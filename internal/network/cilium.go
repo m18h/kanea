@@ -19,6 +19,8 @@ type Config struct {
 	CNIConfPath string
 	// CNIBinDir holds the CNI plugin binaries. Empty means the default.
 	CNIBinDir string
+	// PolicyDir is the agent's --static-cnp-path. Empty means the default.
+	PolicyDir string
 	// Logger receives attach/detach events.
 	Logger *slog.Logger
 	// IdentityTimeout bounds the wait for an endpoint to reach a real security
@@ -59,6 +61,7 @@ type Cilium struct {
 	netns  netnsOps
 	log    *slog.Logger
 
+	policyDir       string
 	identityTimeout time.Duration
 	labelRetry      backoff
 }
@@ -98,11 +101,15 @@ func New(cfg Config) (*Cilium, error) {
 	if cfg.IdentityTimeout <= 0 {
 		cfg.IdentityTimeout = DefaultIdentityTimeout
 	}
+	if cfg.PolicyDir == "" {
+		cfg.PolicyDir = DefaultPolicyDir
+	}
 	return &Cilium{
 		client:          newClient(cfg.SocketPath, cfg.RequestTimeout),
 		cni:             newCNIInvoker(cfg.CNIConfPath, cfg.CNIBinDir),
 		netns:           hostNetns(),
 		log:             cfg.Logger,
+		policyDir:       cfg.PolicyDir,
 		identityTimeout: cfg.IdentityTimeout,
 		labelRetry:      defaultBackoff,
 	}, nil

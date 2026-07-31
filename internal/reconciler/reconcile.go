@@ -54,6 +54,18 @@ type NetworkReaper interface {
 	Attached(ctx context.Context) ([]string, error)
 }
 
+// PolicySyncer is an optional Network capability: making the datapath's network
+// policies match the projects that currently exist.
+//
+// Policy is derived state — it follows from desired state and is rebuilt rather
+// than remembered (constraint #9) — so it belongs in the convergence loop
+// alongside everything else that has to agree with the Store.
+type PolicySyncer interface {
+	// SyncPolicies installs the default policy for each named project and
+	// withdraws policies for projects that no longer exist.
+	SyncPolicies(ctx context.Context, projects []string) error
+}
+
 // Config configures a Reconciler.
 type Config struct {
 	Store  Store
@@ -164,6 +176,18 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	if err != nil {
 		return result, fmt.Errorf("load desired state: %w", err)
 	}
+
+	// Policy before allocs, and fail the pass if it does not land.
+	//
+	// An endpoint with no policy selecting it has no ingress enforcement at all
+	// — it is reachable from every other workload on the node. So a project
+	// whose isolation policy could not be written must not get new allocs:
+	// convergence stalling is recoverable, a workload started unprotected is
+	// not. Allocs already running are unaffected; the next pass retries.
+	if err := r.syncPolicies(ctx, desired); err != nil {
+		return result, fmt.Errorf("sync network policies: %w", err)
+	}
+
 	records, err := r.loadRecords(ctx)
 	if err != nil {
 		return result, fmt.Errorf("load alloc records: %w", err)
@@ -214,6 +238,19 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	// one of those belongs to an alloc the sweep considers known.
 	result.Reaped = r.reapNetwork(ctx, world)
 	return result, nil
+}
+
+// syncPolicies makes network policy match the set of projects in desired state.
+func (r *Reconciler) syncPolicies(ctx context.Context, desired []Desired) error {
+	syncer, ok := r.network.(PolicySyncer)
+	if !ok {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(desired))
+	for _, d := range desired {
+		seen[d.Project] = struct{}{}
+	}
+	return syncer.SyncPolicies(ctx, sortedKeys(seen))
 }
 
 // reapNetwork detaches network attachments belonging to no known alloc.

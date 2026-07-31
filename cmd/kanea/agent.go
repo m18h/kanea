@@ -44,6 +44,7 @@ func runAgent(args []string) error {
 	ciliumSocket := fs.String("cilium", network.DefaultSocketPath, "cilium-agent API socket")
 	cniConf := fs.String("cni-conf", network.DefaultCNIConfPath, "CNI configuration list")
 	cniBin := fs.String("cni-bin", network.DefaultCNIBinDir, "CNI plugin directory")
+	policyDir := fs.String("policy-dir", network.DefaultPolicyDir, "cilium --static-cnp-path directory")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -101,6 +102,7 @@ func runAgent(args []string) error {
 		SocketPath:  *ciliumSocket,
 		CNIConfPath: *cniConf,
 		CNIBinDir:   *cniBin,
+		PolicyDir:   *policyDir,
 		Logger:      logger,
 	}, logger)
 	if err != nil {

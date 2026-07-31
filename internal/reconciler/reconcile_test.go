@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -151,6 +153,10 @@ type fakeNetwork struct {
 	mu       sync.Mutex
 	events   []string
 	attached map[string]bool
+
+	// policy sync state
+	policySyncs [][]string
+	policyErr   error
 }
 
 func newFakeNetwork() *fakeNetwork {
@@ -177,6 +183,33 @@ func (n *fakeNetwork) isAttached(id string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.attached[id]
+}
+
+// SyncPolicies makes fakeNetwork a reconciler.PolicySyncer.
+func (n *fakeNetwork) SyncPolicies(_ context.Context, projects []string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.events = append(n.events, "policy:"+strings.Join(projects, ","))
+	if n.policyErr != nil {
+		return n.policyErr
+	}
+	n.policySyncs = append(n.policySyncs, projects)
+	return nil
+}
+
+func (n *fakeNetwork) lastPolicySync() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.policySyncs) == 0 {
+		return nil
+	}
+	return n.policySyncs[len(n.policySyncs)-1]
+}
+
+func (n *fakeNetwork) eventLog() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return slices.Clone(n.events)
 }
 
 // Attached makes fakeNetwork a reconciler.NetworkReaper.
@@ -313,9 +346,15 @@ func TestReconcileAttachesNetworkBeforeStartingTheTask(t *testing.T) {
 		t.Error("network not attached")
 	}
 	// Attach happens before the container is even created, which is strictly
-	// before the task starts.
-	if len(h.network.events) == 0 || h.network.events[0] != "attach:"+id {
-		t.Errorf("network events = %v, want attach first", h.network.events)
+	// before the task starts. Policy sync legitimately precedes both.
+	var networkOps []string
+	for _, e := range h.network.eventLog() {
+		if !strings.HasPrefix(e, "policy:") {
+			networkOps = append(networkOps, e)
+		}
+	}
+	if len(networkOps) == 0 || networkOps[0] != "attach:"+id {
+		t.Errorf("network events = %v, want attach first", h.network.eventLog())
 	}
 }
 
@@ -815,5 +854,69 @@ func TestReconcileSkipsSweepWithoutAReaper(t *testing.T) {
 	if _, ok := any(reconciler.NetnsNetwork{}).(reconciler.NetworkReaper); ok {
 		t.Fatal("NetnsNetwork must not implement NetworkReaper: it cannot tell its " +
 			"namespaces from any other tool's, and reaping deletes")
+	}
+}
+
+// Policy is derived from desired state, so it belongs in the convergence loop.
+func TestReconcileSyncsPolicyForEveryProject(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desired(1))
+	blog := desired(1)
+	blog.Project = "blog"
+	h.setDesired(t, blog)
+
+	h.reconcile(t)
+
+	want := []string{"blog", "shop"}
+	if got := h.network.lastPolicySync(); !slices.Equal(got, want) {
+		t.Fatalf("policy sync = %v, want %v", got, want)
+	}
+}
+
+// An endpoint that no policy selects has no ingress enforcement at all — it is
+// reachable from every workload on the node. So a policy write that fails must
+// stop the pass *before* anything attaches: convergence stalling is
+// recoverable, a workload started unprotected is not.
+func TestReconcileFailsClosedWhenPolicyCannotBeWritten(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desired(2))
+	h.network.policyErr = errors.New("policy directory is read-only")
+
+	if _, err := h.r.Reconcile(context.Background()); err == nil {
+		t.Fatal("Reconcile = nil, want the policy failure")
+	}
+	if got := h.driver.count(); got != 0 {
+		t.Fatalf("%d allocs were created despite the policy failure", got)
+	}
+	for _, e := range h.network.eventLog() {
+		if strings.HasPrefix(e, "attach:") {
+			t.Fatalf("an alloc attached before its policy existed: %v", h.network.eventLog())
+		}
+	}
+}
+
+// Ordering, not just presence: the policy must be in place before the first
+// endpoint appears, or there is a window in which a new project's allocs are
+// running with nothing selecting them.
+func TestReconcileSyncsPolicyBeforeAttaching(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desired(1))
+	h.reconcile(t)
+
+	events := h.network.eventLog()
+	firstAttach, firstPolicy := -1, -1
+	for i, e := range events {
+		if firstPolicy < 0 && strings.HasPrefix(e, "policy:") {
+			firstPolicy = i
+		}
+		if firstAttach < 0 && strings.HasPrefix(e, "attach:") {
+			firstAttach = i
+		}
+	}
+	if firstPolicy < 0 || firstAttach < 0 {
+		t.Fatalf("expected both a policy sync and an attach: %v", events)
+	}
+	if firstPolicy > firstAttach {
+		t.Fatalf("attached before policy was written: %v", events)
 	}
 }
