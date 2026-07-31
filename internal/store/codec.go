@@ -13,9 +13,22 @@ import (
 // a lot during incident response, and field additions stay backward-compatible
 // (PRD §15.4 pairs this with bucket schema versions for the breaking cases).
 
+// Reader is the read surface the typed helpers need. Taking the narrowest
+// interface lets a caller pass its own consumer-defined subset of Store rather
+// than the whole thing.
+type Reader interface {
+	Get(ctx context.Context, kind Kind, key string) (Record, error)
+	List(ctx context.Context, kind Kind, opts ListOptions) (Page, error)
+}
+
+// Applier is the write surface: one atomic batch.
+type Applier interface {
+	Apply(ctx context.Context, muts ...Mutation) (uint64, error)
+}
+
 // GetValue reads and decodes one record, returning its index alongside the
 // value so the caller can pass it back as Mutation.PrevIndex for a safe update.
-func GetValue[T any](ctx context.Context, s Store, kind Kind, key string) (T, uint64, error) {
+func GetValue[T any](ctx context.Context, s Reader, kind Kind, key string) (T, uint64, error) {
 	var out T
 	rec, err := s.Get(ctx, kind, key)
 	if err != nil {
@@ -29,7 +42,7 @@ func GetValue[T any](ctx context.Context, s Store, kind Kind, key string) (T, ui
 
 // ListValues decodes a bounded page. The returned Page carries the pagination
 // cursor; values come back in the parallel slice, in the same order.
-func ListValues[T any](ctx context.Context, s Store, kind Kind, opts ListOptions) ([]T, Page, error) {
+func ListValues[T any](ctx context.Context, s Reader, kind Kind, opts ListOptions) ([]T, Page, error) {
 	page, err := s.List(ctx, kind, opts)
 	if err != nil {
 		return nil, Page{}, err
@@ -86,7 +99,7 @@ func DeleteMutation(kind Kind, key string) Mutation {
 // PutValue is the one-call convenience for a single unconditional write.
 // Batches should build mutations and pass them to Apply together, so they
 // commit — and replicate — atomically.
-func PutValue[T any](ctx context.Context, s Store, kind Kind, key string, value T) (uint64, error) {
+func PutValue[T any](ctx context.Context, s Applier, kind Kind, key string, value T) (uint64, error) {
 	m, err := PutMutation(kind, key, value)
 	if err != nil {
 		return 0, err
