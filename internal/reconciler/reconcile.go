@@ -95,6 +95,11 @@ type Config struct {
 	// ServiceCIDR is the pool service frontends are allocated from
 	// (PRD §15.1). Empty means DefaultServiceCIDR.
 	ServiceCIDR string
+	// ResolvConfDir holds the generated per-project resolv.conf files.
+	ResolvConfDir string
+	// Nameserver is the address allocs are pointed at for DNS. Empty means
+	// allocs keep whatever resolv.conf their image ships.
+	Nameserver string
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -112,10 +117,12 @@ type Reconciler struct {
 
 	vips *vipAllocator
 
-	interval  time.Duration
-	stopGrace time.Duration
-	logDir    string
-	volumeDir string
+	interval      time.Duration
+	stopGrace     time.Duration
+	logDir        string
+	volumeDir     string
+	resolvConfDir string
+	nameserver    string
 }
 
 // New builds a Reconciler.
@@ -140,16 +147,18 @@ func New(cfg Config) (*Reconciler, error) {
 		return nil, err
 	}
 	return &Reconciler{
-		store:     cfg.Store,
-		vips:      vips,
-		driver:    cfg.Driver,
-		network:   cfg.Network,
-		log:       cfg.Logger,
-		now:       cfg.Now,
-		interval:  cfg.Interval,
-		stopGrace: cfg.StopGrace,
-		logDir:    cfg.LogDir,
-		volumeDir: cfg.VolumeDir,
+		store:         cfg.Store,
+		vips:          vips,
+		driver:        cfg.Driver,
+		network:       cfg.Network,
+		log:           cfg.Logger,
+		now:           cfg.Now,
+		interval:      cfg.Interval,
+		stopGrace:     cfg.StopGrace,
+		logDir:        cfg.LogDir,
+		volumeDir:     cfg.VolumeDir,
+		resolvConfDir: cfg.ResolvConfDir,
+		nameserver:    cfg.Nameserver,
 	}, nil
 }
 
@@ -369,8 +378,8 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 // A ready endpoint is required as well: one that has not resolved its identity
 // carries reserved:init and has its traffic denied in both directions, so
 // advertising it would route requests straight into a drop.
-func backendsFor(w World, d Desired, attachments map[string]network.Attachment) []string {
-	backends := make([]string, 0, d.Count)
+func backendsFor(w World, d Desired, attachments map[string]network.Attachment) []network.Backend {
+	backends := make([]network.Backend, 0, d.Count)
 	for i := range d.Count {
 		id := AllocID(d.Project, d.Service, i)
 
@@ -381,11 +390,23 @@ func backendsFor(w World, d Desired, attachments map[string]network.Attachment) 
 		if !ok || !att.Ready || att.IPv4 == "" {
 			continue
 		}
-		backends = append(backends, att.IPv4)
+		backends = append(backends, network.Backend{AllocID: id, IPv4: att.IPv4})
 	}
-	sort.Strings(backends)
+	sort.Slice(backends, func(i, j int) bool { return backends[i].AllocID < backends[j].AllocID })
 	return backends
 }
+
+// resolvConfFor renders the project's resolv.conf, or reports why it cannot.
+func (r *Reconciler) resolvConfFor(project string) (string, error) {
+	if r.resolvConfDir == "" || r.nameserver == "" {
+		return "", errNoInternalDNS
+	}
+	return network.WriteResolvConf(r.resolvConfDir, project, r.nameserver)
+}
+
+// errNoInternalDNS marks a node with no embedded resolver configured — the
+// netns development mode, or an operator who turned DNS off.
+var errNoInternalDNS = errors.New("no internal resolver is configured")
 
 // syncPolicies makes network policy match the set of projects in desired state.
 func (r *Reconciler) syncPolicies(ctx context.Context, desired []Desired) error {
@@ -536,6 +557,18 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 }
 
 func (r *Reconciler) create(ctx context.Context, desired Desired, action Action) error {
+	// Which resolver an alloc talks to is a property of the node, not the job,
+	// so it is filled in here rather than carried through the Store.
+	if path, err := r.resolvConfFor(desired.Project); err != nil {
+		// Not fatal: an alloc with the image's own resolv.conf can still reach
+		// external names, it just cannot resolve peers by their internal name.
+		// Refusing to start it would turn a degraded deploy into no deploy.
+		r.log.Warn("cannot provide internal DNS to alloc",
+			"project", desired.Project, "alloc", action.AllocID, "error", err)
+	} else {
+		desired.ResolvConfPath = path
+	}
+
 	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
 
 	if _, err := r.driver.EnsureImage(ctx, desired.Project, desired.Image); err != nil {
@@ -544,7 +577,7 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	// Volume directories exist before the task does. A bind mount whose source
 	// is missing would otherwise be created by the runtime as a root-owned
 	// directory at an unpredictable moment, or fail the alloc outright.
-	if err := r.ensureVolumes(spec); err != nil {
+	if err := r.ensureVolumes(desired, action.Index); err != nil {
 		return err
 	}
 	// Network before task: an alloc must never run without its network, and on
@@ -582,12 +615,18 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	return r.persist(ctx, map[string]AllocRecord{record.ID: record})
 }
 
-// ensureVolumes creates each mount's host directory. Data is never deleted on
-// teardown: a volume outliving its alloc is the entire point (PRD §8).
-func (r *Reconciler) ensureVolumes(spec runtime.AllocSpec) error {
-	for _, m := range spec.Mounts {
-		if err := os.MkdirAll(m.Source, 0o750); err != nil {
-			return fmt.Errorf("volume %s: %w", m.Source, err)
+// ensureVolumes creates each declared volume's host directory. Data is never
+// deleted on teardown: a volume outliving its alloc is the entire point (§8).
+//
+// It walks the service's volumes rather than the spec's mounts, because not
+// every mount is a volume. resolv.conf is bind-mounted from a *file*, and
+// running MkdirAll over the mount list would try to turn it into a directory —
+// which fails, and takes the whole alloc with it.
+func (r *Reconciler) ensureVolumes(d Desired, index int) error {
+	for _, v := range d.Volumes {
+		path := VolumeHostPath(r.volumeDir, d.Project, d.Service, index, v.Name)
+		if err := os.MkdirAll(path, 0o750); err != nil {
+			return fmt.Errorf("volume %s: %w", v.Name, err)
 		}
 	}
 	return nil

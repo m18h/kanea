@@ -37,11 +37,21 @@ type Service struct {
 	VIP string
 	// Ports the frontend listens on.
 	Ports []ServicePort
-	// Backends are the alloc IPs that should receive traffic. Only allocs that
-	// are actually running belong here — an alloc that is created, backing off
-	// or mid-restart is not a backend, and listing it would send real requests
+	// Backends are the allocs that should receive traffic. Only allocs that are
+	// actually running belong here — an alloc that is created, backing off or
+	// mid-restart is not a backend, and listing it would send real requests
 	// into a black hole.
-	Backends []string
+	//
+	// The alloc id travels with the address because two consumers need
+	// different halves of it: load balancing wants the addresses, and DNS wants
+	// to publish a per-alloc name for each one (PRD §7.1).
+	Backends []Backend
+}
+
+// Backend is one alloc serving a service.
+type Backend struct {
+	AllocID string
+	IPv4    string
 }
 
 // lbState is the file the agent watches.
@@ -140,6 +150,11 @@ func (c *Cilium) SyncServices(_ context.Context, services []Service) error {
 	if err != nil {
 		return err
 	}
+	// DNS follows the same set of services, so it is published from the same
+	// call: a frontend and the name that resolves to it should never disagree.
+	if c.dns != nil {
+		c.dns.SetZone(services)
+	}
 	if changed {
 		c.log.Info("updated service load balancing",
 			"file", c.lbStateFile, "services", len(state.Services), "backends", countBackends(state))
@@ -196,14 +211,14 @@ func buildLBState(services []Service) (lbState, error) {
 			},
 		})
 
-		backends := make([]string, len(svc.Backends))
+		backends := make([]Backend, len(svc.Backends))
 		copy(backends, svc.Backends)
-		sort.Strings(backends)
+		sort.Slice(backends, func(i, j int) bool { return backends[i].AllocID < backends[j].AllocID })
 
 		entries := make([]endpointEntry, 0, len(backends))
-		for _, ip := range backends {
+		for _, b := range backends {
 			entries = append(entries, endpointEntry{
-				Addresses:  []string{ip},
+				Addresses:  []string{b.IPv4},
 				Conditions: endpointConditions{Ready: true, Serving: true},
 			})
 		}
@@ -249,10 +264,13 @@ func (s Service) validate() error {
 		}
 		seen[p.Name] = true
 	}
-	for _, ip := range s.Backends {
-		if !validIP(ip) {
+	for _, b := range s.Backends {
+		if !validIP(b.IPv4) {
 			return fmt.Errorf("network: service %s/%s has an invalid backend address %q",
-				s.Project, s.Service, ip)
+				s.Project, s.Service, b.IPv4)
+		}
+		if b.AllocID == "" {
+			return fmt.Errorf("network: service %s/%s has a backend with no alloc id", s.Project, s.Service)
 		}
 	}
 	return nil
@@ -279,6 +297,11 @@ func writeFileIfChanged(path string, body []byte) (bool, error) {
 		// agent only watches these, and a typo'd path would silently do nothing.
 		return false, fmt.Errorf("network: %q is not a watched state file", path)
 	}
+	return writeFileIfChangedMode(path, body, 0o600)
+}
+
+// writeFileIfChangedMode is the atomic swap the watched-state writers share.
+func writeFileIfChangedMode(path string, body []byte, mode os.FileMode) (bool, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return false, fmt.Errorf("state dir %s: %w", dir, err)
@@ -291,7 +314,7 @@ func writeFileIfChanged(path string, body []byte) (bool, error) {
 	}
 
 	tmp := filepath.Join(dir, "."+filepath.Base(path)+".tmp")
-	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+	if err := os.WriteFile(tmp, body, mode); err != nil {
 		return false, fmt.Errorf("write %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

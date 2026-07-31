@@ -1,0 +1,408 @@
+package network
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/netip"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// InternalZone is the suffix Kanea is authoritative for (PRD §7.1).
+const InternalZone = "kanea"
+
+// DNS defaults.
+const (
+	// DefaultDNSPort is the standard port; the listener binds a node-local
+	// address, never a public one.
+	DefaultDNSPort = 53
+	// DefaultRecordTTL is short on purpose. Records follow allocs, and an alloc
+	// can move within one reconcile interval, so a long TTL would mostly serve
+	// to keep clients pointed at addresses that no longer exist. VIPs are
+	// stable, but a resolver cannot tell the two kinds of name apart.
+	DefaultRecordTTL = 30 * time.Second
+	// DefaultForwardTimeout bounds one upstream query.
+	DefaultForwardTimeout = 2 * time.Second
+	// DefaultMaxForwards caps concurrent upstream queries. DNS sits in the path
+	// of every service call: when this is exhausted the answer is an immediate
+	// SERVFAIL, never a queue. A client that gets SERVFAIL retries; a client
+	// stuck behind a queue holds a connection open and takes the caller with it.
+	DefaultMaxForwards = 64
+	// allocLabelPrefix names a single alloc: alloc-<id>.<service>.<project>.kanea
+	allocLabelPrefix = "alloc-"
+)
+
+// DNSConfig configures the embedded resolver.
+type DNSConfig struct {
+	// Listen is the address to serve on, e.g. "10.200.1.1:53".
+	//
+	// It must be node-local. Binding a wildcard address would publish an open
+	// resolver on every interface the node has, which is both an amplification
+	// vector and a way for anything on the network to enumerate the services
+	// running here.
+	Listen string
+	// Upstreams are the resolvers external names are forwarded to. Empty means
+	// no forwarding: queries outside the internal zone get REFUSED.
+	Upstreams []string
+	// TTL for records this server is authoritative for.
+	TTL time.Duration
+	// ForwardTimeout bounds one upstream query.
+	ForwardTimeout time.Duration
+	// MaxForwards caps concurrent upstream queries.
+	MaxForwards int
+	// Logger receives lifecycle events. Individual queries are not logged:
+	// at one lookup per service call the volume is enormous and the content is
+	// a record of what every workload talks to.
+	Logger *slog.Logger
+}
+
+// DNS is the embedded authoritative resolver for the internal zone.
+//
+// It answers `<service>.<project>.kanea` with the service's frontend VIP and
+// `alloc-<id>.<service>.<project>.kanea` with that alloc's address, and
+// forwards everything else. Names are injected into each alloc's resolv.conf,
+// so this is what makes `${service.x.host}` resolve to something stable —
+// the whole reason service references are DNS names and never IPs (PRD §7.1.1).
+//
+// The design constraint is that it must degrade rather than stall. Every
+// upstream query is bounded by a timeout and by a concurrency cap, and neither
+// a slow upstream nor a flood of external lookups can delay an answer for an
+// internal name — those are served from memory with no I/O at all.
+type DNS struct {
+	listen         string
+	upstreams      []string
+	ttl            time.Duration
+	forwardTimeout time.Duration
+	log            *slog.Logger
+
+	// zone is swapped wholesale on update, so a lookup never holds a lock
+	// across anything but a map read.
+	zone atomic.Pointer[zone]
+
+	// forwardSlots is a counting semaphore over in-flight upstream queries.
+	forwardSlots chan struct{}
+
+	conn atomic.Pointer[net.UDPConn]
+	wg   sync.WaitGroup
+}
+
+// zone is an immutable snapshot of the internal namespace.
+type zone struct {
+	// records maps a fully-qualified name to its addresses.
+	records map[string][]netip.Addr
+}
+
+// NewDNS builds the resolver. It does not bind — call Serve.
+func NewDNS(cfg DNSConfig) (*DNS, error) {
+	if cfg.Listen == "" {
+		return nil, errors.New("dns: listen address is required")
+	}
+	if err := validateNodeLocal(cfg.Listen); err != nil {
+		return nil, err
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+	if cfg.TTL <= 0 {
+		cfg.TTL = DefaultRecordTTL
+	}
+	if cfg.ForwardTimeout <= 0 {
+		cfg.ForwardTimeout = DefaultForwardTimeout
+	}
+	if cfg.MaxForwards <= 0 {
+		cfg.MaxForwards = DefaultMaxForwards
+	}
+
+	upstreams := make([]string, 0, len(cfg.Upstreams))
+	for _, u := range cfg.Upstreams {
+		normalized, err := normalizeUpstream(u)
+		if err != nil {
+			return nil, err
+		}
+		upstreams = append(upstreams, normalized)
+	}
+
+	d := &DNS{
+		listen:         cfg.Listen,
+		upstreams:      upstreams,
+		ttl:            cfg.TTL,
+		forwardTimeout: cfg.ForwardTimeout,
+		log:            cfg.Logger,
+		forwardSlots:   make(chan struct{}, cfg.MaxForwards),
+	}
+	d.zone.Store(&zone{records: map[string][]netip.Addr{}})
+	return d, nil
+}
+
+// validateNodeLocal refuses a wildcard bind.
+//
+// An open resolver on a public interface is a DNS amplification source and an
+// inventory of everything running on the node. This is cheap to get wrong in a
+// config file and expensive to notice, so it is refused at construction.
+func validateNodeLocal(listen string) error {
+	host, _, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("dns: listen address %q: %w", listen, err)
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return fmt.Errorf("dns: listen address %q must be an IP, not a name: %w", listen, err)
+	}
+	if addr.IsUnspecified() {
+		return fmt.Errorf("dns: refusing to listen on %s — bind a node-local address, "+
+			"a wildcard bind publishes an open resolver on every interface", host)
+	}
+	return nil
+}
+
+func normalizeUpstream(u string) (string, error) {
+	if _, _, err := net.SplitHostPort(u); err == nil {
+		return u, nil
+	}
+	if _, err := netip.ParseAddr(u); err != nil {
+		return "", fmt.Errorf("dns: upstream %q is not an address: %w", u, err)
+	}
+	return net.JoinHostPort(u, "53"), nil
+}
+
+// SetZone replaces the served records with those derived from the given
+// services. It is safe to call while serving.
+func (d *DNS) SetZone(services []Service) {
+	records := make(map[string][]netip.Addr, len(services)*2)
+
+	for _, svc := range services {
+		if svc.Project == "" || svc.Service == "" {
+			continue
+		}
+		base := ServiceName(svc.Project, svc.Service)
+
+		// The service name resolves to the frontend, not to the backends. A
+		// client that resolves to alloc addresses would load balance in its own
+		// resolver cache and keep using an address after the alloc behind it
+		// went away; the VIP is what the datapath keeps honest.
+		if vip, err := netip.ParseAddr(svc.VIP); err == nil && vip.Is4() {
+			records[base] = []netip.Addr{vip}
+		}
+
+		for _, backend := range svc.Backends {
+			ip, err := netip.ParseAddr(backend.IPv4)
+			if err != nil || !ip.Is4() {
+				continue
+			}
+			records[AllocName(svc.Project, svc.Service, backend.AllocID)] = []netip.Addr{ip}
+		}
+	}
+	d.zone.Store(&zone{records: records})
+}
+
+// ServiceName is the internal name of a service: <service>.<project>.kanea.
+func ServiceName(project, service string) string {
+	return service + "." + project + "." + InternalZone
+}
+
+// AllocName is the internal name of one alloc (PRD §7.1).
+func AllocName(project, service, allocID string) string {
+	return allocLabelPrefix + allocID + "." + service + "." + project + "." + InternalZone
+}
+
+// Serve binds the listener and answers queries until ctx is cancelled.
+func (d *DNS) Serve(ctx context.Context) error {
+	addr, err := net.ResolveUDPAddr("udp", d.listen)
+	if err != nil {
+		return fmt.Errorf("dns: resolve %s: %w", d.listen, err)
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return fmt.Errorf("dns: listen %s: %w", d.listen, err)
+	}
+	d.conn.Store(conn)
+	d.log.Info("internal dns listening", "address", d.listen, "zone", InternalZone,
+		"upstreams", len(d.upstreams))
+
+	go func() {
+		<-ctx.Done()
+		// Closing is what unblocks ReadFromUDP; a failure here means the socket
+		// was already gone, which is the state we were aiming for anyway.
+		if err := conn.Close(); err != nil {
+			d.log.Debug("closing dns listener", "error", err)
+		}
+	}()
+
+	buf := make([]byte, maxUDPPayload*2)
+	for {
+		n, client, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			if ctx.Err() != nil {
+				d.wg.Wait()
+				d.log.Info("internal dns stopped")
+				return ctx.Err()
+			}
+			// A read error on a UDP socket is per-datagram, not fatal: dropping
+			// the whole resolver because one packet was malformed would take
+			// every service call on the node with it.
+			d.log.Warn("dns read failed", "error", err)
+			continue
+		}
+
+		// Copied because the buffer is reused by the next read.
+		request := make([]byte, n)
+		copy(request, buf[:n])
+
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.handle(ctx, conn, client, request)
+		}()
+	}
+}
+
+// Listen reports the configured listen address, available before Serve binds.
+func (d *DNS) Listen() string { return d.listen }
+
+// Addr reports the bound address, or the empty string before Serve binds.
+func (d *DNS) Addr() string {
+	if conn := d.conn.Load(); conn != nil {
+		return conn.LocalAddr().String()
+	}
+	return ""
+}
+
+// handle answers one datagram.
+func (d *DNS) handle(ctx context.Context, conn *net.UDPConn, client *net.UDPAddr, request []byte) {
+	response := d.respond(ctx, request)
+	if len(response) == 0 {
+		return
+	}
+	if _, err := conn.WriteToUDP(response, client); err != nil && ctx.Err() == nil {
+		d.log.Warn("dns write failed", "client", client.String(), "error", err)
+	}
+}
+
+// respond produces the reply bytes for a request.
+func (d *DNS) respond(ctx context.Context, request []byte) []byte {
+	q, err := parseQuery(request)
+	if err != nil {
+		return errorResponse(request, rcodeFormErr)
+	}
+	if q.opcode() != 0 {
+		return errorResponse(request, rcodeNotImpl)
+	}
+	if q.Class != classIN && q.Class != typeANY {
+		return newResponse(request, q, rcodeNotImpl, false).finish()
+	}
+
+	if isInternalName(q.Name) {
+		return d.answerInternal(request, q)
+	}
+	return d.forward(ctx, request, q)
+}
+
+// isInternalName reports whether a name falls inside the zone this server owns.
+func isInternalName(name string) bool {
+	return name == InternalZone || strings.HasSuffix(name, "."+InternalZone)
+}
+
+// answerInternal serves a name from the zone snapshot, with no I/O.
+func (d *DNS) answerInternal(request []byte, q query) []byte {
+	addrs := d.zone.Load().records[q.Name]
+
+	if len(addrs) == 0 {
+		// Authoritative: the name is in our zone and we do not have it.
+		return newResponse(request, q, rcodeNXDomain, true).finish()
+	}
+
+	// The name exists. For a type we do not hold — AAAA being the one that
+	// matters, since Kanea is IPv4-only in v1 — the answer is NODATA: NOERROR
+	// with no records. NXDOMAIN here would be a lie about the name itself, and
+	// a dual-stack client that believes it may never try the A query at all.
+	if q.Type != typeA && q.Type != typeANY {
+		return newResponse(request, q, rcodeNoError, true).finish()
+	}
+
+	b := newResponse(request, q, rcodeNoError, true)
+	for _, addr := range addrs {
+		if err := b.addA(q.Name, addr, uint32(d.ttl.Seconds())); err != nil {
+			return newResponse(request, q, rcodeServFail, true).finish()
+		}
+	}
+	return b.finish()
+}
+
+// forward relays a query for a name outside the internal zone.
+//
+// The request is passed through and the reply returned as opaque bytes: this
+// server has no reason to understand an external answer, and not parsing it
+// means a hostile or broken upstream cannot reach the parser at all.
+func (d *DNS) forward(ctx context.Context, request []byte, q query) []byte {
+	if len(d.upstreams) == 0 {
+		return newResponse(request, q, rcodeRefused, false).finish()
+	}
+	if !q.recursionDesired() {
+		// We are not authoritative for this name and were asked not to recurse.
+		return newResponse(request, q, rcodeRefused, false).finish()
+	}
+
+	// Take a slot or give up immediately. Blocking here is the failure mode
+	// this whole design exists to avoid: the caller is a workload waiting to
+	// make a request, and a queue turns one slow upstream into a stalled node.
+	select {
+	case d.forwardSlots <- struct{}{}:
+		defer func() { <-d.forwardSlots }()
+	default:
+		return newResponse(request, q, rcodeServFail, false).finish()
+	}
+
+	for _, upstream := range d.upstreams {
+		reply, err := d.queryUpstream(ctx, upstream, request)
+		if err == nil {
+			return reply
+		}
+	}
+	return newResponse(request, q, rcodeServFail, false).finish()
+}
+
+// queryUpstream sends one query and waits for a reply, bounded by the timeout.
+func (d *DNS) queryUpstream(ctx context.Context, upstream string, request []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.forwardTimeout)
+	defer cancel()
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "udp", upstream)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			d.log.Debug("closing upstream socket", "upstream", upstream, "error", err)
+		}
+	}()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := conn.Write(request); err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, maxUDPPayload*2)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+	if n < dnsHeaderLen {
+		return nil, fmt.Errorf("dns: upstream %s returned %d bytes", upstream, n)
+	}
+	// Match the transaction id, so a spoofed or stale datagram is not passed
+	// back to the client as an answer.
+	if string(buf[0:2]) != string(request[0:2]) {
+		return nil, fmt.Errorf("dns: upstream %s replied to a different query", upstream)
+	}
+	return buf[:n], nil
+}

@@ -6,9 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +30,8 @@ const (
 	defaultLogDir  = "/var/log/kanea/allocs"
 	// volumeSubdir is where local volumes live under the data dir (PRD §8).
 	volumeSubdir = "volumes"
+	// resolvSubdir holds the generated per-project resolv.conf files.
+	resolvSubdir = "resolv"
 )
 
 // runAgent is kanead: the control plane. It owns the state file — bbolt is
@@ -47,6 +52,10 @@ func runAgent(args []string) error {
 	policyDir := fs.String("policy-dir", network.DefaultPolicyDir, "cilium --static-cnp-path directory")
 	lbStateFile := fs.String("lb-state-file", network.DefaultLBStateFile, "cilium --lb-state-file path")
 	serviceCIDR := fs.String("service-cidr", reconciler.DefaultServiceCIDR, "pool for service frontend addresses")
+	dnsListen := fs.String("dns-listen", "",
+		"internal DNS listen address (default: the cilium_host address; \"off\" disables)")
+	dnsUpstream := fs.String("dns-upstream", "",
+		"comma-separated upstream resolvers for external names (default: the host's)")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -100,12 +109,18 @@ func runAgent(args []string) error {
 		return fmt.Errorf("volume dir: %w", err)
 	}
 
+	dns, err := buildDNS(*networkMode, *dnsListen, *dnsUpstream, logger)
+	if err != nil {
+		return err
+	}
+
 	net, err := buildNetwork(ctx, *networkMode, network.Config{
 		SocketPath:  *ciliumSocket,
 		CNIConfPath: *cniConf,
 		CNIBinDir:   *cniBin,
 		PolicyDir:   *policyDir,
 		LBStateFile: *lbStateFile,
+		DNS:         dns,
 		Logger:      logger,
 	}, logger)
 	if err != nil {
@@ -117,13 +132,15 @@ func runAgent(args []string) error {
 	notify := make(chan struct{}, 1)
 
 	rec, err := reconciler.New(reconciler.Config{
-		Store:       st,
-		Driver:      driver,
-		Network:     net,
-		Logger:      logger,
-		LogDir:      *logDir,
-		VolumeDir:   volumes,
-		ServiceCIDR: *serviceCIDR,
+		Store:         st,
+		Driver:        driver,
+		Network:       net,
+		Logger:        logger,
+		LogDir:        *logDir,
+		VolumeDir:     volumes,
+		ServiceCIDR:   *serviceCIDR,
+		ResolvConfDir: filepath.Join(*dataDir, resolvSubdir),
+		Nameserver:    nameserverOf(dns),
 	})
 	if err != nil {
 		return err
@@ -146,13 +163,20 @@ func runAgent(args []string) error {
 		"version", version, "state", statePath, "socket", *socket,
 		"log_dir", *logDir, "volume_dir", volumes, "network", *networkMode)
 
-	errs := make(chan error, 2)
+	tasks := 2
+	if dns != nil {
+		tasks++
+	}
+	errs := make(chan error, tasks)
 	go func() { errs <- server.Serve(ctx) }()
 	go func() { errs <- rec.Run(ctx, notify) }()
+	if dns != nil {
+		go func() { errs <- dns.Serve(ctx) }()
+	}
 
-	// Wait for both to finish; a context cancellation is a clean shutdown.
+	// Wait for all of them; a context cancellation is a clean shutdown.
 	var firstErr error
-	for range 2 {
+	for range tasks {
 		if err := <-errs; err != nil && !errors.Is(err, context.Canceled) && firstErr == nil {
 			firstErr = err
 		}
@@ -207,3 +231,97 @@ func buildNetwork(ctx context.Context, mode string, cfg network.Config, logger *
 // ciliumHealthTimeout bounds the startup probe. It is short on purpose: this is
 // a diagnostic, and kanead starts either way.
 const ciliumHealthTimeout = 5 * time.Second
+
+// DNS wiring.
+const (
+	// dnsOff disables the embedded resolver.
+	dnsOff = "off"
+	// ciliumHostInterface carries the node's address inside the cluster CIDR.
+	// It is the one address reachable from every alloc's namespace *and* from
+	// the host, which is exactly what a node-local resolver needs.
+	ciliumHostInterface = "cilium_host"
+)
+
+// buildDNS constructs the embedded resolver, or nil when it is not wanted.
+//
+// The listen address defaults to the cilium_host interface rather than a
+// wildcard. That is a security decision, not a convenience one: a resolver
+// bound to 0.0.0.0 is reachable on the node's public interface, which makes it
+// a DNS amplification source and lets anyone on the network enumerate the
+// services running here. network.NewDNS refuses a wildcard outright; this
+// picks a sensible specific address so nobody is tempted to pass one.
+func buildDNS(mode, listen, upstreams string, logger *slog.Logger) (*network.DNS, error) {
+	if listen == dnsOff {
+		logger.Warn("internal DNS is disabled; services are reachable only by address")
+		return nil, nil
+	}
+	if mode != networkCilium {
+		// Without the Cilium datapath there are no service frontends to answer
+		// with, so a resolver would serve an empty zone.
+		return nil, nil
+	}
+
+	if listen == "" {
+		addr, err := interfaceAddr(ciliumHostInterface)
+		if err != nil {
+			return nil, fmt.Errorf("internal DNS: %w (pass --dns-listen, or --dns-listen=off)", err)
+		}
+		listen = net.JoinHostPort(addr, strconv.Itoa(network.DefaultDNSPort))
+	}
+
+	resolvers, err := upstreamResolvers(upstreams)
+	if err != nil {
+		return nil, err
+	}
+	return network.NewDNS(network.DNSConfig{
+		Listen:    listen,
+		Upstreams: resolvers,
+		Logger:    logger,
+	})
+}
+
+// nameserverOf reports the address allocs should be pointed at.
+func nameserverOf(dns *network.DNS) string {
+	if dns == nil {
+		return ""
+	}
+	return dns.Listen()
+}
+
+// interfaceAddr returns the first IPv4 address on a named interface.
+func interfaceAddr(name string) (string, error) {
+	iface, err := net.InterfaceByName(name)
+	if err != nil {
+		return "", fmt.Errorf("interface %s not found", name)
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", fmt.Errorf("interface %s: %w", name, err)
+	}
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok {
+			if v4 := ipnet.IP.To4(); v4 != nil {
+				return v4.String(), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("interface %s has no IPv4 address", name)
+}
+
+// upstreamResolvers parses the forwarding targets, defaulting to the host's.
+//
+// Forwarding to the host's own resolvers keeps a workload's view of the
+// internet identical to the node's, which is what an operator expects when they
+// configure DNS once in /etc/resolv.conf.
+func upstreamResolvers(configured string) ([]string, error) {
+	if configured != "" {
+		var out []string
+		for _, u := range strings.Split(configured, ",") {
+			if u = strings.TrimSpace(u); u != "" {
+				out = append(out, u)
+			}
+		}
+		return out, nil
+	}
+	return network.HostResolvers()
+}

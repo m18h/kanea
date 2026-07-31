@@ -42,6 +42,10 @@ type Desired struct {
 	// `network { port "http" { container = 8080 } }`). A service with no ports
 	// gets no frontend: there is nothing to load balance.
 	Ports []Port
+	// ResolvConfPath is the host file bind-mounted at /etc/resolv.conf. It is
+	// filled in by the reconciler rather than the spec: which resolver an alloc
+	// talks to is a property of the node, not of the job.
+	ResolvConfPath string `json:"-"`
 	// ReadOnlyRootfs opts into a read-only root filesystem.
 	ReadOnlyRootfs bool
 	// Restart is the crash-restart policy.

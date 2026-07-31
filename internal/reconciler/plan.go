@@ -210,6 +210,13 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 	if logDir != "" {
 		spec.LogPath = filepath.Join(logDir, id+".log")
 	}
+	// resolv.conf is a bind mount like any other, and read-only: a workload
+	// that could rewrite it would take itself off the internal zone.
+	if d.ResolvConfPath != "" {
+		spec.Mounts = append(spec.Mounts, runtime.Mount{
+			Source: d.ResolvConfPath, Destination: "/etc/resolv.conf", ReadOnly: true,
+		})
+	}
 	for _, v := range d.Volumes {
 		spec.Mounts = append(spec.Mounts, runtime.Mount{
 			Source:      VolumeHostPath(volumeDir, d.Project, d.Service, index, v.Name),

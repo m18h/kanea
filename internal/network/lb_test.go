@@ -2,6 +2,7 @@ package network
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,11 @@ func readLBState(t *testing.T, path string) lbState {
 	return state
 }
 
-func webService(backends ...string) Service {
+func webService(backendIPs ...string) Service {
+	backends := make([]Backend, 0, len(backendIPs))
+	for i, ip := range backendIPs {
+		backends = append(backends, Backend{AllocID: fmt.Sprintf("shop-web-%d", i), IPv4: ip})
+	}
 	return Service{
 		Project: "shop", Service: "web", VIP: "10.201.0.1",
 		Ports:    []ServicePort{{Name: "http", Port: 8080, TargetPort: 8080}},
@@ -103,9 +108,9 @@ func TestSyncServicesBatchesEverythingIntoOneFile(t *testing.T) {
 // map iteration order alone would otherwise trigger it on every pass.
 func TestSyncServicesIsIdempotent(t *testing.T) {
 	c, path := testLBWriter(t)
-	services := []Service{webService("10.200.1.6", "10.200.1.5")}
 
-	if err := c.SyncServices(t.Context(), services); err != nil {
+	first := webService("10.200.1.5", "10.200.1.6")
+	if err := c.SyncServices(t.Context(), []Service{first}); err != nil {
 		t.Fatalf("first sync: %v", err)
 	}
 	backdated := time.Now().Add(-time.Hour).Truncate(time.Second)
@@ -113,9 +118,13 @@ func TestSyncServicesIsIdempotent(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	// Same services, backends listed in a different order.
-	reordered := []Service{webService("10.200.1.5", "10.200.1.6")}
-	if err := c.SyncServices(t.Context(), reordered); err != nil {
+	// The same backends, listed in the other order. The alloc-to-address
+	// pairing is unchanged, so this is the same state — only the slice order
+	// differs, which is exactly what map iteration produces from one pass to
+	// the next.
+	reordered := webService("10.200.1.5", "10.200.1.6")
+	reordered.Backends[0], reordered.Backends[1] = reordered.Backends[1], reordered.Backends[0]
+	if err := c.SyncServices(t.Context(), []Service{reordered}); err != nil {
 		t.Fatalf("second sync: %v", err)
 	}
 
@@ -198,6 +207,13 @@ func TestServiceValidation(t *testing.T) {
 			name: "backend that is not an address",
 			svc:  webService("not-an-ip"),
 			want: "invalid backend",
+		},
+		{
+			name: "backend with no alloc id",
+			svc: Service{Project: "shop", Service: "web", VIP: "10.201.0.1",
+				Ports:    []ServicePort{{Name: "http", Port: 8080}},
+				Backends: []Backend{{IPv4: "10.200.1.5"}}},
+			want: "no alloc id",
 		},
 		{
 			name: "unnamed port",

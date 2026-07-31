@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -195,10 +196,15 @@ func (n *fakeNetwork) lastLBSync() []network.Service {
 	return n.lbSyncs[len(n.lbSyncs)-1]
 }
 
+// backendsOf returns the addresses currently advertised for a service.
 func (n *fakeNetwork) backendsOf(project, service string) []string {
 	for _, svc := range n.lastLBSync() {
 		if svc.Project == project && svc.Service == service {
-			return svc.Backends
+			ips := make([]string, 0, len(svc.Backends))
+			for _, b := range svc.Backends {
+				ips = append(ips, b.IPv4)
+			}
+			return ips
 		}
 	}
 	return nil
@@ -309,11 +315,12 @@ func newHarness(t *testing.T) *harness {
 
 	h := &harness{store: s, driver: newFakeDriver(), network: newFakeNetwork(), now: testNow}
 	r, err := reconciler.New(reconciler.Config{
-		Store:   s,
-		Driver:  h.driver,
-		Network: h.network,
-		Now:     func() time.Time { return h.now },
-		LogDir:  t.TempDir(),
+		Store:     s,
+		Driver:    h.driver,
+		Network:   h.network,
+		Now:       func() time.Time { return h.now },
+		LogDir:    t.TempDir(),
+		VolumeDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("new reconciler: %v", err)
@@ -1220,5 +1227,41 @@ func TestPortlessServicesDoNotConsumeFrontendAddresses(t *testing.T) {
 
 	if got := h.network.vipOf("shop", "web"); got != "10.201.0.1" {
 		t.Fatalf("web VIP = %q, want the first address in the pool", got)
+	}
+}
+
+// Not every mount is a volume: resolv.conf is bind-mounted from a file. An
+// ensureVolumes that walked the mount list would try to MkdirAll over it and
+// take the whole alloc down with it.
+func TestReconcileDoesNotTreatFileMountsAsVolumes(t *testing.T) {
+	h := newHarness(t)
+
+	// Point the alloc at a real file, the way the DNS wiring does.
+	dir := t.TempDir()
+	resolv := filepath.Join(dir, "shop.resolv.conf")
+	if err := os.WriteFile(resolv, []byte("nameserver 10.200.1.1\n"), 0o644); err != nil {
+		t.Fatalf("seed resolv.conf: %v", err)
+	}
+
+	d := desired(1)
+	d.ResolvConfPath = resolv
+	d.Volumes = []reconciler.Volume{{Name: "data", MountPath: "/data"}}
+	h.setDesired(t, d)
+
+	res, err := h.r.Reconcile(context.Background())
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res.Applied != 1 {
+		t.Fatalf("applied = %d failed = %d, want the alloc to start", res.Applied, res.Failed)
+	}
+
+	// The file must still be a file.
+	info, err := os.Stat(resolv)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if info.IsDir() {
+		t.Fatal("resolv.conf was replaced by a directory")
 	}
 }

@@ -23,6 +23,8 @@ type Config struct {
 	PolicyDir string
 	// LBStateFile is the agent's --lb-state-file. Empty means the default.
 	LBStateFile string
+	// DNS, when set, has its zone republished on every service sync.
+	DNS *DNS
 	// Logger receives attach/detach events.
 	Logger *slog.Logger
 	// IdentityTimeout bounds the wait for an endpoint to reach a real security
@@ -65,6 +67,7 @@ type Cilium struct {
 
 	policyDir       string
 	lbStateFile     string
+	dns             *DNS
 	identityTimeout time.Duration
 	labelRetry      backoff
 }
@@ -117,6 +120,7 @@ func New(cfg Config) (*Cilium, error) {
 		log:             cfg.Logger,
 		policyDir:       cfg.PolicyDir,
 		lbStateFile:     cfg.LBStateFile,
+		dns:             cfg.DNS,
 		identityTimeout: cfg.IdentityTimeout,
 		labelRetry:      defaultBackoff,
 	}, nil
