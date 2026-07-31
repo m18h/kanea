@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.9 |
+| **Status** | Draft v1.10 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
 | **Last updated** | 2026-07-30 |
 | **Document type** | Product Requirements Document (PRD) |
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.10 amendments** — corrects the §6.1 example so it actually parses as HCL v2 (single-line blocks may hold at most one argument and no nested block, so `resources { cpu = 500  memory = 256 }`, `network { port "http" { … } }` and `expose { tls { … } }` were invalid) and adds the `spec_version = 1` that R6 requires. No semantic change; `internal/jobspec` now parses this example verbatim as a regression test, per AGENTS.md's "keep the PRD §6 examples valid".
 
 > **v1.9 amendments** — **BuildKit is the only build driver** (buildah is no longer shipped as a fallback — one builder to pin and patch; the runner keeps an internal driver seam and R4 records buildah as a measured drop-in), and **`Containerfile` is accepted alongside `Dockerfile`**, taking precedence when both exist, with `build.dockerfile` now an optional override (§6.1, §10.2, §22 R4, §23.2). Both validated in M0 spike ④ (11/11 on the daemon path).
 
@@ -270,6 +272,8 @@ Job specs use **HCL v2** (`github.com/hashicorp/hcl/v2`) — deliberately near-N
 
 ```hcl
 # shop.hcl — everything for one project
+spec_version = 1
+
 project "shop" {
   description = "E-commerce storefront stack"
 
@@ -396,10 +400,17 @@ service "api" {
       ASSETS_ORIGIN = "http://${service.assets.host}"   # forward refs OK (order-independent)
     }
 
-    resources { cpu = 500  memory = 256 }
+    resources {
+      cpu    = 500
+      memory = 256
+    }
   }
 
-  network { port "http" { container = 8080 } }
+  network {
+    port "http" {
+      container = 8080
+    }
+  }
 
   # Explicit start ordering on top of the implicit reference edges (§7.1.1)
   depends_on = ["postgres", "assets"]
@@ -421,10 +432,18 @@ service "postgres" {
 
   task "db" {
     image = "postgres:17@sha256:…"            # digest pinning recommended
-    resources { cpu = 1000  memory = 2048 }
+    resources {
+      cpu    = 1000
+      memory = 2048
+    }
   }
 
-  network { port "pg" { container = 5432 } }  # internal only — no expose block
+  # internal only — no expose block
+  network {
+    port "pg" {
+      container = 5432
+    }
+  }
 
   volume "data" {
     storage    = "local-ssd"                  # named storage resource (§8)
@@ -442,7 +461,10 @@ service "assets" {
     mount_path = "/usr/share/nginx/html/media"
     read_only  = true
   }
-  expose { tls { letsencrypt = true } }       # auto domain: assets.shop.<base_domain>
+  # auto domain: assets.shop.<base_domain>
+  expose {
+    tls { letsencrypt = true }
+  }
 }
 ```
 
