@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/runtime"
 	"github.com/kanea-dev/kanea/internal/store"
 )
@@ -40,18 +41,20 @@ type Network interface {
 	Detach(ctx context.Context, spec runtime.AllocSpec) error
 }
 
-// NetworkReaper is an optional Network capability: enumerating the allocs the
-// datapath currently holds, so attachments nothing knows about can be reclaimed.
+// NetworkInspector is an optional Network capability: reporting what the
+// datapath currently holds, keyed by alloc id.
 //
-// It exists because a network attachment can outlive everything that refers to
-// it. Teardown detaches after the container is removed, so a kanead that dies in
-// that window leaves a namespace and a Cilium endpoint behind with no container
-// and no record — invisible to the planner, which reasons only about allocs it
-// has heard of. The window is narrow and the leak is small, but it is permanent
-// and it holds an IP from the node's allocation CIDR.
-type NetworkReaper interface {
-	// Attached lists the alloc ids the datapath currently holds.
-	Attached(ctx context.Context) ([]string, error)
+// Two things need this. Reclaiming orphans: an attachment can outlive
+// everything that refers to it, because teardown detaches *after* the container
+// is removed, so a kanead that dies in that window leaves a namespace and an
+// endpoint with no container and no record — invisible to the planner, which
+// reasons only about allocs it has heard of. And load balancing: backend
+// addresses are read live rather than remembered, because they are reassigned
+// whenever the agent restarts with a fresh kvstore (constraint #9).
+//
+// The implementation must return only attachments it owns. Reaping deletes.
+type NetworkInspector interface {
+	Attachments(ctx context.Context) (map[string]network.Attachment, error)
 }
 
 // PolicySyncer is an optional Network capability: making the datapath's network
@@ -64,6 +67,13 @@ type PolicySyncer interface {
 	// SyncPolicies installs the default policy for each named project and
 	// withdraws policies for projects that no longer exist.
 	SyncPolicies(ctx context.Context, projects []string) error
+}
+
+// LoadBalancer is an optional Network capability: programming stable service
+// frontends backed by the allocs currently able to serve.
+type LoadBalancer interface {
+	// SyncServices makes the datapath's load balancing match this set exactly.
+	SyncServices(ctx context.Context, services []network.Service) error
 }
 
 // Config configures a Reconciler.
@@ -82,6 +92,9 @@ type Config struct {
 	LogDir string
 	// VolumeDir is the root of local volume storage (PRD §8: data_dir/volumes).
 	VolumeDir string
+	// ServiceCIDR is the pool service frontends are allocated from
+	// (PRD §15.1). Empty means DefaultServiceCIDR.
+	ServiceCIDR string
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -96,6 +109,8 @@ type Reconciler struct {
 	network Network
 	log     *slog.Logger
 	now     func() time.Time
+
+	vips *vipAllocator
 
 	interval  time.Duration
 	stopGrace time.Duration
@@ -120,8 +135,13 @@ func New(cfg Config) (*Reconciler, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	vips, err := newVIPAllocator(cfg.Store, cfg.ServiceCIDR)
+	if err != nil {
+		return nil, err
+	}
 	return &Reconciler{
 		store:     cfg.Store,
+		vips:      vips,
 		driver:    cfg.Driver,
 		network:   cfg.Network,
 		log:       cfg.Logger,
@@ -234,10 +254,137 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 			"action", action.Kind, "alloc", action.AllocID, "reason", action.Reason)
 	}
 
-	// Sweep last: the actions above may have just created attachments, and every
-	// one of those belongs to an alloc the sweep considers known.
-	result.Reaped = r.reapNetwork(ctx, world)
+	// Everything below reasons about the world *after* the actions, so refresh
+	// the view when there were any. Without this a service deployed in this
+	// pass would have no backends until the next one — a full interval of a
+	// frontend that exists and answers nothing.
+	//
+	// Skipped when nothing was applied, which is the overwhelmingly common case:
+	// a steady-state pass should not cost an extra round trip per project.
+	if result.Applied > 0 {
+		if actual, err := r.loadActual(ctx, desired, records); err != nil {
+			r.log.Warn("cannot re-read alloc state after applying actions", "error", err)
+		} else {
+			world.Actual = actual
+		}
+	}
+
+	// Datapath state is read once, after the actions: the allocs just created
+	// are attached by now, and the allocs just removed are not.
+	attachments := r.attachments(ctx)
+
+	// Sweep before publishing backends, so an orphan cannot be advertised as
+	// somewhere to send traffic even for one settle window.
+	result.Reaped = r.reapNetwork(ctx, world, attachments)
+	if err := r.syncServices(ctx, world, attachments); err != nil {
+		// Unlike policy, this is not fail-closed: stale load balancing points at
+		// allocs that were healthy a few seconds ago, which is a degraded
+		// service rather than an unprotected one. Failing the pass here would
+		// stop crash recovery over a routing update.
+		r.log.Error("sync service load balancing", "error", err)
+	}
 	return result, nil
+}
+
+// attachments reads what the datapath holds, or nil if the driver cannot say.
+func (r *Reconciler) attachments(ctx context.Context) map[string]network.Attachment {
+	inspector, ok := r.network.(NetworkInspector)
+	if !ok {
+		return nil
+	}
+	found, err := inspector.Attachments(ctx)
+	if err != nil {
+		// Not worth failing a pass over: every other part of convergence still
+		// works, and the next pass retries. A nil map disables both the sweep
+		// and the LB update, which is the safe reading of "I cannot see".
+		r.log.Warn("cannot read network attachments", "error", err)
+		return nil
+	}
+	return found
+}
+
+// syncServices publishes each service's frontend and its live backends.
+func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[string]network.Attachment) error {
+	lb, ok := r.network.(LoadBalancer)
+	if !ok {
+		return nil
+	}
+	if attachments == nil {
+		return nil // no view of the datapath; leave the last known good state alone
+	}
+
+	// Only services that will actually get a frontend hold an address. A worker
+	// with no ports would otherwise consume one for its whole life and shift
+	// every later assignment along, which makes the pool harder to read and the
+	// numbering harder to explain.
+	refs := make([]serviceRef, 0, len(w.Desired))
+	for _, d := range w.Desired {
+		if len(d.Ports) == 0 {
+			continue
+		}
+		refs = append(refs, serviceRef{Project: d.Project, Service: d.Service})
+	}
+	vips, err := r.vips.Sync(ctx, refs)
+	if err != nil {
+		return err
+	}
+
+	services := make([]network.Service, 0, len(w.Desired))
+	for _, d := range w.Desired {
+		if len(d.Ports) == 0 {
+			continue // nothing to load balance
+		}
+		ports := make([]network.ServicePort, 0, len(d.Ports))
+		for _, p := range d.Ports {
+			ports = append(ports, network.ServicePort{
+				Name: p.Name, Port: p.Container, TargetPort: p.Container,
+			})
+		}
+		services = append(services, network.Service{
+			Project:  d.Project,
+			Service:  d.Service,
+			VIP:      vips[d.Project+"/"+d.Service],
+			Ports:    ports,
+			Backends: backendsFor(w, d, attachments),
+		})
+	}
+	return lb.SyncServices(ctx, services)
+}
+
+// backendsFor picks the allocs of one service that should receive traffic.
+//
+// "Desired" is not the test — "serving right now" is. An alloc that is created
+// but not started, waiting out a restart backoff, or has exhausted its budget
+// may still hold an attachment, and routing real requests into it is a black
+// hole.
+//
+// The two conditions are what the runtime reports and what the datapath
+// reports, deliberately not what the Store remembers. An alloc's record is
+// written at the end of the pass that changed it, so a just-restarted alloc
+// still reads `backoff` while containerd already reports it running — trusting
+// the record would drop a healthy backend for a full interval. Observed state
+// is the truth about whether traffic can be served; the record is the truth
+// about why, which is a different question.
+//
+// A ready endpoint is required as well: one that has not resolved its identity
+// carries reserved:init and has its traffic denied in both directions, so
+// advertising it would route requests straight into a drop.
+func backendsFor(w World, d Desired, attachments map[string]network.Attachment) []string {
+	backends := make([]string, 0, d.Count)
+	for i := range d.Count {
+		id := AllocID(d.Project, d.Service, i)
+
+		if status, ok := w.Actual[id]; !ok || status.State != runtime.StateRunning {
+			continue
+		}
+		att, ok := attachments[id]
+		if !ok || !att.Ready || att.IPv4 == "" {
+			continue
+		}
+		backends = append(backends, att.IPv4)
+	}
+	sort.Strings(backends)
+	return backends
 }
 
 // syncPolicies makes network policy match the set of projects in desired state.
@@ -259,16 +406,8 @@ func (r *Reconciler) syncPolicies(ctx context.Context, desired []Desired) error 
 // that is mid-create is desired but has no record yet, and detaching it would
 // cut the network out from under a workload that is about to start. Reclaiming
 // a leaked IP a pass later is free; taking down a live alloc is not.
-func (r *Reconciler) reapNetwork(ctx context.Context, w World) int {
-	reaper, ok := r.network.(NetworkReaper)
-	if !ok {
-		return 0
-	}
-	attached, err := reaper.Attached(ctx)
-	if err != nil {
-		// The datapath being unreadable is not worth failing a pass over: every
-		// other part of convergence still works, and the next pass retries.
-		r.log.Warn("cannot list network attachments", "error", err)
+func (r *Reconciler) reapNetwork(ctx context.Context, w World, attachments map[string]network.Attachment) int {
+	if len(attachments) == 0 {
 		return 0
 	}
 
@@ -286,7 +425,7 @@ func (r *Reconciler) reapNetwork(ctx context.Context, w World) int {
 	}
 
 	var reaped int
-	for _, id := range attached {
+	for _, id := range sortedKeys(attachments) {
 		if _, ok := known[id]; ok {
 			continue
 		}
@@ -608,7 +747,7 @@ func desiredFor(w World, action Action) (Desired, bool) {
 	return Desired{Project: action.Project, Service: action.Service}, false
 }
 
-func sortedKeys(m map[string]struct{}) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
@@ -643,7 +782,7 @@ func (NetnsNetwork) Detach(_ context.Context, spec runtime.AllocSpec) error {
 	return runtime.DeleteNetns(spec.ID)
 }
 
-// NetnsNetwork deliberately does not implement NetworkReaper. /run/netns is a
+// NetnsNetwork deliberately does not implement NetworkInspector. /run/netns is a
 // shared host resource and a bare namespace carries no mark of who made it, so
 // "everything I did not expect" would include namespaces belonging to other
 // tools — and reaping means deleting. The Cilium driver can reap precisely

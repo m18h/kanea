@@ -124,6 +124,14 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 			specs.PIDNamespace, specs.IPCNamespace, specs.UTSNamespace,
 			specs.MountNamespace, specs.CgroupNamespace)
 
+		// A UTS namespace with the host's hostname in it is the worst of both
+		// worlds: the alloc is isolated but every log line, every `hostname`
+		// call and every client library that self-identifies claims to be the
+		// node. The alloc id is what `kanea ps` and `kanea logs` use, so it is
+		// the name that lets someone correlate what they see inside a container
+		// with what they see outside it.
+		s.Hostname = spec.ID
+
 		// Standard kernel-surface reduction: these are the paths a container
 		// must not read or write even with no capabilities.
 		s.Linux.MaskedPaths = maskedPaths()

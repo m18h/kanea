@@ -21,6 +21,8 @@ type Config struct {
 	CNIBinDir string
 	// PolicyDir is the agent's --static-cnp-path. Empty means the default.
 	PolicyDir string
+	// LBStateFile is the agent's --lb-state-file. Empty means the default.
+	LBStateFile string
 	// Logger receives attach/detach events.
 	Logger *slog.Logger
 	// IdentityTimeout bounds the wait for an endpoint to reach a real security
@@ -62,6 +64,7 @@ type Cilium struct {
 	log    *slog.Logger
 
 	policyDir       string
+	lbStateFile     string
 	identityTimeout time.Duration
 	labelRetry      backoff
 }
@@ -104,12 +107,16 @@ func New(cfg Config) (*Cilium, error) {
 	if cfg.PolicyDir == "" {
 		cfg.PolicyDir = DefaultPolicyDir
 	}
+	if cfg.LBStateFile == "" {
+		cfg.LBStateFile = DefaultLBStateFile
+	}
 	return &Cilium{
 		client:          newClient(cfg.SocketPath, cfg.RequestTimeout),
 		cni:             newCNIInvoker(cfg.CNIConfPath, cfg.CNIBinDir),
 		netns:           hostNetns(),
 		log:             cfg.Logger,
 		policyDir:       cfg.PolicyDir,
+		lbStateFile:     cfg.LBStateFile,
 		identityTimeout: cfg.IdentityTimeout,
 		labelRetry:      defaultBackoff,
 	}, nil

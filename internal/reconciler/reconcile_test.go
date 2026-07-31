@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
 	"github.com/kanea-dev/kanea/internal/store"
@@ -157,10 +157,60 @@ type fakeNetwork struct {
 	// policy sync state
 	policySyncs [][]string
 	policyErr   error
+
+	// load-balancing state
+	ips       map[string]string
+	nextIP    int
+	notReady  map[string]bool
+	attachErr error
+	lbSyncs   [][]network.Service
+	lbErr     error
 }
 
 func newFakeNetwork() *fakeNetwork {
-	return &fakeNetwork{attached: map[string]bool{}}
+	return &fakeNetwork{
+		attached: map[string]bool{},
+		ips:      map[string]string{},
+		notReady: map[string]bool{},
+	}
+}
+
+// SyncServices makes fakeNetwork a reconciler.LoadBalancer.
+func (n *fakeNetwork) SyncServices(_ context.Context, services []network.Service) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.lbErr != nil {
+		return n.lbErr
+	}
+	n.lbSyncs = append(n.lbSyncs, services)
+	return nil
+}
+
+func (n *fakeNetwork) lastLBSync() []network.Service {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.lbSyncs) == 0 {
+		return nil
+	}
+	return n.lbSyncs[len(n.lbSyncs)-1]
+}
+
+func (n *fakeNetwork) backendsOf(project, service string) []string {
+	for _, svc := range n.lastLBSync() {
+		if svc.Project == project && svc.Service == service {
+			return svc.Backends
+		}
+	}
+	return nil
+}
+
+func (n *fakeNetwork) vipOf(project, service string) string {
+	for _, svc := range n.lastLBSync() {
+		if svc.Project == project && svc.Service == service {
+			return svc.VIP
+		}
+	}
+	return ""
 }
 
 func (n *fakeNetwork) Attach(_ context.Context, spec runtime.AllocSpec) error {
@@ -168,6 +218,10 @@ func (n *fakeNetwork) Attach(_ context.Context, spec runtime.AllocSpec) error {
 	defer n.mu.Unlock()
 	n.events = append(n.events, "attach:"+spec.ID)
 	n.attached[spec.ID] = true
+	if _, ok := n.ips[spec.ID]; !ok {
+		n.nextIP++
+		n.ips[spec.ID] = fmt.Sprintf("10.200.1.%d", n.nextIP)
+	}
 	return nil
 }
 
@@ -212,16 +266,27 @@ func (n *fakeNetwork) eventLog() []string {
 	return slices.Clone(n.events)
 }
 
-// Attached makes fakeNetwork a reconciler.NetworkReaper.
-func (n *fakeNetwork) Attached(_ context.Context) ([]string, error) {
+// Attachments makes fakeNetwork a reconciler.NetworkInspector. The fake hands
+// each alloc a deterministic address so backend selection can be asserted.
+func (n *fakeNetwork) Attachments(_ context.Context) (map[string]network.Attachment, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	ids := make([]string, 0, len(n.attached))
-	for id := range n.attached {
-		ids = append(ids, id)
+	if n.attachErr != nil {
+		return nil, n.attachErr
 	}
-	sort.Strings(ids)
-	return ids, nil
+	out := make(map[string]network.Attachment, len(n.attached))
+	for id := range n.attached {
+		out[id] = network.Attachment{AllocID: id, IPv4: n.ipFor(id), Ready: !n.notReady[id]}
+	}
+	return out, nil
+}
+
+// ipFor assigns a stable fake address per alloc, in first-attach order.
+func (n *fakeNetwork) ipFor(id string) string {
+	if ip, ok := n.ips[id]; ok {
+		return ip
+	}
+	return ""
 }
 
 // harness wires a real store to fake infrastructure.
@@ -850,9 +915,9 @@ func TestReconcileDoesNotReapAllocsBeingCreated(t *testing.T) {
 // the netns driver's situation by design: /run/netns is shared with the rest of
 // the host and a bare namespace carries no mark of who created it, so "anything
 // I did not expect" would include other tools' namespaces.
-func TestReconcileSkipsSweepWithoutAReaper(t *testing.T) {
-	if _, ok := any(reconciler.NetnsNetwork{}).(reconciler.NetworkReaper); ok {
-		t.Fatal("NetnsNetwork must not implement NetworkReaper: it cannot tell its " +
+func TestReconcileSkipsSweepWithoutAnInspector(t *testing.T) {
+	if _, ok := any(reconciler.NetnsNetwork{}).(reconciler.NetworkInspector); ok {
+		t.Fatal("NetnsNetwork must not implement NetworkInspector: it cannot tell its " +
 			"namespaces from any other tool's, and reaping deletes")
 	}
 }
@@ -918,5 +983,242 @@ func TestReconcileSyncsPolicyBeforeAttaching(t *testing.T) {
 	}
 	if firstPolicy > firstAttach {
 		t.Fatalf("attached before policy was written: %v", events)
+	}
+}
+
+// desiredWithPort is a service that has something to load balance.
+func desiredWithPort(count int) reconciler.Desired {
+	d := desired(count)
+	d.Ports = []reconciler.Port{{Name: "http", Container: 8080}}
+	return d
+}
+
+func TestReconcileProgramsServiceFrontend(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(2))
+	h.reconcile(t)
+
+	svc := h.network.lastLBSync()
+	if len(svc) != 1 {
+		t.Fatalf("load-balanced services = %d, want 1", len(svc))
+	}
+	if svc[0].VIP != "10.201.0.1" {
+		t.Errorf("VIP = %q, want the first address in the pool", svc[0].VIP)
+	}
+	if len(svc[0].Ports) != 1 || svc[0].Ports[0].Port != 8080 || svc[0].Ports[0].TargetPort != 8080 {
+		t.Errorf("ports = %+v, want http 8080->8080", svc[0].Ports)
+	}
+	if got := h.network.backendsOf("shop", "web"); len(got) != 2 {
+		t.Errorf("backends = %v, want both allocs", got)
+	}
+}
+
+// A service with no declared ports has nothing to load balance, and minting a
+// frontend for it would burn an address and publish an endpoint that refuses
+// every connection.
+func TestReconcileSkipsServicesWithoutPorts(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desired(1))
+	h.reconcile(t)
+
+	if got := h.network.lastLBSync(); len(got) != 0 {
+		t.Fatalf("load-balanced services = %+v, want none", got)
+	}
+}
+
+// The VIP is the address DNS answers with and clients cache. It has to survive
+// everything that legitimately churns underneath it — restarts, rescheduling,
+// scale changes — or existing clients end up pointing at nothing.
+func TestServiceVIPIsStableAcrossChurn(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(2))
+	h.reconcile(t)
+	original := h.network.vipOf("shop", "web")
+	if original == "" {
+		t.Fatal("no VIP assigned")
+	}
+
+	// Crash an alloc, let it restart, and scale the service.
+	id := reconciler.AllocID("shop", "web", 0)
+	h.driver.crash(id, 137, h.now)
+	h.reconcile(t)
+	h.now = h.now.Add(time.Hour)
+	h.reconcile(t)
+	h.setDesired(t, desiredWithPort(3))
+	h.reconcile(t)
+
+	if got := h.network.vipOf("shop", "web"); got != original {
+		t.Fatalf("VIP moved from %q to %q", original, got)
+	}
+}
+
+// The assignment lives in the Store precisely so a fresh reconciler — a kanead
+// restart, or a datapath rebuilt from scratch — hands back the same address.
+func TestServiceVIPSurvivesReconcilerRestart(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(1))
+	h.reconcile(t)
+	original := h.network.vipOf("shop", "web")
+
+	// A new reconciler over the same store is what a kanead restart looks like.
+	restarted, err := reconciler.New(reconciler.Config{
+		Store: h.store, Driver: h.driver, Network: h.network,
+		Now: func() time.Time { return h.now }, LogDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new reconciler: %v", err)
+	}
+	if _, err := restarted.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got := h.network.vipOf("shop", "web"); got != original {
+		t.Fatalf("VIP after restart = %q, want %q", got, original)
+	}
+}
+
+// Backends are "serving right now", not "desired". An alloc waiting out a
+// restart backoff still has a record and may still hold an attachment; routing
+// real requests into it is a black hole.
+func TestBackendsExcludeAllocsThatAreNotRunning(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(2))
+	h.reconcile(t)
+	if got := h.network.backendsOf("shop", "web"); len(got) != 2 {
+		t.Fatalf("backends = %v, want 2 before the crash", got)
+	}
+
+	// Crash one alloc; the observing pass puts it in backoff.
+	h.driver.crash(reconciler.AllocID("shop", "web", 0), 137, h.now)
+	h.reconcile(t)
+
+	got := h.network.backendsOf("shop", "web")
+	if len(got) != 1 {
+		t.Fatalf("backends = %v, want only the survivor", got)
+	}
+}
+
+// An endpoint whose identity has not resolved cannot receive traffic anyway —
+// advertising it just sends requests into a drop.
+func TestBackendsExcludeUnreadyEndpoints(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(2))
+	h.reconcile(t)
+
+	h.network.mu.Lock()
+	h.network.notReady[reconciler.AllocID("shop", "web", 1)] = true
+	h.network.mu.Unlock()
+	h.reconcile(t)
+
+	if got := h.network.backendsOf("shop", "web"); len(got) != 1 {
+		t.Fatalf("backends = %v, want only the ready endpoint", got)
+	}
+}
+
+// A released address is reusable: a project torn down and rebuilt should not
+// walk the pool forward forever.
+func TestServiceVIPIsReleasedOnDelete(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(1))
+	h.reconcile(t)
+	first := h.network.vipOf("shop", "web")
+
+	h.deleteDesired(t, "shop", "web")
+	h.reconcile(t)
+
+	other := desiredWithPort(1)
+	other.Service = "api"
+	h.setDesired(t, other)
+	h.reconcile(t)
+
+	if got := h.network.vipOf("shop", "api"); got != first {
+		t.Fatalf("new service got %q, want the released address %q", got, first)
+	}
+}
+
+// Two services must never share a frontend.
+func TestServiceVIPsAreDistinct(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(1))
+	api := desiredWithPort(1)
+	api.Service = "api"
+	h.setDesired(t, api)
+	blog := desiredWithPort(1)
+	blog.Project = "blog"
+	h.setDesired(t, blog)
+	h.reconcile(t)
+
+	seen := map[string]string{}
+	for _, svc := range h.network.lastLBSync() {
+		key := svc.Project + "/" + svc.Service
+		if other, clash := seen[svc.VIP]; clash {
+			t.Fatalf("%s and %s share frontend %s", other, key, svc.VIP)
+		}
+		seen[svc.VIP] = key
+	}
+	if len(seen) != 3 {
+		t.Fatalf("got %d distinct frontends, want 3", len(seen))
+	}
+}
+
+// Stale load balancing points at allocs that were healthy seconds ago — a
+// degraded service, not an unprotected one. Failing the pass would stop crash
+// recovery over a routing update.
+func TestLoadBalancerFailureDoesNotStallConvergence(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(2))
+	h.network.lbErr = errors.New("state file is read-only")
+
+	res, err := h.r.Reconcile(context.Background())
+	if err != nil {
+		t.Fatalf("Reconcile = %v, want the pass to continue", err)
+	}
+	if res.Applied != 2 {
+		t.Fatalf("applied = %d, want both allocs created despite the LB failure", res.Applied)
+	}
+}
+
+// A restarted alloc must return to the backend set in the pass that restarts
+// it, not the one after. Its record still reads "backoff" at that moment —
+// written by the pass that observed the crash — while containerd already
+// reports it running. Trusting the record would drop a healthy backend for a
+// full interval on every crash.
+func TestBackendsIncludeAllocRestartedThisPass(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(2))
+	h.reconcile(t)
+
+	id := reconciler.AllocID("shop", "web", 0)
+	h.driver.crash(id, 137, h.now)
+	h.reconcile(t) // observes the crash, records backoff
+	if got := h.network.backendsOf("shop", "web"); len(got) != 1 {
+		t.Fatalf("backends during backoff = %v, want only the survivor", got)
+	}
+
+	h.now = h.now.Add(time.Hour) // backoff expires
+	h.reconcile(t)               // restarts the alloc
+
+	if rec := h.allocRecord(t, 0); rec.Restarts == 0 {
+		t.Fatalf("alloc was not restarted: %+v", rec)
+	}
+	if got := h.network.backendsOf("shop", "web"); len(got) != 2 {
+		t.Fatalf("backends after restart = %v, want both allocs back", got)
+	}
+}
+
+// A service with no ports never gets a frontend, so holding an address for it
+// would consume one for its whole life and shift every later assignment along.
+func TestPortlessServicesDoNotConsumeFrontendAddresses(t *testing.T) {
+	h := newHarness(t)
+
+	// "client" sorts before "web", so it would take the first address if
+	// portless services were allocated one.
+	client := desired(1)
+	client.Service = "client"
+	h.setDesired(t, client)
+	h.setDesired(t, desiredWithPort(1))
+	h.reconcile(t)
+
+	if got := h.network.vipOf("shop", "web"); got != "10.201.0.1" {
+		t.Fatalf("web VIP = %q, want the first address in the pool", got)
 	}
 }

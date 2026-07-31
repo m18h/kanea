@@ -45,6 +45,8 @@ func runAgent(args []string) error {
 	cniConf := fs.String("cni-conf", network.DefaultCNIConfPath, "CNI configuration list")
 	cniBin := fs.String("cni-bin", network.DefaultCNIBinDir, "CNI plugin directory")
 	policyDir := fs.String("policy-dir", network.DefaultPolicyDir, "cilium --static-cnp-path directory")
+	lbStateFile := fs.String("lb-state-file", network.DefaultLBStateFile, "cilium --lb-state-file path")
+	serviceCIDR := fs.String("service-cidr", reconciler.DefaultServiceCIDR, "pool for service frontend addresses")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -103,6 +105,7 @@ func runAgent(args []string) error {
 		CNIConfPath: *cniConf,
 		CNIBinDir:   *cniBin,
 		PolicyDir:   *policyDir,
+		LBStateFile: *lbStateFile,
 		Logger:      logger,
 	}, logger)
 	if err != nil {
@@ -114,12 +117,13 @@ func runAgent(args []string) error {
 	notify := make(chan struct{}, 1)
 
 	rec, err := reconciler.New(reconciler.Config{
-		Store:     st,
-		Driver:    driver,
-		Network:   net,
-		Logger:    logger,
-		LogDir:    *logDir,
-		VolumeDir: volumes,
+		Store:       st,
+		Driver:      driver,
+		Network:     net,
+		Logger:      logger,
+		LogDir:      *logDir,
+		VolumeDir:   volumes,
+		ServiceCIDR: *serviceCIDR,
 	})
 	if err != nil {
 		return err

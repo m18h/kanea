@@ -57,6 +57,14 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				PidsLimit:   DefaultPidsLimit,
 			},
 		}
+		if svc.Network != nil {
+			for _, p := range svc.Network.Ports {
+				desired.Ports = append(desired.Ports, reconciler.Port{
+					Name: p.Name, Container: p.Container,
+				})
+			}
+		}
+
 		for _, v := range svc.Volumes {
 			st := spec.StorageByName(v.Storage)
 			// Validation guarantees the reference resolves; the type check is

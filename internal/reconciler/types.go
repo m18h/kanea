@@ -38,10 +38,22 @@ type Desired struct {
 	// per-alloc at spec-build time, not here: the same declaration produces a
 	// different directory for each alloc index.
 	Volumes []Volume
+	// Ports are the named container ports the service listens on (jobspec
+	// `network { port "http" { container = 8080 } }`). A service with no ports
+	// gets no frontend: there is nothing to load balance.
+	Ports []Port
 	// ReadOnlyRootfs opts into a read-only root filesystem.
 	ReadOnlyRootfs bool
 	// Restart is the crash-restart policy.
 	Restart RestartPolicy
+}
+
+// Port is a named container port. The service frontend listens on the same
+// number, so `port "http" { container = 8080 }` is reachable at <vip>:8080 —
+// one number to reason about instead of two.
+type Port struct {
+	Name      string
+	Container int
 }
 
 // RestartPolicy bounds how often a crashed alloc is restarted (PRD §6.1

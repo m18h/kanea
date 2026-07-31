@@ -426,3 +426,13 @@ func TestNoRequestedCapabilitiesStillDropsAll(t *testing.T) {
 		t.Errorf("capabilities granted without a request: %+v", caps)
 	}
 }
+
+// A UTS namespace carrying the host's hostname is the worst of both worlds:
+// isolated, but every log line inside the container claims to be the node.
+func TestSpecSetsAllocHostname(t *testing.T) {
+	alloc := validAlloc()
+	s := buildSpec(t, alloc)
+	if s.Hostname != alloc.ID {
+		t.Errorf("Hostname = %q, want the alloc id %q", s.Hostname, alloc.ID)
+	}
+}

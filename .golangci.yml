@@ -39,9 +39,12 @@ linters:
   exclusions:
     generated: lax
     rules:
-      # Tests may ignore errors and use lax patterns.
+      # Tests may ignore errors and use lax patterns. unparam is excluded too:
+      # a test helper spells out its arguments so the call site reads as a
+      # sentence ("backendsOf(shop, web)"), which is worth keeping even while
+      # every current caller passes the same project.
       - path: _test\.go
-        linters: [errcheck, gosec, forbidigo, depguard]
+        linters: [errcheck, gosec, forbidigo, depguard, unparam]
 
 formatters:
   enable:
