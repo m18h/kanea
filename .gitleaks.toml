@@ -1,0 +1,14 @@
+# Gitleaks configuration — secret scanning gate (AGENTS.md constraint #7).
+title = "kanea"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project-wide allowlist: lockfiles and vendored deps only"
+paths = [
+  '''go\.sum''',
+  '''package-lock\.json''',
+  '''vendor/''',
+  '''node_modules/''',
+]

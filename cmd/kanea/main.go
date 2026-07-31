@@ -1,0 +1,99 @@
+// Command kanea is the single binary of the Kanea platform: control plane
+// (agent), ingress (edge), MCP server, and CLI — all subcommands of one
+// static binary (PRD §2, G1).
+//
+// See PRD.md (the project north star) and AGENTS.md before making any
+// architectural change. Deviations require a PRD amendment first.
+package main
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"text/tabwriter"
+)
+
+// version is injected at build time:
+//
+//	go build -ldflags "-X main.version=vX.Y.Z" ./cmd/kanea
+var version = "0.0.0-dev"
+
+// errNotImplemented marks subcommands belonging to a future milestone (PRD §20).
+var errNotImplemented = errors.New("not implemented yet — see PRD §20 milestones")
+
+type command struct {
+	name string
+	desc string
+	run  func(args []string) error
+}
+
+// commands is the CLI surface defined in PRD §16.2, in usage order.
+var commands = []command{
+	{"init", "interactive first-install: config, auth, deps/kernel/NTP checks, key ceremony", todo},
+	{"agent", "run the control-plane daemon (kanead)", todo},
+	{"edge", "run the edge ingress proxy (kanea-edge, separate process — PRD §5.2.6)", todo},
+	{"doctor", "verify node health: deps, versions, kvstore, disk, clock", todo},
+	{"plan", "dry-run diff of a job spec", todo},
+	{"run", "apply a job spec", todo},
+	{"stop", "stop a service", todo},
+	{"ps", "list allocations", todo},
+	{"status", "service/platform status, events, scaling", todo},
+	{"logs", "stream service logs", todo},
+	{"exec", "debug shell into an alloc (admin-only, audited)", todo},
+	{"scale", "manually scale a service", todo},
+	{"build", "trigger a build pipeline", todo},
+	{"project", "project operations (sync, ...)", todo},
+	{"backup", "backup create|list|verify", todo},
+	{"restore", "restore state from a snapshot", todo},
+	{"token", "manage API tokens", todo},
+	{"upgrade", "drain edge, restart services, run state migrations", todo},
+	{"mcp", "stdio MCP server for local AI agents (PRD §16.3)", todo},
+	{"ui", "open the dashboard URL", todo},
+	{"version", "print version and exit", runVersion},
+}
+
+func main() {
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "kanea:", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	if len(args) == 0 {
+		return printUsage(os.Stdout)
+	}
+	for _, c := range commands {
+		if c.name == args[0] {
+			return c.run(args[1:])
+		}
+	}
+	if err := printUsage(os.Stderr); err != nil {
+		return err
+	}
+	return fmt.Errorf("unknown command %q", args[0])
+}
+
+func todo([]string) error { return errNotImplemented }
+
+func runVersion([]string) error {
+	_, err := fmt.Fprintln(os.Stdout, "kanea", version)
+	return err
+}
+
+func printUsage(w io.Writer) error {
+	if _, err := fmt.Fprintln(w, "kanea — lightweight container orchestration (north star: PRD.md)"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(w, "\nUsage: kanea <command> [args]\n\nCommands:"); err != nil {
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, c := range commands {
+		if _, err := fmt.Fprintf(tw, "  %s\t%s\n", c.name, c.desc); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
+}

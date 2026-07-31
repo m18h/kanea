@@ -1,0 +1,92 @@
+# CI — all gates mirror `make check` locally. Security gates are release
+# gates (AGENTS.md constraint #7): they may never be skipped or made
+# non-blocking.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go — build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go build -trimpath ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test (race)
+        run: go test ./... -race -count=1
+
+  lint:
+    name: Lint — golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
+  security:
+    name: Security gates — gosec, govulncheck, gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks needs full history
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gosec
+        uses: securego/gosec@master
+        with:
+          args: -quiet ./...
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-package: ./...
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  dashboard:
+    name: Dashboard — lint, typecheck, test, build, audit
+    runs-on: ubuntu-latest
+    # dashboard/ is scaffolded in milestone M4; skip gracefully until then.
+    if: hashFiles('dashboard/package.json') != ''
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --audit-level=high

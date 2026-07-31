@@ -1,0 +1,53 @@
+# golangci-lint configuration (v2 format).
+# Security gates (gosec) are also run standalone via `make security` — this
+# config is the general lint gate. See AGENTS.md "Coding conventions".
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - depguard      # ban stdlib "log" (use log/slog via internal/logging)
+    - errcheck      # unchecked errors
+    - errorlint     # proper %w / errors.Is/As usage
+    - forbidigo     # ban direct fmt.Print* (CLI output goes through fmt.Fprint*(w))
+    - gocritic      # opinionated correctness/style checks
+    - gosec         # security (belt-and-braces with the standalone gate)
+    - misspell      # typos
+    - revive        # style + exported-docs
+    - staticcheck   # SA/S/ST/QF checks
+    - unconvert     # needless conversions
+    - unparam       # unused params/results
+    - unused        # dead code
+  settings:
+    errcheck:
+      check-blank: true
+    depguard:
+      rules:
+        stdlib-log:
+          files:
+            - "**/*.go"
+          deny:
+            - pkg: log$
+              desc: use log/slog via github.com/kanea-dev/kanea/internal/logging (AGENTS.md conventions)
+    forbidigo:
+      forbid:
+        - pattern: ^fmt\.Print
+          msg: components log via injected *slog.Logger (internal/logging); CLI output uses fmt.Fprint*(os.Stdout/os.Stderr, ...)
+  exclusions:
+    generated: lax
+    rules:
+      # Tests may ignore errors and use lax patterns.
+      - path: _test\.go
+        linters: [errcheck, gosec, forbidigo, depguard]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,35 @@
+# Binaries & build artifacts
+/bin/
+/kanea
+*.exe
+*.test
+*.out
+coverage.*
+dist/
+
+# Go
+vendor/
+
+# Node / dashboard (M4)
+node_modules/
+dashboard/dist/
+
+# Secrets & env — never commit (gitleaks enforces)
+.env
+.env.*
+*.key
+*.pem
+*.p12
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local runtime data
+/data/
+
+# Local dev-tool caches (e.g. offline vulndb for govulncheck -db)
+/.cache/
