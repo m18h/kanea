@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -170,6 +171,24 @@ func (n *fakeNetwork) Detach(_ context.Context, spec runtime.AllocSpec) error {
 	n.events = append(n.events, "detach:"+spec.ID)
 	delete(n.attached, spec.ID)
 	return nil
+}
+
+func (n *fakeNetwork) isAttached(id string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.attached[id]
+}
+
+// Attached makes fakeNetwork a reconciler.NetworkReaper.
+func (n *fakeNetwork) Attached(_ context.Context) ([]string, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	ids := make([]string, 0, len(n.attached))
+	for id := range n.attached {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 // harness wires a real store to fake infrastructure.
@@ -731,5 +750,70 @@ func TestDeletingAServiceClearsEvenFailedAllocRecords(t *testing.T) {
 	}
 	if len(page.Records) != 0 {
 		t.Errorf("%d alloc record(s) survived service deletion", len(page.Records))
+	}
+}
+
+// A network attachment can outlive everything that refers to it: teardown
+// detaches after the container is removed, so a kanead killed in that window
+// leaves a namespace and a Cilium endpoint holding an IP that no alloc claims.
+// Nothing in the planner sees it, because the planner reasons only about allocs
+// it has heard of.
+func TestReconcileReapsOrphanedAttachments(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desired(1))
+	h.reconcile(t)
+
+	// Simulate the leak directly: attached, but no container and no record.
+	if err := h.network.Attach(context.Background(),
+		runtime.AllocSpec{ID: "ghost-web-0", Project: "ghost", Service: "web"}); err != nil {
+		t.Fatalf("seed orphan: %v", err)
+	}
+
+	res := h.reconcile(t)
+	if res.Reaped != 1 {
+		t.Fatalf("reaped = %d, want 1", res.Reaped)
+	}
+	if h.network.isAttached("ghost-web-0") {
+		t.Error("orphaned attachment survived the sweep")
+	}
+	// The live alloc must be untouched — reaping deletes, so a false positive
+	// here would cut the network out from under a running workload.
+	if !h.network.isAttached(reconciler.AllocID("shop", "web", 0)) {
+		t.Error("sweep detached a live alloc")
+	}
+}
+
+// An alloc that is desired but not yet created has an attachment and no record,
+// which looks exactly like an orphan. It is not: create() attaches before it
+// persists, so reaping on that basis would race a starting workload.
+func TestReconcileDoesNotReapAllocsBeingCreated(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desired(2))
+
+	// Attach index 1 by hand, then let the pass run: it is desired, so it must
+	// survive the sweep even though nothing has recorded it yet.
+	id := reconciler.AllocID("shop", "web", 1)
+	if err := h.network.Attach(context.Background(),
+		runtime.AllocSpec{ID: id, Project: "shop", Service: "web"}); err != nil {
+		t.Fatalf("seed attachment: %v", err)
+	}
+
+	res := h.reconcile(t)
+	if res.Reaped != 0 {
+		t.Fatalf("reaped = %d, want 0", res.Reaped)
+	}
+	if !h.network.isAttached(id) {
+		t.Error("sweep detached an alloc that was mid-create")
+	}
+}
+
+// A Network that cannot enumerate its attachments simply is not swept. That is
+// the netns driver's situation by design: /run/netns is shared with the rest of
+// the host and a bare namespace carries no mark of who created it, so "anything
+// I did not expect" would include other tools' namespaces.
+func TestReconcileSkipsSweepWithoutAReaper(t *testing.T) {
+	if _, ok := any(reconciler.NetnsNetwork{}).(reconciler.NetworkReaper); ok {
+		t.Fatal("NetnsNetwork must not implement NetworkReaper: it cannot tell its " +
+			"namespaces from any other tool's, and reaping deletes")
 	}
 }

@@ -40,6 +40,20 @@ type Network interface {
 	Detach(ctx context.Context, spec runtime.AllocSpec) error
 }
 
+// NetworkReaper is an optional Network capability: enumerating the allocs the
+// datapath currently holds, so attachments nothing knows about can be reclaimed.
+//
+// It exists because a network attachment can outlive everything that refers to
+// it. Teardown detaches after the container is removed, so a kanead that dies in
+// that window leaves a namespace and a Cilium endpoint behind with no container
+// and no record — invisible to the planner, which reasons only about allocs it
+// has heard of. The window is narrow and the leak is small, but it is permanent
+// and it holds an IP from the node's allocation CIDR.
+type NetworkReaper interface {
+	// Attached lists the alloc ids the datapath currently holds.
+	Attached(ctx context.Context) ([]string, error)
+}
+
 // Config configures a Reconciler.
 type Config struct {
 	Store  Store
@@ -113,6 +127,8 @@ type Result struct {
 	Applied  int
 	Failed   int
 	Observed int
+	// Reaped counts orphaned network attachments reclaimed this pass.
+	Reaped int
 }
 
 // Run drives the loop until the context is cancelled. Trigger is an optional
@@ -193,7 +209,58 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		r.log.Info("action applied",
 			"action", action.Kind, "alloc", action.AllocID, "reason", action.Reason)
 	}
+
+	// Sweep last: the actions above may have just created attachments, and every
+	// one of those belongs to an alloc the sweep considers known.
+	result.Reaped = r.reapNetwork(ctx, world)
 	return result, nil
+}
+
+// reapNetwork detaches network attachments belonging to no known alloc.
+//
+// "Known" is deliberately generous — desired, recorded, or running. An alloc
+// that is mid-create is desired but has no record yet, and detaching it would
+// cut the network out from under a workload that is about to start. Reclaiming
+// a leaked IP a pass later is free; taking down a live alloc is not.
+func (r *Reconciler) reapNetwork(ctx context.Context, w World) int {
+	reaper, ok := r.network.(NetworkReaper)
+	if !ok {
+		return 0
+	}
+	attached, err := reaper.Attached(ctx)
+	if err != nil {
+		// The datapath being unreadable is not worth failing a pass over: every
+		// other part of convergence still works, and the next pass retries.
+		r.log.Warn("cannot list network attachments", "error", err)
+		return 0
+	}
+
+	known := make(map[string]struct{}, len(w.Records)+len(w.Actual))
+	for _, d := range w.Desired {
+		for i := range d.Count {
+			known[AllocID(d.Project, d.Service, i)] = struct{}{}
+		}
+	}
+	for id := range w.Records {
+		known[id] = struct{}{}
+	}
+	for id := range w.Actual {
+		known[id] = struct{}{}
+	}
+
+	var reaped int
+	for _, id := range attached {
+		if _, ok := known[id]; ok {
+			continue
+		}
+		if err := r.network.Detach(ctx, runtime.AllocSpec{ID: id}); err != nil {
+			r.log.Error("reap network attachment", "alloc", id, "error", err)
+			continue
+		}
+		reaped++
+		r.log.Info("reaped orphaned network attachment", "alloc", id)
+	}
+	return reaped
 }
 
 // Observe turns "what containerd reports" into durable facts: crashes recorded,
@@ -538,3 +605,9 @@ func (NetnsNetwork) Attach(_ context.Context, spec runtime.AllocSpec) error {
 func (NetnsNetwork) Detach(_ context.Context, spec runtime.AllocSpec) error {
 	return runtime.DeleteNetns(spec.ID)
 }
+
+// NetnsNetwork deliberately does not implement NetworkReaper. /run/netns is a
+// shared host resource and a bare namespace carries no mark of who made it, so
+// "everything I did not expect" would include namespaces belonging to other
+// tools — and reaping means deleting. The Cilium driver can reap precisely
+// because its endpoints carry an ownership label.

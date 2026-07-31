@@ -7,6 +7,7 @@ require (
 	github.com/containerd/containerd/v2 v2.3.3
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/typeurl/v2 v2.2.3
+	github.com/containernetworking/cni v1.3.0
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/zclconf/go-cty v1.16.3

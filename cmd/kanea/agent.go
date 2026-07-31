@@ -5,13 +5,16 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/kanea-dev/kanea/internal/api"
 	"github.com/kanea-dev/kanea/internal/logging"
+	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
 	"github.com/kanea-dev/kanea/internal/store"
@@ -36,6 +39,11 @@ func runAgent(args []string) error {
 	volumeDir := fs.String("volume-dir", "", "local volume root (default <data-dir>/volumes)")
 	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
 	containerdSocket := fs.String("containerd", runtime.DefaultSocket, "containerd socket")
+	networkMode := fs.String("network", networkCilium,
+		"network driver: cilium, or netns for development (no policy, no service LB)")
+	ciliumSocket := fs.String("cilium", network.DefaultSocketPath, "cilium-agent API socket")
+	cniConf := fs.String("cni-conf", network.DefaultCNIConfPath, "CNI configuration list")
+	cniBin := fs.String("cni-bin", network.DefaultCNIBinDir, "CNI plugin directory")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -89,6 +97,16 @@ func runAgent(args []string) error {
 		return fmt.Errorf("volume dir: %w", err)
 	}
 
+	net, err := buildNetwork(ctx, *networkMode, network.Config{
+		SocketPath:  *ciliumSocket,
+		CNIConfPath: *cniConf,
+		CNIBinDir:   *cniBin,
+		Logger:      logger,
+	}, logger)
+	if err != nil {
+		return err
+	}
+
 	// The API wakes the reconciler after every apply, so a deploy converges
 	// immediately rather than waiting out the interval.
 	notify := make(chan struct{}, 1)
@@ -96,7 +114,7 @@ func runAgent(args []string) error {
 	rec, err := reconciler.New(reconciler.Config{
 		Store:     st,
 		Driver:    driver,
-		Network:   reconciler.NetnsNetwork{},
+		Network:   net,
 		Logger:    logger,
 		LogDir:    *logDir,
 		VolumeDir: volumes,
@@ -120,7 +138,7 @@ func runAgent(args []string) error {
 
 	logger.Info("kanead starting",
 		"version", version, "state", statePath, "socket", *socket,
-		"log_dir", *logDir, "volume_dir", volumes)
+		"log_dir", *logDir, "volume_dir", volumes, "network", *networkMode)
 
 	errs := make(chan error, 2)
 	go func() { errs <- server.Serve(ctx) }()
@@ -136,3 +154,50 @@ func runAgent(args []string) error {
 	logger.Info("kanead stopped")
 	return firstErr
 }
+
+// Network driver names for --network.
+const (
+	// networkCilium is the product: eBPF datapath, per-project policy, service LB.
+	networkCilium = "cilium"
+	// networkNetns gives each alloc a bare namespace and nothing else. It exists
+	// so kanead can run on a host without Cilium — a laptop, a CI job — and is
+	// not a supported deployment: no policy is enforced and no service is load
+	// balanced, so allocs are unreachable by name.
+	networkNetns = "netns"
+)
+
+// buildNetwork selects the network driver.
+//
+// An unreachable cilium-agent is a warning, not a startup failure. Refusing to
+// start would take the control API down with it — and the API is exactly what
+// an operator needs in order to see why the node is unhealthy. The reconciler
+// already treats a failed action as retryable, so attaches resume on their own
+// once the agent is back.
+func buildNetwork(ctx context.Context, mode string, cfg network.Config, logger *slog.Logger) (reconciler.Network, error) {
+	switch mode {
+	case networkNetns:
+		logger.Warn("network policy and service load balancing are disabled",
+			"network", networkNetns, "detail", "development mode: allocs get a bare namespace")
+		return reconciler.NetnsNetwork{}, nil
+
+	case networkCilium:
+		net, err := network.New(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("network: %w", err)
+		}
+		healthCtx, cancel := context.WithTimeout(ctx, ciliumHealthTimeout)
+		defer cancel()
+		if err := net.Health(healthCtx); err != nil {
+			logger.Warn("cilium agent is not answering; allocs cannot attach until it is",
+				"socket", cfg.SocketPath, "error", err)
+		}
+		return net, nil
+
+	default:
+		return nil, fmt.Errorf("unknown --network %q: want %s or %s", mode, networkCilium, networkNetns)
+	}
+}
+
+// ciliumHealthTimeout bounds the startup probe. It is short on purpose: this is
+// a diagnostic, and kanead starts either way.
+const ciliumHealthTimeout = 5 * time.Second
