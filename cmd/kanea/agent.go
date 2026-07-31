@@ -22,6 +22,8 @@ import (
 const (
 	defaultDataDir = "/var/lib/kanea"
 	defaultLogDir  = "/var/log/kanea/allocs"
+	// volumeSubdir is where local volumes live under the data dir (PRD §8).
+	volumeSubdir = "volumes"
 )
 
 // runAgent is kanead: the control plane. It owns the state file — bbolt is
@@ -31,6 +33,7 @@ func runAgent(args []string) error {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	dataDir := fs.String("data-dir", defaultDataDir, "state directory")
 	logDir := fs.String("log-dir", defaultLogDir, "per-alloc log directory")
+	volumeDir := fs.String("volume-dir", "", "local volume root (default <data-dir>/volumes)")
 	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
 	containerdSocket := fs.String("containerd", runtime.DefaultSocket, "containerd socket")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
@@ -78,17 +81,25 @@ func runAgent(args []string) error {
 	if err := os.MkdirAll(*logDir, 0o750); err != nil {
 		return fmt.Errorf("log dir: %w", err)
 	}
+	volumes := *volumeDir
+	if volumes == "" {
+		volumes = filepath.Join(*dataDir, volumeSubdir)
+	}
+	if err := os.MkdirAll(volumes, 0o750); err != nil {
+		return fmt.Errorf("volume dir: %w", err)
+	}
 
 	// The API wakes the reconciler after every apply, so a deploy converges
 	// immediately rather than waiting out the interval.
 	notify := make(chan struct{}, 1)
 
 	rec, err := reconciler.New(reconciler.Config{
-		Store:   st,
-		Driver:  driver,
-		Network: reconciler.NetnsNetwork{},
-		Logger:  logger,
-		LogDir:  *logDir,
+		Store:     st,
+		Driver:    driver,
+		Network:   reconciler.NetnsNetwork{},
+		Logger:    logger,
+		LogDir:    *logDir,
+		VolumeDir: volumes,
 	})
 	if err != nil {
 		return err
@@ -108,7 +119,8 @@ func runAgent(args []string) error {
 	}
 
 	logger.Info("kanead starting",
-		"version", version, "state", statePath, "socket", *socket, "log_dir", *logDir)
+		"version", version, "state", statePath, "socket", *socket,
+		"log_dir", *logDir, "volume_dir", volumes)
 
 	errs := make(chan error, 2)
 	go func() { errs <- server.Serve(ctx) }()

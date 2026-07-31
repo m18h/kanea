@@ -821,6 +821,15 @@ func TestVolumeValidation(t *testing.T) {
 			src := `
 spec_version = 1
 project "shop" {}
+storage "local-ssd" {
+  type = "local"
+}
+storage "a" {
+  type = "local"
+}
+storage "b" {
+  type = "local"
+}
 service "web" {
   project = "shop"
   task "app" { image = "nginx" }

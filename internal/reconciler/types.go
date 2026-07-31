@@ -34,8 +34,10 @@ type Desired struct {
 	Env map[string]string
 	// Resources are the mandatory per-alloc limits.
 	Resources runtime.Resources
-	// Mounts are the resolved volume mounts.
-	Mounts []runtime.Mount
+	// Volumes are the service's declared volumes. Host paths are resolved
+	// per-alloc at spec-build time, not here: the same declaration produces a
+	// different directory for each alloc index.
+	Volumes []Volume
 	// ReadOnlyRootfs opts into a read-only root filesystem.
 	ReadOnlyRootfs bool
 	// Restart is the crash-restart policy.
@@ -87,6 +89,23 @@ func (p RestartPolicy) delayFor(n int) time.Duration {
 		n = len(schedule)
 	}
 	return schedule[n-1]
+}
+
+// Volume is one local volume mounted into every alloc of a service.
+//
+// M1 implements local storage only, and gives each alloc its own directory.
+// Sharing one directory between allocs is what PRD §8 calls the "shared" mode;
+// it needs a spec field to opt into, and per-alloc is the safe default — two
+// database allocs writing the same data directory would corrupt it.
+type Volume struct {
+	// Name is the volume's name within the service.
+	Name string
+	// Storage is the storage resource it comes from.
+	Storage string
+	// MountPath is where it appears inside the container.
+	MountPath string
+	// ReadOnly mounts it read-only.
+	ReadOnly bool
 }
 
 // AllocState is the reconciler's own view of an alloc, independent of what

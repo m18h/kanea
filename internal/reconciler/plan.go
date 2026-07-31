@@ -2,7 +2,9 @@ package reconciler
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/runtime"
@@ -177,10 +179,20 @@ func planOrphans(w World, desiredByService map[string]Desired, wanted map[string
 	return actions
 }
 
+// VolumeHostPath is where an alloc's copy of a volume lives on the host:
+// <volumeDir>/<project>/<service>/<index>/<volume>.
+//
+// The alloc index is in the path on purpose. It is stable across restarts — a
+// restarted alloc keeps index 0 — so data survives a crash, while two allocs of
+// the same service never share a directory (PRD §8's per-alloc mode).
+func VolumeHostPath(volumeDir, project, service string, index int, volume string) string {
+	return filepath.Join(volumeDir, project, service, strconv.Itoa(index), volume)
+}
+
 // AllocSpecFor builds the runtime spec for one alloc of a service. Keeping it
 // here (rather than in the executor) means a test can assert exactly what would
 // be handed to containerd.
-func AllocSpecFor(d Desired, index int, logDir string) runtime.AllocSpec {
+func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocSpec {
 	id := AllocID(d.Project, d.Service, index)
 	spec := runtime.AllocSpec{
 		ID:             id,
@@ -191,13 +203,19 @@ func AllocSpecFor(d Desired, index int, logDir string) runtime.AllocSpec {
 		Capabilities:   d.Capabilities,
 		Env:            d.Env,
 		Resources:      d.Resources,
-		Mounts:         d.Mounts,
 		ReadOnlyRootfs: d.ReadOnlyRootfs,
 		CgroupPath:     runtime.CgroupPath(runtime.WorkloadSlice, id),
 		NetnsPath:      runtime.NetnsPath(id),
 	}
 	if logDir != "" {
-		spec.LogPath = logDir + "/" + id + ".log"
+		spec.LogPath = filepath.Join(logDir, id+".log")
+	}
+	for _, v := range d.Volumes {
+		spec.Mounts = append(spec.Mounts, runtime.Mount{
+			Source:      VolumeHostPath(volumeDir, d.Project, d.Service, index, v.Name),
+			Destination: v.MountPath,
+			ReadOnly:    v.ReadOnly,
+		})
 	}
 	return spec
 }

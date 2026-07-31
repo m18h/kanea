@@ -38,7 +38,7 @@ var commands = []command{
 	{"run", "apply a job spec (or --image for a bare image)", runRun},
 	{"stop", "stop a service (scale to zero; --rm deletes it)", runStop},
 	{"ps", "list allocations", runPs},
-	{"status", "service/platform status, events, scaling", todo},
+	{"status", "service and platform status", runStatus},
 	{"logs", "stream service logs", runLogs},
 	{"exec", "debug shell into an alloc (admin-only, audited)", todo},
 	{"scale", "manually scale a service", todo},

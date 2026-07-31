@@ -19,6 +19,20 @@ project "shop" {
   }
 }
 
+# Storage resources may be declared here (project level) or in the server
+# config (§8, §15.1). Volume blocks reference them by name.
+storage "local-ssd" {
+  type = "local"
+}
+
+storage "s3-media" {
+  type     = "s3"
+  bucket   = "shop-media"
+  endpoint = "https://s3.eu-central-1.amazonaws.com"
+  auth_ref = "secret:shop/s3-media"
+  mode     = "ro"                           # mountpoint-s3; "rw" selects s3fs
+}
+
 service "web" {
   project     = "shop"
   description = "Storefront frontend (Next.js)"

@@ -44,6 +44,7 @@ var implemented = map[string]bool{
 	"version": true,
 	// M1 runtime core:
 	"agent": true, "plan": true, "run": true, "stop": true, "ps": true, "logs": true,
+	"status": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {
@@ -74,5 +75,33 @@ func TestImplementedCommandsAreWired(t *testing.T) {
 		if !found {
 			t.Errorf("command %q is listed as implemented but missing from the table", name)
 		}
+	}
+}
+
+func TestServiceHealth(t *testing.T) {
+	// `kanea status` is where an operator looks to decide whether to worry, so
+	// "ok" must mean settled — not merely "nothing has failed yet".
+	tests := []struct {
+		name                              string
+		desired, running, backoff, failed int
+		want                              string
+		wantSettled                       bool
+	}{
+		{"all running", 2, 2, 0, 0, "ok", true},
+		{"still starting", 3, 1, 0, 0, "starting", false},
+		{"restarting", 2, 1, 1, 0, "1 restarting", false},
+		{"failed wins over restarting", 2, 0, 1, 1, "1 failed", false},
+		{"scaled to zero and drained", 0, 0, 0, 0, "stopped", true},
+		{"draining after a stop", 0, 1, 0, 0, "stopping", false},
+		{"scaling in", 1, 3, 0, 0, "stopping", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, settled := serviceHealth(tc.desired, tc.running, tc.backoff, tc.failed)
+			if got != tc.want || settled != tc.wantSettled {
+				t.Errorf("serviceHealth(%d,%d,%d,%d) = %q,%v; want %q,%v",
+					tc.desired, tc.running, tc.backoff, tc.failed, got, settled, tc.want, tc.wantSettled)
+			}
+		})
 	}
 }

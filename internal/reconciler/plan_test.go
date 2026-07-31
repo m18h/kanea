@@ -352,7 +352,7 @@ func TestRestartPolicyDefaultsAndSchedule(t *testing.T) {
 func TestAllocSpecFor(t *testing.T) {
 	d := desired(2)
 	d.Env = map[string]string{"A": "1"}
-	spec := reconciler.AllocSpecFor(d, 1, "/var/log/kanea")
+	spec := reconciler.AllocSpecFor(d, 1, "/var/log/kanea", "/var/lib/kanea/volumes")
 
 	if spec.ID != "shop-web-1" {
 		t.Errorf("id = %q", spec.ID)
@@ -369,6 +369,42 @@ func TestAllocSpecFor(t *testing.T) {
 	// The spec the driver receives must already satisfy its own validation.
 	if err := spec.Validate(); err != nil {
 		t.Errorf("generated spec is invalid: %v", err)
+	}
+}
+
+func TestAllocSpecForResolvesVolumesPerAlloc(t *testing.T) {
+	// PRD §8 per-alloc mode: each alloc gets its own directory, so two database
+	// allocs can never write the same data dir.
+	d := desired(2)
+	d.Volumes = []reconciler.Volume{
+		{Name: "data", Storage: "local-ssd", MountPath: "/var/lib/data"},
+		{Name: "media", Storage: "local-ssd", MountPath: "/media", ReadOnly: true},
+	}
+
+	zero := reconciler.AllocSpecFor(d, 0, "", "/vol")
+	one := reconciler.AllocSpecFor(d, 1, "", "/vol")
+
+	if len(zero.Mounts) != 2 {
+		t.Fatalf("mounts = %+v, want 2", zero.Mounts)
+	}
+	if zero.Mounts[0].Source != "/vol/shop/web/0/data" {
+		t.Errorf("source = %q, want /vol/shop/web/0/data", zero.Mounts[0].Source)
+	}
+	if zero.Mounts[0].Destination != "/var/lib/data" {
+		t.Errorf("destination = %q", zero.Mounts[0].Destination)
+	}
+	if !zero.Mounts[1].ReadOnly {
+		t.Error("read-only volume mounted read-write")
+	}
+	if one.Mounts[0].Source == zero.Mounts[0].Source {
+		t.Errorf("allocs share a volume directory: %q", one.Mounts[0].Source)
+	}
+
+	// The index is stable across restarts, so a restarted alloc finds its data.
+	again := reconciler.AllocSpecFor(d, 0, "", "/vol")
+	if again.Mounts[0].Source != zero.Mounts[0].Source {
+		t.Errorf("volume path is not stable across rebuilds: %q vs %q",
+			again.Mounts[0].Source, zero.Mounts[0].Source)
 	}
 }
 

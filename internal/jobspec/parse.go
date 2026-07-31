@@ -32,7 +32,22 @@ type hclRoot struct {
 	SpecVersion *int         `hcl:"spec_version,optional"`
 	Projects    []hclProject `hcl:"project,block"`
 	Services    []hclService `hcl:"service,block"`
+	Storages    []hclStorage `hcl:"storage,block"`
 	Remain      hcl.Body     `hcl:",remain"`
+}
+
+type hclStorage struct {
+	Name     string    `hcl:"name,label"`
+	Type     string    `hcl:"type"`
+	Bucket   string    `hcl:"bucket,optional"`
+	Endpoint string    `hcl:"endpoint,optional"`
+	AuthRef  string    `hcl:"auth_ref,optional"`
+	Mode     string    `hcl:"mode,optional"`
+	Server   string    `hcl:"server,optional"`
+	Export   string    `hcl:"export,optional"`
+	Share    string    `hcl:"share,optional"`
+	Options  string    `hcl:"options,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclProject struct {
@@ -257,6 +272,14 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 	}
 	for i := range root.Projects {
 		spec.Projects = append(spec.Projects, convertProject(&root.Projects[i]))
+	}
+	for i := range root.Storages {
+		st := &root.Storages[i]
+		spec.Storages = append(spec.Storages, &Storage{
+			Name: st.Name, Type: st.Type, Bucket: st.Bucket, Endpoint: st.Endpoint,
+			AuthRef: st.AuthRef, Mode: st.Mode, Server: st.Server, Export: st.Export,
+			Share: st.Share, Options: st.Options, DefRange: st.DefRange,
+		})
 	}
 	for i := range root.Services {
 		svc, svcDiags := convertService(&root.Services[i])

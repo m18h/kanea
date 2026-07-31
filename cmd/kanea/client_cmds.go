@@ -284,6 +284,119 @@ func runPs(args []string) error {
 	return o.Err()
 }
 
+// runStatus implements `kanea status`: the one-screen answer to "is the
+// platform healthy, and is anything unhappy?".
+func runStatus(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	socket := socketFlag(fs)
+	project := fs.String("project", "", "filter by project")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	client := api.NewClient(*socket)
+
+	health, err := client.Health(ctx)
+	if err != nil {
+		return err
+	}
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	allocs, err := client.Allocs(ctx, *project, "")
+	if err != nil {
+		return err
+	}
+
+	o := newOut()
+	o.printf("kanead    %s (store index %d)\n", health.Status, health.StoreIndex)
+	o.printf("socket    %s\n", client.Socket())
+	o.println()
+
+	if len(services) == 0 {
+		o.println("No services declared. Try `kanea run --image=... --name=... --project=...`.")
+		return o.Err()
+	}
+
+	// Per service: desired count against what is actually running, plus the
+	// unhappy states called out by name. A status screen that only prints
+	// totals hides exactly the thing the operator is looking for.
+	type tally struct {
+		running, backoff, failed, other int
+	}
+	counts := map[string]*tally{}
+	for _, a := range allocs {
+		key := a.Project + "/" + a.Service
+		if counts[key] == nil {
+			counts[key] = &tally{}
+		}
+		switch a.State {
+		case reconciler.AllocRunning:
+			counts[key].running++
+		case reconciler.AllocBackoff:
+			counts[key].backoff++
+		case reconciler.AllocFailed:
+			counts[key].failed++
+		default:
+			counts[key].other++
+		}
+	}
+
+	o.table()
+	o.println("SERVICE\tDESIRED\tRUNNING\tHEALTH\tIMAGE")
+	unhealthy := 0
+	for _, svc := range services {
+		key := svc.Project + "/" + svc.Service
+		if *project != "" && svc.Project != *project {
+			continue
+		}
+		t := counts[key]
+		if t == nil {
+			t = &tally{}
+		}
+		health, settled := serviceHealth(svc.Count, t.running, t.backoff, t.failed)
+		if !settled {
+			unhealthy++
+		}
+		o.printf("%s\t%d\t%d\t%s\t%s\n", key, svc.Count, t.running, health, svc.Image)
+	}
+	if err := o.Err(); err != nil {
+		return err
+	}
+
+	tail := newOut()
+	tail.println()
+	if unhealthy == 0 {
+		tail.println("All services healthy.")
+	} else {
+		tail.printf("%d service(s) need attention — see `kanea ps` and `kanea logs <service>`.\n", unhealthy)
+	}
+	return tail.Err()
+}
+
+// serviceHealth summarises one service for `kanea status`, and reports whether
+// it has settled. "Settled" means running exactly matches desired with nothing
+// failed or restarting — running *more* than desired is mid-convergence (a
+// scale-in or a stop still draining), not health.
+func serviceHealth(desiredCount, running, backoff, failed int) (string, bool) {
+	switch {
+	case failed > 0:
+		return fmt.Sprintf("%d failed", failed), false
+	case backoff > 0:
+		return fmt.Sprintf("%d restarting", backoff), false
+	case running < desiredCount:
+		return "starting", false
+	case running > desiredCount:
+		return "stopping", false
+	case desiredCount == 0:
+		return "stopped", true
+	default:
+		return "ok", true
+	}
+}
+
 // runLogs implements `kanea logs`.
 func runLogs(args []string) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)

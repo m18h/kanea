@@ -22,6 +22,50 @@ type Spec struct {
 	SpecVersion int
 	Projects    []*Project
 	Services    []*Service
+	// Storages are the named storage resources services mount (PRD §8).
+	Storages []*Storage
+}
+
+// Storage is a named storage resource (PRD §8). Services reference it by name
+// from their volume blocks; credentials always come from the secret store.
+type Storage struct {
+	Name string
+	// Type is local | s3 | nfs | smb.
+	Type string
+	// Local has no fields: the path is derived under data_dir/volumes.
+	//
+	// S3:
+	Bucket   string
+	Endpoint string
+	AuthRef  string
+	// Mode selects the S3 driver: "ro" (mountpoint-s3, the default) or "rw"
+	// (s3fs) — M0 spike ③.
+	Mode string
+	// NFS and SMB:
+	Server  string
+	Export  string
+	Share   string
+	Options string
+	// DefRange is where this block was declared, for diagnostics.
+	DefRange hcl.Range
+}
+
+// Storage driver types (PRD §8).
+const (
+	StorageLocal = "local"
+	StorageS3    = "s3"
+	StorageNFS   = "nfs"
+	StorageSMB   = "smb"
+)
+
+// StorageByName returns the named storage resource, or nil.
+func (s *Spec) StorageByName(name string) *Storage {
+	for _, st := range s.Storages {
+		if st.Name == name {
+			return st
+		}
+	}
+	return nil
 }
 
 // Project groups services; it is the isolation, discovery and notification

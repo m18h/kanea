@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.11 |
+| **Status** | Draft v1.12 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
 | **Last updated** | 2026-07-30 |
 | **Document type** | Product Requirements Document (PRD) |
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.12 amendments** — makes the §6.1 example self-contained by declaring the `local-ssd` and `s3-media` storage resources its volume blocks reference. §8 allows storage to be declared at server level *or* project level; until the server config lands (§15.1), project level is the only source, and a volume referencing an undeclared resource is now a parse error rather than a mount failure at alloc start.
 
 > **v1.11 amendments** — adds the two `task` fields M1 showed were missing: **`command`** (argument array overriding the image entrypoint, R12) and **`capabilities`** (R13) — the explicit allowlist §14 A05 always promised but §6 had no field for. Without it the hardening defaults are unusable with stock images: nginx cannot `chown` its cache dir and redis cannot drop to its own user, so both crash-loop. Requests are bounded by a permitted set that excludes privilege-equivalent capabilities, so the allowlist cannot become the `privileged` escape hatch v1 refuses to have (§6.1, §6.2 R12–R13, §14 A05).
 
@@ -292,6 +294,20 @@ project "shop" {
     webhook  { url = "https://hooks.slack.com/services/…" }
     on       = ["deploy.failed", "service.unhealthy", "scale.*"]
   }
+}
+
+# Storage resources may be declared here (project level) or in the server
+# config (§8, §15.1). Volume blocks reference them by name.
+storage "local-ssd" {
+  type = "local"
+}
+
+storage "s3-media" {
+  type     = "s3"
+  bucket   = "shop-media"
+  endpoint = "https://s3.eu-central-1.amazonaws.com"
+  auth_ref = "secret:shop/s3-media"
+  mode     = "ro"                           # mountpoint-s3; "rw" selects s3fs
 }
 
 service "web" {

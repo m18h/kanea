@@ -39,6 +39,7 @@ func Validate(spec *Spec) hcl.Diagnostics {
 
 	diags = append(diags, validateSpecVersion(spec)...)
 	diags = append(diags, validateProjects(spec)...)
+	diags = append(diags, validateStorages(spec)...)
 	diags = append(diags, validateServices(spec)...)
 	diags = append(diags, validateDependencies(spec)...)
 	return diags
@@ -84,6 +85,92 @@ func validateProjects(spec *Spec) hcl.Diagnostics {
 			continue
 		}
 		seen[p.Name] = p.DefRange
+	}
+	return diags
+}
+
+// validateStorages checks the named storage resources (PRD §8): known driver,
+// the fields that driver needs, and no duplicates.
+func validateStorages(spec *Spec) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	seen := map[string]hcl.Range{}
+
+	for _, st := range spec.Storages {
+		diags = append(diags, validateName("Storage", st.Name, st.DefRange)...)
+
+		if first, dup := seen[st.Name]; dup {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Duplicate storage",
+				Detail:   fmt.Sprintf("Storage %q is already declared at %s.", st.Name, first),
+				Subject:  st.DefRange.Ptr(),
+			})
+			continue
+		}
+		seen[st.Name] = st.DefRange
+
+		missing := func(field string) *hcl.Diagnostic {
+			return &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Incomplete storage",
+				Detail: fmt.Sprintf("Storage %q is type %q and needs %s.",
+					st.Name, st.Type, field),
+				Subject: st.DefRange.Ptr(),
+			}
+		}
+
+		switch st.Type {
+		case StorageLocal:
+			// Nothing to configure: the path is derived under data_dir/volumes.
+
+		case StorageS3:
+			if st.Bucket == "" {
+				diags = append(diags, missing("bucket"))
+			}
+			if st.Mode != "" && st.Mode != "ro" && st.Mode != "rw" {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Invalid storage mode",
+					Detail: fmt.Sprintf("Storage %q has mode %q; expected \"ro\" (mountpoint-s3, "+
+						"the default) or \"rw\" (s3fs).", st.Name, st.Mode),
+					Subject: st.DefRange.Ptr(),
+				})
+			}
+
+		case StorageNFS:
+			if st.Server == "" {
+				diags = append(diags, missing("server"))
+			}
+			if st.Export == "" {
+				diags = append(diags, missing("export"))
+			}
+
+		case StorageSMB:
+			if st.Server == "" {
+				diags = append(diags, missing("server"))
+			}
+			if st.Share == "" {
+				diags = append(diags, missing("share"))
+			}
+
+		case "":
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Storage has no type",
+				Detail: fmt.Sprintf("Storage %q must set type = \"%s\" | \"%s\" | \"%s\" | \"%s\".",
+					st.Name, StorageLocal, StorageS3, StorageNFS, StorageSMB),
+				Subject: st.DefRange.Ptr(),
+			})
+
+		default:
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unknown storage type",
+				Detail: fmt.Sprintf("Storage %q has type %q; expected %s, %s, %s or %s.",
+					st.Name, st.Type, StorageLocal, StorageS3, StorageNFS, StorageSMB),
+				Subject: st.DefRange.Ptr(),
+			})
+		}
 	}
 	return diags
 }
@@ -141,7 +228,7 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		diags = append(diags, validateTask(svc)...)
 		diags = append(diags, validatePorts(svc)...)
 		diags = append(diags, validateHealthChecks(svc)...)
-		diags = append(diags, validateVolumes(svc)...)
+		diags = append(diags, validateVolumes(spec, svc)...)
 		diags = append(diags, validateScaling(svc)...)
 	}
 	return diags
@@ -335,7 +422,7 @@ func healthDiag(svc *Service, hc *HealthCheck, detail string) *hcl.Diagnostic {
 	}
 }
 
-func validateVolumes(svc *Service) hcl.Diagnostics {
+func validateVolumes(spec *Spec, svc *Service) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	seenName := map[string]hcl.Range{}
 	seenPath := map[string]hcl.Range{}
@@ -352,12 +439,23 @@ func validateVolumes(svc *Service) hcl.Diagnostics {
 				Subject: v.DefRange.Ptr(),
 			})
 		}
-		if v.Storage == "" {
+		switch {
+		case v.Storage == "":
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Volume has no storage",
 				Detail:   fmt.Sprintf("Volume %q of service %q must name a storage resource.", v.Name, svc.Name),
 				Subject:  v.DefRange.Ptr(),
+			})
+		case spec.StorageByName(v.Storage) == nil:
+			// Catching this here means a typo fails at `plan`, not at alloc
+			// start with a confusing mount error.
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unknown storage",
+				Detail: fmt.Sprintf("Volume %q of service %q references storage %q, which is not "+
+					"declared in this set.", v.Name, svc.Name, v.Storage),
+				Subject: v.DefRange.Ptr(),
 			})
 		}
 		if first, dup := seenName[v.Name]; dup {

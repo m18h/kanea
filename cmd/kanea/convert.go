@@ -57,6 +57,19 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				PidsLimit:   DefaultPidsLimit,
 			},
 		}
+		for _, v := range svc.Volumes {
+			st := spec.StorageByName(v.Storage)
+			// Validation guarantees the reference resolves; the type check is
+			// what M1 can actually honour.
+			if st != nil && st.Type != jobspec.StorageLocal {
+				return nil, fmt.Errorf("service %s/%s: volume %q uses %s storage %q; "+
+					"only local volumes are implemented in M1 (S3/NFS/SMB arrive in M2)",
+					svc.Project, svc.Name, v.Name, st.Type, v.Storage)
+			}
+			desired.Volumes = append(desired.Volumes, reconciler.Volume{
+				Name: v.Name, Storage: v.Storage, MountPath: v.MountPath, ReadOnly: v.ReadOnly,
+			})
+		}
 		if svc.Restart != nil {
 			desired.Restart.Attempts = svc.Restart.Attempts
 			backoff, err := parseBackoff(svc.Restart.Backoff)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"time"
 
@@ -53,6 +54,8 @@ type Config struct {
 	StopGrace time.Duration
 	// LogDir receives per-alloc log files.
 	LogDir string
+	// VolumeDir is the root of local volume storage (PRD §8: data_dir/volumes).
+	VolumeDir string
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -71,6 +74,7 @@ type Reconciler struct {
 	interval  time.Duration
 	stopGrace time.Duration
 	logDir    string
+	volumeDir string
 }
 
 // New builds a Reconciler.
@@ -99,6 +103,7 @@ func New(cfg Config) (*Reconciler, error) {
 		interval:  cfg.Interval,
 		stopGrace: cfg.StopGrace,
 		logDir:    cfg.LogDir,
+		volumeDir: cfg.VolumeDir,
 	}, nil
 }
 
@@ -288,10 +293,16 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 }
 
 func (r *Reconciler) create(ctx context.Context, desired Desired, action Action) error {
-	spec := AllocSpecFor(desired, action.Index, r.logDir)
+	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
 
 	if _, err := r.driver.EnsureImage(ctx, desired.Project, desired.Image); err != nil {
 		return fmt.Errorf("image: %w", err)
+	}
+	// Volume directories exist before the task does. A bind mount whose source
+	// is missing would otherwise be created by the runtime as a root-owned
+	// directory at an unpredictable moment, or fail the alloc outright.
+	if err := r.ensureVolumes(spec); err != nil {
+		return err
 	}
 	// Network before task: an alloc must never run without its network, and on
 	// Cilium an unlabelled endpoint has its traffic denied (M0 spikes ①, ②).
@@ -328,6 +339,17 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	return r.persist(ctx, map[string]AllocRecord{record.ID: record})
 }
 
+// ensureVolumes creates each mount's host directory. Data is never deleted on
+// teardown: a volume outliving its alloc is the entire point (PRD §8).
+func (r *Reconciler) ensureVolumes(spec runtime.AllocSpec) error {
+	for _, m := range spec.Mounts {
+		if err := os.MkdirAll(m.Source, 0o750); err != nil {
+			return fmt.Errorf("volume %s: %w", m.Source, err)
+		}
+	}
+	return nil
+}
+
 func (r *Reconciler) teardown(ctx context.Context, desired Desired, action Action) error {
 	if err := r.driver.Stop(ctx, action.Project, action.AllocID, r.stopGrace); err != nil {
 		return fmt.Errorf("stop: %w", err)
@@ -338,7 +360,7 @@ func (r *Reconciler) teardown(ctx context.Context, desired Desired, action Actio
 	// Detach after the task is gone: CNI DEL needs the namespace to still
 	// exist (M0 spike ②).
 	if r.network != nil {
-		spec := AllocSpecFor(desired, action.Index, r.logDir)
+		spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
 		if err := r.network.Detach(ctx, spec); err != nil {
 			return fmt.Errorf("detach network: %w", err)
 		}
