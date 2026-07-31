@@ -700,3 +700,36 @@ func TestRunReactsToTrigger(t *testing.T) {
 		}
 	}
 }
+
+func TestDeletingAServiceClearsEvenFailedAllocRecords(t *testing.T) {
+	// A failed alloc keeps its record so `kanea ps` can explain itself — but
+	// only while the service exists. Deleting the service must not leave a
+	// ghost row that no command can clear.
+	h := newHarness(t)
+	d := desired(1)
+	d.Restart = reconciler.RestartPolicy{Attempts: 1, Backoff: []time.Duration{time.Second}}
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	id := reconciler.AllocID("shop", "web", 0)
+	for range 4 {
+		h.driver.crash(id, 1, h.now)
+		h.reconcile(t)
+		h.now = h.now.Add(2 * time.Second)
+		h.reconcile(t)
+	}
+	if rec := h.allocRecord(t, 0); rec.State != reconciler.AllocFailed {
+		t.Fatalf("state = %q, want failed as the precondition for this test", rec.State)
+	}
+
+	h.deleteDesired(t, "shop", "web")
+	h.reconcile(t)
+
+	page, err := h.store.List(context.Background(), store.KindAlloc, store.ListOptions{})
+	if err != nil {
+		t.Fatalf("list allocs: %v", err)
+	}
+	if len(page.Records) != 0 {
+		t.Errorf("%d alloc record(s) survived service deletion", len(page.Records))
+	}
+}

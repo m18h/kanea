@@ -37,13 +37,42 @@ func TestNoArgsPrintsUsage(t *testing.T) {
 	}
 }
 
+// implemented lists the commands that do real work today. Everything else must
+// still report the milestone that will bring it, so `kanea backup` says "not
+// implemented yet" rather than failing obscurely.
+var implemented = map[string]bool{
+	"version": true,
+	// M1 runtime core:
+	"agent": true, "plan": true, "run": true, "stop": true, "ps": true, "logs": true,
+}
+
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {
 	for _, c := range commands {
-		if c.name == "version" {
+		if implemented[c.name] {
 			continue
 		}
 		if err := c.run(nil); !errors.Is(err, errNotImplemented) {
 			t.Errorf("command %q: expected errNotImplemented, got %v", c.name, err)
+		}
+	}
+}
+
+func TestImplementedCommandsAreWired(t *testing.T) {
+	// Guards against the opposite mistake: a command listed as implemented but
+	// still pointing at the todo stub.
+	for name := range implemented {
+		var found bool
+		for _, c := range commands {
+			if c.name != name {
+				continue
+			}
+			found = true
+			if err := c.run(nil); errors.Is(err, errNotImplemented) {
+				t.Errorf("command %q is listed as implemented but returns errNotImplemented", name)
+			}
+		}
+		if !found {
+			t.Errorf("command %q is listed as implemented but missing from the table", name)
 		}
 	}
 }

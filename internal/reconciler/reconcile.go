@@ -280,7 +280,7 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 		return r.create(ctx, desired, action)
 
 	case ActionRemove:
-		return r.remove(ctx, w, desired, action)
+		return r.remove(ctx, w, desired, ok, action)
 
 	default:
 		return fmt.Errorf("unknown action %q", action.Kind)
@@ -346,7 +346,7 @@ func (r *Reconciler) teardown(ctx context.Context, desired Desired, action Actio
 	return nil
 }
 
-func (r *Reconciler) remove(ctx context.Context, w World, desired Desired, action Action) error {
+func (r *Reconciler) remove(ctx context.Context, w World, desired Desired, stillDeclared bool, action Action) error {
 	if err := r.teardown(ctx, desired, action); err != nil {
 		return err
 	}
@@ -359,7 +359,11 @@ func (r *Reconciler) remove(ctx context.Context, w World, desired Desired, actio
 	// failed: `kanea ps` must be able to explain why it is not running. The
 	// decision comes from the record and the policy, never from the reason
 	// string — that text is for humans.
-	if record.State == AllocFailed || record.Restarts >= desired.Restart.attempts() {
+	//
+	// But only while the service still exists. Once it is deleted, keeping the
+	// record would leave a permanent ghost in `kanea ps` that no command could
+	// clear.
+	if stillDeclared && (record.State == AllocFailed || record.Restarts >= desired.Restart.attempts()) {
 		record.State = AllocFailed
 		record.UpdatedAt = r.now()
 		return r.persist(ctx, map[string]AllocRecord{record.ID: record})
