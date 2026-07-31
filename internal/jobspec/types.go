@@ -106,7 +106,13 @@ type Build struct {
 type Task struct {
 	Name  string
 	Image string
-	Env   map[string]string
+	// Command overrides the image entrypoint (R12). Argument array, never a
+	// shell string.
+	Command []string
+	// Capabilities is the explicit allowlist on top of the drop-ALL default
+	// (R13). Only PermittedCapabilities may be requested.
+	Capabilities []string
+	Env          map[string]string
 	// Resources are always enforced; an omitted block yields defaults (R11).
 	Resources Resources
 	// ResourcesDeclared records whether the spec declared the block, so

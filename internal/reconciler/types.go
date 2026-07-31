@@ -28,6 +28,8 @@ type Desired struct {
 	Image string
 	// Command overrides the image entrypoint when non-empty.
 	Command []string
+	// Capabilities is the validated capability allowlist (jobspec R13).
+	Capabilities []string
 	// Env is the fully resolved environment for each alloc.
 	Env map[string]string
 	// Resources are the mandatory per-alloc limits.

@@ -191,6 +191,8 @@ func validateTask(svc *Service) hcl.Diagnostics {
 	}
 
 	diags = append(diags, validateSecretRefs(svc)...)
+	diags = append(diags, validateCommand(svc)...)
+	diags = append(diags, validateCapabilities(svc)...)
 	return diags
 }
 

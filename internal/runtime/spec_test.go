@@ -389,3 +389,40 @@ func TestDeleteNetnsIsIdempotentForMissingNamespace(t *testing.T) {
 		t.Errorf("deleting an empty alloc id must be a no-op, got %v", err)
 	}
 }
+
+func TestRequestedCapabilitiesAreGranted(t *testing.T) {
+	// R13: the allowlist on top of the drop-ALL default. nginx needs CAP_CHOWN
+	// to chown its cache dir; redis needs SETUID/SETGID to drop privileges.
+	alloc := validAlloc()
+	alloc.Capabilities = []string{"CAP_CHOWN", "CAP_SETGID", "CAP_SETUID"}
+	s := buildSpec(t, alloc)
+
+	caps := s.Process.Capabilities
+	if caps == nil {
+		t.Fatal("no capability set")
+	}
+	for name, set := range map[string][]string{
+		"bounding": caps.Bounding, "effective": caps.Effective, "permitted": caps.Permitted,
+	} {
+		if len(set) != 3 {
+			t.Errorf("%s = %v, want the three requested capabilities", name, set)
+		}
+	}
+	// Never inheritable or ambient: a granted capability must not survive into
+	// a child that re-execs.
+	if len(caps.Inheritable) != 0 {
+		t.Errorf("inheritable = %v, want empty", caps.Inheritable)
+	}
+	if len(caps.Ambient) != 0 {
+		t.Errorf("ambient = %v, want empty", caps.Ambient)
+	}
+}
+
+func TestNoRequestedCapabilitiesStillDropsAll(t *testing.T) {
+	// The default must not change: no request means no capabilities.
+	s := buildSpec(t, validAlloc())
+	caps := s.Process.Capabilities
+	if len(caps.Bounding)+len(caps.Effective)+len(caps.Permitted)+len(caps.Inheritable) != 0 {
+		t.Errorf("capabilities granted without a request: %+v", caps)
+	}
+}

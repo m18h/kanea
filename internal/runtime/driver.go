@@ -9,8 +9,10 @@
 // rather than trusting callers:
 //
 //   - Hardening defaults (PRD §14, A05): every alloc drops ALL capabilities,
-//     sets no-new-privileges, and gets its own PID and IPC namespaces. There is
-//     no `privileged` escape hatch in the v1 spec.
+//     sets no-new-privileges, and gets its own PID, IPC, UTS, mount and cgroup
+//     namespaces. A service may request capabilities back (PRD §6.2 R13), but
+//     only from a permitted set that jobspec enforces — there is no `privileged`
+//     escape hatch in the v1 spec, and the allowlist must not become one.
 //   - Resource limits (PRD §6.2 R11, §5.2.11): no container ever runs
 //     unlimited. Missing limits are a programming error, not a default.
 //   - Network namespace ordering (M0 spike ②): the netns is created and wired
@@ -51,8 +53,13 @@ type AllocSpec struct {
 	Service string
 	// Image is a pullable reference, ideally digest-pinned.
 	Image string
-	// Command overrides the image entrypoint when non-empty.
+	// Command overrides the image entrypoint when non-empty. Argument array,
+	// never a shell string (PRD §6.2 R12).
 	Command []string
+	// Capabilities is the explicit allowlist on top of the drop-ALL default
+	// (PRD §6.2 R13). The caller is responsible for having validated it: this
+	// package grants exactly what it is given.
+	Capabilities []string
 	// Env is the resolved environment. Secret values are already materialised
 	// by the caller; this package never resolves secret: references.
 	Env map[string]string

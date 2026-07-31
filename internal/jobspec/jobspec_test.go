@@ -1157,3 +1157,135 @@ func TestPRDExampleParses(t *testing.T) {
 		t.Errorf("web expose = %+v", web.Expose)
 	}
 }
+
+func TestTaskCommandIsAnArgumentArray(t *testing.T) {
+	// R12: an argument array, never a shell string.
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image   = "nginx:1.27-alpine"
+    command = ["nginx", "-g", "daemon off;"]
+  }
+}
+`)
+	got := spec.ServiceByName("shop", "web").Task.Command
+	want := []string{"nginx", "-g", "daemon off;"}
+	if len(got) != len(want) {
+		t.Fatalf("command = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("command = %v, want %v", got, want)
+		}
+	}
+
+	// An empty *argument* is legitimate: `redis-server --save ""` is the
+	// documented way to disable snapshots.
+	parse(t, `
+spec_version = 1
+project "shop" {}
+service "cache" {
+  project = "shop"
+  task "app" {
+    image   = "redis:7-alpine"
+    command = ["redis-server", "--save", "", "--appendonly", "no"]
+  }
+}
+`)
+
+	// An empty *program* is not: there is nothing to run.
+	out := parseErr(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image   = "nginx"
+    command = ["", "-g"]
+  }
+}
+`)
+	if !strings.Contains(out, "cannot be empty") {
+		t.Errorf("diagnostics = %q", out)
+	}
+}
+
+func TestCapabilityAllowlist(t *testing.T) {
+	// R13: only the permitted set may be requested, and privilege-equivalent
+	// capabilities are refused with an explanation.
+	tests := []struct {
+		name    string
+		caps    string
+		wantErr string
+	}{
+		{"nginx needs chown", `["CAP_CHOWN"]`, ""},
+		{"redis drops privileges", `["CAP_SETUID", "CAP_SETGID"]`, ""},
+		{"binding port 80", `["CAP_NET_BIND_SERVICE"]`, ""},
+		{"empty list", `[]`, ""},
+		{"sys_admin is refused", `["CAP_SYS_ADMIN"]`, "equivalent to root"},
+		{"ptrace is refused", `["CAP_SYS_PTRACE"]`, "escaping the container"},
+		{"net_admin is refused", `["CAP_NET_ADMIN"]`, "Kanea's own datapath"},
+		{"bpf is refused", `["CAP_BPF"]`, "host-level control"},
+		{"unknown capability", `["CAP_NONSENSE"]`, "unknown or unsupported"},
+		{"missing prefix", `["CHOWN"]`, "CAP_ prefix"},
+		{"duplicate", `["CAP_CHOWN", "CAP_CHOWN"]`, "listed twice"},
+		{"empty name", `[""]`, "empty capability name"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image        = "nginx"
+    capabilities = ` + tc.caps + `
+  }
+}
+`
+			if tc.wantErr == "" {
+				parse(t, src)
+				return
+			}
+			if out := parseErr(t, src); !strings.Contains(out, tc.wantErr) {
+				t.Errorf("diagnostics = %q, want %q", out, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestForbiddenCapabilityDiagnosticSaysWhy(t *testing.T) {
+	// "Not allowed" is not enough: the operator needs to know it is refused
+	// because it is equivalent to privilege, not because of a typo.
+	out := parseErr(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image        = "nginx"
+    capabilities = ["CAP_SYS_MODULE"]
+  }
+}
+`)
+	if !strings.Contains(out, "no privileged escape hatch") {
+		t.Errorf("diagnostics = %q, want the reasoning spelled out", out)
+	}
+}
+
+func TestNormalizeCapabilities(t *testing.T) {
+	got := jobspec.NormalizeCapabilities([]string{"cap_setuid", "CAP_CHOWN", " CAP_CHOWN ", ""})
+	want := []string{"CAP_CHOWN", "CAP_SETUID"}
+	if len(got) != len(want) {
+		t.Fatalf("normalized = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("normalized = %v, want %v (sorted and deduplicated)", got, want)
+		}
+	}
+}

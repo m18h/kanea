@@ -44,11 +44,13 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 		}
 
 		desired := reconciler.Desired{
-			Project: svc.Project,
-			Service: svc.Name,
-			Count:   svc.Count,
-			Image:   image,
-			Env:     svc.Task.Env,
+			Project:      svc.Project,
+			Service:      svc.Name,
+			Count:        svc.Count,
+			Image:        image,
+			Command:      svc.Task.Command,
+			Capabilities: jobspec.NormalizeCapabilities(svc.Task.Capabilities),
+			Env:          svc.Task.Env,
 			Resources: runtime.Resources{
 				CPUMillis:   svc.Task.Resources.CPU * 1000 / NominalCoreMHz,
 				MemoryBytes: int64(svc.Task.Resources.Memory) << 20,

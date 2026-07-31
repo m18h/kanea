@@ -159,6 +159,12 @@ service "postgres" {
 
   task "db" {
     image = "postgres:17@sha256:…"            # digest pinning recommended
+
+    # Stock images routinely chown their data dir and drop to their own user at
+    # startup. Workloads run with ALL capabilities dropped (§14, A05), so those
+    # few must be requested explicitly — and only from the permitted set (R13).
+    capabilities = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID", "CAP_DAC_OVERRIDE"]
+
     resources {
       cpu    = 1000
       memory = 2048
@@ -182,6 +188,10 @@ service "assets" {
   project = "shop"
   task "cdn" {
     image = "nginx:1.27-alpine"
+
+    # Argument array, never a shell string (R12).
+    command      = ["nginx", "-g", "daemon off;"]
+    capabilities = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"]
   }
   volume "media" {
     storage    = "s3-media"                   # S3 bucket mounted via FUSE

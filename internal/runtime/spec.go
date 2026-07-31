@@ -93,11 +93,20 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 			s.Linux = &specs.Linux{}
 		}
 
-		// Drop ALL capabilities. A workload that needs one gets an explicit
-		// allowlist later; the default is nothing.
-		empty := []string{}
+		// Drop ALL capabilities, then grant back exactly what the spec asked
+		// for (PRD §6.2 R13). jobspec has already refused anything outside the
+		// permitted set, so this grants a bounded, reviewed list.
+		//
+		// Bounding, effective and permitted — never inheritable or ambient: a
+		// granted capability must not survive into a child that re-execs, which
+		// is how a capability turns into a persistent foothold.
+		granted := append([]string(nil), spec.Capabilities...)
 		s.Process.Capabilities = &specs.LinuxCapabilities{
-			Bounding: empty, Effective: empty, Permitted: empty, Inheritable: empty,
+			Bounding:    granted,
+			Effective:   granted,
+			Permitted:   granted,
+			Inheritable: []string{},
+			Ambient:     []string{},
 		}
 		// No setuid escalation, even if the image ships setuid binaries.
 		s.Process.NoNewPrivileges = true

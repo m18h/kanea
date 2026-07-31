@@ -91,11 +91,13 @@ type hclBuild struct {
 }
 
 type hclTask struct {
-	Name      string         `hcl:"name,label"`
-	Image     string         `hcl:"image,optional"`
-	Env       hcl.Expression `hcl:"env,optional"`
-	Resources *hclResources  `hcl:"resources,block"`
-	DefRange  hcl.Range      `hcl:",def_range"`
+	Name         string         `hcl:"name,label"`
+	Image        string         `hcl:"image,optional"`
+	Command      []string       `hcl:"command,optional"`
+	Capabilities []string       `hcl:"capabilities,optional"`
+	Env          hcl.Expression `hcl:"env,optional"`
+	Resources    *hclResources  `hcl:"resources,block"`
+	DefRange     hcl.Range      `hcl:",def_range"`
 }
 
 type hclResources struct {
@@ -397,11 +399,13 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 
 func convertTask(t *hclTask) *Task {
 	out := &Task{
-		DefRange:  t.DefRange,
-		Name:      t.Name,
-		Image:     t.Image,
-		Env:       map[string]string{},
-		Resources: Resources{CPU: DefaultCPU, Memory: DefaultMemory},
+		DefRange:     t.DefRange,
+		Name:         t.Name,
+		Image:        t.Image,
+		Command:      t.Command,
+		Capabilities: t.Capabilities,
+		Env:          map[string]string{},
+		Resources:    Resources{CPU: DefaultCPU, Memory: DefaultMemory},
 	}
 	if t.Resources != nil {
 		out.ResourcesDeclared = true

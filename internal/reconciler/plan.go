@@ -188,6 +188,7 @@ func AllocSpecFor(d Desired, index int, logDir string) runtime.AllocSpec {
 		Service:        d.Service,
 		Image:          d.Image,
 		Command:        d.Command,
+		Capabilities:   d.Capabilities,
 		Env:            d.Env,
 		Resources:      d.Resources,
 		Mounts:         d.Mounts,

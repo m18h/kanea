@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.10 |
+| **Status** | Draft v1.11 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
 | **Last updated** | 2026-07-30 |
 | **Document type** | Product Requirements Document (PRD) |
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.11 amendments** — adds the two `task` fields M1 showed were missing: **`command`** (argument array overriding the image entrypoint, R12) and **`capabilities`** (R13) — the explicit allowlist §14 A05 always promised but §6 had no field for. Without it the hardening defaults are unusable with stock images: nginx cannot `chown` its cache dir and redis cannot drop to its own user, so both crash-loop. Requests are bounded by a permitted set that excludes privilege-equivalent capabilities, so the allowlist cannot become the `privileged` escape hatch v1 refuses to have (§6.1, §6.2 R12–R13, §14 A05).
 
 > **v1.10 amendments** — corrects the §6.1 example so it actually parses as HCL v2 (single-line blocks may hold at most one argument and no nested block, so `resources { cpu = 500  memory = 256 }`, `network { port "http" { … } }` and `expose { tls { … } }` were invalid) and adds the `spec_version = 1` that R6 requires. No semantic change; `internal/jobspec` now parses this example verbatim as a regression test, per AGENTS.md's "keep the PRD §6 examples valid".
 
@@ -432,6 +434,12 @@ service "postgres" {
 
   task "db" {
     image = "postgres:17@sha256:…"            # digest pinning recommended
+
+    # Stock images routinely chown their data dir and drop to their own user at
+    # startup. Workloads run with ALL capabilities dropped (§14, A05), so those
+    # few must be requested explicitly — and only from the permitted set (R13).
+    capabilities = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID", "CAP_DAC_OVERRIDE"]
+
     resources {
       cpu    = 1000
       memory = 2048
@@ -455,6 +463,10 @@ service "assets" {
   project = "shop"
   task "cdn" {
     image = "nginx:1.27-alpine"
+
+    # Argument array, never a shell string (R12).
+    command      = ["nginx", "-g", "daemon off;"]
+    capabilities = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"]
   }
   volume "media" {
     storage    = "s3-media"                   # S3 bucket mounted via FUSE
@@ -481,6 +493,8 @@ service "assets" {
 - **R9** — **Service references:** `${service.<name>.host}` and `${service.<name>.port.<port-name>}` interpolate to the referenced service's internal DNS name (`<name>.<project>.kanea`) and frontend port. References are **same-project only** in v1, validated at `plan` against the full applied spec set (referenced service and port must exist; file order is irrelevant), resolved at alloc start as **DNS names, never IPs** (LB reprogramming can't break them), and **cycles are rejected** with the cycle shown in the diagnostic.
 - **R10** — **Dependencies:** `depends_on = [...]` declares start ordering; every reference (R9) also creates an implicit dependency edge. The reconciler starts dependencies first and health-gates dependents — a dependent never starts before its dependencies are healthy. If a dependency degrades *after* start, dependents keep running (no cascading stops); events are emitted.
 - **R11** — **Resource limits are mandatory; the declaration is optional.** An omitted `resources` block yields defaults (`cpu = 100`, `memory = 256`); every alloc always runs with `cpu.max`, `memory.max`, and a default `pids.max` — no container is ever unlimited (§5.2.11). A `memory.max` breach OOM-kills the alloc (event emitted, restart policy applies). Declared `resources.cpu`/`memory` are also the admission units counted against the workload budget at `plan`/`apply` time (§15.1).
+- **R12** — **`task.command` overrides the image entrypoint** and is an **argument array, never a shell string** (same rule as R7's `exec` health check — a shell string is an injection vector, §14 A03). Omitted, the image's own entrypoint runs. The first element (the program) must be non-empty; later arguments may be empty, because some programs use that meaningfully — `redis-server --save ""` is how you disable snapshots.
+- **R13** — **`task.capabilities` is the explicit allowlist** promised by the §14 (A05) hardening defaults. Every alloc starts with **ALL capabilities dropped**; a service that needs one names it here (`["CAP_CHOWN"]`). Only capabilities in the **permitted set** may be requested — the set that stock images legitimately need (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `KILL`, `SETGID`, `SETUID`, `SETPCAP`, `SETFCAP`, `NET_BIND_SERVICE`, `NET_RAW`, `SYS_CHROOT`, `MKNOD`, `AUDIT_WRITE`). Privilege-equivalent capabilities (`SYS_ADMIN`, `SYS_MODULE`, `SYS_PTRACE`, `SYS_RAWIO`, `SYS_BOOT`, `BPF`, `PERFMON`, `DAC_READ_SEARCH`, `MAC_ADMIN`, `MAC_OVERRIDE`, …) are **rejected at parse time**: granting them would be the `privileged` escape hatch v1 deliberately does not have. Requested capabilities go into the bounding, effective and permitted sets — never inheritable or ambient, so they are not passed to child processes that re-exec.
 
 ---
 
@@ -693,7 +707,7 @@ OWASP Top 10 (2021) compliance is a **release gate**: every milestone's definiti
 | **A02** | Cryptographic Failures | TLS 1.2+ everywhere (API, dashboard, edge); bcrypt/argon2id for passwords; secrets encrypted at rest in Store (XChaCha20-Poly1305, key from `data_dir/master.key` 0600 or external KMS later); cert/key material 0600; backups encrypted client-side before S3 upload; **master key escrowed at `init` via key ceremony (print-once + passphrase-derived KEK option) — without it, S3 backups are unrecoverable (§15.3)**; secrets injected via tmpfs files by default, not env vars (§6.2, R3) |
 | **A03** | Injection | Strict HCL schema validation, no eval of user input; DNS-1123 name validation (§4.2); no shell invocation with user-controlled strings (buildctl/containerd called with arg arrays, never a shell); log output HTML-escaped in dashboard; SQL N/A (BoltDB); path-join sanitization for volume subpaths |
 | **A04** | Insecure Design | Secure-by-default config (localhost-only if unauthenticated, HTTPS-only API); threat model maintained in `docs/THREAT_MODEL.md`; security review per milestone |
-| **A05** | Security Misconfiguration | Hardened defaults; security headers on all responses: `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`; no debug/pprof endpoints in release builds. **Workload hardening defaults:** drop `ALL` capabilities (+ explicit allowlist), `no-new-privileges`, default seccomp profile, no `privileged` escape hatch in the v1 spec, per-alloc PID/IPC namespaces, optional read-only rootfs — Kanea's own tasks get the same treatment |
+| **A05** | Security Misconfiguration | Hardened defaults; security headers on all responses: `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`; no debug/pprof endpoints in release builds. **Workload hardening defaults:** drop `ALL` capabilities (the explicit allowlist is `task.capabilities`, bounded by a permitted set that excludes every privilege-equivalent capability — §6.2 R13), `no-new-privileges`, default seccomp profile, no `privileged` escape hatch in the v1 spec, per-alloc PID/IPC/cgroup namespaces, optional read-only rootfs — Kanea's own tasks get the same treatment |
 | **A06** | Vulnerable Components | `govulncheck` + `npm audit` gates in CI; Dependabot/Renovate; SBOM (`syft`) attached to releases; pinned base images (buildkit, cilium) by digest |
 | **A07** | Identification & Auth Failures | Rate-limited login (5/min/IP + exponential account backoff); session rotation on privilege change; token expiry; OIDC delegates MFA to IdP and uses PKCE + state/nonce + full ID-token validation with deny-by-default role mapping; global API rate limits and WS connection caps beyond login; **per-service edge rate limits via expose middleware (§7.2.1)**; no credentials in logs/audit (redaction filters) |
 | **A08** | Software & Data Integrity Failures | Release binaries signed (cosign) + checksums; image digest pinning honored (`image@sha256:` enforced when given); TLS-only registries (no insecure registries); pipeline deploys pin built digests; backup archives carry SHA-256 manifest verified before restore; Git webhook HMAC validation + replay protection |
