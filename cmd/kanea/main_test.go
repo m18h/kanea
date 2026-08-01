@@ -1,7 +1,7 @@
 package main
 
 import (
-	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -56,10 +56,20 @@ func TestUnimplementedCommandsReportMilestone(t *testing.T) {
 		if implemented[c.name] {
 			continue
 		}
-		if err := c.run(nil); !errors.Is(err, errNotImplemented) {
-			t.Errorf("command %q: expected errNotImplemented, got %v", c.name, err)
+		if !isStub(c.run) {
+			t.Errorf("command %q is not in the implemented list but does not report the milestone", c.name)
 		}
 	}
+}
+
+// isStub reports whether a command still points at the not-implemented stub.
+//
+// Identity rather than invocation: `kanea agent` and `kanea edge` are daemons
+// that bind listeners and run until interrupted, so calling them to find out
+// whether they are wired would hang the test suite. It only worked while every
+// implemented command happened to fail fast.
+func isStub(run func([]string) error) bool {
+	return reflect.ValueOf(run).Pointer() == reflect.ValueOf(todo).Pointer()
 }
 
 func TestImplementedCommandsAreWired(t *testing.T) {
@@ -72,8 +82,8 @@ func TestImplementedCommandsAreWired(t *testing.T) {
 				continue
 			}
 			found = true
-			if err := c.run(nil); errors.Is(err, errNotImplemented) {
-				t.Errorf("command %q is listed as implemented but returns errNotImplemented", name)
+			if isStub(c.run) {
+				t.Errorf("command %q is listed as implemented but still points at the stub", name)
 			}
 		}
 		if !found {

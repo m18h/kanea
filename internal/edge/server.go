@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -16,6 +19,8 @@ import (
 const (
 	// DefaultHTTPAddr is the public plaintext listener.
 	DefaultHTTPAddr = ":80"
+	// DefaultHTTPSAddr is the public TLS listener.
+	DefaultHTTPSAddr = ":443"
 	// DefaultStatusAddr is the operator-facing listener. Loopback, because it
 	// answers questions ("which hosts do you serve?") that the internet has no
 	// business asking.
@@ -36,8 +41,15 @@ const (
 
 // Config configures kanea-edge.
 type Config struct {
-	// HTTPAddr is the public listener.
+	// HTTPAddr is the public plaintext listener.
 	HTTPAddr string
+	// HTTPSAddr is the public TLS listener. Empty disables TLS, which is what a
+	// node with no certificates yet wants — it must still serve :80, or the
+	// HTTP-01 validation that would produce one cannot complete.
+	HTTPSAddr string
+	// BundlePath is the certificate projection kanead publishes (see Bundle).
+	// Empty disables both TLS and ACME challenge serving.
+	BundlePath string
 	// StatusAddr serves health and diagnostics. Empty disables it.
 	StatusAddr string
 	// SnapshotPath is the route table kanead publishes (see Snapshot).
@@ -60,10 +72,13 @@ type Server struct {
 	cfg      Config
 	log      *slog.Logger
 	proxy    *Proxy
-	watcher  *Watcher
+	certs    *certStore
+	watchers []*Watcher
 	http     *http.Server
+	https    *http.Server
 	status   *http.Server
 	listener net.Listener
+	httpsLn  net.Listener
 	statusLn net.Listener
 }
 
@@ -94,19 +109,58 @@ func New(cfg Config) (*Server, error) {
 	cfg.Proxy.Logger = cfg.Logger
 	proxy := NewProxy(cfg.Proxy)
 
-	watcher, err := NewWatcher(WatcherConfig{
+	s := &Server{cfg: cfg, log: cfg.Logger, proxy: proxy, certs: newCertStore()}
+
+	routes, err := NewWatcher(WatcherConfig{
+		Name:     "routes",
 		Path:     cfg.SnapshotPath,
 		Interval: cfg.PollInterval,
 		Logger:   cfg.Logger,
-		Apply:    proxy.SetTable,
+		Apply: func(body []byte) error {
+			table, err := ParseTable(body)
+			if err != nil {
+				return err
+			}
+			proxy.SetTable(table)
+			cfg.Logger.Info("route table in force", "index", table.Index(), "hosts", table.Len())
+			return nil
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.watchers = append(s.watchers, routes)
 
-	s := &Server{cfg: cfg, log: cfg.Logger, proxy: proxy, watcher: watcher}
+	if cfg.BundlePath != "" {
+		certs, err := NewWatcher(WatcherConfig{
+			Name:     "certificates",
+			Path:     cfg.BundlePath,
+			Interval: cfg.PollInterval,
+			Logger:   cfg.Logger,
+			Apply: func(body []byte) error {
+				bundle, err := ParseBundle(body)
+				if err != nil {
+					return err
+				}
+				ring, err := newKeyring(bundle)
+				if err != nil {
+					return err
+				}
+				s.certs.set(ring)
+				cfg.Logger.Info("certificates in force",
+					"index", bundle.Index, "certificates", ring.len(),
+					"pending_challenges", len(ring.challenges))
+				return nil
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		s.watchers = append(s.watchers, certs)
+	}
+
 	s.http = &http.Server{
-		Handler: proxy,
+		Handler: s.plaintextHandler(),
 		// The three bounds that are safe to apply to every connection. There is
 		// deliberately no ReadTimeout and no WriteTimeout: both would kill
 		// WebSockets and streamed responses, so the slow-body bound is applied
@@ -115,6 +169,16 @@ func New(cfg Config) (*Server, error) {
 		IdleTimeout:       cfg.IdleTimeout,
 		MaxHeaderBytes:    cfg.MaxHeaderBytes,
 		ErrorLog:          slog.NewLogLogger(cfg.Logger.Handler(), slog.LevelDebug),
+	}
+	if cfg.HTTPSAddr != "" {
+		s.https = &http.Server{
+			Handler:           proxy,
+			TLSConfig:         s.certs.tlsConfig(),
+			ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+			IdleTimeout:       cfg.IdleTimeout,
+			MaxHeaderBytes:    cfg.MaxHeaderBytes,
+			ErrorLog:          slog.NewLogLogger(cfg.Logger.Handler(), slog.LevelDebug),
+		}
 	}
 	if cfg.StatusAddr != "" {
 		s.status = &http.Server{
@@ -140,12 +204,21 @@ func (s *Server) Listen() error {
 	}
 	s.listener = ln
 
+	if s.https != nil {
+		httpsLn, err := net.Listen("tcp", s.cfg.HTTPSAddr)
+		if err != nil {
+			return errors.Join(
+				fmt.Errorf("edge: listen on %s: %w", s.cfg.HTTPSAddr, err),
+				ln.Close())
+		}
+		s.httpsLn = httpsLn
+	}
 	if s.status != nil {
 		statusLn, err := net.Listen("tcp", s.cfg.StatusAddr)
 		if err != nil {
 			return errors.Join(
 				fmt.Errorf("edge: listen on %s: %w", s.cfg.StatusAddr, err),
-				ln.Close())
+				ln.Close(), closeIf(s.httpsLn))
 		}
 		s.statusLn = statusLn
 	}
@@ -172,20 +245,29 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	s.log.Info("kanea-edge listening",
-		"addr", s.Addr(), "status", s.cfg.StatusAddr, "snapshot", s.cfg.SnapshotPath)
+		"addr", s.Addr(), "tls", s.cfg.HTTPSAddr, "status", s.cfg.StatusAddr,
+		"routes", s.cfg.SnapshotPath, "certs", s.cfg.BundlePath)
 
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	go func() { errs <- serveHTTP(s.http, s.listener) }()
+	if s.https != nil {
+		// ServeTLS with empty file arguments: the certificates come from
+		// GetCertificate, which is what lets a renewal land without rebuilding
+		// the listener and dropping every connection on it.
+		go func() { errs <- serveTLS(s.https, s.httpsLn) }()
+	}
 	if s.status != nil {
 		go func() { errs <- serveHTTP(s.status, s.statusLn) }()
 	}
-	// The watcher runs in this process, not the caller's: the route table is
+	// The watchers run in this process, not the caller's: the projections are
 	// useless without the server and vice versa.
-	go func() {
-		if err := s.watcher.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			s.log.Error("route watcher stopped", "error", err)
-		}
-	}()
+	for _, w := range s.watchers {
+		go func() {
+			if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				s.log.Error("projection watcher stopped", "error", err)
+			}
+		}()
+	}
 	go s.sweepLimiters(ctx)
 
 	select {
@@ -201,6 +283,9 @@ func (s *Server) Run(ctx context.Context) error {
 	defer cancel()
 
 	err := s.http.Shutdown(drainCtx)
+	if s.https != nil {
+		err = errors.Join(err, s.https.Shutdown(drainCtx))
+	}
 	if s.status != nil {
 		err = errors.Join(err, s.status.Shutdown(drainCtx))
 	}
@@ -211,6 +296,76 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.log.Info("kanea-edge stopped")
 	return err
+}
+
+// plaintextHandler is what the :80 listener serves.
+//
+// Three things in a fixed order, and the order is the whole subtlety:
+//
+//  1. ACME challenges, always, and never redirected. The validation that would
+//     produce a certificate must work on a node that has none.
+//  2. HTTP→HTTPS, but only for hosts the edge actually holds a certificate for.
+//     Redirecting the rest turns "not issued yet" into "unreachable" — the
+//     browser follows the redirect and gets a handshake failure — and takes
+//     HTTP-01 down with it, so the situation never resolves itself.
+//  3. Otherwise proxy the request in plaintext.
+func (s *Server) plaintextHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token, ok := strings.CutPrefix(r.URL.Path, acmeChallengePrefix); ok {
+			s.serveChallenge(w, r, token)
+			return
+		}
+		if s.https != nil && s.certs.get().covers(r.Host) {
+			s.redirectToHTTPS(w, r)
+			return
+		}
+		s.proxy.ServeHTTP(w, r)
+	})
+}
+
+// serveChallenge answers an ACME HTTP-01 validation from the published bundle.
+func (s *Server) serveChallenge(w http.ResponseWriter, r *http.Request, token string) {
+	keyAuth, ok := s.certs.get().challenge(token)
+	if !ok {
+		// Not an error worth alarming about: the internet scans this path, and
+		// a stale validation retry after issuance finished lands here too.
+		s.log.Debug("no such acme challenge", "token", token, "remote", clientIP(r))
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	if _, err := io.WriteString(w, keyAuth); err != nil {
+		s.log.Debug("cannot write challenge response", "token", token, "error", err)
+	}
+}
+
+// redirectToHTTPS sends a client to the TLS listener.
+//
+// 308 rather than 301: a permanent redirect that preserves the method and body,
+// so a POST is not silently turned into a GET. The target is built from the
+// validated Host and the request URI, never from anything else the client sent.
+func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
+	host := NormalizeHost(r.Host)
+	if port := s.httpsPort(); port != "443" {
+		// A non-standard TLS port has to survive the redirect, or a development
+		// or behind-a-load-balancer setup sends everyone to a closed port.
+		host = net.JoinHostPort(host, port)
+	}
+	target := url.URL{Scheme: "https", Host: host, Opaque: r.URL.Opaque,
+		Path: r.URL.Path, RawQuery: r.URL.RawQuery}
+	http.Redirect(w, r, target.String(), http.StatusPermanentRedirect)
+}
+
+// httpsPort reports the port the TLS listener is actually on.
+func (s *Server) httpsPort() string {
+	addr := s.cfg.HTTPSAddr
+	if s.httpsLn != nil {
+		addr = s.httpsLn.Addr().String()
+	}
+	if _, port, err := net.SplitHostPort(addr); err == nil && port != "" {
+		return port
+	}
+	return "443"
 }
 
 // sweepLimiters drops rate-limit buckets that have refilled.
@@ -245,16 +400,52 @@ func serveHTTP(srv *http.Server, ln net.Listener) error {
 	return nil
 }
 
+func serveTLS(srv *http.Server, ln net.Listener) error {
+	if err := srv.ServeTLS(ln, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// closeIf closes a listener that may not have been created.
+func closeIf(ln net.Listener) error {
+	if ln == nil {
+		return nil
+	}
+	return ln.Close()
+}
+
 // statusMux is the loopback diagnostic surface.
 func (s *Server) statusMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		table := s.proxy.Table()
 		s.writeJSON(w, map[string]any{
-			"status":  "ok",
-			"version": s.cfg.Version,
-			"index":   table.Index(),
-			"hosts":   table.Len(),
+			"status":       "ok",
+			"version":      s.cfg.Version,
+			"index":        table.Index(),
+			"hosts":        table.Len(),
+			"certificates": s.certs.get().len(),
+		})
+	})
+	// Expiry is the question an operator asks about certificates, and asking it
+	// should not mean reading a file full of private keys.
+	mux.HandleFunc("GET /certs", func(w http.ResponseWriter, _ *http.Request) {
+		ring := s.certs.get()
+		names := make([]string, 0, len(ring.expiry))
+		for name := range ring.expiry {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		out := make([]map[string]any, 0, len(names))
+		for _, name := range names {
+			out = append(out, map[string]any{"domain": name, "not_after": ring.expiry[name]})
+		}
+		s.writeJSON(w, map[string]any{
+			"index":              ring.index,
+			"certificates":       out,
+			"pending_challenges": len(ring.challenges),
 		})
 	})
 	mux.HandleFunc("GET /routes", func(w http.ResponseWriter, _ *http.Request) {

@@ -34,9 +34,6 @@ type Proxy struct {
 	// bodyTimeout bounds how long a request body may take to arrive. Zero
 	// disables it.
 	bodyTimeout time.Duration
-	// tlsTerminated reports whether the listener this proxy serves is HTTPS,
-	// which is what X-Forwarded-Proto has to say.
-	tlsTerminated bool
 	// securityHeaders installs the §14 A05 response defaults.
 	securityHeaders bool
 }
@@ -56,8 +53,6 @@ type ProxyConfig struct {
 	FlushInterval time.Duration
 	// MaxIdleConnsPerHost bounds the pooled connections held per upstream.
 	MaxIdleConnsPerHost int
-	// TLSTerminated marks this proxy as serving the HTTPS listener.
-	TLSTerminated bool
 	// SecurityHeaders installs the §14 A05 response defaults on every proxied
 	// response (server config `edge.default_security_headers`, §15.1).
 	SecurityHeaders bool
@@ -107,7 +102,6 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 		log:             cfg.Logger,
 		limits:          newLimiter(cfg.LimiterCapacity, cfg.Now),
 		bodyTimeout:     cfg.BodyTimeout,
-		tlsTerminated:   cfg.TLSTerminated,
 		securityHeaders: cfg.SecurityHeaders,
 	}
 	p.table.Store(EmptyTable())
@@ -301,15 +295,14 @@ func (p *Proxy) rewrite(pr *httputil.ProxyRequest) {
 
 	// Then the edge's own statement, from the connection rather than from
 	// anything the client sent. SetXForwarded overwrites X-Forwarded-For with
-	// the peer address and sets X-Forwarded-Host and X-Forwarded-Proto.
+	// the peer address and sets X-Forwarded-Host and X-Forwarded-Proto — the
+	// last from whether *this* request arrived over TLS, which is why one proxy
+	// can serve both listeners.
 	pr.SetXForwarded()
-	if p.tlsTerminated {
-		pr.Out.Header.Set("X-Forwarded-Proto", "https")
-	}
 	if _, port, err := net.SplitHostPort(pr.In.Host); err == nil && port != "" {
 		pr.Out.Header.Set("X-Forwarded-Port", port)
 	} else {
-		pr.Out.Header.Set("X-Forwarded-Port", strconv.Itoa(p.defaultPort()))
+		pr.Out.Header.Set("X-Forwarded-Port", strconv.Itoa(schemePort(pr.In)))
 	}
 
 	// The spec's own transforms come last, after everything the edge owns is
@@ -333,14 +326,14 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 	}
 	// Defaults first so a service's own headers override them: the operator
 	// sets a floor, the service decides what it actually needs.
-	p.applySecurityHeaders(resp.Header)
+	p.applySecurityHeaders(resp.Header, resp.Request.TLS != nil)
 	route.applyResponseHeaders(resp.Header)
 	return nil
 }
 
 // applySecurityHeaders adds the §14 A05 defaults the operator asked for,
 // without overwriting anything the upstream already set deliberately.
-func (p *Proxy) applySecurityHeaders(h http.Header) {
+func (p *Proxy) applySecurityHeaders(h http.Header, overTLS bool) {
 	if !p.securityHeaders {
 		return
 	}
@@ -352,7 +345,7 @@ func (p *Proxy) applySecurityHeaders(h http.Header) {
 	// HSTS only over TLS. Sending it on a plaintext response is meaningless —
 	// a client that can be intercepted can have it stripped — and promising it
 	// before certificates exist would lock users out of an HTTP-only node.
-	if p.tlsTerminated && h.Get("Strict-Transport-Security") == "" {
+	if overTLS && h.Get("Strict-Transport-Security") == "" {
 		h.Set("Strict-Transport-Security", defaultHSTS)
 	}
 }
@@ -371,8 +364,9 @@ var securityHeaderDefaults = map[string]string{
 // whole domain and is not a default anyone should get by accident.
 const defaultHSTS = "max-age=63072000; includeSubDomains"
 
-func (p *Proxy) defaultPort() int {
-	if p.tlsTerminated {
+// schemePort is the port a client would have used for this request's scheme.
+func schemePort(r *http.Request) int {
+	if r.TLS != nil {
 		return 443
 	}
 	return 80

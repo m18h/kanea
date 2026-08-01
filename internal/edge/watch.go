@@ -19,12 +19,17 @@ import (
 // watch was registered on is not the one that ends up in place.
 const DefaultPollInterval = time.Second
 
-// Watcher keeps a Proxy's route table in step with the published snapshot.
+// Watcher keeps one in-memory projection in step with a published file.
+//
+// One implementation serves both the route table and the certificate bundle:
+// the polling, the change detection and the "a bad file must not take routing
+// down" behaviour are identical, and only the decoding differs.
 type Watcher struct {
+	name     string
 	path     string
 	interval time.Duration
 	log      *slog.Logger
-	apply    func(*Table)
+	apply    func([]byte) error
 
 	// last is the raw bytes last successfully loaded, so an unchanged file
 	// costs a read and a compare rather than a parse and a rebuild.
@@ -41,11 +46,14 @@ type Watcher struct {
 
 // WatcherConfig configures the reloader.
 type WatcherConfig struct {
+	// Name identifies the projection in log messages ("routes", "certificates").
+	Name     string
 	Path     string
 	Interval time.Duration
 	Logger   *slog.Logger
-	// Apply receives each new table. It is called from the watcher goroutine.
-	Apply func(*Table)
+	// Apply decodes and installs a changed file. An error is reported and the
+	// previous projection is kept. It is called from the watcher goroutine.
+	Apply func(body []byte) error
 }
 
 // NewWatcher builds a reloader.
@@ -62,7 +70,11 @@ func NewWatcher(cfg WatcherConfig) (*Watcher, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.Name == "" {
+		cfg.Name = "projection"
+	}
 	return &Watcher{
+		name:     cfg.Name,
 		path:     cfg.Path,
 		interval: cfg.Interval,
 		log:      cfg.Logger,
@@ -97,14 +109,14 @@ func (w *Watcher) reload() {
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if !w.missing {
-			w.log.Info("no route snapshot; serving the current table until kanead publishes one",
-				"path", w.path, "routes", len(w.last) > 0)
+			w.log.Info("projection absent; keeping what is loaded until kanead publishes one",
+				"projection", w.name, "path", w.path, "loaded", len(w.last) > 0)
 			w.missing = true
 		}
 		return
 	case err != nil:
-		w.log.Warn("cannot read route snapshot; keeping the current table",
-			"path", w.path, "error", err)
+		w.log.Warn("cannot read projection; keeping the current one",
+			"projection", w.name, "path", w.path, "error", err)
 		return
 	}
 	w.missing = false
@@ -113,35 +125,44 @@ func (w *Watcher) reload() {
 		return
 	}
 
-	table, err := parseTable(body)
-	if err != nil {
+	if err := w.apply(body); err != nil {
 		// Deliberately not fatal, and deliberately loud — but only once per
-		// distinct bad file. A rejected snapshot means routing is frozen at the
-		// last good state, which is a degraded control plane rather than a
+		// distinct bad file. A rejected projection means routing is frozen at
+		// the last good state, which is a degraded control plane rather than a
 		// degraded site; a file that stays broken must not also fill the disk
 		// with one error per poll.
 		if !bytes.Equal(body, w.rejected) {
-			w.log.Error("route snapshot rejected; keeping the current table",
-				"path", w.path, "error", err)
+			w.log.Error("projection rejected; keeping the current one",
+				"projection", w.name, "path", w.path, "error", err)
 			w.rejected = body
 		}
 		return
 	}
 
-	// Recorded only after a successful parse, so a broken file is retried on
+	// Recorded only after a successful apply, so a broken file is retried on
 	// the next tick instead of being remembered as "seen".
 	w.last = body
 	w.rejected = nil
-	w.apply(table)
-	w.log.Info("route table reloaded",
-		"index", table.Index(), "hosts", table.Len(), "path", w.path)
+	w.log.Info("projection reloaded", "projection", w.name, "path", w.path)
 }
 
-// parseTable decodes and indexes a snapshot body.
-func parseTable(body []byte) (*Table, error) {
+// ParseTable decodes and indexes a route snapshot body.
+func ParseTable(body []byte) (*Table, error) {
 	var snap Snapshot
 	if err := json.Unmarshal(body, &snap); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
 	}
 	return NewTable(snap)
+}
+
+// ParseBundle decodes a certificate bundle body.
+func ParseBundle(body []byte) (Bundle, error) {
+	var bundle Bundle
+	if err := json.Unmarshal(body, &bundle); err != nil {
+		return Bundle{}, fmt.Errorf("%w: %w", ErrInvalidBundle, err)
+	}
+	if err := bundle.Validate(); err != nil {
+		return Bundle{}, err
+	}
+	return bundle, nil
 }

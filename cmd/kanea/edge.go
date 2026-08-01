@@ -29,6 +29,9 @@ func runEdge(args []string) error {
 	fs := flag.NewFlagSet("edge", flag.ContinueOnError)
 	snapshot := fs.String("routes", edge.DefaultSnapshotPath, "route table kanead publishes")
 	httpAddr := fs.String("http", edge.DefaultHTTPAddr, "public HTTP listen address")
+	httpsAddr := fs.String("https", edge.DefaultHTTPSAddr,
+		"public HTTPS listen address (\"off\" serves plaintext only)")
+	certs := fs.String("certs", edge.DefaultBundlePath, "certificate bundle kanead publishes")
 	statusAddr := fs.String("status", edge.DefaultStatusAddr,
 		"loopback health/diagnostics address (\"off\" disables)")
 	poll := fs.Duration("poll", edge.DefaultPollInterval, "how often to re-read the route table")
@@ -76,9 +79,19 @@ func runEdge(args []string) error {
 	if status == statusOff {
 		status = ""
 	}
+	// Without TLS the edge still serves :80 — a node with no certificate yet
+	// must be reachable, or the HTTP-01 validation that would produce one
+	// cannot complete (PRD §7.3).
+	tlsAddr := *httpsAddr
+	if tlsAddr == tlsOff {
+		tlsAddr = ""
+		logger.Warn("TLS is disabled; serving plaintext only")
+	}
 
 	server, err := edge.New(edge.Config{
 		HTTPAddr:     *httpAddr,
+		HTTPSAddr:    tlsAddr,
+		BundlePath:   *certs,
 		StatusAddr:   status,
 		SnapshotPath: *snapshot,
 		PollInterval: *poll,
@@ -107,8 +120,11 @@ func runEdge(args []string) error {
 	return nil
 }
 
-// statusOff disables the diagnostics listener.
-const statusOff = "off"
+// statusOff disables the diagnostics listener; tlsOff disables the TLS one.
+const (
+	statusOff = "off"
+	tlsOff    = "off"
+)
 
 // byteUnits are the suffixes parseByteSize accepts, longest first so "GiB" is
 // matched before "G".

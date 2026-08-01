@@ -17,10 +17,16 @@ type applied struct {
 	tables []*Table
 }
 
-func (a *applied) apply(t *Table) {
+// applyBody is the decode-and-install step a route watcher performs.
+func (a *applied) applyBody(body []byte) error {
+	table, err := ParseTable(body)
+	if err != nil {
+		return err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.tables = append(a.tables, t)
+	a.tables = append(a.tables, table)
+	return nil
 }
 
 func (a *applied) last() *Table {
@@ -44,7 +50,7 @@ func newTestWatcher(t *testing.T, path string) (*Watcher, *applied) {
 	w, err := NewWatcher(WatcherConfig{
 		Path:   path,
 		Logger: slog.New(slog.DiscardHandler),
-		Apply:  seen.apply,
+		Apply:  seen.applyBody,
 	})
 	if err != nil {
 		t.Fatalf("NewWatcher: %v", err)
@@ -145,7 +151,7 @@ func TestWatcherRunStopsWithTheContext(t *testing.T) {
 		Path:     path,
 		Interval: 5 * time.Millisecond,
 		Logger:   slog.New(slog.DiscardHandler),
-		Apply:    seen.apply,
+		Apply:    seen.applyBody,
 	})
 	if err != nil {
 		t.Fatalf("NewWatcher: %v", err)
@@ -178,7 +184,7 @@ func TestWatcherRunStopsWithTheContext(t *testing.T) {
 func isContextCanceled(err error) bool { return errors.Is(err, context.Canceled) }
 
 func TestNewWatcherRequiresItsInputs(t *testing.T) {
-	if _, err := NewWatcher(WatcherConfig{Apply: func(*Table) {}}); err == nil {
+	if _, err := NewWatcher(WatcherConfig{Apply: func([]byte) error { return nil }}); err == nil {
 		t.Error("accepted an empty path")
 	}
 	if _, err := NewWatcher(WatcherConfig{Path: "/tmp/x.json"}); err == nil {
@@ -200,7 +206,7 @@ func TestWatcherReportsABadSnapshotOnce(t *testing.T) {
 	w, err := NewWatcher(WatcherConfig{
 		Path:   path,
 		Logger: slog.New(countingHandler{count: &errs}),
-		Apply:  seen.apply,
+		Apply:  seen.applyBody,
 	})
 	if err != nil {
 		t.Fatalf("NewWatcher: %v", err)
