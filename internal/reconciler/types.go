@@ -46,6 +46,9 @@ type Desired struct {
 	// AllowFrom names the peers permitted to reach this service on top of the
 	// project default (jobspec R14). It only ever adds reachability.
 	AllowFrom []PeerRef
+	// Expose is the north-south route this service publishes, or nil for a
+	// service that is only reachable east-west (PRD §7.2).
+	Expose *Expose
 	// DependsOn names the services that must be healthy before this one starts
 	// (jobspec R10). It already includes the implicit edges from ${service.*}
 	// references, and is same-project in v1.
@@ -66,6 +69,20 @@ type Desired struct {
 type PeerRef struct {
 	Project string
 	Service string
+}
+
+// Expose is a service's public ingress (PRD §7.2). It is what the agent turns
+// into an edge route.
+type Expose struct {
+	// Domains are the hostnames declared in the spec. Empty means "generate
+	// one": the auto-FQDN needs the server's base_domain, which is node
+	// configuration a job spec does not have and should not carry.
+	Domains []string
+	// Port is the container port the edge sends requests to, picked by the R16
+	// rule (named "http", or the only one declared).
+	Port int
+	// LetsEncrypt requests a certificate for the domains (PRD §7.3).
+	LetsEncrypt bool
 }
 
 // Port is a named container port. The service frontend listens on the same

@@ -16,8 +16,14 @@ type Options struct {
 	// Vars are ${VAR} substitutions from -var-file and built-ins such as
 	// GIT_SHA_SHORT and KANEA_PROJECT (R2).
 	Vars map[string]string
-	// BaseDomain is used when an expose block omits `domains`. Optional here:
-	// the default is applied by the edge, not the parser.
+	// BaseDomain is the server's `base_domain` (§15.1). An expose block that
+	// omits `domains` gets <service>.<project>.<base_domain> (§7.2).
+	//
+	// Optional: a spec is parseable without it — `kanea plan` run against a file
+	// alone has no server config to read — and the auto-FQDN is then left for
+	// the agent to fill in. What it costs is the R16 collision check between a
+	// generated domain and an explicitly declared one, which is only possible
+	// when the generated name is known.
 	BaseDomain string
 }
 
@@ -143,6 +149,7 @@ type hclExpose struct {
 	IPRestriction *hclIPRestriction `hcl:"ip_restriction,block"`
 	RateLimit     *hclRateLimit     `hcl:"rate_limit,block"`
 	Headers       *hclHeaders       `hcl:"headers,block"`
+	DefRange      hcl.Range         `hcl:",def_range"`
 }
 
 type hclTLS struct {
@@ -150,15 +157,17 @@ type hclTLS struct {
 }
 
 type hclIPRestriction struct {
-	Allow []string `hcl:"allow,optional"`
-	Deny  []string `hcl:"deny,optional"`
+	Allow    []string  `hcl:"allow,optional"`
+	Deny     []string  `hcl:"deny,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclRateLimit struct {
-	Requests int    `hcl:"requests"`
-	Window   string `hcl:"window"`
-	Per      string `hcl:"per,optional"`
-	Burst    int    `hcl:"burst,optional"`
+	Requests int       `hcl:"requests"`
+	Window   string    `hcl:"window"`
+	Per      string    `hcl:"per,optional"`
+	Burst    int       `hcl:"burst,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclHeaders struct {
@@ -166,6 +175,7 @@ type hclHeaders struct {
 	RequestRemove  []string          `hcl:"request_remove,optional"`
 	ResponseSet    map[string]string `hcl:"response_set,optional"`
 	ResponseRemove []string          `hcl:"response_remove,optional"`
+	DefRange       hcl.Range         `hcl:",def_range"`
 }
 
 type hclHealthCheck struct {
@@ -273,7 +283,7 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 		return nil, diags
 	}
 
-	spec := &Spec{}
+	spec := &Spec{BaseDomain: opts.BaseDomain}
 	if root.SpecVersion != nil {
 		spec.SpecVersion = *root.SpecVersion
 	}
@@ -456,23 +466,28 @@ func convertTask(t *hclTask) *Task {
 }
 
 func convertExpose(e *hclExpose) *Expose {
-	out := &Expose{Domains: e.Domains}
+	out := &Expose{Domains: e.Domains, DefRange: e.DefRange}
 	if e.TLS != nil {
 		out.TLS = &TLS{LetsEncrypt: e.TLS.LetsEncrypt}
 	}
 	if e.IPRestriction != nil {
-		out.IPRestriction = &IPRestriction{Allow: e.IPRestriction.Allow, Deny: e.IPRestriction.Deny}
+		out.IPRestriction = &IPRestriction{
+			Allow: e.IPRestriction.Allow, Deny: e.IPRestriction.Deny,
+			DefRange: e.IPRestriction.DefRange,
+		}
 	}
 	if e.RateLimit != nil {
 		out.RateLimit = &RateLimit{
 			Requests: e.RateLimit.Requests, Window: e.RateLimit.Window,
 			Per: e.RateLimit.Per, Burst: e.RateLimit.Burst,
+			DefRange: e.RateLimit.DefRange,
 		}
 	}
 	if e.Headers != nil {
 		out.Headers = &Headers{
 			RequestSet: e.Headers.RequestSet, RequestRemove: e.Headers.RequestRemove,
 			ResponseSet: e.Headers.ResponseSet, ResponseRemove: e.Headers.ResponseRemove,
+			DefRange: e.Headers.DefRange,
 		}
 	}
 	return out

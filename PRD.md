@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.14 |
+| **Status** | Draft v1.15 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
 | **Last updated** | 2026-08-01 |
 | **Document type** | Product Requirements Document (PRD) |
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.15 amendments** — **specifies how `kanea-edge` reads state**, which §5.2.6 has described since v1.1 as "reads its route table + certs from the Store" without saying by what mechanism. It cannot read the Store: bbolt takes a whole-file lock, so a second process opening `state.db` — even read-only — blocks until `kanead` exits (measured: a read-only open times out rather than returning stale data). The Store remains the source of truth and `kanead` remains its only opener; it **projects** the routes, certificates and ACME challenge responses the edge needs into a node-local **edge snapshot** (`/run/kanea-edge/routes.json`, written temp-then-`rename(2)`, the same discipline as the Cilium file interfaces in §5.2.5), which the edge polls and serves from. It is deliberately **not** under `data_dir`: that directory is 0750 and holds the database, so an unprivileged edge user cannot even traverse into it, and widening it to hand over one file would be the wrong trade — this is derived state rebuilt from the Store on every start (constraint #9), which is what `/run` is for. The projection direction is what makes the §5.2.6 promise real: the edge holds no Store handle, needs no write access, and keeps serving the last snapshot for as long as `kanead` is absent — a control-plane outage cannot drop public traffic, and it also means the edge process needs nothing but read access to one file, which is what lets it run as its own unprivileged user. Also fixes what v1 host-based routing does when a service declares several ports (§7.2) and adds **R16**: the `expose` block is validated at `plan`, so the fail-closed promise in §7.2.1 has a rule to point at.
 
 > **v1.14 amendments** — adds the **`host` storage driver** (§8, §15.1, §6.2 **R15**): a volume backed by a directory the operator already has, rather than one Kanea derives under `data_dir/volumes/`. It is deliberately a **separate driver rather than an option on `local`**, so it is visible in a spec review, and it is **inert unless the operator opts in**: the permitted parent directories are listed in the *server* config (`storage.allowed_host_paths`), never in a job spec, and the default is an empty list — no host path mounts at all. That split is the entire security argument. An unrestricted host mount is `privileged` by another name (`/`, `/etc`, the containerd socket) and would make the §14 A05 hardening defaults irrelevant, so the boundary is set by the person who owns the node and merely *referenced* by the person who writes the spec. Paths are resolved through symlinks before the allowlist is checked, because `/srv/data/link → /etc` would otherwise walk straight out of it, and a host directory must already exist — creating one on demand is how a typo becomes a silently empty volume.
 
@@ -231,7 +233,10 @@ Job spec (HCL) ──parse/validate──▶ Desired state (Store)
 
 #### 5.2.6 Edge ingress proxy (`kanea-edge` — separate process)
 - Lightweight L7 reverse proxy (Go `httputil.ReverseProxy` core) — standalone Cilium has no Gateway API without k8s, so Kanea owns north-south HTTP(S).
-- **Runs as its own supervised process** (same binary, `kanea edge`; separate systemd unit, `Restart=always`): a `kanead` crash/restart/upgrade never interrupts public traffic, and an edge OOM never takes down the reconciler. Reads its route table + certs from the Store. The unit runs as a dedicated `kanea-edge` user with only `AmbientCapabilities=CAP_NET_BIND_SERVICE`, `NoNewPrivileges=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`, and sits in `kanea.slice` (§5.2.11).
+- **Runs as its own supervised process** (same binary, `kanea edge`; separate systemd unit, `Restart=always`): a `kanead` crash/restart/upgrade never interrupts public traffic, and an edge OOM never takes down the reconciler. The unit runs as a dedicated `kanea-edge` user with only `AmbientCapabilities=CAP_NET_BIND_SERVICE`, `NoNewPrivileges=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`, and sits in `kanea.slice` (§5.2.11).
+- **How it gets its state — the edge snapshot.** The Store is the source of truth, but the edge does not open it: bbolt locks the whole file, so a second process opening `state.db` even read-only blocks until `kanead` exits rather than returning stale data. Instead `kanead` **projects** what the edge needs — routes (host → service frontend), certificates, and pending ACME challenge responses — into `/run/kanea-edge/routes.json`, written temp-then-`rename(2)` so a partially written file is never observable (§5.2.5's discipline). The edge polls that file and reloads on change; the projection carries the Store index it was built from, so a reload can be logged and a stale snapshot recognised.
+  - **One direction only.** The edge never writes state. That is what lets it run as an unprivileged user with no Store access, and it means a compromised edge — the process that terminates untrusted public traffic — cannot mutate the platform (§14, A01).
+  - **A missing or stale snapshot is not an outage.** The edge keeps serving the last table it loaded for as long as `kanead` is absent, and starts with an empty table (every request 404) rather than refusing to start if the file does not exist yet. "The control plane is down" must never become "the site is down" (§21).
 - Routes `Host: service.project.<base_domain>` → service's Cilium frontend IP; WebSocket and gRPC supported.
 - Terminates TLS with Let's Encrypt certs (§7); redirects HTTP→HTTPS; security headers injected (§14, A05).
 - **Hardening (required, not optional):** `ReadHeaderTimeout`/`ReadTimeout`/`IdleTimeout`/`MaxHeaderBytes` (slowloris), per-route upstream timeouts, bounded connection pools, flush intervals for streaming, client-supplied `X-Forwarded-*` stripped, unknown `Host` → 404 (also DNS-rebinding defense for the co-hosted API), `GOMEMLIMIT` set.
@@ -374,7 +379,10 @@ service "web" {
     }
 
     headers {
-      request_set     = { X-Forwarded-Proto = "https" }
+      # X-Forwarded-* is the edge's to set, and R16 rejects a spec that
+      # touches it — those headers are the client identity everything else
+      # is keyed on.
+      request_set     = { X-Kanea-Tenant = "shop" }
       request_remove  = ["X-Internal-Debug"]
       response_set    = { Strict-Transport-Security = "max-age=63072000; includeSubDomains" }
       response_remove = ["Server", "X-Powered-By"]
@@ -499,6 +507,9 @@ service "assets" {
     mount_path = "/usr/share/nginx/html/media"
     read_only  = true
   }
+  network {
+    port "http" { container = 80 }            # an exposed service must say where (R16)
+  }
   # auto domain: assets.shop.<base_domain>
   expose {
     tls { letsencrypt = true }
@@ -526,6 +537,8 @@ service "assets" {
 
 - **R15** — **`host` volumes are operator-gated.** A `storage` block of type `host` names an absolute `path`, validated at parse time as absolute, clean and free of `..`. Whether it may actually be mounted is **not** decided by the job spec: `kanead` refuses any path that does not sit under a prefix in `storage.allowed_host_paths` (§15.1), whose default is **empty**, so the driver does nothing until an operator enables it. The check is applied to the path *after* symlink resolution — `/srv/data/link → /etc` is otherwise a trivial escape — and the directory must already exist and be a directory, because creating it on demand turns a typo into a silently empty volume. An alloc whose host volume fails this check does not start (§8's "mount failures fail the alloc loudly"). Host volumes are shared by every alloc of a service: the directory is the operator's, not Kanea's, and Kanea never deletes it.
 
+- **R16** — **`expose` is validated at `plan`, fail-closed** (§7.2, §7.2.1). A service may only be exposed if it declares a port to expose (`expose` without `network { port … }` is an error, not a route to nowhere), and the upstream port must be unambiguous — named `http`, or the sole declared port. Every `domains` entry is validated as a hostname (labels, length, no scheme, no path, no port, no trailing dot) and **no two services may claim the same domain**, counting the auto-FQDNs that omitted `domains` blocks generate. Middleware is checked here too, because an ingress control that fails open is worse than one that is absent: `ip_restriction` entries must parse as CIDRs, `rate_limit` needs a positive `requests` and a valid `window` with `per` one of `ip` / `header:<name>` / `service`, and `headers` may not set or remove the hop-by-hop headers or the `X-Forwarded-*` set the edge owns (§5.2.6) — a spec that could rewrite `X-Forwarded-For` would be forging the identity every other control is keyed on.
+
 ---
 
 ## 7. Networking Model
@@ -550,6 +563,8 @@ service "assets" {
 - Only the edge proxy listens publicly (80/443).
 - **Automatic FQDNs:** every service with an `expose` block gets `service.project.<base_domain>` (e.g., `web.shop.apps.example.com`) — `base_domain` set in server config. Custom `domains` override/extend.
 - Operator sets one **wildcard DNS record** (`*.apps.example.com → node IP`) once; all services routable instantly.
+- **Upstream selection:** a route points at the service's Cilium frontend (§7.1), not at an alloc — the eBPF LB does the balancing, so the edge holds one upstream address per service and never a backend list. The port is the one named **`http`**, or the service's only port if it declares exactly one. A service that exposes several ports without an `http` among them is a **`plan` error** (R16): v1 routes by Host alone, so there is no request attribute left to choose a port with, and picking one silently is how traffic ends up at the metrics listener.
+- **A domain belongs to one service.** Two services claiming the same host — including two that default to the same auto-FQDN — is a `plan` error, not a last-writer-wins race in the edge (R16).
 - Path prefixes and multiple ports per service: v1.1 (v1 = host-based routing only).
 
 ### 7.2.1 Edge middleware (ingress controls)

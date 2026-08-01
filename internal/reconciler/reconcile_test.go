@@ -338,7 +338,10 @@ type harness struct {
 	now     time.Time
 }
 
-func newHarness(t *testing.T) *harness {
+// newHarness builds a reconciler over fakes. The variadic hooks let a test
+// adjust the config it is actually about (edge routing, base domain) without
+// every other test having to know those fields exist.
+func newHarness(t *testing.T, with ...func(*reconciler.Config)) *harness {
 	t.Helper()
 
 	s, err := store.Open(store.Options{Path: filepath.Join(t.TempDir(), "state.db")})
@@ -348,14 +351,18 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { _ = s.Close() })
 
 	h := &harness{store: s, driver: newFakeDriver(), network: newFakeNetwork(), now: testNow}
-	r, err := reconciler.New(reconciler.Config{
+	cfg := reconciler.Config{
 		Store:     s,
 		Driver:    h.driver,
 		Network:   h.network,
 		Now:       func() time.Time { return h.now },
 		LogDir:    t.TempDir(),
 		VolumeDir: t.TempDir(),
-	})
+	}
+	for _, apply := range with {
+		apply(&cfg)
+	}
+	r, err := reconciler.New(cfg)
 	if err != nil {
 		t.Fatalf("new reconciler: %v", err)
 	}

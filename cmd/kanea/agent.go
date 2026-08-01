@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/api"
+	"github.com/kanea-dev/kanea/internal/edge"
 	"github.com/kanea-dev/kanea/internal/logging"
 	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/reconciler"
@@ -35,6 +36,8 @@ const (
 	resolvSubdir = "resolv"
 	// credentialSubdir holds transient mount credential files.
 	credentialSubdir = "credentials"
+	// edgeRoutesOff disables publishing the edge route table.
+	edgeRoutesOff = "off"
 )
 
 // runAgent is kanead: the control plane. It owns the state file — bbolt is
@@ -61,6 +64,10 @@ func runAgent(args []string) error {
 		"internal DNS listen address (default: the cilium_host address; \"off\" disables)")
 	dnsUpstream := fs.String("dns-upstream", "",
 		"comma-separated upstream resolvers for external names (default: the host's)")
+	baseDomain := fs.String("base-domain", "",
+		"domain exposed services get an FQDN under, e.g. apps.example.com (PRD §7.2)")
+	edgeRoutes := fs.String("edge-routes", edge.DefaultSnapshotPath,
+		"where to publish the route table for kanea-edge (\"off\" disables)")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -153,6 +160,19 @@ func runAgent(args []string) error {
 	// immediately rather than waiting out the interval.
 	notify := make(chan struct{}, 1)
 
+	// The route table is published for a process that may not be running yet,
+	// or ever. That is deliberate: kanead does not supervise the edge and does
+	// not depend on it (PRD §5.2.6).
+	routesPath := *edgeRoutes
+	if routesPath == edgeRoutesOff {
+		routesPath = ""
+		logger.Info("edge route publishing is disabled")
+	}
+	if routesPath != "" && *baseDomain == "" {
+		logger.Warn("no --base-domain: exposed services get no automatic FQDN",
+			"detail", "only services with an explicit expose.domains will be routable")
+	}
+
 	rec, err := reconciler.New(reconciler.Config{
 		Store:         st,
 		Driver:        driver,
@@ -165,6 +185,8 @@ func runAgent(args []string) error {
 		Nameserver:    nameserverOf(dns),
 		Prober:        reconciler.NewProber(driver),
 		Mounts:        mounts,
+		EdgeSnapshot:  routesPath,
+		BaseDomain:    *baseDomain,
 	})
 	if err != nil {
 		return err

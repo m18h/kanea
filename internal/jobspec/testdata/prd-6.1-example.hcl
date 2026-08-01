@@ -93,7 +93,10 @@ service "web" {
     }
 
     headers {
-      request_set     = { X-Forwarded-Proto = "https" }
+      # X-Forwarded-* is the edge's to set, and R16 rejects a spec that
+      # touches it — those headers are the client identity everything else
+      # is keyed on.
+      request_set     = { X-Kanea-Tenant = "shop" }
       request_remove  = ["X-Internal-Debug"]
       response_set    = { Strict-Transport-Security = "max-age=63072000; includeSubDomains" }
       response_remove = ["Server", "X-Powered-By"]
@@ -217,6 +220,9 @@ service "assets" {
     storage    = "s3-media"                   # S3 bucket mounted via FUSE
     mount_path = "/usr/share/nginx/html/media"
     read_only  = true
+  }
+  network {
+    port "http" { container = 80 }
   }
   # auto domain: assets.shop.<base_domain>
   expose {

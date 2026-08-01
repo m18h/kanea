@@ -47,6 +47,8 @@ var implemented = map[string]bool{
 	// M1 runtime core:
 	"agent": true, "plan": true, "run": true, "stop": true, "ps": true, "logs": true,
 	"status": true,
+	// M3 ingress:
+	"edge": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {

@@ -75,6 +75,9 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				})
 			}
 		}
+		if expose := convertExpose(svc); expose != nil {
+			desired.Expose = expose
+		}
 
 		for _, v := range svc.Volumes {
 			// Validation guarantees the reference resolves (§8), so a nil here
@@ -126,6 +129,30 @@ func parseBackoff(s string) ([]time.Duration, error) {
 // reconciler's form, resolving the named port to a number.
 //
 // Only the first is used. The spec allows several blocks, but "healthy" is one
+// convertExpose carries the spec's ingress declaration into desired state.
+//
+// The domains are left exactly as declared, including empty. Generating the
+// auto-FQDN needs the server's base_domain, which lives in node configuration —
+// so it is the agent's to fill in, not the CLI's, and baking a name in here
+// would make the same spec mean different things depending on which machine
+// parsed it.
+func convertExpose(svc *jobspec.Service) *reconciler.Expose {
+	if svc.Expose == nil {
+		return nil
+	}
+	port := svc.EdgePort()
+	if port == nil {
+		// R16 rejects this at validation, so reaching it means an unvalidated
+		// spec got here. A route with no upstream port is worse than no route.
+		return nil
+	}
+	out := &reconciler.Expose{Domains: svc.Expose.Domains, Port: port.Container}
+	if svc.Expose.TLS != nil {
+		out.LetsEncrypt = svc.Expose.TLS.LetsEncrypt
+	}
+	return out
+}
+
 // bit and combining checks needs a rule (all? any?) the PRD does not state —
 // inventing one here would be a stealth spec decision.
 func convertHealthCheck(svc *jobspec.Service) *reconciler.HealthCheck {

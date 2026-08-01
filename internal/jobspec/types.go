@@ -29,6 +29,10 @@ type Spec struct {
 	Services    []*Service
 	// Storages are the named storage resources services mount (PRD §8).
 	Storages []*Storage
+	// BaseDomain is the server's `base_domain`, carried from Options so that
+	// validation can generate the auto-FQDNs of §7.2 and check them for
+	// collisions (R16). Empty when the spec was parsed without server config.
+	BaseDomain string
 }
 
 // Storage is a named storage resource (PRD §8). Services reference it by name
@@ -281,6 +285,8 @@ type Expose struct {
 	IPRestriction *IPRestriction
 	RateLimit     *RateLimit
 	Headers       *Headers
+	// DefRange is where this block was declared, for diagnostics.
+	DefRange hcl.Range
 }
 
 // TLS controls certificate provisioning for the exposed domains.
@@ -290,8 +296,9 @@ type TLS struct {
 
 // IPRestriction is the first middleware in the chain; deny wins over allow.
 type IPRestriction struct {
-	Allow []string
-	Deny  []string
+	Allow    []string
+	Deny     []string
+	DefRange hcl.Range
 }
 
 // RateLimit is a token bucket applied per the Per key.
@@ -300,6 +307,7 @@ type RateLimit struct {
 	Window   string
 	Per      string
 	Burst    int
+	DefRange hcl.Range
 }
 
 // Headers rewrites request and response headers at the edge.
@@ -308,6 +316,7 @@ type Headers struct {
 	RequestRemove  []string
 	ResponseSet    map[string]string
 	ResponseRemove []string
+	DefRange       hcl.Range
 }
 
 // HealthCheck gates readiness and drives restarts (R7).

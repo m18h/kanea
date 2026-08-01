@@ -32,7 +32,7 @@ type command struct {
 var commands = []command{
 	{"init", "interactive first-install: config, auth, deps/kernel/NTP checks, key ceremony", todo},
 	{"agent", "run the control-plane daemon (kanead)", runAgent},
-	{"edge", "run the edge ingress proxy (kanea-edge, separate process — PRD §5.2.6)", todo},
+	{"edge", "run the edge ingress proxy (kanea-edge, separate process — PRD §5.2.6)", runEdge},
 	{"doctor", "verify node health: deps, versions, kvstore, disk, clock", todo},
 	{"plan", "dry-run diff of a job spec", runPlan},
 	{"run", "apply a job spec (or --image for a bare image)", runRun},

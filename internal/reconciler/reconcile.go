@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,9 @@ type Store interface {
 	Get(ctx context.Context, kind store.Kind, key string) (store.Record, error)
 	List(ctx context.Context, kind store.Kind, opts store.ListOptions) (store.Page, error)
 	Apply(ctx context.Context, muts ...store.Mutation) (uint64, error)
+	// Index stamps the edge snapshot with the state it was projected from
+	// (PRD §5.2.6), so a reload is loggable and a stale file recognisable.
+	Index(ctx context.Context) (uint64, error)
 }
 
 // Driver is the slice of the runtime driver this package needs.
@@ -123,6 +127,14 @@ type Config struct {
 	Prober Prober
 	// Mounts establishes non-local volumes. Nil means only local volumes work.
 	Mounts Mounter
+	// EdgeSnapshot is where the route table is published for kanea-edge
+	// (PRD §5.2.6). Empty disables publishing, which is what a node with no
+	// ingress wants.
+	EdgeSnapshot string
+	// BaseDomain generates the auto-FQDN of an expose block that declares no
+	// domains (PRD §7.2). It is node configuration, not spec content: one
+	// wildcard DNS record for it makes every service routable.
+	BaseDomain string
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -148,6 +160,8 @@ type Reconciler struct {
 	volumeDir     string
 	resolvConfDir string
 	nameserver    string
+	edgeSnapshot  string
+	baseDomain    string
 }
 
 // New builds a Reconciler.
@@ -186,6 +200,8 @@ func New(cfg Config) (*Reconciler, error) {
 		volumeDir:     cfg.VolumeDir,
 		resolvConfDir: cfg.ResolvConfDir,
 		nameserver:    cfg.Nameserver,
+		edgeSnapshot:  cfg.EdgeSnapshot,
+		baseDomain:    strings.Trim(cfg.BaseDomain, "."),
 	}, nil
 }
 
@@ -329,13 +345,17 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	// somewhere to send traffic even for one settle window.
 	result.Reaped = r.reapNetwork(ctx, world, attachments)
 	r.pruneMounts(ctx, world)
-	if err := r.syncServices(ctx, world, attachments); err != nil {
+	vips, err := r.syncServices(ctx, world, attachments)
+	if err != nil {
 		// Unlike policy, this is not fail-closed: stale load balancing points at
 		// allocs that were healthy a few seconds ago, which is a degraded
 		// service rather than an unprotected one. Failing the pass here would
 		// stop crash recovery over a routing update.
 		r.log.Error("sync service load balancing", "error", err)
 	}
+	// Routes last: an edge route points at a frontend, so publishing one before
+	// the frontend is programmed would advertise a host that 502s.
+	r.syncEdgeRoutes(ctx, world, vips)
 	return result, nil
 }
 
@@ -356,14 +376,17 @@ func (r *Reconciler) attachments(ctx context.Context) map[string]network.Attachm
 	return found
 }
 
-// syncServices publishes each service's frontend and its live backends.
-func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[string]network.Attachment) error {
+// syncServices publishes each service's frontend and its live backends, and
+// returns the frontend addresses keyed by "project/service" — the edge route
+// table needs the same mapping, and allocating it twice would be two sources of
+// truth for one fact.
+func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[string]network.Attachment) (map[string]string, error) {
 	lb, ok := r.network.(LoadBalancer)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if attachments == nil {
-		return nil // no view of the datapath; leave the last known good state alone
+		return nil, nil // no view of the datapath; leave the last known good state alone
 	}
 
 	// Only services that will actually get a frontend hold an address. A worker
@@ -379,7 +402,7 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 	}
 	vips, err := r.vips.Sync(ctx, refs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	services := make([]network.Service, 0, len(w.Desired))
@@ -401,7 +424,13 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 			Backends: backendsFor(w, d, attachments),
 		})
 	}
-	return lb.SyncServices(ctx, services)
+	if err := lb.SyncServices(ctx, services); err != nil {
+		// The addresses are still returned: they are durable assignments read
+		// from the Store, and a failed datapath write does not make them wrong.
+		// Withholding them would drop every edge route over one transient error.
+		return vips, err
+	}
+	return vips, nil
 }
 
 // backendsFor picks the allocs of one service that should receive traffic.
