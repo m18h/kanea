@@ -37,6 +37,10 @@ func runEdge(args []string) error {
 		"bound on reading a request body (0 disables)")
 	upstreamTimeout := fs.Duration("upstream-timeout", edge.DefaultResponseHeaderTimeout,
 		"bound on an upstream starting to answer (does not bound the body)")
+	securityHeaders := fs.Bool("security-headers", true,
+		"add the default security response headers (PRD §14 A05)")
+	limiterCap := fs.Int("rate-limit-buckets", edge.DefaultLimiterCapacity,
+		"maximum tracked rate-limit buckets before least-recently-used eviction")
 	memLimit := fs.String("memory-limit", "", "GOMEMLIMIT for this process, e.g. 128MiB")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
@@ -84,6 +88,8 @@ func runEdge(args []string) error {
 		Proxy: edge.ProxyConfig{
 			BodyTimeout:           *bodyTimeout,
 			ResponseHeaderTimeout: *upstreamTimeout,
+			SecurityHeaders:       *securityHeaders,
+			LimiterCapacity:       *limiterCap,
 		},
 	})
 	if err != nil {

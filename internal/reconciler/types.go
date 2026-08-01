@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/edge"
 	"github.com/kanea-dev/kanea/internal/runtime"
 	"github.com/kanea-dev/kanea/internal/storage"
 )
@@ -83,6 +84,13 @@ type Expose struct {
 	Port int
 	// LetsEncrypt requests a certificate for the domains (PRD §7.3).
 	LetsEncrypt bool
+	// IPRestriction, RateLimit and Headers are the edge middleware chain
+	// (PRD §7.2.1), carried verbatim from the spec. They are validated at plan
+	// time (R16) and again when the edge compiles them, so nothing here needs
+	// to be interpreted on the way through.
+	IPRestriction *edge.IPRestriction
+	RateLimit     *edge.RateLimit
+	Headers       *edge.Headers
 }
 
 // Port is a named container port. The service frontend listens on the same

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -23,12 +25,20 @@ type Proxy struct {
 	rp    *httputil.ReverseProxy
 	log   *slog.Logger
 
+	// limits outlives the table on purpose. Buckets keyed by route name survive
+	// a reload, so deploying a service does not hand every client that was
+	// being throttled a fresh allowance — which would make the rate limit
+	// trivially evadable by anyone who can trigger a redeploy.
+	limits *limiter
+
 	// bodyTimeout bounds how long a request body may take to arrive. Zero
 	// disables it.
 	bodyTimeout time.Duration
 	// tlsTerminated reports whether the listener this proxy serves is HTTPS,
 	// which is what X-Forwarded-Proto has to say.
 	tlsTerminated bool
+	// securityHeaders installs the §14 A05 response defaults.
+	securityHeaders bool
 }
 
 // ProxyConfig configures the request path.
@@ -48,6 +58,13 @@ type ProxyConfig struct {
 	MaxIdleConnsPerHost int
 	// TLSTerminated marks this proxy as serving the HTTPS listener.
 	TLSTerminated bool
+	// SecurityHeaders installs the §14 A05 response defaults on every proxied
+	// response (server config `edge.default_security_headers`, §15.1).
+	SecurityHeaders bool
+	// LimiterCapacity bounds the rate-limit bucket set. Zero means the default.
+	LimiterCapacity int
+	// Now is injectable so rate-limit tests do not sleep.
+	Now func() time.Time
 }
 
 // Proxy defaults. They are all bounds rather than tuning: an unbounded value
@@ -87,9 +104,11 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 	}
 
 	p := &Proxy{
-		log:           cfg.Logger,
-		bodyTimeout:   cfg.BodyTimeout,
-		tlsTerminated: cfg.TLSTerminated,
+		log:             cfg.Logger,
+		limits:          newLimiter(cfg.LimiterCapacity, cfg.Now),
+		bodyTimeout:     cfg.BodyTimeout,
+		tlsTerminated:   cfg.TLSTerminated,
+		securityHeaders: cfg.SecurityHeaders,
 	}
 	p.table.Store(EmptyTable())
 
@@ -110,10 +129,11 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 	}
 
 	p.rp = &httputil.ReverseProxy{
-		Rewrite:       p.rewrite,
-		Transport:     transport,
-		FlushInterval: cfg.FlushInterval,
-		ErrorHandler:  p.upstreamError,
+		Rewrite:        p.rewrite,
+		Transport:      transport,
+		FlushInterval:  cfg.FlushInterval,
+		ModifyResponse: p.modifyResponse,
+		ErrorHandler:   p.upstreamError,
 		// ReverseProxy logs to this on its own errors; without it they go to
 		// the standard logger, which is depguard-banned and unstructured.
 		ErrorLog: slog.NewLogLogger(cfg.Logger.Handler(), slog.LevelDebug),
@@ -134,8 +154,8 @@ func (p *Proxy) Table() *Table { return p.table.Load() }
 // away every time a service is deployed.
 type routeKey struct{}
 
-func routeFrom(ctx context.Context) (Route, bool) {
-	r, ok := ctx.Value(routeKey{}).(Route)
+func routeFrom(ctx context.Context) (compiled, bool) {
+	r, ok := ctx.Value(routeKey{}).(compiled)
 	return r, ok
 }
 
@@ -154,7 +174,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	route, ok := p.table.Load().Lookup(host)
+	// The chain, in the order PRD §7.2.1 specifies: Host match → IP restriction
+	// → rate limit → header transforms → upstream. The order is not arbitrary —
+	// rate limiting a request that IP restriction would have refused wastes a
+	// token on a client that is not allowed to spend one.
+	route, ok := p.table.Load().lookup(host)
 	if !ok {
 		// Unknown Host is a 404 and not a redirect or a default backend. It is
 		// also the DNS-rebinding defense for anything else on this address: an
@@ -165,8 +189,68 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	addr := peerAddr(r)
+	if !route.allowsAddress(addr) {
+		p.log.Debug("address refused by ip_restriction",
+			"service", route.Name(), "host", host, "remote", addr.String())
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	if !p.withinRateLimit(w, r, route, addr) {
+		return
+	}
+
 	p.applyDeadline(w, r)
 	p.rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), routeKey{}, route)))
+}
+
+// withinRateLimit spends a token, answering 429 if there is none. It reports
+// whether the request may continue.
+func (p *Proxy) withinRateLimit(w http.ResponseWriter, r *http.Request, route compiled, addr netip.Addr) bool {
+	if route.limit == nil {
+		return true
+	}
+	key := route.rateKey(r, addr)
+	if key == "" {
+		// Nothing to key the bucket by. Limiting every such request through one
+		// shared bucket would let one client throttle everyone, so they pass.
+		return true
+	}
+
+	ok, retry := p.limits.allow(route.Name()+"\x00"+key, *route.limit)
+	if ok {
+		return true
+	}
+
+	// Retry-After is required for a 429 to be actionable: without it a client
+	// can only guess, and guessing means retrying immediately.
+	seconds := int(math.Ceil(retry.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	p.log.Debug("rate limited",
+		"service", route.Name(), "host", r.Host, "remote", addr.String(), "retry_after", seconds)
+	http.Error(w, "too many requests", http.StatusTooManyRequests)
+	return false
+}
+
+// peerAddr is the connection's source address, or the zero Addr if it cannot be
+// read. It is never taken from a header: the point of the edge owning
+// X-Forwarded-For is that the header is a claim, not evidence.
+func peerAddr(r *http.Request) netip.Addr {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}
+	}
+	// A v4-mapped v6 address must compare against v4 prefixes, or a rule
+	// written as 10.0.0.0/8 silently matches nothing on a dual-stack listener.
+	return addr.Unmap()
 }
 
 // applyDeadline bounds the read of a request body.
@@ -228,6 +312,11 @@ func (p *Proxy) rewrite(pr *httputil.ProxyRequest) {
 		pr.Out.Header.Set("X-Forwarded-Port", strconv.Itoa(p.defaultPort()))
 	}
 
+	// The spec's own transforms come last, after everything the edge owns is
+	// settled, so a service can add or drop whatever it likes without being
+	// able to reach the headers above.
+	route.applyRequestHeaders(pr.Out.Header)
+
 	pr.SetURL(&url.URL{Scheme: "http", Host: route.Address()})
 	// SetURL rewrites the outbound Host to the upstream address. Put the
 	// client's back: a service behind the frontend may serve several names, and
@@ -235,6 +324,52 @@ func (p *Proxy) rewrite(pr *httputil.ProxyRequest) {
 	// links to a private address.
 	pr.Out.Host = pr.In.Host
 }
+
+// modifyResponse applies the response half of the header middleware.
+func (p *Proxy) modifyResponse(resp *http.Response) error {
+	route, ok := routeFrom(resp.Request.Context())
+	if !ok {
+		return nil
+	}
+	// Defaults first so a service's own headers override them: the operator
+	// sets a floor, the service decides what it actually needs.
+	p.applySecurityHeaders(resp.Header)
+	route.applyResponseHeaders(resp.Header)
+	return nil
+}
+
+// applySecurityHeaders adds the §14 A05 defaults the operator asked for,
+// without overwriting anything the upstream already set deliberately.
+func (p *Proxy) applySecurityHeaders(h http.Header) {
+	if !p.securityHeaders {
+		return
+	}
+	for name, value := range securityHeaderDefaults {
+		if h.Get(name) == "" {
+			h.Set(name, value)
+		}
+	}
+	// HSTS only over TLS. Sending it on a plaintext response is meaningless —
+	// a client that can be intercepted can have it stripped — and promising it
+	// before certificates exist would lock users out of an HTTP-only node.
+	if p.tlsTerminated && h.Get("Strict-Transport-Security") == "" {
+		h.Set("Strict-Transport-Security", defaultHSTS)
+	}
+}
+
+// securityHeaderDefaults are the headers `edge.default_security_headers`
+// installs (PRD §15.1, §14 A05). Deliberately short: each one is safe for an
+// arbitrary application to receive. Anything with a real chance of breaking a
+// working service belongs in the service's own `headers` block.
+var securityHeaderDefaults = map[string]string{
+	"X-Content-Type-Options": "nosniff",
+	"X-Frame-Options":        "DENY",
+	"Referrer-Policy":        "strict-origin-when-cross-origin",
+}
+
+// defaultHSTS is two years, without preload: preload is a one-way door for the
+// whole domain and is not a default anyone should get by accident.
+const defaultHSTS = "max-age=63072000; includeSubDomains"
 
 func (p *Proxy) defaultPort() int {
 	if p.tlsTerminated {

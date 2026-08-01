@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -116,11 +117,14 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 		}
 
 		routes = append(routes, edge.Route{
-			Project:  d.Project,
-			Service:  d.Service,
-			Domains:  kept,
-			Upstream: vip,
-			Port:     d.Expose.Port,
+			Project:       d.Project,
+			Service:       d.Service,
+			Domains:       kept,
+			Upstream:      vip,
+			Port:          d.Expose.Port,
+			IPRestriction: d.Expose.IPRestriction,
+			RateLimit:     d.Expose.RateLimit,
+			Headers:       d.Expose.Headers,
 		})
 	}
 	return routes
@@ -165,6 +169,9 @@ func routesEqual(a, b []edge.Route) bool {
 	return slices.EqualFunc(a, b, func(x, y edge.Route) bool {
 		return x.Project == y.Project && x.Service == y.Service &&
 			x.Upstream == y.Upstream && x.Port == y.Port &&
-			slices.Equal(x.Domains, y.Domains)
+			slices.Equal(x.Domains, y.Domains) &&
+			reflect.DeepEqual(x.IPRestriction, y.IPRestriction) &&
+			reflect.DeepEqual(x.RateLimit, y.RateLimit) &&
+			reflect.DeepEqual(x.Headers, y.Headers)
 	})
 }

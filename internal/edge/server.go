@@ -186,6 +186,7 @@ func (s *Server) Run(ctx context.Context) error {
 			s.log.Error("route watcher stopped", "error", err)
 		}
 	}()
+	go s.sweepLimiters(ctx)
 
 	select {
 	case err := <-errs:
@@ -211,6 +212,31 @@ func (s *Server) Run(ctx context.Context) error {
 	s.log.Info("kanea-edge stopped")
 	return err
 }
+
+// sweepLimiters drops rate-limit buckets that have refilled.
+//
+// The bucket set is capped, so this is not what prevents exhaustion — eviction
+// is. It is what keeps a node that saw a traffic spike from holding the
+// high-water mark of buckets for the rest of its life.
+func (s *Server) sweepLimiters(ctx context.Context) {
+	ticker := time.NewTicker(limiterSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if dropped := s.proxy.limits.sweep(); dropped > 0 {
+				s.log.Debug("swept idle rate limit buckets",
+					"dropped", dropped, "remaining", s.proxy.limits.len())
+			}
+		}
+	}
+}
+
+// limiterSweepInterval is deliberately unhurried: the cap is the safety
+// property, and sweeping is only housekeeping.
+const limiterSweepInterval = time.Minute
 
 func serveHTTP(srv *http.Server, ln net.Listener) error {
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

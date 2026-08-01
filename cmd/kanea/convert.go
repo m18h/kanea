@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/edge"
 	"github.com/kanea-dev/kanea/internal/jobspec"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
@@ -125,10 +126,6 @@ func parseBackoff(s string) ([]time.Duration, error) {
 	return out, nil
 }
 
-// convertHealthCheck turns the first declared health check into the
-// reconciler's form, resolving the named port to a number.
-//
-// Only the first is used. The spec allows several blocks, but "healthy" is one
 // convertExpose carries the spec's ingress declaration into desired state.
 //
 // The domains are left exactly as declared, including empty. Generating the
@@ -136,6 +133,9 @@ func parseBackoff(s string) ([]time.Duration, error) {
 // so it is the agent's to fill in, not the CLI's, and baking a name in here
 // would make the same spec mean different things depending on which machine
 // parsed it.
+//
+// The middleware travels verbatim. It is validated at plan time (R16) and again
+// when the edge compiles it, so there is nothing to interpret in between.
 func convertExpose(svc *jobspec.Service) *reconciler.Expose {
 	if svc.Expose == nil {
 		return nil
@@ -150,9 +150,27 @@ func convertExpose(svc *jobspec.Service) *reconciler.Expose {
 	if svc.Expose.TLS != nil {
 		out.LetsEncrypt = svc.Expose.TLS.LetsEncrypt
 	}
+	if r := svc.Expose.IPRestriction; r != nil {
+		out.IPRestriction = &edge.IPRestriction{Allow: r.Allow, Deny: r.Deny}
+	}
+	if rl := svc.Expose.RateLimit; rl != nil {
+		out.RateLimit = &edge.RateLimit{
+			Requests: rl.Requests, Window: rl.Window, Per: rl.Per, Burst: rl.Burst,
+		}
+	}
+	if h := svc.Expose.Headers; h != nil {
+		out.Headers = &edge.Headers{
+			RequestSet: h.RequestSet, RequestRemove: h.RequestRemove,
+			ResponseSet: h.ResponseSet, ResponseRemove: h.ResponseRemove,
+		}
+	}
 	return out
 }
 
+// convertHealthCheck turns the first declared health check into the
+// reconciler's form, resolving the named port to a number.
+//
+// Only the first is used. The spec allows several blocks, but "healthy" is one
 // bit and combining checks needs a rule (all? any?) the PRD does not state —
 // inventing one here would be a stealth spec decision.
 func convertHealthCheck(svc *jobspec.Service) *reconciler.HealthCheck {

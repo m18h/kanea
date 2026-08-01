@@ -63,6 +63,42 @@ type Route struct {
 	// Port is the frontend port, chosen by the R16 rule: the port named "http",
 	// or the only one declared.
 	Port int `json:"port"`
+	// IPRestriction, RateLimit and Headers are the per-service ingress chain
+	// (§7.2.1), applied in that order. Nil means the middleware is not
+	// configured for this service — which is not the same as configured to
+	// allow everything, and the distinction matters when server-level defaults
+	// (§15.1 `edge`) fill in the gaps.
+	IPRestriction *IPRestriction `json:"ip_restriction,omitempty"`
+	RateLimit     *RateLimit     `json:"rate_limit,omitempty"`
+	Headers       *Headers       `json:"headers,omitempty"`
+}
+
+// IPRestriction is the first middleware: deny wins over allow, and an empty
+// allow list means the world.
+type IPRestriction struct {
+	Allow []string `json:"allow,omitempty"`
+	Deny  []string `json:"deny,omitempty"`
+}
+
+// RateLimit is a token bucket keyed by Per.
+type RateLimit struct {
+	// Requests is the sustained allowance per Window.
+	Requests int `json:"requests"`
+	// Window is the period Requests is measured over, as a Go duration.
+	Window string `json:"window"`
+	// Per selects the bucket key: "ip", "service", or "header:<name>".
+	Per string `json:"per,omitempty"`
+	// Burst is the bucket's capacity above the sustained rate. Zero means
+	// Requests, so a client may spend its whole allowance at once.
+	Burst int `json:"burst,omitempty"`
+}
+
+// Headers rewrites request and response headers.
+type Headers struct {
+	RequestSet     map[string]string `json:"request_set,omitempty"`
+	RequestRemove  []string          `json:"request_remove,omitempty"`
+	ResponseSet    map[string]string `json:"response_set,omitempty"`
+	ResponseRemove []string          `json:"response_remove,omitempty"`
 }
 
 // Name identifies the route in logs and errors.
@@ -110,6 +146,13 @@ func (s Snapshot) Validate() error {
 					ErrInvalidSnapshot, d, first, r.Name())
 			}
 			seen[d] = r.Name()
+		}
+		// Middleware is checked by compiling it, so the writer cannot publish a
+		// rule the reader will refuse. A snapshot that passes here and fails at
+		// the edge would freeze routing at the last good table while kanead
+		// reports success — the worst of both.
+		if _, err := compile(r); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
 		}
 	}
 	return nil
