@@ -66,7 +66,7 @@ type NetworkInspector interface {
 type PolicySyncer interface {
 	// SyncPolicies installs the default policy for each named project and
 	// withdraws policies for projects that no longer exist.
-	SyncPolicies(ctx context.Context, projects []string) error
+	SyncPolicies(ctx context.Context, projects []network.ProjectPolicy) error
 }
 
 // LoadBalancer is an optional Network capability: programming stable service
@@ -414,11 +414,37 @@ func (r *Reconciler) syncPolicies(ctx context.Context, desired []Desired) error 
 	if !ok {
 		return nil
 	}
-	seen := make(map[string]struct{}, len(desired))
+	// One entry per project, carrying only the services that asked for extra
+	// ingress. Sorted so an unchanged spec produces an identical call — the
+	// writer skips unchanged files, and that only works if the input is stable.
+	byProject := map[string]*network.ProjectPolicy{}
 	for _, d := range desired {
-		seen[d.Project] = struct{}{}
+		policy, ok := byProject[d.Project]
+		if !ok {
+			policy = &network.ProjectPolicy{Project: d.Project}
+			byProject[d.Project] = policy
+		}
+		if len(d.AllowFrom) == 0 {
+			continue
+		}
+		peers := make([]network.ServiceRef, 0, len(d.AllowFrom))
+		for _, p := range d.AllowFrom {
+			peers = append(peers, network.ServiceRef{Project: p.Project, Service: p.Service})
+		}
+		policy.Services = append(policy.Services, network.ServicePolicy{
+			Service: d.Service, AllowFrom: peers,
+		})
 	}
-	return syncer.SyncPolicies(ctx, sortedKeys(seen))
+
+	out := make([]network.ProjectPolicy, 0, len(byProject))
+	for _, name := range sortedKeys(byProject) {
+		policy := byProject[name]
+		sort.Slice(policy.Services, func(i, j int) bool {
+			return policy.Services[i].Service < policy.Services[j].Service
+		})
+		out = append(out, *policy)
+	}
+	return syncer.SyncPolicies(ctx, out)
 }
 
 // reapNetwork detaches network attachments belonging to no known alloc.

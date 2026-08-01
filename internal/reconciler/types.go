@@ -42,6 +42,9 @@ type Desired struct {
 	// `network { port "http" { container = 8080 } }`). A service with no ports
 	// gets no frontend: there is nothing to load balance.
 	Ports []Port
+	// AllowFrom names the peers permitted to reach this service on top of the
+	// project default (jobspec R14). It only ever adds reachability.
+	AllowFrom []PeerRef
 	// ResolvConfPath is the host file bind-mounted at /etc/resolv.conf. It is
 	// filled in by the reconciler rather than the spec: which resolver an alloc
 	// talks to is a property of the node, not of the job.
@@ -50,6 +53,12 @@ type Desired struct {
 	ReadOnlyRootfs bool
 	// Restart is the crash-restart policy.
 	Restart RestartPolicy
+}
+
+// PeerRef names another service, as "<project>/<service>".
+type PeerRef struct {
+	Project string
+	Service string
 }
 
 // Port is a named container port. The service frontend listens on the same

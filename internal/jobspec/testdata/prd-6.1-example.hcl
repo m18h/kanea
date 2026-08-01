@@ -65,6 +65,12 @@ service "web" {
 
   network {
     port "http" { container = 3000 }
+
+    # Ingress beyond the default (§7.1): the project boundary is default-deny,
+    # so a peer in another project is only reachable through an explicit edge.
+    policy {
+      allow_from = ["analytics/collector"]
+    }
   }
 
   # North-south exposure: edge proxy + TLS + middleware

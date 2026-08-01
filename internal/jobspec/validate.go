@@ -280,6 +280,7 @@ func validateTask(svc *Service) hcl.Diagnostics {
 	diags = append(diags, validateSecretRefs(svc)...)
 	diags = append(diags, validateCommand(svc)...)
 	diags = append(diags, validateCapabilities(svc)...)
+	diags = append(diags, validateNetworkPolicy(svc)...)
 	return diags
 }
 
@@ -706,4 +707,58 @@ func validateDuration(field, value string, rng hcl.Range) hcl.Diagnostics {
 		}}
 	}
 	return nil
+}
+
+// validateNetworkPolicy enforces R14: the per-service ingress allowlist.
+//
+// Every entry is checked here rather than when the policy is generated,
+// because by then the diagnostic would have no file or line to point at — and
+// a network rule that silently fails to match is the exact failure mode this
+// whole area is prone to (M0 spike ①).
+func validateNetworkPolicy(svc *Service) hcl.Diagnostics {
+	if svc.Network == nil || svc.Network.Policy == nil {
+		return nil
+	}
+	policy := svc.Network.Policy
+
+	var diags hcl.Diagnostics
+	seen := make(map[string]bool, len(policy.AllowFrom))
+
+	for _, raw := range policy.AllowFrom {
+		ref, err := ParsePeerRef(raw)
+		if err != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid policy peer",
+				Detail: fmt.Sprintf("Service %q: %s. Each allow_from entry names one peer as "+
+					"\"<project>/<service>\" — for example \"analytics/collector\".", svc.Name, err),
+				Subject: policy.DefRange.Ptr(),
+			})
+			continue
+		}
+		if seen[ref.String()] {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Duplicate policy peer",
+				Detail:   fmt.Sprintf("Service %q: %q is listed twice in allow_from.", svc.Name, ref),
+				Subject:  policy.DefRange.Ptr(),
+			})
+			continue
+		}
+		seen[ref.String()] = true
+
+		// A service naming itself is almost certainly a copy-paste slip, and it
+		// is the one entry that can never mean anything: a service already
+		// reaches itself.
+		if ref.Project == svc.Project && ref.Service == svc.Name {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Service allows itself",
+				Detail: fmt.Sprintf("Service %q lists itself in allow_from; a service can always "+
+					"reach itself.", svc.Name),
+				Subject: policy.DefRange.Ptr(),
+			})
+		}
+	}
+	return diags
 }

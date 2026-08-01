@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.12 |
+| **Status** | Draft v1.13 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-07-30 |
+| **Last updated** | 2026-08-01 |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.13 amendments** — **specifies `network { policy { … } }`**, which §7.1 has referenced since v1.0 without ever defining it (§6.1, §6.2 **R14**, §7.1). A service names the peers allowed to reach it as `allow_from = ["<project>/<service>"]`, and Kanea emits one additional CCNP per service alongside the project isolation policy — Cilium ingress rules are a union, so the effect is "intra-project, or the edge, or these named peers". This makes **cross-project traffic possible in v1** by explicit policy edge, which the default-deny project boundary otherwise forbids outright; cross-project *service references* (`${service.…}` interpolation and dependency ordering) remain v1.1 per R9 and §19.3, so the peer's name is written as the literal `<service>.<project>.kanea` that internal DNS already resolves. Least privilege is the default: entries are per-service, there is no whole-project wildcard, and an unknown peer is a parse error rather than a silently ineffective rule.
 
 > **v1.12 amendments** — makes the §6.1 example self-contained by declaring the `local-ssd` and `s3-media` storage resources its volume blocks reference. §8 allows storage to be declared at server level *or* project level; until the server config lands (§15.1), project level is the only source, and a volume referencing an undeclared resource is now a parse error rather than a mount failure at alloc start.
 
@@ -342,6 +344,12 @@ service "web" {
 
   network {
     port "http" { container = 3000 }
+
+    # Ingress beyond the default (§7.1): the project boundary is default-deny,
+    # so a peer in another project is only reachable through an explicit edge.
+    policy {
+      allow_from = ["analytics/collector"]
+    }
   }
 
   # North-south exposure: edge proxy + TLS + middleware
@@ -512,6 +520,8 @@ service "assets" {
 - **R12** — **`task.command` overrides the image entrypoint** and is an **argument array, never a shell string** (same rule as R7's `exec` health check — a shell string is an injection vector, §14 A03). Omitted, the image's own entrypoint runs. The first element (the program) must be non-empty; later arguments may be empty, because some programs use that meaningfully — `redis-server --save ""` is how you disable snapshots.
 - **R13** — **`task.capabilities` is the explicit allowlist** promised by the §14 (A05) hardening defaults. Every alloc starts with **ALL capabilities dropped**; a service that needs one names it here (`["CAP_CHOWN"]`). Only capabilities in the **permitted set** may be requested — the set that stock images legitimately need (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `KILL`, `SETGID`, `SETUID`, `SETPCAP`, `SETFCAP`, `NET_BIND_SERVICE`, `NET_RAW`, `SYS_CHROOT`, `MKNOD`, `AUDIT_WRITE`). Privilege-equivalent capabilities (`SYS_ADMIN`, `SYS_MODULE`, `SYS_PTRACE`, `SYS_RAWIO`, `SYS_BOOT`, `BPF`, `PERFMON`, `DAC_READ_SEARCH`, `MAC_ADMIN`, `MAC_OVERRIDE`, …) are **rejected at parse time**: granting them would be the `privileged` escape hatch v1 deliberately does not have. Requested capabilities go into the bounding, effective and permitted sets — never inheritable or ambient, so they are not passed to child processes that re-exec.
 
+- **R14** — **`network.policy.allow_from` is the explicit ingress allowlist.** Each entry is a fully-qualified `"<project>/<service>"`; both halves are DNS-1123 labels, validated at parse time. Kanea emits one additional CiliumClusterwideNetworkPolicy per service that declares one, selecting that service and admitting the listed peers — Cilium ingress rules **union**, so an entry only ever *adds* reachability and can never weaken the project default-deny. There is **no whole-project wildcard**: naming the peer service is the point, and `"analytics/*"` is a parse error. Same-project entries are accepted and redundant (the default already permits them), so an operator may be explicit without changing behaviour. A cross-project peer is addressed by its literal internal DNS name (`<service>.<project>.kanea`) because `${service.…}` interpolation stays same-project until v1.1 (R9, §19.3).
+
 ---
 
 ## 7. Networking Model
@@ -521,7 +531,7 @@ service "assets" {
 - Every alloc gets an IP from Cilium (per-node allocation CIDR).
 - **Internal DNS** (embedded, lightweight): resolves `service.project.kanea` → service's Cilium frontend IP; `alloc-<id>.service.project.kanea` → alloc IPs. Listens on node-local address, injected into alloc resolv.conf. It is authoritative **only** for the internal zone — external queries are forwarded to the system resolver with strict timeouts and concurrency caps (or delegated to Cilium's standalone DNS proxy). DNS sits in the path of every service call: it must degrade gracefully, never stall.
 - LB in eBPF via Cilium service map: kube-proxy-free, per-connection, Maglev-like consistent hashing.
-- Default policy: project is an isolation boundary (default-deny inbound except intra-project + edge proxy identity); `network { policy { ... } }` for custom rules. Kanea generates one CNP/CCNP YAML file per project into the agent's policy directory (§5.2.5); **`project` is also published as the endpoint's `k8s:io.kubernetes.pod.namespace` label**, because Cilium's selector translation requires it — without it a rule matches nothing and denies everything (M0 spike ①).
+- Default policy: project is an isolation boundary (default-deny inbound except intra-project + edge proxy identity); **`network { policy { allow_from = [...] } }`** (R14) adds explicit ingress edges on top — the only way cross-project traffic is permitted in v1. Kanea generates one CNP/CCNP YAML file per project into the agent's policy directory (§5.2.5); **`project` is also published as the endpoint's `k8s:io.kubernetes.pod.namespace` label**, because Cilium's selector translation requires it — without it a rule matches nothing and denies everything (M0 spike ①).
 
 ### 7.1.1 Service references & dependencies
 

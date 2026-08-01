@@ -14,7 +14,12 @@
 // collected before evaluation so the reference graph survives (R9, R10).
 package jobspec
 
-import "github.com/hashicorp/hcl/v2"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/hashicorp/hcl/v2"
+)
 
 // Spec is one parsed, validated applied set: everything `kanea apply` was given.
 type Spec struct {
@@ -181,9 +186,76 @@ const (
 	DefaultCount  = 1
 )
 
-// Network declares container ports by name.
+// Network declares container ports by name and the service's ingress policy.
 type Network struct {
-	Ports []*Port
+	Ports  []*Port
+	Policy *NetworkPolicy
+}
+
+// NetworkPolicy is the per-service ingress allowlist (R14).
+//
+// It only ever *adds* reachability. Cilium ingress rules union, so an entry
+// here cannot weaken the project's default-deny boundary — which is what makes
+// it safe to let a job spec influence policy at all.
+type NetworkPolicy struct {
+	// AllowFrom names the peers permitted to reach this service, each a
+	// fully-qualified "<project>/<service>" exactly as written in the file.
+	// Validation guarantees every entry parses; use Peers to read them.
+	AllowFrom []string
+	// DefRange is where the block was declared, for diagnostics.
+	DefRange hcl.Range
+}
+
+// Peers returns the parsed allowlist. It assumes validation has run — a spec
+// that reached the reconciler has already had every entry checked.
+func (p *NetworkPolicy) Peers() []PeerRef {
+	if p == nil {
+		return nil
+	}
+	out := make([]PeerRef, 0, len(p.AllowFrom))
+	for _, raw := range p.AllowFrom {
+		if ref, err := ParsePeerRef(raw); err == nil {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+// PeerRef is a fully-qualified reference to another service.
+type PeerRef struct {
+	Project string
+	Service string
+}
+
+// String renders the canonical "project/service" form.
+func (p PeerRef) String() string { return p.Project + "/" + p.Service }
+
+// ParsePeerRef reads a "<project>/<service>" reference.
+//
+// Both halves are required. A bare service name would have to mean "in my own
+// project", which reads fine in a same-project spec and silently means the
+// wrong thing the moment the block is copied into another project — so the
+// fully-qualified form is the only one accepted (R14).
+func ParsePeerRef(s string) (PeerRef, error) {
+	project, service, ok := strings.Cut(s, "/")
+	if !ok {
+		return PeerRef{}, fmt.Errorf("%q must be written as \"<project>/<service>\"", s)
+	}
+	if strings.Contains(service, "/") {
+		return PeerRef{}, fmt.Errorf("%q has more than one %q separator", s, "/")
+	}
+	// A wildcard would open an entire project at once. Naming the peer is the
+	// point of the field, so this is refused rather than quietly expanded.
+	if project == "*" || service == "*" {
+		return PeerRef{}, fmt.Errorf("%q uses a wildcard; name the peer service explicitly", s)
+	}
+	if !dns1123Label.MatchString(project) || len(project) > MaxNameLength {
+		return PeerRef{}, fmt.Errorf("project %q in %q is not a DNS-1123 label", project, s)
+	}
+	if !dns1123Label.MatchString(service) || len(service) > MaxNameLength {
+		return PeerRef{}, fmt.Errorf("service %q in %q is not a DNS-1123 label", service, s)
+	}
+	return PeerRef{Project: project, Service: service}, nil
 }
 
 // Port is a named container port; the name is what ${service.x.port.<name>}

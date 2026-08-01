@@ -95,6 +95,64 @@ type egressRule struct {
 // would match nothing. `any:` matches regardless of source.
 const selectorSource = "any:"
 
+// ProjectPolicy is everything Kanea needs to write for one project.
+type ProjectPolicy struct {
+	Project string
+	// Services carries only the services that declare an ingress allowlist;
+	// the rest are covered by the project isolation policy alone.
+	Services []ServicePolicy
+}
+
+// ServicePolicy is one service's explicit ingress allowlist (PRD §6.2 R14).
+type ServicePolicy struct {
+	Service string
+	// AllowFrom names the peers permitted to reach this service.
+	AllowFrom []ServiceRef
+}
+
+// serviceSelector matches one service's endpoints.
+func serviceSelector(project, service string) endpointSelector {
+	return endpointSelector{MatchLabels: map[string]string{
+		selectorSource + LabelManaged: "true",
+		selectorSource + LabelProject: project,
+		selectorSource + LabelService: service,
+	}}
+}
+
+// serviceAllowPolicy builds the extra ingress edges a service asked for.
+//
+// It is a separate document from the project isolation policy because a
+// CiliumClusterwideNetworkPolicy carries exactly one endpointSelector, and this
+// one selects a single service rather than the whole project.
+//
+// Being separate is also what makes it safe. Cilium unions ingress rules across
+// every policy selecting an endpoint, so this document can only ever *add*
+// reachability — there is no way for a job spec to weaken the project's
+// default-deny boundary by writing something here.
+func serviceAllowPolicy(project string, svc ServicePolicy) policyDocument {
+	peers := make([]endpointSelector, 0, len(svc.AllowFrom))
+	for _, peer := range svc.AllowFrom {
+		peers = append(peers, serviceSelector(peer.Project, peer.Service))
+	}
+	return policyDocument{
+		APIVersion: policyAPIVersion,
+		Kind:       kindClusterwide,
+		Metadata:   policyMetadata{Name: allowPolicyName(project, svc.Service)},
+		Spec: policySpec{
+			EndpointSelector: serviceSelector(project, svc.Service),
+			Ingress:          []ingressRule{{FromEndpoints: peers}},
+		},
+	}
+}
+
+func allowPolicyName(project, service string) string {
+	return policyFilePrefix + project + "-" + service + "-allow"
+}
+
+func allowPolicyFileName(project, service string) string {
+	return allowPolicyName(project, service) + policyFileSuffix
+}
+
 // projectSelector matches every Kanea endpoint in one project.
 func projectSelector(project string) endpointSelector {
 	return endpointSelector{MatchLabels: map[string]string{
@@ -131,19 +189,29 @@ func policyFileName(project string) string { return policyName(project) + policy
 // leaves everything else alone. Rewriting an unchanged file would be visible to
 // the agent as a policy change and cost an endpoint regeneration for nothing,
 // so "no drift" really does mean no writes.
-func (c *Cilium) SyncPolicies(_ context.Context, projects []string) error {
+func (c *Cilium) SyncPolicies(_ context.Context, projects []ProjectPolicy) error {
 	if err := os.MkdirAll(c.policyDir, 0o700); err != nil {
 		return fmt.Errorf("policy dir: %w", err)
 	}
 
 	wanted := make(map[string][]byte, len(projects))
 	for _, project := range projects {
-		doc := projectIsolationPolicy(project)
-		body, err := renderPolicy(doc)
+		body, err := renderPolicy(projectIsolationPolicy(project.Project))
 		if err != nil {
-			return fmt.Errorf("policy for project %s: %w", project, err)
+			return fmt.Errorf("policy for project %s: %w", project.Project, err)
 		}
-		wanted[policyFileName(project)] = body
+		wanted[policyFileName(project.Project)] = body
+
+		for _, svc := range project.Services {
+			if len(svc.AllowFrom) == 0 {
+				continue
+			}
+			body, err := renderPolicy(serviceAllowPolicy(project.Project, svc))
+			if err != nil {
+				return fmt.Errorf("policy for service %s/%s: %w", project.Project, svc.Service, err)
+			}
+			wanted[allowPolicyFileName(project.Project, svc.Service)] = body
+		}
 	}
 
 	existing, err := c.listPolicyFiles()

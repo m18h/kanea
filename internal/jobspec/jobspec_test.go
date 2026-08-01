@@ -1298,3 +1298,95 @@ func TestNormalizeCapabilities(t *testing.T) {
 		}
 	}
 }
+
+// R14: the per-service ingress allowlist. Every entry is checked at parse time
+// because a network rule that fails to match denies silently — the failure mode
+// this whole area is prone to.
+func TestNetworkPolicyValidation(t *testing.T) {
+	spec := func(allowFrom string) string {
+		return `spec_version = 1
+project "shop" {}
+service "api" {
+  project = "shop"
+  task "app" { image = "busybox:1.37" }
+  network {
+    port "http" { container = 8080 }
+    policy {
+      allow_from = [` + allowFrom + `]
+    }
+  }
+}`
+	}
+
+	tests := []struct {
+		name      string
+		allowFrom string
+		want      string
+	}{
+		{name: "cross-project peer", allowFrom: `"analytics/collector"`},
+		{
+			// Redundant but harmless: the project default already permits it,
+			// and being explicit stays correct if that default ever changes.
+			name: "same-project peer is accepted", allowFrom: `"shop/web"`,
+		},
+		{
+			name: "bare service name", allowFrom: `"collector"`,
+			want: "<project>/<service>",
+		},
+		{
+			// A wildcard would open a whole project at once; naming the peer is
+			// the point of the field.
+			name: "wildcard service", allowFrom: `"analytics/*"`,
+			want: "wildcard",
+		},
+		{
+			name: "wildcard project", allowFrom: `"*/collector"`,
+			want: "wildcard",
+		},
+		{
+			name: "too many separators", allowFrom: `"a/b/c"`,
+			want: "more than one",
+		},
+		{
+			name: "peer that is not a DNS label", allowFrom: `"Analytics/collector"`,
+			want: "DNS-1123",
+		},
+		{
+			name: "duplicate entry", allowFrom: `"analytics/collector", "analytics/collector"`,
+			want: "listed twice",
+		},
+		{
+			name: "service allows itself", allowFrom: `"shop/api"`,
+			want: "reach itself",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.want == "" {
+				parse(t, spec(tc.allowFrom))
+				return
+			}
+			if got := parseErr(t, spec(tc.allowFrom)); !strings.Contains(got, tc.want) {
+				t.Fatalf("diagnostics:\n%s\nwant a mention of %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The parsed form is what the reconciler consumes, and a service with no policy
+// block is by far the common case — so a nil block must be safe to read.
+func TestNetworkPolicyPeers(t *testing.T) {
+	var absent *jobspec.NetworkPolicy
+	if got := absent.Peers(); got != nil {
+		t.Errorf("Peers() on a nil policy = %v, want nil", got)
+	}
+
+	policy := &jobspec.NetworkPolicy{AllowFrom: []string{"analytics/collector", "ops/agent"}}
+	peers := policy.Peers()
+	if len(peers) != 2 {
+		t.Fatalf("peers = %v", peers)
+	}
+	if peers[0].String() != "analytics/collector" || peers[1].String() != "ops/agent" {
+		t.Errorf("peers = %v", peers)
+	}
+}

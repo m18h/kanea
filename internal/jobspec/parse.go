@@ -121,7 +121,13 @@ type hclResources struct {
 }
 
 type hclNetwork struct {
-	Ports []hclPort `hcl:"port,block"`
+	Ports  []hclPort         `hcl:"port,block"`
+	Policy *hclNetworkPolicy `hcl:"policy,block"`
+}
+
+type hclNetworkPolicy struct {
+	AllowFrom []string  `hcl:"allow_from,optional"`
+	DefRange  hcl.Range `hcl:",def_range"`
 }
 
 type hclPort struct {
@@ -383,6 +389,12 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 		for i := range s.Network.Ports {
 			p := &s.Network.Ports[i]
 			out.Network.Ports = append(out.Network.Ports, &Port{Name: p.Name, Container: p.Container, DefRange: p.DefRange})
+		}
+		if s.Network.Policy != nil {
+			out.Network.Policy = &NetworkPolicy{
+				AllowFrom: s.Network.Policy.AllowFrom,
+				DefRange:  s.Network.Policy.DefRange,
+			}
 		}
 	}
 	if s.Expose != nil {

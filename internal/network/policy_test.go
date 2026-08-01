@@ -20,6 +20,15 @@ func testPolicyWriter(t *testing.T) (*Cilium, string) {
 	return c, dir
 }
 
+// projectPolicies builds the plain per-project input, with no extra edges.
+func projectPolicies(names ...string) []ProjectPolicy {
+	out := make([]ProjectPolicy, 0, len(names))
+	for _, n := range names {
+		out = append(out, ProjectPolicy{Project: n})
+	}
+	return out
+}
+
 func policyFiles(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -37,7 +46,7 @@ func policyFiles(t *testing.T, dir string) []string {
 func TestSyncPoliciesWritesOnePerProject(t *testing.T) {
 	c, dir := testPolicyWriter(t)
 
-	if err := c.SyncPolicies(t.Context(), []string{"shop", "blog"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop", "blog")); err != nil {
 		t.Fatalf("SyncPolicies: %v", err)
 	}
 	want := []string{"kanea-blog-isolation.yaml", "kanea-shop-isolation.yaml"}
@@ -50,7 +59,7 @@ func TestSyncPoliciesWritesOnePerProject(t *testing.T) {
 // and the agent's decoder accepts it. Verified against Cilium 1.19.6.
 func TestPolicyDocumentShape(t *testing.T) {
 	c, dir := testPolicyWriter(t)
-	if err := c.SyncPolicies(t.Context(), []string{"shop"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
 		t.Fatalf("SyncPolicies: %v", err)
 	}
 
@@ -94,7 +103,7 @@ func TestSyncPoliciesIsIdempotent(t *testing.T) {
 	c, dir := testPolicyWriter(t)
 	path := filepath.Join(dir, "kanea-shop-isolation.yaml")
 
-	if err := c.SyncPolicies(t.Context(), []string{"shop"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
 		t.Fatalf("first sync: %v", err)
 	}
 
@@ -106,7 +115,7 @@ func TestSyncPoliciesIsIdempotent(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	if err := c.SyncPolicies(t.Context(), []string{"shop"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
 		t.Fatalf("second sync: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -124,14 +133,14 @@ func TestSyncPoliciesWritesWhenContentChanges(t *testing.T) {
 	c, dir := testPolicyWriter(t)
 	path := filepath.Join(dir, "kanea-shop-isolation.yaml")
 
-	if err := c.SyncPolicies(t.Context(), []string{"shop"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
 		t.Fatalf("corrupt file: %v", err)
 	}
 
-	if err := c.SyncPolicies(t.Context(), []string{"shop"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
 		t.Fatalf("resync: %v", err)
 	}
 	raw, err := os.ReadFile(path)
@@ -146,10 +155,10 @@ func TestSyncPoliciesWritesWhenContentChanges(t *testing.T) {
 func TestSyncPoliciesWithdrawsDeletedProjects(t *testing.T) {
 	c, dir := testPolicyWriter(t)
 
-	if err := c.SyncPolicies(t.Context(), []string{"shop", "blog"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop", "blog")); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	if err := c.SyncPolicies(t.Context(), []string{"shop"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
 		t.Fatalf("resync: %v", err)
 	}
 	if got := policyFiles(t, dir); !slices.Equal(got, []string{"kanea-shop-isolation.yaml"}) {
@@ -159,7 +168,7 @@ func TestSyncPoliciesWithdrawsDeletedProjects(t *testing.T) {
 
 func TestSyncPoliciesWithNoProjectsClearsEverything(t *testing.T) {
 	c, dir := testPolicyWriter(t)
-	if err := c.SyncPolicies(t.Context(), []string{"shop"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	if err := c.SyncPolicies(t.Context(), nil); err != nil {
@@ -192,7 +201,7 @@ func TestSyncPoliciesLeavesForeignFilesAlone(t *testing.T) {
 // The temp file must therefore not carry the watched extension.
 func TestSyncPoliciesLeavesNoVisibleTempFiles(t *testing.T) {
 	c, dir := testPolicyWriter(t)
-	if err := c.SyncPolicies(t.Context(), []string{"shop"}); err != nil {
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	for _, name := range policyFiles(t, dir) {
@@ -294,7 +303,7 @@ func TestPolicyValidation(t *testing.T) {
 func TestSyncPoliciesRejectsBadProjectNameWithoutWriting(t *testing.T) {
 	c, dir := testPolicyWriter(t)
 
-	err := c.SyncPolicies(t.Context(), []string{"Shop Evil"})
+	err := c.SyncPolicies(t.Context(), projectPolicies("Shop Evil"))
 	if err == nil {
 		t.Fatal("SyncPolicies = nil, want an error")
 	}
@@ -316,5 +325,123 @@ func TestValidateDNS1123(t *testing.T) {
 		if err := validateDNS1123(s); err == nil {
 			t.Errorf("validateDNS1123(%q) = nil, want error", s)
 		}
+	}
+}
+
+// The whole point of R14: a peer in another project gets its own document,
+// selecting only the service that asked for it.
+func TestSyncPoliciesWritesServiceAllowlist(t *testing.T) {
+	c, dir := testPolicyWriter(t)
+
+	err := c.SyncPolicies(t.Context(), []ProjectPolicy{{
+		Project: "shop",
+		Services: []ServicePolicy{{
+			Service:   "api",
+			AllowFrom: []ServiceRef{{Project: "analytics", Service: "collector"}},
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("SyncPolicies: %v", err)
+	}
+
+	want := []string{"kanea-shop-api-allow.yaml", "kanea-shop-isolation.yaml"}
+	if got := policyFiles(t, dir); !slices.Equal(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "kanea-shop-api-allow.yaml"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var doc policyDocument
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+
+	// The subject is one service, not the whole project.
+	sel := doc.Spec.EndpointSelector.MatchLabels
+	if sel["any:project"] != "shop" || sel["any:service"] != "api" {
+		t.Errorf("endpointSelector = %v, want just shop/api", sel)
+	}
+	if len(doc.Spec.Ingress) != 1 || len(doc.Spec.Ingress[0].FromEndpoints) != 1 {
+		t.Fatalf("ingress = %+v, want one peer", doc.Spec.Ingress)
+	}
+	peer := doc.Spec.Ingress[0].FromEndpoints[0].MatchLabels
+	if peer["any:project"] != "analytics" || peer["any:service"] != "collector" {
+		t.Errorf("peer selector = %v, want analytics/collector", peer)
+	}
+	// An egress rule here would flip that direction to default-deny for the
+	// selected service — a spec author must not be able to do that by accident.
+	if len(doc.Spec.Egress) != 0 {
+		t.Errorf("allow policy must not touch egress: %+v", doc.Spec.Egress)
+	}
+}
+
+// The safety property that makes it acceptable for a job spec to influence
+// policy at all: the isolation document is untouched, so the extra edges can
+// only ever union on top of it.
+func TestServiceAllowlistDoesNotAlterProjectIsolation(t *testing.T) {
+	c, dir := testPolicyWriter(t)
+	isolation := filepath.Join(dir, "kanea-shop-isolation.yaml")
+
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	before, err := os.ReadFile(isolation)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	err = c.SyncPolicies(t.Context(), []ProjectPolicy{{
+		Project: "shop",
+		Services: []ServicePolicy{{
+			Service:   "api",
+			AllowFrom: []ServiceRef{{Project: "analytics", Service: "collector"}},
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("resync: %v", err)
+	}
+
+	after, err := os.ReadFile(isolation)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Error("adding a service allowlist changed the project isolation policy")
+	}
+}
+
+// Removing allow_from from a spec must withdraw the edge, not leave it behind.
+func TestSyncPoliciesWithdrawsServiceAllowlist(t *testing.T) {
+	c, dir := testPolicyWriter(t)
+
+	err := c.SyncPolicies(t.Context(), []ProjectPolicy{{
+		Project: "shop",
+		Services: []ServicePolicy{{
+			Service:   "api",
+			AllowFrom: []ServiceRef{{Project: "analytics", Service: "collector"}},
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if err := c.SyncPolicies(t.Context(), projectPolicies("shop")); err != nil {
+		t.Fatalf("resync: %v", err)
+	}
+
+	if got := policyFiles(t, dir); !slices.Equal(got, []string{"kanea-shop-isolation.yaml"}) {
+		t.Fatalf("files = %v, want the allow policy withdrawn", got)
+	}
+}
+
+// An allowlist that names nothing would switch ingress enforcement on for the
+// service while permitting no peers — silent, total denial. validate catches it.
+func TestServiceAllowPolicyWithNoPeersIsRejected(t *testing.T) {
+	doc := serviceAllowPolicy("shop", ServicePolicy{Service: "api"})
+
+	err := doc.validate()
+	if err == nil || !strings.Contains(err.Error(), "selects no peers") {
+		t.Fatalf("validate = %v, want a refusal", err)
 	}
 }

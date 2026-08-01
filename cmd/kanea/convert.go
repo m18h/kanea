@@ -63,6 +63,11 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 					Name: p.Name, Container: p.Container,
 				})
 			}
+			for _, peer := range svc.Network.Policy.Peers() {
+				desired.AllowFrom = append(desired.AllowFrom, reconciler.PeerRef{
+					Project: peer.Project, Service: peer.Service,
+				})
+			}
 		}
 
 		for _, v := range svc.Volumes {

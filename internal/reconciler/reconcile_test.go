@@ -156,7 +156,7 @@ type fakeNetwork struct {
 	attached map[string]bool
 
 	// policy sync state
-	policySyncs [][]string
+	policySyncs [][]network.ProjectPolicy
 	policyErr   error
 
 	// load-balancing state
@@ -246,10 +246,14 @@ func (n *fakeNetwork) isAttached(id string) bool {
 }
 
 // SyncPolicies makes fakeNetwork a reconciler.PolicySyncer.
-func (n *fakeNetwork) SyncPolicies(_ context.Context, projects []string) error {
+func (n *fakeNetwork) SyncPolicies(_ context.Context, projects []network.ProjectPolicy) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.events = append(n.events, "policy:"+strings.Join(projects, ","))
+	names := make([]string, 0, len(projects))
+	for _, p := range projects {
+		names = append(names, p.Project)
+	}
+	n.events = append(n.events, "policy:"+strings.Join(names, ","))
 	if n.policyErr != nil {
 		return n.policyErr
 	}
@@ -257,13 +261,42 @@ func (n *fakeNetwork) SyncPolicies(_ context.Context, projects []string) error {
 	return nil
 }
 
-func (n *fakeNetwork) lastPolicySync() []string {
+func (n *fakeNetwork) lastPolicySync() []network.ProjectPolicy {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if len(n.policySyncs) == 0 {
 		return nil
 	}
 	return n.policySyncs[len(n.policySyncs)-1]
+}
+
+// policyProjects is the project names of the most recent sync.
+func (n *fakeNetwork) policyProjects() []string {
+	out := []string{}
+	for _, p := range n.lastPolicySync() {
+		out = append(out, p.Project)
+	}
+	return out
+}
+
+// allowFromOf returns the peers a service was granted in the last sync.
+func (n *fakeNetwork) allowFromOf(project, service string) []string {
+	for _, p := range n.lastPolicySync() {
+		if p.Project != project {
+			continue
+		}
+		for _, svc := range p.Services {
+			if svc.Service != service {
+				continue
+			}
+			out := make([]string, 0, len(svc.AllowFrom))
+			for _, peer := range svc.AllowFrom {
+				out = append(out, peer.String())
+			}
+			return out
+		}
+	}
+	return nil
 }
 
 func (n *fakeNetwork) eventLog() []string {
@@ -940,7 +973,7 @@ func TestReconcileSyncsPolicyForEveryProject(t *testing.T) {
 	h.reconcile(t)
 
 	want := []string{"blog", "shop"}
-	if got := h.network.lastPolicySync(); !slices.Equal(got, want) {
+	if got := h.network.policyProjects(); !slices.Equal(got, want) {
 		t.Fatalf("policy sync = %v, want %v", got, want)
 	}
 }
@@ -1263,5 +1296,26 @@ func TestReconcileDoesNotTreatFileMountsAsVolumes(t *testing.T) {
 	}
 	if info.IsDir() {
 		t.Fatal("resolv.conf was replaced by a directory")
+	}
+}
+
+// The reconciler carries the allowlist from the spec through to the policy
+// writer, grouped by project.
+func TestReconcileForwardsServiceAllowlists(t *testing.T) {
+	h := newHarness(t)
+
+	api := desiredWithPort(1)
+	api.Service = "api"
+	api.AllowFrom = []reconciler.PeerRef{{Project: "analytics", Service: "collector"}}
+	h.setDesired(t, api)
+	h.setDesired(t, desiredWithPort(1)) // shop/web, no allowlist
+	h.reconcile(t)
+
+	if got := h.network.allowFromOf("shop", "api"); !slices.Equal(got, []string{"analytics/collector"}) {
+		t.Fatalf("api allowlist = %v", got)
+	}
+	// A service that asked for nothing must not get a document at all.
+	if got := h.network.allowFromOf("shop", "web"); got != nil {
+		t.Errorf("web allowlist = %v, want none", got)
 	}
 }
