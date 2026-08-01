@@ -5,10 +5,17 @@ title = "kanea"
 useDefault = true
 
 [allowlist]
-description = "Project-wide allowlist: lockfiles and vendored deps only"
+description = "Project-wide allowlist: lockfiles, vendored deps, and named constants"
 paths = [
   '''go\.sum''',
   '''package-lock\.json''',
   '''vendor/''',
   '''node_modules/''',
+]
+# Cryptographic algorithm identifiers are high-entropy by nature and read as
+# API keys to the generic rule. These are library constants naming a curve or a
+# cipher, not material. Listed one by one rather than by a broad pattern so a
+# real key that happens to sit near one is still caught.
+regexes = [
+  '''certcrypto\.(EC256|EC384|RSA2048|RSA4096|RSA8192)''',
 ]

@@ -3,6 +3,7 @@ module github.com/kanea-dev/kanea
 go 1.26.3
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/containerd/containerd/api v1.11.1
 	github.com/containerd/containerd/v2 v2.3.3
 	github.com/containerd/errdefs v1.0.0

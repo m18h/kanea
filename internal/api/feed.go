@@ -1,0 +1,227 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/kanea-dev/kanea/internal/store"
+)
+
+// emitFunc delivers one payload to a subscriber.
+type emitFunc func(payload any)
+
+// feedFunc runs a subscription until its context is cancelled.
+type feedFunc func(ctx context.Context, emit emitFunc)
+
+// FeedInterval is how often a Store-backed feed looks for changes.
+//
+// Polling the Store rather than being notified by it: the Store has no change
+// stream yet (that is the CDC replicator, §15.3, M10), and adding one just for
+// the dashboard would be a second source of truth for "what changed". A second
+// is well inside what a human watching a page notices, and the poll is a
+// bounded, paginated read — the shape §5.2.2 requires.
+const FeedInterval = time.Second
+
+// feedFor resolves a subscription request to the feed that serves it.
+func (s *Server) feedFor(frame ClientFrame) (feedFunc, error) {
+	switch frame.Topic {
+	case TopicServices:
+		return s.feedServices, nil
+	case TopicAllocs:
+		return s.feedAllocs, nil
+	case TopicLogs:
+		if frame.Project == "" || frame.Service == "" {
+			return nil, fmt.Errorf("api: the %s topic needs a project and a service", TopicLogs)
+		}
+		return s.feedLogs(frame), nil
+	default:
+		return nil, fmt.Errorf("api: unknown topic %q", frame.Topic)
+	}
+}
+
+// feedServices streams the desired-state set whenever it changes.
+func (s *Server) feedServices(ctx context.Context, emit emitFunc) {
+	s.feedStoreKind(ctx, emit, func(ctx context.Context) (any, error) {
+		services, err := listAll[reconciler.Desired](ctx, s.store, store.KindService)
+		if err != nil {
+			return nil, err
+		}
+		return ServicesResponse{Services: services}, nil
+	})
+}
+
+// feedAllocs streams alloc records whenever they change.
+func (s *Server) feedAllocs(ctx context.Context, emit emitFunc) {
+	s.feedStoreKind(ctx, emit, func(ctx context.Context) (any, error) {
+		allocs, err := listAll[reconciler.AllocRecord](ctx, s.store, store.KindAlloc)
+		if err != nil {
+			return nil, err
+		}
+		return AllocsResponse{Allocs: allocs}, nil
+	})
+}
+
+// feedStoreKind sends a snapshot immediately, then again whenever the Store's
+// index moves.
+//
+// Gating on the index rather than diffing: every mutation bumps it (§15.2), so
+// it is a cheap, exact "has anything changed" that costs one read instead of a
+// full comparison. It over-sends — an unrelated alloc write re-sends the service
+// list — which is the right trade at this scale and stops being one only when
+// the payload is large enough to notice.
+func (s *Server) feedStoreKind(ctx context.Context, emit emitFunc,
+	snapshot func(context.Context) (any, error),
+) {
+	send := func() uint64 {
+		index, err := s.store.Index(ctx)
+		if err != nil {
+			s.log.Debug("feed: cannot read store index", "error", err)
+			return 0
+		}
+		payload, err := snapshot(ctx)
+		if err != nil {
+			s.log.Warn("feed: cannot read snapshot", "error", err)
+			return 0
+		}
+		emit(payload)
+		return index
+	}
+
+	last := send()
+
+	ticker := time.NewTicker(FeedInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		index, err := s.store.Index(ctx)
+		if err != nil {
+			s.log.Debug("feed: cannot read store index", "error", err)
+			continue
+		}
+		if index == last {
+			continue
+		}
+		last = send()
+	}
+}
+
+// LogLine is one workload log line as the dashboard receives it.
+//
+// Text, never markup. The dashboard renders it escaped and never through
+// dangerouslySetInnerHTML (PRD §14, A03): workload output is attacker-controlled
+// whenever the workload is, and a log viewer that interprets it is an XSS hole
+// with extra steps.
+type LogLine struct {
+	AllocID string `json:"alloc_id"`
+	Line    string `json:"line"`
+}
+
+// feedLogs follows one service's logs.
+func (s *Server) feedLogs(frame ClientFrame) feedFunc {
+	return func(ctx context.Context, emit emitFunc) {
+		opts := LogOptions{
+			Project: frame.Project,
+			Service: frame.Service,
+			Tail:    frame.Tail,
+			Follow:  true,
+		}
+		allocs, err := s.selectAllocs(ctx, opts)
+		if err != nil {
+			s.log.Warn("log feed: cannot select allocs",
+				"service", frame.Project+"/"+frame.Service, "error", err)
+			return
+		}
+
+		tails := make([]*tailer, 0, len(allocs))
+		defer func() {
+			for _, t := range tails {
+				if err := t.Close(); err != nil {
+					s.log.Debug("close log tailer", "alloc", t.allocID, "error", err)
+				}
+			}
+		}()
+
+		for _, alloc := range allocs {
+			path := filepath.Join(s.logDir, alloc.ID+".log")
+			// prefix=false: the alloc id travels in the frame, so the dashboard
+			// can attribute a line without parsing it back out of the text.
+			t, err := newTailer(path, alloc.ID, opts.Tail, false)
+			if err != nil {
+				// Normal for an alloc that has not started yet.
+				s.log.Debug("no log file", "alloc", alloc.ID, "error", err)
+				continue
+			}
+			tails = append(tails, t)
+		}
+		if len(tails) == 0 {
+			return
+		}
+
+		// One writer per tailer: the split state (a line straddling two reads)
+		// belongs to that file, not to the loop.
+		writers := make([]*lineWriter, len(tails))
+		for i, t := range tails {
+			allocID := t.allocID
+			writers[i] = &lineWriter{emit: func(line string) {
+				emit(LogLine{AllocID: allocID, Line: line})
+			}}
+		}
+
+		ticker := time.NewTicker(PollInterval)
+		defer ticker.Stop()
+		for {
+			for i, t := range tails {
+				if _, err := t.copyTo(writers[i]); err != nil {
+					s.log.Debug("read log", "alloc", t.allocID, "error", err)
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}
+}
+
+// lineWriter turns the tailer's byte stream into whole lines.
+//
+// A read can end mid-line, so the remainder is held until the rest arrives.
+// Emitting a partial line would show the dashboard a truncated message and then
+// a fragment, which reads as corruption rather than as buffering.
+type lineWriter struct {
+	emit    func(line string)
+	partial []byte
+}
+
+// maxLineBytes bounds an unterminated line. A workload writing megabytes with
+// no newline — a stack trace, a progress bar, a hostile one — must not grow
+// this buffer without limit, so it is flushed as-is at the cap.
+const maxLineBytes = 64 << 10
+
+func (w *lineWriter) Write(data []byte) (int, error) {
+	w.partial = append(w.partial, data...)
+	for {
+		idx := bytes.IndexByte(w.partial, '\n')
+		if idx < 0 {
+			break
+		}
+		w.emit(strings.TrimRight(string(w.partial[:idx]), "\r"))
+		w.partial = w.partial[idx+1:]
+	}
+	if len(w.partial) > maxLineBytes {
+		w.emit(string(w.partial))
+		w.partial = nil
+	}
+	return len(data), nil
+}

@@ -81,6 +81,8 @@ func runAgent(args []string) error {
 		"extra CA to trust when talking to the ACME directory (for a private or test CA)")
 	acmeVerifyURL := fs.String("acme-verify-url", acmelib.DefaultVerifyURL,
 		"where kanead reaches its own edge to confirm a challenge is being served")
+	wsOrigins := fs.String("dashboard-origins", "",
+		"comma-separated Origins allowed to open the live-data websocket (default: none)")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -211,6 +213,7 @@ func runAgent(args []string) error {
 	server, err := api.NewServer(api.ServerConfig{
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
+		WSOrigins: splitList(*wsOrigins),
 	})
 	if err != nil {
 		return err

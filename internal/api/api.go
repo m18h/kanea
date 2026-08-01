@@ -37,6 +37,10 @@ type Health struct {
 	// StoreIndex is the latest applied store index — a cheap liveness signal
 	// that also tells the CLI whether its write landed.
 	StoreIndex uint64 `json:"store_index"`
+	// WSConnections is how many live-data sockets are attached. It answers
+	// "why is this daemon busy" and "did my dashboard actually connect"
+	// without reading the log.
+	WSConnections int `json:"ws_connections"`
 }
 
 // ApplyRequest replaces the desired state of the services it names. Services

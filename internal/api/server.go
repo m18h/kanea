@@ -42,18 +42,26 @@ type ServerConfig struct {
 	// Notify is signalled after a successful apply so the reconciler converges
 	// immediately instead of waiting out its interval.
 	Notify chan<- struct{}
+	// WSOrigins is the Origin allowlist for the live-data socket (PRD §12.1,
+	// §14 A01). Empty rejects every browser Upgrade, which is correct for a
+	// daemon with no dashboard origin configured.
+	WSOrigins []string
+	// WSMaxConns caps concurrent websocket connections. Zero means the default.
+	WSMaxConns int
 }
 
 // Server is the control-plane HTTP server.
 type Server struct {
-	store    Store
-	log      *slog.Logger
-	socket   string
-	version  string
-	logDir   string
-	notify   chan<- struct{}
-	listener net.Listener
-	http     *http.Server
+	store     Store
+	log       *slog.Logger
+	socket    string
+	version   string
+	logDir    string
+	notify    chan<- struct{}
+	listener  net.Listener
+	http      *http.Server
+	wsOrigins []string
+	ws        *wsHub
 }
 
 // NewServer builds the server. It does not listen yet.
@@ -70,6 +78,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s := &Server{
 		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
+		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 	}
 
 	mux := http.NewServeMux()
@@ -79,6 +88,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("DELETE "+PathServices+"/{project}/{service}", s.handleDeleteService)
 	mux.HandleFunc("GET "+PathAllocs, s.handleListAllocs)
 	mux.HandleFunc("GET "+PathLogs, s.handleLogs)
+	mux.HandleFunc("GET "+PathWS, s.handleWS)
 
 	s.http = &http.Server{
 		Handler: mux,
@@ -161,7 +171,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, Health{Status: "ok", Version: s.version, StoreIndex: index})
+	writeJSON(w, http.StatusOK, Health{
+		Status: "ok", Version: s.version, StoreIndex: index,
+		WSConnections: s.ws.count(),
+	})
 }
 
 func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {

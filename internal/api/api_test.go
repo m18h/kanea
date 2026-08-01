@@ -3,6 +3,8 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +26,10 @@ type harness struct {
 	notify chan struct{}
 }
 
-func newHarness(t *testing.T) *harness {
+// newHarness starts a server over a unix socket. The variadic hooks let a test
+// adjust the config it is actually about without every other test knowing those
+// fields exist.
+func newHarness(t *testing.T, with ...func(*api.ServerConfig)) *harness {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -44,9 +49,13 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	h := &harness{store: st, logDir: logDir, socket: socket, notify: make(chan struct{}, 1)}
-	server, err := api.NewServer(api.ServerConfig{
+	cfg := api.ServerConfig{
 		Store: st, Socket: socket, Version: "test", LogDir: logDir, Notify: h.notify,
-	})
+	}
+	for _, apply := range with {
+		apply(&cfg)
+	}
+	server, err := api.NewServer(cfg)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -457,4 +466,32 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// httpClient dials the harness's unix socket over HTTP, which is what the
+// websocket client needs: the socket is the transport, "kanead" is a placeholder
+// host that never leaves the process.
+func (h *harness) httpClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", h.socket)
+			},
+		},
+	}
+}
+
+// putService writes one desired service straight to the Store, bypassing the
+// API so a feed test is about the feed and not about apply.
+func (h *harness) putService(t *testing.T, project, service string, count int) {
+	t.Helper()
+	d := reconciler.Desired{
+		Project: project, Service: service, Count: count,
+		Image:     "docker.io/library/nginx:1.27-alpine",
+		Resources: runtime.Resources{CPUMillis: 100, MemoryBytes: 256 << 20},
+	}
+	if _, err := store.PutValue(context.Background(), h.store,
+		store.KindService, project+"/"+service, d); err != nil {
+		t.Fatalf("put service: %v", err)
+	}
 }
