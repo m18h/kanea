@@ -61,8 +61,9 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
 /internal/reconciler/  # convergence loop, scheduler interface
 /internal/runtime/     # containerd driver
 /internal/network/     # Cilium driver (endpoints, services, policies, DNS)
-/internal/edge/        # kanea-edge: routing, TLS, middleware chain
-/internal/jobspec/     # HCL schema, parsing, validation (incl. R1–R11 rules)
+/internal/edge/        # kanea-edge: routing, TLS, middleware; the projections kanead publishes to it
+/internal/acme/        # ACME issuance + renewal — runs in kanead, never in the edge (§5.2.6)
+/internal/jobspec/     # HCL schema, parsing, validation (incl. R1–R16 rules)
 /internal/scaling/     # metrics TS, evaluator
 /internal/gitops/      # git sync, webhooks, kaniko runner
 /internal/notify/      # notification channels, coalescing

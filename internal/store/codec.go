@@ -106,3 +106,17 @@ func PutValue[T any](ctx context.Context, s Applier, kind Kind, key string, valu
 	}
 	return s.Apply(ctx, m)
 }
+
+// PutRawMutation builds an upsert for a value that is already encoded.
+//
+// It exists for callers holding bytes rather than a Go value — the ACME manager
+// serialises its own records so that internal/acme need not know what a Store
+// is. The payload is checked here rather than trusted: a record that is not
+// valid JSON would survive the write and fail every later read, which turns a
+// caller's bug into a corrupt bucket.
+func PutRawMutation(kind Kind, key string, raw []byte) (Mutation, error) {
+	if !json.Valid(raw) {
+		return Mutation{}, fmt.Errorf("encode %s/%s: value is not valid JSON", kind, key)
+	}
+	return Mutation{Op: OpPut, Kind: kind, Key: key, Value: raw}, nil
+}

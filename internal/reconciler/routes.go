@@ -130,9 +130,22 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 	return routes
 }
 
-// domainsFor resolves a service's hostnames, generating the auto-FQDN when the
-// spec declared none (PRD §7.2).
+// domainsFor resolves a service's hostnames against this agent's base domain.
 func (r *Reconciler) domainsFor(d Desired) []string {
+	return EdgeDomains(d, r.baseDomain)
+}
+
+// EdgeDomains resolves the hostnames a service answers on, generating the
+// auto-FQDN when the spec declared none (PRD §7.2).
+//
+// Exported because certificate issuance has to ask the same question the route
+// table does. Answering it twice, differently, would mean requesting a
+// certificate for a name the edge does not route — an issuance guaranteed to
+// fail validation, and to keep failing.
+func EdgeDomains(d Desired, baseDomain string) []string {
+	if d.Expose == nil {
+		return nil
+	}
 	if len(d.Expose.Domains) > 0 {
 		out := make([]string, 0, len(d.Expose.Domains))
 		for _, domain := range d.Expose.Domains {
@@ -142,10 +155,11 @@ func (r *Reconciler) domainsFor(d Desired) []string {
 		}
 		return out
 	}
-	if r.baseDomain == "" {
+	baseDomain = strings.Trim(strings.TrimSpace(baseDomain), ".")
+	if baseDomain == "" {
 		return nil
 	}
-	return []string{canonicalDomain(d.Service + "." + d.Project + "." + r.baseDomain)}
+	return []string{canonicalDomain(d.Service + "." + d.Project + "." + baseDomain)}
 }
 
 // canonicalDomain matches the form the edge's route table is keyed by.

@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	acmelib "github.com/kanea-dev/kanea/internal/acme"
 	"github.com/kanea-dev/kanea/internal/api"
 	"github.com/kanea-dev/kanea/internal/edge"
 	"github.com/kanea-dev/kanea/internal/logging"
@@ -68,6 +69,18 @@ func runAgent(args []string) error {
 		"domain exposed services get an FQDN under, e.g. apps.example.com (PRD §7.2)")
 	edgeRoutes := fs.String("edge-routes", edge.DefaultSnapshotPath,
 		"where to publish the route table for kanea-edge (\"off\" disables)")
+	edgeCerts := fs.String("edge-certs", edge.DefaultBundlePath,
+		"where to publish certificates for kanea-edge")
+	edgeGroup := fs.String("edge-group", "",
+		"group allowed to read the certificate bundle — the kanea-edge user's (default: owner only)")
+	acmeEmail := fs.String("acme-email", "",
+		"ACME account contact; without it no certificates are obtained")
+	acmeDirectory := fs.String("acme-directory", acmelib.LetsEncryptStaging,
+		"ACME directory URL (the staging CA by default: its certificates are not publicly trusted)")
+	acmeCA := fs.String("acme-ca-bundle", "",
+		"extra CA to trust when talking to the ACME directory (for a private or test CA)")
+	acmeVerifyURL := fs.String("acme-verify-url", acmelib.DefaultVerifyURL,
+		"where kanead reaches its own edge to confirm a challenge is being served")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -157,8 +170,11 @@ func runAgent(args []string) error {
 	}
 
 	// The API wakes the reconciler after every apply, so a deploy converges
-	// immediately rather than waiting out the interval.
+	// immediately rather than waiting out the interval. The certificate loop
+	// wants the same signal, so the notification is fanned out below.
 	notify := make(chan struct{}, 1)
+	reconcileNotify := make(chan struct{}, 1)
+	certNotify := make(chan struct{}, 1)
 
 	// The route table is published for a process that may not be running yet,
 	// or ever. That is deliberate: kanead does not supervise the edge and does
@@ -205,6 +221,12 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	certs, err := buildCertificates(*acmeEmail, *acmeDirectory, *acmeCA, *edgeCerts,
+		*edgeGroup, *acmeVerifyURL, st, logger)
+	if err != nil {
+		return err
+	}
+
 	logger.Info("kanead starting",
 		"version", version, "state", statePath, "socket", *socket,
 		"log_dir", *logDir, "volume_dir", volumes, "network", *networkMode)
@@ -213,11 +235,20 @@ func runAgent(args []string) error {
 	if dns != nil {
 		tasks++
 	}
+	if certs != nil {
+		tasks++
+	}
 	errs := make(chan error, tasks)
+	go fanOut(ctx, notify, reconcileNotify, certNotify)
 	go func() { errs <- server.Serve(ctx) }()
-	go func() { errs <- rec.Run(ctx, notify) }()
+	go func() { errs <- rec.Run(ctx, reconcileNotify) }()
 	if dns != nil {
 		go func() { errs <- dns.Serve(ctx) }()
+	}
+	if certs != nil {
+		go func() {
+			errs <- runCertificates(ctx, certs.manager, certs.publisher, st, *baseDomain, certNotify, logger)
+		}()
 	}
 	// The mount supervisor runs alongside, not inside, the reconcile loop: a
 	// probe of a wedged mount can take seconds to abandon, and convergence must
@@ -379,4 +410,26 @@ func splitList(raw string) []string {
 		}
 	}
 	return out
+}
+
+// fanOut forwards one wake-up signal to several listeners.
+//
+// The sends are non-blocking because every listener's channel is a
+// coalescing buffer of one: a listener that is mid-pass already has everything
+// this signal would tell it, and a blocking send would let a slow consumer
+// stall the API's apply path.
+func fanOut(ctx context.Context, in <-chan struct{}, out ...chan<- struct{}) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-in:
+			for _, ch := range out {
+				select {
+				case ch <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}
 }
