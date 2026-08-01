@@ -73,6 +73,11 @@ func scope(ctx context.Context, project string) context.Context {
 func (d *containerdDriver) EnsureImage(ctx context.Context, project, ref string) (string, error) {
 	ctx = scope(ctx, project)
 
+	ref, err := NormalizeRef(ref)
+	if err != nil {
+		return "", err
+	}
+
 	if img, err := d.client.GetImage(ctx, ref); err == nil {
 		return img.Target().Digest.String(), nil
 	} else if !errdefs.IsNotFound(err) {
@@ -93,12 +98,18 @@ func (d *containerdDriver) Create(ctx context.Context, spec AllocSpec) error {
 	}
 	ctx = scope(ctx, spec.Project)
 
-	img, err := d.client.GetImage(ctx, spec.Image)
+	// The same expansion EnsureImage used, or the lookup misses what the pull
+	// stored under the qualified name.
+	ref, err := NormalizeRef(spec.Image)
+	if err != nil {
+		return err
+	}
+	img, err := d.client.GetImage(ctx, ref)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
-			return fmt.Errorf("image %s not pulled: %w", spec.Image, err)
+			return fmt.Errorf("image %s not pulled: %w", ref, err)
 		}
-		return fmt.Errorf("look up image %s: %w", spec.Image, err)
+		return fmt.Errorf("look up image %s: %w", ref, err)
 	}
 
 	// Image config first, then our options: hardening and limits must win over
