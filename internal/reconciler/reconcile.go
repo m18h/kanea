@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/network"
@@ -100,6 +101,9 @@ type Config struct {
 	// Nameserver is the address allocs are pointed at for DNS. Empty means
 	// allocs keep whatever resolv.conf their image ships.
 	Nameserver string
+	// Prober runs health checks. Nil disables health checking entirely, which
+	// makes every running service count as healthy for dependency gating.
+	Prober Prober
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -115,7 +119,8 @@ type Reconciler struct {
 	log     *slog.Logger
 	now     func() time.Time
 
-	vips *vipAllocator
+	vips   *vipAllocator
+	prober Prober
 
 	interval      time.Duration
 	stopGrace     time.Duration
@@ -149,6 +154,7 @@ func New(cfg Config) (*Reconciler, error) {
 	return &Reconciler{
 		store:         cfg.Store,
 		vips:          vips,
+		prober:        cfg.Prober,
 		driver:        cfg.Driver,
 		network:       cfg.Network,
 		log:           cfg.Logger,
@@ -226,7 +232,24 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		return result, fmt.Errorf("load actual state: %w", err)
 	}
 
+	// Read the datapath before planning: health checks need alloc addresses, and
+	// the planner needs the health verdicts to gate dependents.
+	attachments := r.attachments(ctx)
 	world := World{Desired: desired, Records: records, Actual: actual, Now: r.now()}
+
+	// Probing is separate from observation for the same reason observation is
+	// separate from planning: "the check failed" is a fact about the world, and
+	// what to do about it is a decision.
+	probed := r.probeHealth(ctx, world, attachments)
+	if len(probed) > 0 {
+		if err := r.persist(ctx, probed); err != nil {
+			return result, fmt.Errorf("persist health: %w", err)
+		}
+		for id, rec := range probed {
+			records[id] = rec
+		}
+		world.Records = records
+	}
 
 	// Observation is separate from planning on purpose: recording "this alloc
 	// crashed at T with code N" is a fact, while deciding what to do about it
@@ -276,11 +299,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		} else {
 			world.Actual = actual
 		}
+		// The allocs just created are attached by now, and the ones just
+		// removed are not.
+		attachments = r.attachments(ctx)
 	}
-
-	// Datapath state is read once, after the actions: the allocs just created
-	// are attached by now, and the allocs just removed are not.
-	attachments := r.attachments(ctx)
 
 	// Sweep before publishing backends, so an orphan cannot be advertised as
 	// somewhere to send traffic even for one settle window.
@@ -557,6 +579,9 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 	}
 
 	switch action.Kind {
+	case ActionWait:
+		return nil // nothing to do; the reason is the whole point
+
 	case ActionCreate:
 		return r.create(ctx, desired, action)
 
@@ -852,3 +877,110 @@ func (NetnsNetwork) Detach(_ context.Context, spec runtime.AllocSpec) error {
 // "everything I did not expect" would include namespaces belonging to other
 // tools — and reaping means deleting. The Cilium driver can reap precisely
 // because its endpoints carry an ownership label.
+
+// probeHealth runs due health checks and returns the records that changed.
+//
+// Probes run concurrently and every one is bounded by its own timeout, because
+// this is inside the reconcile pass: a service whose check hangs must not delay
+// convergence for everything else on the node. The declared interval is honoured
+// via LastProbeAt rather than by a separate timer, so a check declaring "30s"
+// runs every 30s even though the loop wakes every 10s.
+func (r *Reconciler) probeHealth(ctx context.Context, w World, attachments map[string]network.Attachment) map[string]AllocRecord {
+	if r.prober == nil {
+		return nil
+	}
+
+	type job struct {
+		record AllocRecord
+		target ProbeTarget
+		check  HealthCheck
+	}
+	var jobs []job
+
+	for _, d := range w.Desired {
+		if !d.Check.configured() {
+			continue
+		}
+		for i := range d.Count {
+			id := AllocID(d.Project, d.Service, i)
+
+			// Only a running alloc is worth probing: a stopped one is the
+			// restart policy's business, and probing it would just produce
+			// failures that mean nothing new.
+			if status, ok := w.Actual[id]; !ok || status.State != runtime.StateRunning {
+				continue
+			}
+			record, ok := w.Records[id]
+			if !ok {
+				continue // created this pass; probe it on the next one
+			}
+			if !record.LastProbeAt.IsZero() && w.Now.Sub(record.LastProbeAt) < d.Check.interval() {
+				continue
+			}
+			jobs = append(jobs, job{
+				record: record,
+				target: ProbeTarget{Project: d.Project, AllocID: id, IPv4: attachments[id].IPv4},
+				check:  *d.Check,
+			})
+		}
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	var (
+		mu      sync.Mutex
+		changed = make(map[string]AllocRecord, len(jobs))
+		wg      sync.WaitGroup
+	)
+	for _, j := range jobs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := r.prober.Probe(ctx, j.target, j.check)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if record, ok := applyProbe(j.record, j.check, err, w.Now); ok {
+				changed[record.ID] = record
+			}
+		}()
+	}
+	wg.Wait()
+	return changed
+}
+
+// applyProbe folds one probe result into a record, reporting whether anything
+// changed. It is pure so the threshold logic can be tested directly.
+func applyProbe(record AllocRecord, check HealthCheck, probeErr error, now time.Time) (AllocRecord, bool) {
+	before := record
+
+	record.LastProbeAt = now
+	if probeErr == nil {
+		// A single pass clears the counter, so a service that fails
+		// intermittently below the threshold is never marked unhealthy.
+		record.HealthFailures = 0
+		record.HealthMessage = ""
+		record.Healthy = true
+	} else {
+		record.HealthFailures++
+		record.HealthMessage = probeErr.Error()
+		// Healthy stays true until the threshold is crossed: that is what the
+		// `failures` field is for, and flipping on the first failure would make
+		// every transient blip a dependency outage for everything downstream.
+		if record.HealthFailures >= check.failureThreshold() {
+			record.Healthy = false
+		}
+	}
+
+	if record.Healthy != before.Healthy {
+		record.UpdatedAt = now
+	}
+	// LastProbeAt always moves, so the record is always worth writing — but only
+	// report a change when something a reader cares about actually differs.
+	changed := record.Healthy != before.Healthy ||
+		record.HealthFailures != before.HealthFailures ||
+		record.HealthMessage != before.HealthMessage ||
+		now.Sub(before.LastProbeAt) >= check.interval()
+	return record, changed
+}

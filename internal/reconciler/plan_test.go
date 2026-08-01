@@ -424,3 +424,207 @@ func TestAllocIDAndKeyFormats(t *testing.T) {
 		t.Error("shortest alloc id is below the CNI floor")
 	}
 }
+
+// R10: a dependent never starts before its dependencies are healthy. This is
+// M2's exit criterion, and the failure it prevents is a service that comes up,
+// cannot reach its database, and crash-loops through its restart budget before
+// the database has finished starting.
+func TestPlanGatesDependentsOnDependencyHealth(t *testing.T) {
+	db := desired(1)
+	db.Service = "postgres"
+
+	api := desired(1)
+	api.Service = "api"
+	api.DependsOn = []string{"postgres"}
+
+	world := reconciler.World{Desired: []reconciler.Desired{db, api}, Now: testNow}
+
+	// Nothing running yet: postgres may be created, api must wait.
+	actions := reconciler.Plan(world)
+	byAlloc := map[string]reconciler.ActionKind{}
+	for _, a := range actions {
+		byAlloc[a.AllocID] = a.Kind
+	}
+	if got := byAlloc[reconciler.AllocID("shop", "postgres", 0)]; got != reconciler.ActionCreate {
+		t.Errorf("postgres action = %q, want create", got)
+	}
+	if got := byAlloc[reconciler.AllocID("shop", "api", 0)]; got != reconciler.ActionWait {
+		t.Errorf("api action = %q, want wait", got)
+	}
+
+	// With postgres running, api is free to start.
+	world.Actual = map[string]runtime.Status{
+		reconciler.AllocID("shop", "postgres", 0): running(reconciler.AllocID("shop", "postgres", 0)),
+	}
+	for _, a := range reconciler.Plan(world) {
+		if a.AllocID == reconciler.AllocID("shop", "api", 0) && a.Kind != reconciler.ActionCreate {
+			t.Errorf("api action = %q, want create once postgres is up", a.Kind)
+		}
+	}
+}
+
+// "Running" is not enough when a check is declared: the dependency has to be
+// passing it. Otherwise the gate would open on a database that has a process
+// but is still replaying its write-ahead log.
+func TestPlanGatesOnHealthCheckNotJustRunning(t *testing.T) {
+	db := desired(1)
+	db.Service = "postgres"
+	db.Check = &reconciler.HealthCheck{Type: reconciler.HealthTCP, Port: 5432}
+
+	api := desired(1)
+	api.Service = "api"
+	api.DependsOn = []string{"postgres"}
+
+	dbID := reconciler.AllocID("shop", "postgres", 0)
+	world := reconciler.World{
+		Desired: []reconciler.Desired{db, api},
+		Actual:  map[string]runtime.Status{dbID: running(dbID)},
+		Records: map[string]reconciler.AllocRecord{
+			dbID: {ID: dbID, Project: "shop", Service: "postgres", State: reconciler.AllocRunning, Healthy: false},
+		},
+		Now: testNow,
+	}
+
+	for _, a := range reconciler.Plan(world) {
+		if a.AllocID == reconciler.AllocID("shop", "api", 0) && a.Kind != reconciler.ActionWait {
+			t.Fatalf("api action = %q, want wait while postgres is running but unhealthy", a.Kind)
+		}
+	}
+
+	// Once the check passes, the gate opens.
+	world.Records[dbID] = reconciler.AllocRecord{
+		ID: dbID, Project: "shop", Service: "postgres",
+		State: reconciler.AllocRunning, Healthy: true,
+	}
+	var apiKind reconciler.ActionKind
+	for _, a := range reconciler.Plan(world) {
+		if a.AllocID == reconciler.AllocID("shop", "api", 0) {
+			apiKind = a.Kind
+		}
+	}
+	if apiKind != reconciler.ActionCreate {
+		t.Fatalf("api action = %q, want create once postgres is healthy", apiKind)
+	}
+}
+
+// A dependency must be *fully* up, not partially. A dependent that starts
+// against a half-scaled dependency spreads its load over backends that are not
+// all there yet, which is exactly what gating exists to prevent.
+func TestPlanWaitsForEveryAllocOfADependency(t *testing.T) {
+	db := desired(3)
+	db.Service = "postgres"
+
+	api := desired(1)
+	api.Service = "api"
+	api.DependsOn = []string{"postgres"}
+
+	// Two of three running.
+	actual := map[string]runtime.Status{}
+	for i := range 2 {
+		id := reconciler.AllocID("shop", "postgres", i)
+		actual[id] = running(id)
+	}
+	world := reconciler.World{Desired: []reconciler.Desired{db, api}, Actual: actual, Now: testNow}
+
+	for _, a := range reconciler.Plan(world) {
+		if a.AllocID == reconciler.AllocID("shop", "api", 0) && a.Kind != reconciler.ActionWait {
+			t.Fatalf("api action = %q, want wait while postgres is 2/3 up", a.Kind)
+		}
+	}
+}
+
+// R10 is explicit that a degraded dependency does not stop its dependents. The
+// gate is on creation only; a running dependent keeps running.
+func TestPlanDoesNotStopRunningDependentsWhenADependencyDegrades(t *testing.T) {
+	db := desired(1)
+	db.Service = "postgres"
+	db.Check = &reconciler.HealthCheck{Type: reconciler.HealthTCP, Port: 5432}
+
+	api := desired(1)
+	api.Service = "api"
+	api.DependsOn = []string{"postgres"}
+
+	dbID := reconciler.AllocID("shop", "postgres", 0)
+	apiID := reconciler.AllocID("shop", "api", 0)
+
+	world := reconciler.World{
+		Desired: []reconciler.Desired{db, api},
+		Actual: map[string]runtime.Status{
+			dbID:  running(dbID),
+			apiID: running(apiID),
+		},
+		Records: map[string]reconciler.AllocRecord{
+			// The dependency has gone unhealthy underneath a running dependent.
+			dbID: {ID: dbID, Project: "shop", Service: "postgres", State: reconciler.AllocRunning, Healthy: false},
+		},
+		Now: testNow,
+	}
+
+	for _, a := range reconciler.Plan(world) {
+		if a.AllocID == apiID {
+			t.Fatalf("running dependent got action %q; R10 forbids cascading stops", a.Kind)
+		}
+	}
+}
+
+// A dependency scaled to zero is vacuously satisfied. Blocking forever on
+// something deliberately turned off is a deadlock, not a safeguard.
+func TestPlanTreatsScaledToZeroDependencyAsSatisfied(t *testing.T) {
+	db := desired(0)
+	db.Service = "postgres"
+
+	api := desired(1)
+	api.Service = "api"
+	api.DependsOn = []string{"postgres"}
+
+	world := reconciler.World{Desired: []reconciler.Desired{db, api}, Now: testNow}
+
+	var kind reconciler.ActionKind
+	for _, a := range reconciler.Plan(world) {
+		if a.AllocID == reconciler.AllocID("shop", "api", 0) {
+			kind = a.Kind
+		}
+	}
+	if kind != reconciler.ActionCreate {
+		t.Fatalf("api action = %q, want create against a zero-count dependency", kind)
+	}
+}
+
+// jobspec rejects a depends_on naming a service that does not exist, so
+// reaching this state means the dependency was removed under a running spec.
+// Waiting forever on something that will never appear is worse than starting.
+func TestPlanDoesNotBlockOnAnUndeclaredDependency(t *testing.T) {
+	api := desired(1)
+	api.Service = "api"
+	api.DependsOn = []string{"ghost"}
+
+	world := reconciler.World{Desired: []reconciler.Desired{api}, Now: testNow}
+
+	var kind reconciler.ActionKind
+	for _, a := range reconciler.Plan(world) {
+		if a.AllocID == reconciler.AllocID("shop", "api", 0) {
+			kind = a.Kind
+		}
+	}
+	if kind != reconciler.ActionCreate {
+		t.Fatalf("api action = %q, want create despite the missing dependency", kind)
+	}
+}
+
+// Waiting has to be visible. An alloc that silently never appears is the worst
+// possible operator experience — `kanea plan` must say what it is waiting for.
+func TestWaitActionExplainsWhat(t *testing.T) {
+	db := desired(1)
+	db.Service = "postgres"
+	api := desired(1)
+	api.Service = "api"
+	api.DependsOn = []string{"postgres"}
+
+	for _, a := range reconciler.Plan(reconciler.World{
+		Desired: []reconciler.Desired{db, api}, Now: testNow,
+	}) {
+		if a.Kind == reconciler.ActionWait && !strings.Contains(a.Reason, "postgres") {
+			t.Errorf("wait reason %q does not name the dependency", a.Reason)
+		}
+	}
+}

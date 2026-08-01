@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -345,6 +346,86 @@ func (d *containerdDriver) Exits(ctx context.Context, project string) (<-chan Ex
 		}
 	}()
 	return out, nil
+}
+
+// Exec runs a command inside a running alloc and returns its exit code.
+//
+// This is what backs the `exec` health check (PRD §6.2 R7). The command is an
+// argument array and is executed directly — never through a shell, which would
+// make a health check a command-injection vector (§14, A03).
+//
+// The exec process inherits the task's namespaces and cgroup, so a health check
+// counts against the alloc's own limits rather than escaping them. Its output
+// is discarded: a check reports pass or fail, and streaming an arbitrary
+// command's output into the control plane's logs is a way to fill a disk.
+func (d *containerdDriver) Exec(ctx context.Context, project, id string, cmd []string, timeout time.Duration) (uint32, error) {
+	if len(cmd) == 0 {
+		return 0, fmt.Errorf("%w: empty exec command", ErrInvalidSpec)
+	}
+	ctx = scope(ctx, project)
+
+	task, err := d.task(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	spec, err := task.Spec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("spec of %s: %w", id, err)
+	}
+
+	// Start from the task's own process spec so the exec keeps its user,
+	// environment and working directory, then replace only the command.
+	process := *spec.Process
+	process.Args = cmd
+	process.Terminal = false
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// The exec id must be unique per in-flight exec on the task; the alloc's
+	// probe is serialised by the caller, so the deadline is enough to make it so.
+	execID := "kanea-health-" + strconv.FormatInt(deadlineNonce(ctx), 10)
+
+	proc, err := task.Exec(ctx, execID, &process, cio.NullIO)
+	if err != nil {
+		return 0, fmt.Errorf("exec in %s: %w", id, err)
+	}
+	defer func() {
+		// Always reap: a leaked exec process holds its parent task's resources
+		// and shows up in the alloc's pids limit.
+		if _, delErr := proc.Delete(context.WithoutCancel(ctx), containerd.WithProcessKill); delErr != nil {
+			d.log.Debug("cleaning up health exec", "alloc", id, "error", delErr)
+		}
+	}()
+
+	statusC, err := proc.Wait(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("wait exec in %s: %w", id, err)
+	}
+	if err := proc.Start(ctx); err != nil {
+		return 0, fmt.Errorf("start exec in %s: %w", id, err)
+	}
+
+	select {
+	case <-ctx.Done():
+		// A check that never returns is a failed check, not a stalled loop.
+		return 0, fmt.Errorf("exec in %s: %w", id, ctx.Err())
+	case status := <-statusC:
+		code, _, err := status.Result()
+		if err != nil {
+			return 0, fmt.Errorf("exec in %s: %w", id, err)
+		}
+		return code, nil
+	}
+}
+
+// deadlineNonce derives a per-exec id from the context deadline. It only has to
+// be distinct among concurrently running execs on one task.
+func deadlineNonce(ctx context.Context) int64 {
+	if deadline, ok := ctx.Deadline(); ok {
+		return deadline.UnixNano()
+	}
+	return 0
 }
 
 func (d *containerdDriver) task(ctx context.Context, id string) (containerd.Task, error) {

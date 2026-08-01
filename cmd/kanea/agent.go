@@ -141,6 +141,7 @@ func runAgent(args []string) error {
 		ServiceCIDR:   *serviceCIDR,
 		ResolvConfDir: filepath.Join(*dataDir, resolvSubdir),
 		Nameserver:    nameserverOf(dns),
+		Prober:        reconciler.NewProber(driver),
 	})
 	if err != nil {
 		return err

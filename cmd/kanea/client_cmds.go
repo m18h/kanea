@@ -277,6 +277,13 @@ func runPs(args []string) error {
 		case reconciler.AllocBackoff:
 			state = fmt.Sprintf("backoff (exit %d, retry in %s)",
 				a.LastExitCode, shortDuration(time.Until(a.NextRestartAt)))
+		case reconciler.AllocRunning:
+			// A running-but-failing alloc is the case `ps` most needs to
+			// distinguish: the process is up, so "running" alone is misleading,
+			// and it is why anything depending on it has not started.
+			if !a.Healthy && !a.LastProbeAt.IsZero() {
+				state = "running (unhealthy)"
+			}
 		}
 		o.printf("%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			a.ID, a.Project, a.Service, state, a.Restarts, a.Image, age)
@@ -323,9 +330,6 @@ func runStatus(args []string) error {
 	// Per service: desired count against what is actually running, plus the
 	// unhappy states called out by name. A status screen that only prints
 	// totals hides exactly the thing the operator is looking for.
-	type tally struct {
-		running, backoff, failed, other int
-	}
 	counts := map[string]*tally{}
 	for _, a := range allocs {
 		key := a.Project + "/" + a.Service
@@ -335,6 +339,9 @@ func runStatus(args []string) error {
 		switch a.State {
 		case reconciler.AllocRunning:
 			counts[key].running++
+			if !a.Healthy && !a.LastProbeAt.IsZero() {
+				counts[key].unhealthy++
+			}
 		case reconciler.AllocBackoff:
 			counts[key].backoff++
 		case reconciler.AllocFailed:
@@ -356,7 +363,16 @@ func runStatus(args []string) error {
 		if t == nil {
 			t = &tally{}
 		}
-		health, settled := serviceHealth(svc.Count, t.running, t.backoff, t.failed)
+		health, settled := serviceHealth(svc.Count, t.running, t.backoff, t.failed, t.unhealthy)
+		// "starting" is not an answer when a service has been gated for
+		// minutes. Say what it is waiting for, or the operator has to read the
+		// agent log to find out why nothing is happening.
+		if t.running == 0 && t.backoff == 0 && t.failed == 0 {
+			if blocked := blockedOn(svc, services, counts); len(blocked) > 0 {
+				health = "waiting for " + strings.Join(blocked, ", ")
+				settled = false
+			}
+		}
 		if !settled {
 			unhealthy++
 		}
@@ -380,12 +396,17 @@ func runStatus(args []string) error {
 // it has settled. "Settled" means running exactly matches desired with nothing
 // failed or restarting — running *more* than desired is mid-convergence (a
 // scale-in or a stop still draining), not health.
-func serviceHealth(desiredCount, running, backoff, failed int) (string, bool) {
+func serviceHealth(desiredCount, running, backoff, failed, unhealthy int) (string, bool) {
 	switch {
 	case failed > 0:
 		return fmt.Sprintf("%d failed", failed), false
 	case backoff > 0:
 		return fmt.Sprintf("%d restarting", backoff), false
+	case unhealthy > 0:
+		// Counted before the "starting" case: an alloc that is up but failing
+		// its check is a different problem from one that has not started, and
+		// reporting it as "starting" would suggest waiting is enough.
+		return fmt.Sprintf("%d unhealthy", unhealthy), false
 	case running < desiredCount:
 		return "starting", false
 	case running > desiredCount:
@@ -571,4 +592,42 @@ func shortDuration(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
+}
+
+// tally counts a service's allocs by state, for `kanea status`.
+type tally struct {
+	running, backoff, failed, unhealthy, other int
+}
+
+// blockedOn reports which of a service's dependencies cannot yet serve,
+// mirroring the reconciler's gate (R10) for display.
+//
+// It is recomputed here rather than reported by the agent because a gated alloc
+// has no record to carry a reason: it does not exist yet, which is precisely
+// the thing being explained.
+func blockedOn(svc reconciler.Desired, services []reconciler.Desired, counts map[string]*tally) []string {
+	declared := make(map[string]reconciler.Desired, len(services))
+	for _, other := range services {
+		declared[other.Project+"/"+other.Service] = other
+	}
+
+	var blocked []string
+	for _, dep := range svc.DependsOn {
+		key := svc.Project + "/" + dep
+		target, ok := declared[key]
+		if !ok {
+			// Removed under a running spec; the reconciler starts anyway rather
+			// than waiting forever on something that will never appear.
+			continue
+		}
+		if target.Count == 0 {
+			continue // deliberately scaled to nothing: vacuously satisfied
+		}
+		t := counts[key]
+		if t == nil || t.running < target.Count || t.unhealthy > 0 {
+			blocked = append(blocked, dep)
+		}
+	}
+	sort.Strings(blocked)
+	return blocked
 }

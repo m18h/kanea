@@ -151,6 +151,9 @@ type Driver interface {
 	Stop(ctx context.Context, project, id string, grace time.Duration) error
 	// Remove deletes the task, container and snapshot. Idempotent.
 	Remove(ctx context.Context, project, id string) error
+	// Exec runs a command inside a running alloc and returns its exit code.
+	// It backs the `exec` health check (R7): argument array, never a shell.
+	Exec(ctx context.Context, project, id string, cmd []string, timeout time.Duration) (uint32, error)
 	// Wait blocks until the alloc exits or the context is cancelled.
 	Wait(ctx context.Context, project, id string) (Exit, error)
 	// Exits streams task exits for a project — the reconciler's crash signal,

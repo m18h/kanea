@@ -57,6 +57,11 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				PidsLimit:   DefaultPidsLimit,
 			},
 		}
+		desired.DependsOn = append(desired.DependsOn, svc.Dependencies...)
+		if check := convertHealthCheck(svc); check != nil {
+			desired.Check = check
+		}
+
 		if svc.Network != nil {
 			for _, p := range svc.Network.Ports {
 				desired.Ports = append(desired.Ports, reconciler.Port{
@@ -114,4 +119,42 @@ func parseBackoff(s string) ([]time.Duration, error) {
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+// convertHealthCheck turns the first declared health check into the
+// reconciler's form, resolving the named port to a number.
+//
+// Only the first is used. The spec allows several blocks, but "healthy" is one
+// bit and combining checks needs a rule (all? any?) the PRD does not state —
+// inventing one here would be a stealth spec decision.
+func convertHealthCheck(svc *jobspec.Service) *reconciler.HealthCheck {
+	if len(svc.HealthChecks) == 0 {
+		return nil
+	}
+	hc := svc.HealthChecks[0]
+
+	out := &reconciler.HealthCheck{
+		Type:     hc.Type,
+		Path:     hc.Path,
+		Command:  hc.Command,
+		Failures: hc.Failures,
+	}
+	if d, err := time.ParseDuration(hc.Interval); err == nil {
+		out.Interval = d
+	}
+	if d, err := time.ParseDuration(hc.Timeout); err == nil {
+		out.Timeout = d
+	}
+
+	// The check names a port; the datapath needs the number. jobspec has
+	// already validated that the name exists (R7).
+	if hc.Port != "" && svc.Network != nil {
+		for _, p := range svc.Network.Ports {
+			if p.Name == hc.Port {
+				out.Port = p.Container
+				break
+			}
+		}
+	}
+	return out
 }

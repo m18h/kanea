@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/runtime"
@@ -36,6 +37,10 @@ func Plan(w World) []Action {
 	desiredByService := make(map[string]Desired, len(w.Desired))
 	wanted := make(map[string]struct{}) // alloc ids that should exist
 
+	// Which services are currently able to serve. Computed once: it is the same
+	// answer for every alloc, and it is what gates dependents (R10).
+	healthy := healthyServices(w)
+
 	for _, d := range w.Desired {
 		key := d.Project + "/" + d.Service
 		desiredByService[key] = d
@@ -43,7 +48,7 @@ func Plan(w World) []Action {
 		for i := range d.Count {
 			id := AllocID(d.Project, d.Service, i)
 			wanted[id] = struct{}{}
-			actions = append(actions, planAlloc(w, d, i, id)...)
+			actions = append(actions, planAlloc(w, d, i, id, healthy)...)
 		}
 	}
 
@@ -62,7 +67,7 @@ func Plan(w World) []Action {
 }
 
 // planAlloc decides about one alloc index of one service.
-func planAlloc(w World, d Desired, index int, id string) []Action {
+func planAlloc(w World, d Desired, index int, id string, healthy map[string]bool) []Action {
 	record, hasRecord := w.Records[id]
 	status, isActual := w.Actual[id]
 
@@ -78,6 +83,16 @@ func planAlloc(w World, d Desired, index int, id string) []Action {
 	if !isActual {
 		if hasRecord && record.State == AllocBackoff && w.Now.Before(record.NextRestartAt) {
 			return nil // still waiting out the backoff
+		}
+		// Dependencies gate creation, not restart: a dependent that is already
+		// running keeps running when a dependency degrades (R10 is explicit
+		// that there are no cascading stops). This is the point where an alloc
+		// would come up and immediately fail to reach something it needs.
+		if blocked := unmetDependencies(d, healthy); len(blocked) > 0 {
+			act := base
+			act.Kind = ActionWait
+			act.Reason = "waiting for " + strings.Join(blocked, ", ") + " to become healthy"
+			return []Action{act}
 		}
 		reason := "alloc missing"
 		if hasRecord && record.Restarts > 0 {
@@ -225,4 +240,68 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 		})
 	}
 	return spec
+}
+
+// healthyServices reports, per "project/service", whether the service is
+// currently able to serve.
+//
+// The bar is every desired alloc running *and* passing its check. Not "at least
+// one": a dependent that starts against a half-scaled dependency will spread its
+// own load across backends that are not all there yet, and the whole point of
+// gating is to make the dependency ready before anything talks to it.
+//
+// A service with count 0 is vacuously healthy — it was deliberately scaled to
+// nothing, and blocking its dependents forever would be a deadlock rather than
+// a safeguard.
+func healthyServices(w World) map[string]bool {
+	out := make(map[string]bool, len(w.Desired))
+
+	for _, d := range w.Desired {
+		key := d.Project + "/" + d.Service
+		if d.Count == 0 {
+			out[key] = true
+			continue
+		}
+
+		ready := true
+		for i := range d.Count {
+			id := AllocID(d.Project, d.Service, i)
+
+			status, running := w.Actual[id]
+			if !running || status.State != runtime.StateRunning {
+				ready = false
+				break
+			}
+			// A record is only consulted for its health verdict. An alloc that
+			// is running but has no record yet was created this pass; with no
+			// check declared that is healthy, and with one it is not yet known
+			// to be, which the zero value already says.
+			if d.Check.configured() && !w.Records[id].Healthy {
+				ready = false
+				break
+			}
+		}
+		out[key] = ready
+	}
+	return out
+}
+
+// unmetDependencies lists the services a dependent is still waiting on.
+//
+// A dependency that is not in the desired set at all is *not* treated as unmet.
+// jobspec already rejects a depends_on naming a service that does not exist
+// (R10), so reaching this state means the dependency was removed out from under
+// a running spec — and blocking forever on something that will never appear is
+// worse than starting.
+func unmetDependencies(d Desired, healthy map[string]bool) []string {
+	var blocked []string
+	for _, dep := range d.DependsOn {
+		key := d.Project + "/" + dep
+		ready, declared := healthy[key]
+		if declared && !ready {
+			blocked = append(blocked, dep)
+		}
+	}
+	sort.Strings(blocked)
+	return blocked
 }

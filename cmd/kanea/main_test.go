@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/kanea-dev/kanea/internal/reconciler"
 )
 
 func TestUsageListsAllCommands(t *testing.T) {
@@ -82,26 +84,104 @@ func TestServiceHealth(t *testing.T) {
 	// `kanea status` is where an operator looks to decide whether to worry, so
 	// "ok" must mean settled — not merely "nothing has failed yet".
 	tests := []struct {
-		name                              string
-		desired, running, backoff, failed int
-		want                              string
-		wantSettled                       bool
+		name                                         string
+		desired, running, backoff, failed, unhealthy int
+		want                                         string
+		wantSettled                                  bool
 	}{
-		{"all running", 2, 2, 0, 0, "ok", true},
-		{"still starting", 3, 1, 0, 0, "starting", false},
-		{"restarting", 2, 1, 1, 0, "1 restarting", false},
-		{"failed wins over restarting", 2, 0, 1, 1, "1 failed", false},
-		{"scaled to zero and drained", 0, 0, 0, 0, "stopped", true},
-		{"draining after a stop", 0, 1, 0, 0, "stopping", false},
-		{"scaling in", 1, 3, 0, 0, "stopping", false},
+		{"all running", 2, 2, 0, 0, 0, "ok", true},
+		{"still starting", 3, 1, 0, 0, 0, "starting", false},
+		{"restarting", 2, 1, 1, 0, 0, "1 restarting", false},
+		{"failed wins over restarting", 2, 0, 1, 1, 0, "1 failed", false},
+		{"scaled to zero and drained", 0, 0, 0, 0, 0, "stopped", true},
+		{"draining after a stop", 0, 1, 0, 0, 0, "stopping", false},
+		{"scaling in", 1, 3, 0, 0, 0, "stopping", false},
+		// An alloc that is up but failing its check is a different problem from
+		// one that has not started; reporting it as "starting" would suggest
+		// that waiting is enough.
+		{"running but failing its check", 2, 2, 0, 0, 1, "1 unhealthy", false},
+		{"unhealthy while still scaling up", 3, 2, 0, 0, 1, "1 unhealthy", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, settled := serviceHealth(tc.desired, tc.running, tc.backoff, tc.failed)
+			got, settled := serviceHealth(tc.desired, tc.running, tc.backoff, tc.failed, tc.unhealthy)
 			if got != tc.want || settled != tc.wantSettled {
-				t.Errorf("serviceHealth(%d,%d,%d,%d) = %q,%v; want %q,%v",
-					tc.desired, tc.running, tc.backoff, tc.failed, got, settled, tc.want, tc.wantSettled)
+				t.Errorf("serviceHealth(%d,%d,%d,%d,%d) = %q,%v; want %q,%v",
+					tc.desired, tc.running, tc.backoff, tc.failed, tc.unhealthy,
+					got, settled, tc.want, tc.wantSettled)
 			}
 		})
+	}
+}
+
+// A service gated on a dependency has no allocs and therefore no records, so
+// "starting" is all the alloc states can say. Status has to reconstruct the
+// reason or an operator watches nothing happen and has to read the agent log.
+func TestBlockedOnExplainsWhyAServiceHasNotStarted(t *testing.T) {
+	api := reconciler.Desired{
+		Project: "shop", Service: "api", Count: 1, DependsOn: []string{"postgres", "cache"},
+	}
+	db := reconciler.Desired{Project: "shop", Service: "postgres", Count: 2}
+	cache := reconciler.Desired{Project: "shop", Service: "cache", Count: 1}
+	services := []reconciler.Desired{api, db, cache}
+
+	tests := []struct {
+		name   string
+		counts map[string]*tally
+		want   []string
+	}{
+		{
+			name:   "nothing up yet",
+			counts: map[string]*tally{},
+			want:   []string{"cache", "postgres"},
+		},
+		{
+			name: "one dependency partly up",
+			counts: map[string]*tally{
+				"shop/postgres": {running: 1}, // wants 2
+				"shop/cache":    {running: 1},
+			},
+			want: []string{"postgres"},
+		},
+		{
+			name: "dependency running but failing its check",
+			counts: map[string]*tally{
+				"shop/postgres": {running: 2},
+				"shop/cache":    {running: 1, unhealthy: 1},
+			},
+			want: []string{"cache"},
+		},
+		{
+			name: "everything healthy",
+			counts: map[string]*tally{
+				"shop/postgres": {running: 2},
+				"shop/cache":    {running: 1},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := blockedOn(api, services, tc.counts)
+			if len(got) != len(tc.want) {
+				t.Fatalf("blockedOn = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("blockedOn = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// A dependency deliberately scaled to zero is satisfied, not a deadlock.
+func TestBlockedOnIgnoresZeroCountAndMissingDependencies(t *testing.T) {
+	api := reconciler.Desired{
+		Project: "shop", Service: "api", Count: 1, DependsOn: []string{"postgres", "ghost"},
+	}
+	services := []reconciler.Desired{api, {Project: "shop", Service: "postgres", Count: 0}}
+
+	if got := blockedOn(api, services, map[string]*tally{}); len(got) != 0 {
+		t.Fatalf("blockedOn = %v, want nothing blocking", got)
 	}
 }

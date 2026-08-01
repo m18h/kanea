@@ -45,6 +45,12 @@ type Desired struct {
 	// AllowFrom names the peers permitted to reach this service on top of the
 	// project default (jobspec R14). It only ever adds reachability.
 	AllowFrom []PeerRef
+	// DependsOn names the services that must be healthy before this one starts
+	// (jobspec R10). It already includes the implicit edges from ${service.*}
+	// references, and is same-project in v1.
+	DependsOn []string
+	// Check is the service's health probe, if it declared one.
+	Check *HealthCheck
 	// ResolvConfPath is the host file bind-mounted at /etc/resolv.conf. It is
 	// filled in by the reconciler rather than the spec: which resolver an alloc
 	// talks to is a property of the node, not of the job.
@@ -169,6 +175,17 @@ type AllocRecord struct {
 	LastExitAt   time.Time `json:"last_exit_at,omitzero"`
 	// NextRestartAt is when the alloc may be restarted; zero means immediately.
 	NextRestartAt time.Time `json:"next_restart_at,omitzero"`
+	// Healthy reports the last health-check verdict. A service with no check
+	// declared is healthy as soon as it runs, so this stays true.
+	Healthy bool `json:"healthy"`
+	// HealthFailures counts consecutive failed probes. It resets on a pass, so
+	// a service that flaps below the threshold is never marked unhealthy.
+	HealthFailures int `json:"health_failures,omitempty"`
+	// LastProbeAt is when the check last ran, so the declared interval is
+	// honoured rather than the reconcile interval.
+	LastProbeAt time.Time `json:"last_probe_at,omitzero"`
+	// HealthMessage explains the most recent failure, for `kanea ps`.
+	HealthMessage string    `json:"health_message,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
@@ -184,6 +201,11 @@ type ActionKind string
 
 // Actions the planner can emit.
 const (
+	// ActionWait records that an alloc cannot be created yet because a
+	// dependency is not healthy. It has no side effect — it exists so that
+	// waiting is visible in `kanea plan` and in the log, rather than an alloc
+	// silently never appearing.
+	ActionWait ActionKind = "wait"
 	// ActionCreate creates and starts a missing alloc.
 	ActionCreate ActionKind = "create"
 	// ActionStart starts an alloc that exists but is not running.
