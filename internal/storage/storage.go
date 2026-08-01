@@ -31,6 +31,9 @@ const (
 	TypeS3    = "s3"
 	TypeNFS   = "nfs"
 	TypeSMB   = "smb"
+	// TypeHost mounts a directory the operator already owns, gated by the
+	// server-config allowlist (R15).
+	TypeHost = "host"
 )
 
 // S3 access modes. The driver differs by mode because the two are not
@@ -68,11 +71,26 @@ type Resource struct {
 	Export  string
 	Share   string
 	Options string
+	// Host: the directory to mount, as written in the spec.
+	Path string
 }
 
-// NeedsMount reports whether this resource requires an actual mount. Local
-// volumes are plain directories under the data dir.
-func (r Resource) NeedsMount() bool { return r.Type != TypeLocal && r.Type != "" }
+// NeedsMount reports whether this resource requires a mount command.
+//
+// Local and host volumes do not: both are already directories on this node, so
+// the alloc's own bind mount is the whole mechanism. They differ only in who
+// chose the directory — Kanea derives a local one, an operator owns a host one.
+func (r Resource) NeedsMount() bool {
+	switch r.Type {
+	case "", TypeLocal, TypeHost:
+		return false
+	default:
+		return true
+	}
+}
+
+// IsHost reports whether this resource is an operator-provided directory.
+func (r Resource) IsHost() bool { return r.Type == TypeHost }
 
 // Request is one mount to establish.
 type Request struct {
@@ -159,6 +177,9 @@ type Config struct {
 	// MountTable reports whether a path is currently mounted. Nil reads
 	// /proc/mounts; tests substitute their own.
 	MountTable func(string) (bool, error)
+	// HostPaths is the operator's allowlist for `host` volumes (R15). The zero
+	// value permits none, which is the intended default.
+	HostPaths HostPathPolicy
 }
 
 // mountPath is the host path of a mount, used as its identity.

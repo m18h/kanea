@@ -47,6 +47,7 @@ type hclStorage struct {
 	Export   string    `hcl:"export,optional"`
 	Share    string    `hcl:"share,optional"`
 	Options  string    `hcl:"options,optional"`
+	Path     string    `hcl:"path,optional"`
 	DefRange hcl.Range `hcl:",def_range"`
 }
 
@@ -284,7 +285,7 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 		spec.Storages = append(spec.Storages, &Storage{
 			Name: st.Name, Type: st.Type, Bucket: st.Bucket, Endpoint: st.Endpoint,
 			AuthRef: st.AuthRef, Mode: st.Mode, Server: st.Server, Export: st.Export,
-			Share: st.Share, Options: st.Options, DefRange: st.DefRange,
+			Share: st.Share, Options: st.Options, Path: st.Path, DefRange: st.DefRange,
 		})
 	}
 	for i := range root.Services {

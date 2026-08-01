@@ -1390,3 +1390,52 @@ func TestNetworkPolicyPeers(t *testing.T) {
 		t.Errorf("peers = %v", peers)
 	}
 }
+
+// R15's parse-time half: only the *shape* of a host path is decided here. Which
+// paths are permitted is a server-config question that a job spec has no
+// business answering.
+func TestHostStorageValidation(t *testing.T) {
+	spec := func(path string) string {
+		return `spec_version = 1
+project "shop" {}
+storage "app-config" {
+  type = "host"
+  path = ` + path + `
+}
+service "web" {
+  project = "shop"
+  task "app" { image = "busybox:1.37" }
+  volume "config" {
+    storage    = "app-config"
+    mount_path = "/etc/app"
+  }
+}`
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "absolute path", path: `"/srv/shop/config"`},
+		{name: "missing path", path: `""`, want: "absolute `path`"},
+		{name: "relative path", path: `"srv/config"`, want: "must be absolute"},
+		// Refused rather than cleaned away: ".." is either a mistake or an
+		// attempt to walk out of an allowlisted prefix, and silently rewriting
+		// it would hide both.
+		{name: "parent traversal", path: `"/srv/../etc"`, want: `must not contain`},
+		{name: "trailing slash is not simplest form", path: `"/srv/config/"`, want: "simplest form"},
+		{name: "root filesystem", path: `"/"`, want: "never permitted"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.want == "" {
+				parse(t, spec(tc.path))
+				return
+			}
+			if got := parseErr(t, spec(tc.path)); !strings.Contains(got, tc.want) {
+				t.Fatalf("diagnostics:\n%s\nwant a mention of %q", got, tc.want)
+			}
+		})
+	}
+}

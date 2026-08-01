@@ -76,6 +76,10 @@ type PolicySyncer interface {
 // which need no mount at all.
 type Mounter interface {
 	Ensure(ctx context.Context, req storage.Request) error
+	// ResolveHost checks a host volume against the operator's allowlist and
+	// returns the real directory to bind-mount (R15). The allowlist is node
+	// configuration, so only the agent can answer this — which is the point.
+	ResolveHost(path string) (string, error)
 	// Prune releases every mount whose target is not in keep. Releasing is
 	// driven by a sweep rather than by teardown because a network volume is
 	// shared by every alloc of its service: "the last one stopped" is a fact
@@ -638,17 +642,19 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 		desired.ResolvConfPath = path
 	}
 
-	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
-
 	if _, err := r.driver.EnsureImage(ctx, desired.Project, desired.Image); err != nil {
 		return fmt.Errorf("image: %w", err)
 	}
-	// Volume directories exist before the task does. A bind mount whose source
-	// is missing would otherwise be created by the runtime as a root-owned
-	// directory at an unpredictable moment, or fail the alloc outright.
+	// Volumes before the spec, not just before the task. Directories have to
+	// exist so the runtime does not create a bind-mount source as a root-owned
+	// directory at an unpredictable moment — and a host volume's real path is
+	// only known once the allowlist has resolved it, so the spec cannot be
+	// built until that has happened.
 	if err := r.ensureVolumes(ctx, desired, action.Index); err != nil {
 		return err
 	}
+
+	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
 	// Network before task: an alloc must never run without its network, and on
 	// Cilium an unlabelled endpoint has its traffic denied (M0 spikes ①, ②).
 	if r.network != nil {
@@ -695,8 +701,25 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 // starts against a volume that did not mount writes its data into an empty
 // local directory and reports success the whole time.
 func (r *Reconciler) ensureVolumes(ctx context.Context, d Desired, index int) error {
-	for _, v := range d.Volumes {
-		path := VolumePath(r.volumeDir, d, index, v)
+	for i := range d.Volumes {
+		v := &d.Volumes[i]
+
+		// A host volume is the operator's directory, not Kanea's. It is checked
+		// against the allowlist and never created: a host path that does not
+		// exist is a mistake to report, not a directory to invent (R15).
+		if v.Resource.IsHost() {
+			if r.mounts == nil {
+				return fmt.Errorf("volume %s is a host volume but host volumes are not configured", v.Name)
+			}
+			resolved, err := r.mounts.ResolveHost(v.Resource.Path)
+			if err != nil {
+				return fmt.Errorf("volume %s: %w", v.Name, err)
+			}
+			v.resolvedHostPath = resolved
+			continue
+		}
+
+		path := VolumePath(r.volumeDir, d, index, *v)
 		if err := os.MkdirAll(path, 0o750); err != nil {
 			return fmt.Errorf("volume %s: %w", v.Name, err)
 		}

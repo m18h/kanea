@@ -53,6 +53,8 @@ func runAgent(args []string) error {
 	cniConf := fs.String("cni-conf", network.DefaultCNIConfPath, "CNI configuration list")
 	cniBin := fs.String("cni-bin", network.DefaultCNIBinDir, "CNI plugin directory")
 	policyDir := fs.String("policy-dir", network.DefaultPolicyDir, "cilium --static-cnp-path directory")
+	hostPaths := fs.String("allowed-host-paths", "",
+		"comma-separated directories that `host` volumes may mount from (default: none)")
 	lbStateFile := fs.String("lb-state-file", network.DefaultLBStateFile, "cilium --lb-state-file path")
 	serviceCIDR := fs.String("service-cidr", reconciler.DefaultServiceCIDR, "pool for service frontend addresses")
 	dnsListen := fs.String("dns-listen", "",
@@ -117,8 +119,20 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// The host-volume allowlist is deliberately an operator input and empty by
+	// default: until someone who owns this node names a directory, no job spec
+	// can mount one (PRD §6.2 R15).
+	hostPolicy, err := storage.NewHostPathPolicy(splitList(*hostPaths))
+	if err != nil {
+		return err
+	}
+	if hostPolicy.Enabled() {
+		logger.Info("host volumes enabled", "allowed_paths", hostPolicy.Allowed())
+	}
+
 	mounts := storage.New(storage.Config{
 		CredentialDir: filepath.Join(*dataDir, credentialSubdir),
+		HostPaths:     hostPolicy,
 		Logger:        logger,
 	})
 
@@ -329,13 +343,18 @@ func interfaceAddr(name string) (string, error) {
 // configure DNS once in /etc/resolv.conf.
 func upstreamResolvers(configured string) ([]string, error) {
 	if configured != "" {
-		var out []string
-		for _, u := range strings.Split(configured, ",") {
-			if u = strings.TrimSpace(u); u != "" {
-				out = append(out, u)
-			}
-		}
-		return out, nil
+		return splitList(configured), nil
 	}
 	return network.HostResolvers()
+}
+
+// splitList parses a comma-separated flag value, dropping empty entries.
+func splitList(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

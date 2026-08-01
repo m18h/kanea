@@ -218,6 +218,12 @@ func SharedVolumeHostPath(volumeDir, project, service, volume string) string {
 // VolumePath returns where a volume lives for one alloc, which depends on
 // whether it is backed by local disk or by network storage.
 func VolumePath(volumeDir string, d Desired, index int, v Volume) string {
+	// A host volume is mounted straight from the operator's directory: there is
+	// nothing for Kanea to derive, and copying it under data_dir would give the
+	// container a different filesystem than the one the operator named.
+	if v.Resource.IsHost() {
+		return v.HostPath()
+	}
 	if v.Resource.NeedsMount() {
 		return SharedVolumeHostPath(volumeDir, d.Project, d.Service, v.Name)
 	}

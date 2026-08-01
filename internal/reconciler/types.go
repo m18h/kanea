@@ -141,7 +141,16 @@ type Volume struct {
 	MountPath string
 	// ReadOnly mounts it read-only.
 	ReadOnly bool
+	// resolvedHostPath is the allowlist-checked directory for a host volume,
+	// filled in by the reconciler just before the alloc is created. It is
+	// unexported and untagged on purpose: it is a node-local fact, so it must
+	// not travel through the Store or the API alongside the spec.
+	resolvedHostPath string
 }
+
+// HostPath returns the resolved directory for a host volume, if one has been
+// checked against the allowlist.
+func (v Volume) HostPath() string { return v.resolvedHostPath }
 
 // AllocState is the reconciler's own view of an alloc, independent of what
 // containerd currently reports.

@@ -31,7 +31,8 @@ type Manager struct {
 	now            func() time.Time
 	// mounted reports whether a path is in the kernel's mount table. It is a
 	// field so tests can model a mount table on a host that has none.
-	mounted func(string) (bool, error)
+	mounted   func(string) (bool, error)
+	hostPaths HostPathPolicy
 
 	mu     sync.Mutex
 	mounts map[mountPath]*mountState
@@ -115,6 +116,7 @@ func New(cfg Config) *Manager {
 		checkTimeout:   cfg.CheckTimeout,
 		now:            cfg.Now,
 		mounted:        cfg.MountTable,
+		hostPaths:      cfg.HostPaths,
 		mounts:         map[mountPath]*mountState{},
 	}
 }
@@ -247,6 +249,17 @@ func (m *Manager) unmount(ctx context.Context, target string) error {
 
 // errNotMounted marks a target that has no mount on it at all.
 var errNotMounted = errors.New("storage: nothing is mounted at this path")
+
+// ResolveHost checks a host volume against the operator's allowlist and returns
+// the directory to bind-mount (R15).
+//
+// It lives on the Manager rather than being a free function because the
+// allowlist is node configuration, and the Manager is where node configuration
+// already lives. A caller that has one of these has, by construction, been
+// given the operator's policy rather than inventing one.
+func (m *Manager) ResolveHost(path string) (string, error) {
+	return m.hostPaths.Resolve(path)
+}
 
 // Prune releases every tracked mount whose target is not in keep.
 func (m *Manager) Prune(ctx context.Context, keep map[string]struct{}) error {

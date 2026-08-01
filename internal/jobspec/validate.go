@@ -3,6 +3,7 @@ package jobspec
 import (
 	"fmt"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -123,6 +124,9 @@ func validateStorages(spec *Spec) hcl.Diagnostics {
 		case StorageLocal:
 			// Nothing to configure: the path is derived under data_dir/volumes.
 
+		case StorageHost:
+			diags = append(diags, validateHostPath(st)...)
+
 		case StorageS3:
 			if st.Bucket == "" {
 				diags = append(diags, missing("bucket"))
@@ -166,8 +170,8 @@ func validateStorages(spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Unknown storage type",
-				Detail: fmt.Sprintf("Storage %q has type %q; expected %s, %s, %s or %s.",
-					st.Name, st.Type, StorageLocal, StorageS3, StorageNFS, StorageSMB),
+				Detail: fmt.Sprintf("Storage %q has type %q; expected %s, %s, %s, %s or %s.",
+					st.Name, st.Type, StorageLocal, StorageHost, StorageS3, StorageNFS, StorageSMB),
 				Subject: st.DefRange.Ptr(),
 			})
 		}
@@ -761,4 +765,40 @@ func validateNetworkPolicy(svc *Service) hcl.Diagnostics {
 		}
 	}
 	return diags
+}
+
+// validateHostPath enforces the parse-time half of R15.
+//
+// Only the *shape* of the path is decided here. Whether it may actually be
+// mounted is a server-config question (§15.1) that a job spec has no business
+// answering and this package has no way to answer — it does not know the
+// operator's allowlist, and a spec author naming their own permitted paths
+// would defeat the point of having one.
+func validateHostPath(st *Storage) hcl.Diagnostics {
+	reject := func(detail string) hcl.Diagnostics {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid host path",
+			Detail:   fmt.Sprintf("Storage %q: %s", st.Name, detail),
+			Subject:  st.DefRange.Ptr(),
+		}}
+	}
+
+	switch {
+	case st.Path == "":
+		return reject("a host volume needs an absolute `path`.")
+	case !filepath.IsAbs(st.Path):
+		return reject(fmt.Sprintf("path %q must be absolute.", st.Path))
+	case strings.Contains(st.Path, ".."):
+		// Refused outright rather than cleaned away: a spec containing ".." is
+		// either a mistake or an attempt to walk out of an allowlisted prefix,
+		// and silently rewriting it would hide both.
+		return reject(fmt.Sprintf("path %q must not contain \"..\".", st.Path))
+	case filepath.Clean(st.Path) != st.Path:
+		return reject(fmt.Sprintf("path %q is not in its simplest form; write %q.",
+			st.Path, filepath.Clean(st.Path)))
+	case st.Path == "/":
+		return reject("mounting the whole root filesystem is never permitted.")
+	}
+	return nil
 }

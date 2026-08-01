@@ -15,6 +15,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/kanea-dev/kanea/internal/storage"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -1317,5 +1318,117 @@ func TestReconcileForwardsServiceAllowlists(t *testing.T) {
 	// A service that asked for nothing must not get a document at all.
 	if got := h.network.allowFromOf("shop", "web"); got != nil {
 		t.Errorf("web allowlist = %v, want none", got)
+	}
+}
+
+// fakeMounter stands in for the storage manager.
+type fakeMounter struct {
+	mu       sync.Mutex
+	ensured  []string
+	pruned   []string
+	hostErr  error
+	hostPath string
+}
+
+func (f *fakeMounter) Ensure(_ context.Context, req storage.Request) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensured = append(f.ensured, req.Target)
+	return nil
+}
+
+func (f *fakeMounter) Prune(_ context.Context, keep map[string]struct{}) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pruned = nil
+	for target := range keep {
+		f.pruned = append(f.pruned, target)
+	}
+	return nil
+}
+
+func (f *fakeMounter) ResolveHost(path string) (string, error) {
+	if f.hostErr != nil {
+		return "", f.hostErr
+	}
+	if f.hostPath != "" {
+		return f.hostPath, nil
+	}
+	return path, nil
+}
+
+// A host volume is bind-mounted straight from the operator's directory: there
+// is nothing under data_dir to derive, and copying it there would give the
+// container a different filesystem than the one the operator named.
+func TestHostVolumeMountsTheOperatorsDirectory(t *testing.T) {
+	h := newHarness(t)
+	mounter := &fakeMounter{}
+	r, err := reconciler.New(reconciler.Config{
+		Store: h.store, Driver: h.driver, Network: h.network, Mounts: mounter,
+		Now: func() time.Time { return h.now }, LogDir: t.TempDir(), VolumeDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new reconciler: %v", err)
+	}
+
+	d := desired(1)
+	d.Volumes = []reconciler.Volume{{
+		Name: "config", Storage: "app-config", MountPath: "/etc/app",
+		Resource: storage.Resource{Name: "app-config", Type: storage.TypeHost, Path: "/srv/shop/config"},
+	}}
+	h.setDesired(t, d)
+
+	if _, err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	spec, ok := h.driver.specs[reconciler.AllocID("shop", "web", 0)]
+	if !ok {
+		t.Fatal("alloc was not created")
+	}
+	var source string
+	for _, m := range spec.Mounts {
+		if m.Destination == "/etc/app" {
+			source = m.Source
+		}
+	}
+	if source != "/srv/shop/config" {
+		t.Fatalf("mount source = %q, want the operator's directory", source)
+	}
+	// A host directory needs no mount command; it is already a directory here.
+	if len(mounter.ensured) != 0 {
+		t.Errorf("a host volume ran a mount: %v", mounter.ensured)
+	}
+}
+
+// A host path the operator has not allowed must stop the alloc, not warn and
+// carry on with a directory nobody sanctioned.
+func TestHostVolumeRejectedByTheAllowlistFailsTheAlloc(t *testing.T) {
+	h := newHarness(t)
+	mounter := &fakeMounter{hostErr: storage.ErrHostPathNotAllowed}
+	r, err := reconciler.New(reconciler.Config{
+		Store: h.store, Driver: h.driver, Network: h.network, Mounts: mounter,
+		Now: func() time.Time { return h.now }, LogDir: t.TempDir(), VolumeDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new reconciler: %v", err)
+	}
+
+	d := desired(1)
+	d.Volumes = []reconciler.Volume{{
+		Name: "config", Storage: "app-config", MountPath: "/etc/app",
+		Resource: storage.Resource{Name: "app-config", Type: storage.TypeHost, Path: "/etc"},
+	}}
+	h.setDesired(t, d)
+
+	res, err := r.Reconcile(context.Background())
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res.Failed != 1 {
+		t.Fatalf("failed = %d, want the alloc to fail", res.Failed)
+	}
+	if h.driver.count() != 0 {
+		t.Fatal("an alloc started with a host path the operator did not allow")
 	}
 }

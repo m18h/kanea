@@ -174,5 +174,6 @@ func storageResource(st *jobspec.Storage) storage.Resource {
 		Export:   st.Export,
 		Share:    st.Share,
 		Options:  st.Options,
+		Path:     st.Path,
 	}
 }

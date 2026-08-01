@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.13 |
+| **Status** | Draft v1.14 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
 | **Last updated** | 2026-08-01 |
 | **Document type** | Product Requirements Document (PRD) |
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.14 amendments** — adds the **`host` storage driver** (§8, §15.1, §6.2 **R15**): a volume backed by a directory the operator already has, rather than one Kanea derives under `data_dir/volumes/`. It is deliberately a **separate driver rather than an option on `local`**, so it is visible in a spec review, and it is **inert unless the operator opts in**: the permitted parent directories are listed in the *server* config (`storage.allowed_host_paths`), never in a job spec, and the default is an empty list — no host path mounts at all. That split is the entire security argument. An unrestricted host mount is `privileged` by another name (`/`, `/etc`, the containerd socket) and would make the §14 A05 hardening defaults irrelevant, so the boundary is set by the person who owns the node and merely *referenced* by the person who writes the spec. Paths are resolved through symlinks before the allowlist is checked, because `/srv/data/link → /etc` would otherwise walk straight out of it, and a host directory must already exist — creating one on demand is how a typo becomes a silently empty volume.
 
 > **v1.13 amendments** — **specifies `network { policy { … } }`**, which §7.1 has referenced since v1.0 without ever defining it (§6.1, §6.2 **R14**, §7.1). A service names the peers allowed to reach it as `allow_from = ["<project>/<service>"]`, and Kanea emits one additional CCNP per service alongside the project isolation policy — Cilium ingress rules are a union, so the effect is "intra-project, or the edge, or these named peers". This makes **cross-project traffic possible in v1** by explicit policy edge, which the default-deny project boundary otherwise forbids outright; cross-project *service references* (`${service.…}` interpolation and dependency ordering) remain v1.1 per R9 and §19.3, so the peer's name is written as the literal `<service>.<project>.kanea` that internal DNS already resolves. Least privilege is the default: entries are per-service, there is no whole-project wildcard, and an unknown peer is a parse error rather than a silently ineffective rule.
 
@@ -522,6 +524,8 @@ service "assets" {
 
 - **R14** — **`network.policy.allow_from` is the explicit ingress allowlist.** Each entry is a fully-qualified `"<project>/<service>"`; both halves are DNS-1123 labels, validated at parse time. Kanea emits one additional CiliumClusterwideNetworkPolicy per service that declares one, selecting that service and admitting the listed peers — Cilium ingress rules **union**, so an entry only ever *adds* reachability and can never weaken the project default-deny. There is **no whole-project wildcard**: naming the peer service is the point, and `"analytics/*"` is a parse error. Same-project entries are accepted and redundant (the default already permits them), so an operator may be explicit without changing behaviour. A cross-project peer is addressed by its literal internal DNS name (`<service>.<project>.kanea`) because `${service.…}` interpolation stays same-project until v1.1 (R9, §19.3).
 
+- **R15** — **`host` volumes are operator-gated.** A `storage` block of type `host` names an absolute `path`, validated at parse time as absolute, clean and free of `..`. Whether it may actually be mounted is **not** decided by the job spec: `kanead` refuses any path that does not sit under a prefix in `storage.allowed_host_paths` (§15.1), whose default is **empty**, so the driver does nothing until an operator enables it. The check is applied to the path *after* symlink resolution — `/srv/data/link → /etc` is otherwise a trivial escape — and the directory must already exist and be a directory, because creating it on demand turns a typo into a silently empty volume. An alloc whose host volume fails this check does not start (§8's "mount failures fail the alloc loudly"). Host volumes are shared by every alloc of a service: the directory is the operator's, not Kanea's, and Kanea never deletes it.
+
 ---
 
 ## 7. Networking Model
@@ -580,6 +584,7 @@ Named **storage resources** are defined at server level (config) or project leve
 | Driver | Mechanism | Notes |
 |---|---|---|
 | `local` | Host path under `data_dir/volumes/` | Default; per-alloc or shared |
+| `host` | An existing operator-owned directory, named by `path` | **Off unless enabled:** the path must sit under a prefix in the server config's `storage.allowed_host_paths` (§15.1), which defaults to empty. Shared by every alloc of the service |
 | `s3` | FUSE mount — **`mountpoint-s3` (default, read-mostly)** or **`s3fs` (opt-in read-write)**, selected by `mode` (M0 spike ③) | Any S3-compatible endpoint; read-only is the default; **not for latency-sensitive or many-small-files data** (one round trip per file op: 200 files ≈ 30 s at 30 ms RTT). `goofys` is rejected (unmaintained since 2020, no arm64 build); `rclone mount` is not a built-in driver (defers uploads ~6 s past `close()`) |
 | `nfs` | Kernel NFS mount | `server`, `export`, mount options |
 | `smb` | Kernel CIFS mount | `server`, `share`, credentials, `vers=3.0` default |
@@ -596,6 +601,11 @@ storage "shared-nfs" {
   type   = "nfs"
   server = "10.0.0.5"
   export = "/exports/shop"
+}
+
+storage "app-config" {
+  type = "host"                 # only mountable if an operator allowed the prefix
+  path = "/srv/shop/config"
 }
 ```
 
@@ -768,6 +778,13 @@ resources {                              # node resource isolation (§5.2.11)
 edge {                                   # defaults for all exposed services (§7.2.1)
   default_security_headers = true
   default_rate_limit { requests = 1000  window = "1m"  per = "ip" }
+}
+
+storage {                                # host-volume allowlist (§8, §6.2 R15)
+  # Empty by default: no job spec can mount a host directory until an operator
+  # names a permitted parent here. An unrestricted host mount is `privileged`
+  # under another name, so this boundary belongs to whoever owns the node.
+  allowed_host_paths = []                # e.g. ["/srv/kanea", "/opt/shared"]
 }
 
 containerd { socket = "/run/containerd/containerd.sock" }

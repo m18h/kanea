@@ -51,6 +51,9 @@ type Storage struct {
 	Export  string
 	Share   string
 	Options string
+	// Host: the absolute directory to mount. Whether it *may* be mounted is a
+	// server-config decision, not a job-spec one (R15).
+	Path string
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }
@@ -61,6 +64,9 @@ const (
 	StorageS3    = "s3"
 	StorageNFS   = "nfs"
 	StorageSMB   = "smb"
+	// StorageHost mounts a directory the operator already owns. It does nothing
+	// unless an operator has allowlisted its parent (R15, §15.1).
+	StorageHost = "host"
 )
 
 // StorageByName returns the named storage resource, or nil.
