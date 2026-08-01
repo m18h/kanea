@@ -20,6 +20,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/kanea-dev/kanea/internal/storage"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -32,6 +33,8 @@ const (
 	volumeSubdir = "volumes"
 	// resolvSubdir holds the generated per-project resolv.conf files.
 	resolvSubdir = "resolv"
+	// credentialSubdir holds transient mount credential files.
+	credentialSubdir = "credentials"
 )
 
 // runAgent is kanead: the control plane. It owns the state file — bbolt is
@@ -114,6 +117,11 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	mounts := storage.New(storage.Config{
+		CredentialDir: filepath.Join(*dataDir, credentialSubdir),
+		Logger:        logger,
+	})
+
 	net, err := buildNetwork(ctx, *networkMode, network.Config{
 		SocketPath:  *ciliumSocket,
 		CNIConfPath: *cniConf,
@@ -142,6 +150,7 @@ func runAgent(args []string) error {
 		ResolvConfDir: filepath.Join(*dataDir, resolvSubdir),
 		Nameserver:    nameserverOf(dns),
 		Prober:        reconciler.NewProber(driver),
+		Mounts:        mounts,
 	})
 	if err != nil {
 		return err
@@ -174,6 +183,10 @@ func runAgent(args []string) error {
 	if dns != nil {
 		go func() { errs <- dns.Serve(ctx) }()
 	}
+	// The mount supervisor runs alongside, not inside, the reconcile loop: a
+	// probe of a wedged mount can take seconds to abandon, and convergence must
+	// not wait for it (M0 spike ③).
+	go mounts.Supervise(ctx, storage.DefaultCheckInterval)
 
 	// Wait for all of them; a context cancellation is a clean shutdown.
 	var firstErr error

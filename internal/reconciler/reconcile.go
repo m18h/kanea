@@ -12,6 +12,7 @@ import (
 
 	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/kanea-dev/kanea/internal/storage"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -70,6 +71,18 @@ type PolicySyncer interface {
 	SyncPolicies(ctx context.Context, projects []network.ProjectPolicy) error
 }
 
+// Mounter establishes and releases the volume mounts a service declares. It is
+// the seam onto internal/storage; a nil Mounter leaves only local volumes,
+// which need no mount at all.
+type Mounter interface {
+	Ensure(ctx context.Context, req storage.Request) error
+	// Prune releases every mount whose target is not in keep. Releasing is
+	// driven by a sweep rather than by teardown because a network volume is
+	// shared by every alloc of its service: "the last one stopped" is a fact
+	// about the service, not about the alloc being torn down.
+	Prune(ctx context.Context, keep map[string]struct{}) error
+}
+
 // LoadBalancer is an optional Network capability: programming stable service
 // frontends backed by the allocs currently able to serve.
 type LoadBalancer interface {
@@ -104,6 +117,8 @@ type Config struct {
 	// Prober runs health checks. Nil disables health checking entirely, which
 	// makes every running service count as healthy for dependency gating.
 	Prober Prober
+	// Mounts establishes non-local volumes. Nil means only local volumes work.
+	Mounts Mounter
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -121,6 +136,7 @@ type Reconciler struct {
 
 	vips   *vipAllocator
 	prober Prober
+	mounts Mounter
 
 	interval      time.Duration
 	stopGrace     time.Duration
@@ -155,6 +171,7 @@ func New(cfg Config) (*Reconciler, error) {
 		store:         cfg.Store,
 		vips:          vips,
 		prober:        cfg.Prober,
+		mounts:        cfg.Mounts,
 		driver:        cfg.Driver,
 		network:       cfg.Network,
 		log:           cfg.Logger,
@@ -307,6 +324,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	// Sweep before publishing backends, so an orphan cannot be advertised as
 	// somewhere to send traffic even for one settle window.
 	result.Reaped = r.reapNetwork(ctx, world, attachments)
+	r.pruneMounts(ctx, world)
 	if err := r.syncServices(ctx, world, attachments); err != nil {
 		// Unlike policy, this is not fail-closed: stale load balancing points at
 		// allocs that were healthy a few seconds ago, which is a degraded
@@ -628,7 +646,7 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	// Volume directories exist before the task does. A bind mount whose source
 	// is missing would otherwise be created by the runtime as a root-owned
 	// directory at an unpredictable moment, or fail the alloc outright.
-	if err := r.ensureVolumes(desired, action.Index); err != nil {
+	if err := r.ensureVolumes(ctx, desired, action.Index); err != nil {
 		return err
 	}
 	// Network before task: an alloc must never run without its network, and on
@@ -666,17 +684,31 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	return r.persist(ctx, map[string]AllocRecord{record.ID: record})
 }
 
-// ensureVolumes creates each declared volume's host directory. Data is never
-// deleted on teardown: a volume outliving its alloc is the entire point (§8).
+// ensureVolumes prepares each declared volume before the alloc that needs it.
 //
 // It walks the service's volumes rather than the spec's mounts, because not
 // every mount is a volume. resolv.conf is bind-mounted from a *file*, and
 // running MkdirAll over the mount list would try to turn it into a directory —
 // which fails, and takes the whole alloc with it.
-func (r *Reconciler) ensureVolumes(d Desired, index int) error {
+//
+// A failure here fails the alloc, which is the point (PRD §8): a workload that
+// starts against a volume that did not mount writes its data into an empty
+// local directory and reports success the whole time.
+func (r *Reconciler) ensureVolumes(ctx context.Context, d Desired, index int) error {
 	for _, v := range d.Volumes {
-		path := VolumeHostPath(r.volumeDir, d.Project, d.Service, index, v.Name)
+		path := VolumePath(r.volumeDir, d, index, v)
 		if err := os.MkdirAll(path, 0o750); err != nil {
+			return fmt.Errorf("volume %s: %w", v.Name, err)
+		}
+		if !v.Resource.NeedsMount() {
+			continue
+		}
+		if r.mounts == nil {
+			return fmt.Errorf("volume %s needs a %s mount but no mount manager is configured",
+				v.Name, v.Resource.Type)
+		}
+		req := storage.Request{Resource: v.Resource, Target: path, ReadOnly: v.ReadOnly}
+		if err := r.mounts.Ensure(ctx, req); err != nil {
 			return fmt.Errorf("volume %s: %w", v.Name, err)
 		}
 	}
@@ -983,4 +1015,30 @@ func applyProbe(record AllocRecord, check HealthCheck, probeErr error, now time.
 		record.HealthMessage != before.HealthMessage ||
 		now.Sub(before.LastProbeAt) >= check.interval()
 	return record, changed
+}
+
+// pruneMounts releases network volumes no declared service still needs.
+//
+// It runs as a sweep, like the network reaper, rather than in teardown. A
+// network volume is shared by every alloc of its service, so the question is
+// never "is this alloc gone" but "does anything still want this mount" — and
+// the answer only exists at the level of the whole desired state.
+func (r *Reconciler) pruneMounts(ctx context.Context, w World) {
+	if r.mounts == nil {
+		return
+	}
+	keep := map[string]struct{}{}
+	for _, d := range w.Desired {
+		for _, v := range d.Volumes {
+			if v.Resource.NeedsMount() {
+				keep[SharedVolumeHostPath(r.volumeDir, d.Project, d.Service, v.Name)] = struct{}{}
+			}
+		}
+	}
+	if err := r.mounts.Prune(ctx, keep); err != nil {
+		// A mount that will not release is not worth failing a pass over: the
+		// data is safe, the next pass retries, and the alternative is halting
+		// convergence because a dead NFS server will not let go.
+		r.log.Warn("cannot release unused volume mounts", "error", err)
+	}
 }

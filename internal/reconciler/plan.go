@@ -204,6 +204,26 @@ func VolumeHostPath(volumeDir, project, service string, index int, volume string
 	return filepath.Join(volumeDir, project, service, strconv.Itoa(index), volume)
 }
 
+// SharedVolumeHostPath is where a network-backed volume lives:
+// <volumeDir>/<project>/<service>/shared/<volume>.
+//
+// No alloc index, unlike a local volume. An NFS export or an S3 bucket *is* the
+// shared thing — mounting it once per alloc would establish N mounts of one
+// bucket, N supervisors probing it, and N sets of credentials on disk, all to
+// present the same bytes. One mount per service is what the storage actually is.
+func SharedVolumeHostPath(volumeDir, project, service, volume string) string {
+	return filepath.Join(volumeDir, project, service, "shared", volume)
+}
+
+// VolumePath returns where a volume lives for one alloc, which depends on
+// whether it is backed by local disk or by network storage.
+func VolumePath(volumeDir string, d Desired, index int, v Volume) string {
+	if v.Resource.NeedsMount() {
+		return SharedVolumeHostPath(volumeDir, d.Project, d.Service, v.Name)
+	}
+	return VolumeHostPath(volumeDir, d.Project, d.Service, index, v.Name)
+}
+
 // AllocSpecFor builds the runtime spec for one alloc of a service. Keeping it
 // here (rather than in the executor) means a test can assert exactly what would
 // be handed to containerd.
@@ -234,7 +254,7 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 	}
 	for _, v := range d.Volumes {
 		spec.Mounts = append(spec.Mounts, runtime.Mount{
-			Source:      VolumeHostPath(volumeDir, d.Project, d.Service, index, v.Name),
+			Source:      VolumePath(volumeDir, d, index, v),
 			Destination: v.MountPath,
 			ReadOnly:    v.ReadOnly,
 		})

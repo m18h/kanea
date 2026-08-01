@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/kanea-dev/kanea/internal/storage"
 )
 
 // Desired is one service's target state, derived from the job spec.
@@ -133,6 +134,9 @@ type Volume struct {
 	Name string
 	// Storage is the storage resource it comes from.
 	Storage string
+	// Resource is the resolved storage resource. A local volume leaves it
+	// zero-valued; anything else has to be mounted before the alloc starts.
+	Resource storage.Resource
 	// MountPath is where it appears inside the container.
 	MountPath string
 	// ReadOnly mounts it read-only.
