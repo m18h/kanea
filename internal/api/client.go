@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/auth"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/secrets"
 )
@@ -232,4 +233,46 @@ func (c *Client) DeleteSecret(ctx context.Context, secretPath string) error {
 		return err
 	}
 	return c.do(ctx, http.MethodDelete, PathSecrets+"/"+clean, nil, nil)
+}
+
+// Users lists accounts, without password hashes.
+func (c *Client) Users(ctx context.Context) ([]auth.User, error) {
+	var resp UsersResponse
+	if err := c.do(ctx, http.MethodGet, PathUsers, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Users, nil
+}
+
+// PutUser creates or replaces an account.
+func (c *Client) PutUser(ctx context.Context, name, password string, role auth.Role) error {
+	return c.do(ctx, http.MethodPut, PathUsers+"/"+url.PathEscape(name),
+		UserRequest{Password: password, Role: role}, nil)
+}
+
+// DeleteUser removes an account.
+func (c *Client) DeleteUser(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, PathUsers+"/"+url.PathEscape(name), nil, nil)
+}
+
+// Tokens lists tokens, without their hashes.
+func (c *Client) Tokens(ctx context.Context) ([]auth.Token, error) {
+	var resp TokensResponse
+	if err := c.do(ctx, http.MethodGet, PathTokens, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Tokens, nil
+}
+
+// CreateToken mints a token and returns it with its one-time secret.
+func (c *Client) CreateToken(ctx context.Context, name string, role auth.Role, expiresIn string) (TokenResponse, error) {
+	var resp TokenResponse
+	err := c.do(ctx, http.MethodPost, PathTokens,
+		TokenRequest{Name: name, Role: role, ExpiresIn: expiresIn}, &resp)
+	return resp, err
+}
+
+// RevokeToken deletes a token by id.
+func (c *Client) RevokeToken(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, PathTokens+"/"+url.PathEscape(id), nil, nil)
 }

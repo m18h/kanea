@@ -257,7 +257,7 @@ func runAgent(args []string) error {
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
-		Secrets: secretStore, Auth: users, Audit: trail,
+		Secrets: secretStore, Auth: users, Accounts: users, Audit: trail,
 		InsecureCookies: *insecureCookies,
 	})
 	if err != nil {

@@ -85,6 +85,14 @@ func (s *Store) PutUser(ctx context.Context, name, password string, role Role) e
 	user := User{Name: name, PasswordHash: hash, Role: role, Created: now, Updated: now}
 	if existing, err := s.User(ctx, name); err == nil {
 		user.Created = existing.Created
+		// Demoting the last admin is refused for the same reason deleting one
+		// is: it is a one-way door, and the person walking through it is
+		// usually not intending to.
+		if existing.Role == RoleAdmin && role != RoleAdmin {
+			if err := s.checkNotLastAdmin(ctx, name); err != nil {
+				return err
+			}
+		}
 	}
 
 	mut, err := store.PutMutation(authKind, userPrefix+name, user)
@@ -126,11 +134,35 @@ func (s *Store) Users(ctx context.Context) ([]User, error) {
 
 // DeleteUser removes an account.
 func (s *Store) DeleteUser(ctx context.Context, name string) error {
-	if _, err := s.User(ctx, name); err != nil {
+	user, err := s.User(ctx, name)
+	if err != nil {
 		return err
 	}
-	_, err := s.store.Apply(ctx, store.DeleteMutation(authKind, userPrefix+name))
+	if user.Role == RoleAdmin {
+		if err := s.checkNotLastAdmin(ctx, name); err != nil {
+			return err
+		}
+	}
+	_, err = s.store.Apply(ctx, store.DeleteMutation(authKind, userPrefix+name))
 	return err
+}
+
+// checkNotLastAdmin refuses a change that would leave no admin account.
+//
+// Not a hard lock-out — the local unix socket is always admin (§13.1), so a
+// node is recoverable — but a dashboard operator who removes their own account
+// should be told, not silently locked out of the only interface they use.
+func (s *Store) checkNotLastAdmin(ctx context.Context, name string) error {
+	users, err := s.Users(ctx)
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		if u.Role == RoleAdmin && u.Name != name {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s is the only admin account", ErrLastAdmin, name)
 }
 
 // HasUsers reports whether any account exists.

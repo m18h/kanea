@@ -62,6 +62,8 @@ type ServerConfig struct {
 	Auth Authenticator
 	// Audit is the trail every mutation is written to (§14, A09).
 	Audit AuditLog
+	// Accounts backs the user and token routes. Nil disables them.
+	Accounts Accounts
 	// InsecureCookies drops the Secure attribute from the session cookie. It
 	// exists for a daemon reached over plain HTTP on a private network, and is
 	// off by default because the safe value should never be the one someone has
@@ -95,6 +97,7 @@ type Server struct {
 
 	auth            Authenticator
 	audit           AuditLog
+	accounts        Accounts
 	insecureCookies bool
 }
 
@@ -114,7 +117,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, auth: cfg.Auth, audit: cfg.Audit,
-		insecureCookies: cfg.InsecureCookies,
+		accounts: cfg.Accounts, insecureCookies: cfg.InsecureCookies,
 	}
 
 	// Every route states what it requires next to where it is registered. The
@@ -136,6 +139,16 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// The audit log is admin-only to read: it names who did what, and that is
 	// not something a viewer needs (§13.3).
 	mux.Handle("GET "+PathAudit, s.route(policy{action: "audit.list", adminOnly: true}, s.handleAudit))
+	// Accounts. Admin-only throughout: minting a token is minting a credential,
+	// and listing users is a list of things worth attacking (§13.3).
+	mux.Handle("GET "+PathUsers, s.route(policy{action: "user.list", adminOnly: true}, s.handleListUsers))
+	mux.Handle("PUT "+PathUsers+"/{name}", s.route(policy{action: "user.put", mutates: true}, s.handlePutUser))
+	mux.Handle("DELETE "+PathUsers+"/{name}",
+		s.route(policy{action: "user.delete", mutates: true}, s.handleDeleteUser))
+	mux.Handle("GET "+PathTokens, s.route(policy{action: "token.list", adminOnly: true}, s.handleListTokens))
+	mux.Handle("POST "+PathTokens, s.route(policy{action: "token.create", mutates: true}, s.handleCreateToken))
+	mux.Handle("DELETE "+PathTokens+"/{id}",
+		s.route(policy{action: "token.revoke", mutates: true}, s.handleRevokeToken))
 	// List and write, never read: there is no GET for an individual secret,
 	// and its absence is the enforcement (PRD §13.3).
 	mux.Handle("GET "+PathSecrets, s.route(policy{action: "secret.list", adminOnly: true}, s.handleListSecrets))

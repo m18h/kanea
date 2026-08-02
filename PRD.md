@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.17 |
+| **Status** | Draft v1.18 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-08-01 |
+| **Last updated** | 2026-08-02 |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.18 amendments** — moves **accounts out of the config file and into the Store** (§13.1, §13.2, §15.1). v1.1's basic-auth stanza had `kanea user add` edit `kanea.hcl` and the daemon read accounts at start; that makes adding a user a config edit plus a reload, makes revoking one a race between the editor and the reader, and gives credentials a second home outside the single writer that already owns state — which then has to be reconciled during a restore (§15.3). Users now live in the `kv` bucket alongside tokens and sessions, are managed at runtime over the authenticated API (`kanea user add|list|delete`), and replicate and restore with everything else. What the config still decides is what config should decide: **where the API listens** (`bind.api_addr`) and **who the OIDC provider is** (§13.2) — settings, not identities. `kanea init` still creates the first admin, but by calling the same API rather than by writing a stanza. The §13.1 rule is unchanged and now enforced in the middleware rather than at startup: with no account configured, the only way in is the local unix socket, and a network listener is refused rather than opened unauthenticated.
 
 > **v1.17 amendments** — records the **ACME delivery order** (§7.3, §20 M3/M5). **HTTP-01 ships in M3**; **DNS-01 and the wildcard-by-default policy move to M5**, because a DNS provider credential is a `secret:` reference (R3, R5) and the secrets store does not exist until then — implementing it earlier would mean inventing a second, unscoped way to hold a credential. **TLS-ALPN-01 moves with it**: it exists for a node that does not own port 80, and Kanea's edge does. The consequence is stated rather than hidden: until M5 a node past the ~20-service threshold keeps issuing per-service certificates and warns on every pass, instead of quietly walking into a Let's Encrypt rate limit.
 
@@ -739,11 +741,12 @@ Sources:                              Aggregation:                      Consumer
 
 ### 13.1 First-install flow
 
-- Auth is configured in the server config **before first start** (`kanea init` interactively offers to create an admin user / OIDC block, runs dependency/kernel/NTP checks, and performs the **master-key escrow ceremony**, §15.3). If no auth is configured, the API binds to localhost only and prints a loud warning — never an unauthenticated public listener (§14, A05).
+- Auth is set up **before the API is exposed** (`kanea init` interactively creates the first admin account and/or the OIDC block, runs dependency/kernel/NTP checks, and performs the **master-key escrow ceremony**, §15.3). Accounts live in the Store, not in the config file (v1.18), so `kanea init` creates the first one through the same API everything else uses — over the local unix socket, which is the only door open at that point.
+- **With no account configured the API is reachable only over the local unix socket** (0600, owned by the daemon's user), and a configured network listener is refused rather than opened unauthenticated (§14, A05). The daemon says so loudly at startup instead of failing quietly.
 
 ### 13.2 Mechanisms (either or both)
 
-- **Basic auth:** users in config with **bcrypt** (or argon2id) password hashes; `kanea user add` helper hashes and writes the config stanza.
+- **Basic auth:** accounts in the **Store** with **bcrypt** (or argon2id) password hashes; `kanea user add` creates them at runtime over the authenticated API — no config edit, no reload, and one writer for both credentials and state (v1.18).
 - **OAuth2/OIDC:** generic OIDC (Google, Keycloak, Authentik, …) plus presets for **GitHub** and **GitLab** OAuth. Authorization-code flow with **PKCE**, `state` + `nonce` validation, full ID-token verification (signature, issuer, audience, expiry), restricted redirect URIs, deny-by-default claim→role mapping.
 
 ### 13.3 Sessions, tokens, roles

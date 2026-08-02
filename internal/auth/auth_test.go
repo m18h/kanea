@@ -363,6 +363,43 @@ func TestPutUserRejectsBadNames(t *testing.T) {
 	}
 }
 
+func TestTheLastAdminCannotBeRemovedOrDemoted(t *testing.T) {
+	a, _ := newAuth(t)
+	ctx := context.Background()
+
+	if err := a.PutUser(ctx, "admin", goodPassword, auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	if err := a.PutUser(ctx, "viewer", goodPassword, auth.RoleViewer); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+
+	// A viewer is not what keeps the platform administrable.
+	if err := a.DeleteUser(ctx, "admin"); !errors.Is(err, auth.ErrLastAdmin) {
+		t.Fatalf("DeleteUser = %v, want ErrLastAdmin", err)
+	}
+	if err := a.PutUser(ctx, "admin", goodPassword, auth.RoleViewer); !errors.Is(err, auth.ErrLastAdmin) {
+		t.Fatalf("demotion = %v, want ErrLastAdmin", err)
+	}
+	// Changing the password of the last admin is not a demotion and must work:
+	// it is exactly what someone does after a suspected leak.
+	if err := a.PutUser(ctx, "admin", goodPassword+"-rotated", auth.RoleAdmin); err != nil {
+		t.Fatalf("rotating the last admin's password: %v", err)
+	}
+
+	// With a second admin, the first is removable.
+	if err := a.PutUser(ctx, "admin2", goodPassword, auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	if err := a.DeleteUser(ctx, "admin"); err != nil {
+		t.Fatalf("DeleteUser with a second admin: %v", err)
+	}
+	// And a viewer is removable whether or not an admin exists.
+	if err := a.DeleteUser(ctx, "viewer"); err != nil {
+		t.Fatalf("DeleteUser(viewer): %v", err)
+	}
+}
+
 func TestHasUsers(t *testing.T) {
 	a, _ := newAuth(t)
 	ctx := context.Background()

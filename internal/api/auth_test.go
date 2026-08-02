@@ -65,7 +65,7 @@ func newAuthHarness(t *testing.T, with ...func(*api.ServerConfig)) *authHarness 
 
 	cfg := api.ServerConfig{
 		Store: st, Version: "test", LogDir: t.TempDir(),
-		Auth: users, Audit: trail, InsecureCookies: true,
+		Auth: users, Accounts: users, Audit: trail, InsecureCookies: true,
 	}
 	for _, apply := range with {
 		apply(&cfg)

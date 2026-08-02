@@ -73,6 +73,8 @@ var (
 	ErrRateLimited = errors.New("auth: too many attempts")
 	// ErrNotFound marks a missing user or token.
 	ErrNotFound = errors.New("auth: not found")
+	// ErrLastAdmin refuses a change that would leave no admin account.
+	ErrLastAdmin = errors.New("auth: refusing to remove the last admin")
 )
 
 // User is a configured account.
