@@ -46,6 +46,7 @@ var commands = []command{
 	{"project", "project operations (sync, ...)", todo},
 	{"backup", "backup create|list|verify", todo},
 	{"restore", "restore state from a snapshot", todo},
+	{"secret", "manage secrets: put, ls, rm (write-only — there is no get)", runSecret},
 	{"token", "manage API tokens", todo},
 	{"upgrade", "drain edge, restart services, run state migrations", todo},
 	{"mcp", "stdio MCP server for local AI agents (PRD §16.3)", todo},

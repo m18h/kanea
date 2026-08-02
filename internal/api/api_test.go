@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/api"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/kanea-dev/kanea/internal/secrets"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -494,4 +496,44 @@ func (h *harness) putService(t *testing.T, project, service string, count int) {
 		store.KindService, project+"/"+service, d); err != nil {
 		t.Fatalf("put service: %v", err)
 	}
+}
+
+// withSecrets gives the harness a real secrets store.
+func withSecrets(cfg *api.ServerConfig) {
+	dir, err := os.MkdirTemp("", "ksec")
+	if err != nil {
+		panic(err)
+	}
+	st, err := store.Open(store.Options{Path: filepath.Join(dir, "secrets.db")})
+	if err != nil {
+		panic(err)
+	}
+	s, err := secrets.Open(secrets.Config{
+		Store:   st,
+		KeyPath: filepath.Join(dir, secrets.KeyFileName),
+	})
+	if err != nil {
+		panic(err)
+	}
+	cfg.Secrets = s
+	cfg.ServeDashboard = true
+}
+
+// raw makes a request over the harness's socket and returns the status and body.
+func (h *harness) raw(t *testing.T, method, path string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), method, "http://kanead"+path, nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	resp, err := h.httpClient().Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return resp.StatusCode, string(body)
 }

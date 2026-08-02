@@ -68,6 +68,15 @@ func Handler(prefix string) http.Handler {
 	server := http.FileServer(http.FS(files))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Registered on the bare prefix so the API's own patterns stay more
+		// specific, which means the method check lands here rather than in the
+		// route pattern. Static assets answer GET and HEAD and nothing else.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
 		upstream := strings.TrimPrefix(r.URL.Path, strings.TrimSuffix(prefix, "/"))
 		if upstream == "" {
 			upstream = "/"

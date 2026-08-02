@@ -22,6 +22,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/kanea-dev/kanea/internal/secrets"
 	"github.com/kanea-dev/kanea/internal/storage"
 	"github.com/kanea-dev/kanea/internal/store"
 )
@@ -153,9 +154,21 @@ func runAgent(args []string) error {
 		logger.Info("host volumes enabled", "allowed_paths", hostPolicy.Allowed())
 	}
 
+	// The secrets store is what lets the credentialed storage drivers actually
+	// mount: until now an `auth_ref` refused with ErrCredentialsUnavailable.
+	secretStore, err := secrets.Open(secrets.Config{
+		Store:   st,
+		KeyPath: filepath.Join(*dataDir, secrets.KeyFileName),
+		Logger:  logger,
+	})
+	if err != nil {
+		return err
+	}
+
 	mounts := storage.New(storage.Config{
 		CredentialDir: filepath.Join(*dataDir, credentialSubdir),
 		HostPaths:     hostPolicy,
+		Secrets:       secretStore,
 		Logger:        logger,
 	})
 
@@ -215,6 +228,7 @@ func runAgent(args []string) error {
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
+		Secrets: secretStore,
 	})
 	if err != nil {
 		return err

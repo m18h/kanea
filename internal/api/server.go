@@ -19,6 +19,7 @@ import (
 
 	"github.com/kanea-dev/kanea/internal/dashboard"
 	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/kanea-dev/kanea/internal/secrets"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -53,6 +54,18 @@ type ServerConfig struct {
 	// a control channel, and a daemon nobody browses should not be answering
 	// HTML on it.
 	ServeDashboard bool
+	// Secrets backs the write-only secrets surface. Nil disables those routes.
+	Secrets SecretStore
+}
+
+// SecretStore is the slice of the secrets store the API needs.
+//
+// Notably it has no Resolve: the API cannot read a secret because the interface
+// it holds cannot express it (PRD §13.3, §16.3).
+type SecretStore interface {
+	Put(ctx context.Context, path string, value []byte) error
+	List(ctx context.Context, prefix string) ([]secrets.Info, error)
+	Delete(ctx context.Context, path string) error
 }
 
 // Server is the control-plane HTTP server.
@@ -67,6 +80,7 @@ type Server struct {
 	http      *http.Server
 	wsOrigins []string
 	ws        *wsHub
+	secrets   SecretStore
 }
 
 // NewServer builds the server. It does not listen yet.
@@ -84,6 +98,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
+		secrets: cfg.Secrets,
 	}
 
 	mux := http.NewServeMux()
@@ -94,11 +109,29 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("GET "+PathAllocs, s.handleListAllocs)
 	mux.HandleFunc("GET "+PathLogs, s.handleLogs)
 	mux.HandleFunc("GET "+PathWS, s.handleWS)
+	// List and write, never read: there is no GET for an individual secret,
+	// and its absence is the enforcement (PRD §13.3).
+	mux.HandleFunc("GET "+PathSecrets, s.handleListSecrets)
+	mux.HandleFunc("PUT "+PathSecrets+"/{path...}", s.handlePutSecret)
+	mux.HandleFunc("DELETE "+PathSecrets+"/{path...}", s.handleDeleteSecret)
 	// The SPA is registered last and on the bare prefix, so it catches
 	// everything the API did not claim. A client-side route must reach the app,
 	// and ServeMux's longest-pattern-wins rule keeps /v1/* ahead of it.
 	if cfg.ServeDashboard {
-		mux.Handle("GET /", dashboard.Handler("/"))
+		// An unmatched API path must not fall through to the SPA. Without this,
+		// a mistyped or removed route answers 200 with HTML, and a client sees
+		// "success" followed by a JSON decode error somewhere unrelated —
+		// including for routes that deliberately do not exist, like reading a
+		// secret. Longest-prefix wins, so this claims /v1/* ahead of "/".
+		mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound,
+				fmt.Errorf("api: no such route: %s %s", r.Method, r.URL.Path))
+		})
+		// Registered without a method so "/v1/" is unambiguously the more
+		// specific pattern. With "GET /" the two conflict: neither matches a
+		// strict superset of the other, and ServeMux panics rather than guess.
+		// The handler answers non-GET itself.
+		mux.Handle("/", dashboard.Handler("/"))
 		if !dashboard.Built() {
 			cfg.Logger.Warn("serving the dashboard placeholder",
 				"detail", "this binary was built without the UI; run `make dashboard && make build`")

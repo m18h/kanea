@@ -49,6 +49,8 @@ var implemented = map[string]bool{
 	"status": true,
 	// M3 ingress:
 	"edge": true,
+	// M5 auth & secrets:
+	"secret": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {

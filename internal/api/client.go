@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/kanea-dev/kanea/internal/secrets"
 )
 
 // Client talks to a running kanead over its unix socket.
@@ -196,4 +197,39 @@ func decodeError(resp *http.Response) error {
 		return fmt.Errorf("kanead: %s", body.Error)
 	}
 	return fmt.Errorf("kanead: %s", resp.Status)
+}
+
+// ListSecrets returns metadata for the secrets that exist.
+//
+// Metadata only — there is no client method to read a value, because there is
+// no server route to read one (PRD §13.3).
+func (c *Client) ListSecrets(ctx context.Context, prefix string) ([]secrets.Info, error) {
+	path := PathSecrets
+	if prefix != "" {
+		path += "?prefix=" + url.QueryEscape(prefix)
+	}
+	var resp SecretsResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Secrets, nil
+}
+
+// PutSecret creates or replaces a secret.
+func (c *Client) PutSecret(ctx context.Context, secretPath string, value []byte) error {
+	clean, err := secrets.CleanPath(secretPath)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPut, PathSecrets+"/"+clean,
+		SecretRequest{Value: string(value)}, nil)
+}
+
+// DeleteSecret removes a secret.
+func (c *Client) DeleteSecret(ctx context.Context, secretPath string) error {
+	clean, err := secrets.CleanPath(secretPath)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodDelete, PathSecrets+"/"+clean, nil, nil)
 }
