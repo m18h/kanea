@@ -3,12 +3,15 @@ import { Link, Router } from '@/lib/router'
 import { useRouter } from '@/hooks/useRouter'
 import { isActive, matchPath } from '@/lib/paths'
 import { useQuery } from '@tanstack/react-query'
-import { Moon, Sun } from 'lucide-react'
+import { LogOut, Moon, Sun } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Overview } from '@/pages/Overview'
 import { Services } from '@/pages/Services'
 import { ServiceDetail } from '@/pages/ServiceDetail'
+import { Login } from '@/pages/Login'
 import { fetchHealth } from '@/lib/api'
+import { SessionProvider } from '@/lib/session-provider'
+import { useSession } from '@/hooks/useSession'
 import { cn } from '@/lib/utils'
 
 const nav = [
@@ -18,15 +21,37 @@ const nav = [
 
 export function App() {
   return (
-    <Router>
-      <Shell />
-    </Router>
+    <SessionProvider>
+      <Router>
+        <Gate />
+      </Router>
+    </SessionProvider>
   )
+}
+
+/**
+ * Gate decides between the app and the login screen.
+ *
+ * The daemon is the authority — every route behind this is deny-by-default —
+ * so this is presentation, not enforcement. Skipping it would not expose data;
+ * it would show an operator a screen full of 401s instead of a password field.
+ */
+function Gate() {
+  const { session, loading } = useSession()
+
+  if (loading) {
+    // Deliberately blank rather than a spinner: the answer usually arrives in
+    // a few milliseconds, and a flashed skeleton is worse than a still page.
+    return <div className="min-h-screen bg-background" />
+  }
+  if (!session) return <Login />
+  return <Shell />
 }
 
 function Shell() {
   const { path } = useRouter()
   const [theme, setTheme] = useTheme()
+  const { session, signOut } = useSession()
 
   const health = useQuery({
     queryKey: ['health'],
@@ -72,6 +97,26 @@ function Shell() {
             >
               {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
             </button>
+            {session ? (
+              <div className="flex items-center gap-2 border-l pl-3">
+                {/* Who you are and what you may do, always visible: a viewer
+                    who does not know they are a viewer reads every missing
+                    button as a broken dashboard. */}
+                <span className="text-xs text-muted-foreground">
+                  {session.subject}
+                  <span className="ml-1 opacity-70">({session.role})</span>
+                </span>
+                <button
+                  type="button"
+                  aria-label="Sign out"
+                  title="Sign out"
+                  className="rounded-md border p-1.5 hover:bg-muted"
+                  onClick={() => void signOut()}
+                >
+                  <LogOut size={16} />
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </header>
