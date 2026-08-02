@@ -1,0 +1,12 @@
+# Historical false positives, by fingerprint (commit:path:rule:line).
+#
+# gitleaks scans history, so a finding stays findable after the code is fixed.
+# Each entry here must say what the value was and why it was never a secret —
+# an allowlist nobody can audit is worse than the finding it silences.
+
+# Two base64 TSIG secrets in the DNS-01 solver's tests. They were test-only
+# fixtures, never valid anywhere, and 6ee4763 replaced them with per-test
+# generated values so nothing like them is written down again. These entries
+# cover the commit that introduced them.
+9dde3e4df354ffe86ba4f5487727c9f4cd23fa86:internal/acme/dns01_test.go:generic-api-key:17
+9dde3e4df354ffe86ba4f5487727c9f4cd23fa86:internal/acme/dns01_test.go:generic-api-key:230
