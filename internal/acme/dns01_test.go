@@ -1,6 +1,8 @@
 package acme_test
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"net"
 	"strings"
 	"sync"
@@ -12,16 +14,30 @@ import (
 	"github.com/kanea-dev/kanea/internal/acme"
 )
 
-const (
-	testTSIGKey    = "kanea-update."
-	testTSIGSecret = "c2VjcmV0LWtleS1mb3ItdGVzdGluZy1vbmx5" // base64, test-only
-)
+const testTSIGKey = "kanea-update."
+
+// randomSecret mints a TSIG secret for one test.
+//
+// Generated rather than written down: a base64 literal in a repository is
+// indistinguishable from a real leaked key to anything scanning for one — to
+// gitleaks in CI, and to a person reading the diff. Nothing here needs the
+// value to be stable.
+func randomSecret(t *testing.T) string {
+	t.Helper()
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		t.Fatalf("random: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(buf)
+}
 
 // updateServer is a nameserver that accepts TSIG-signed dynamic updates and
 // records them. It exists because the interesting part of the solver is what
 // goes on the wire — a mocked client would assert the code against itself.
 type updateServer struct {
 	addr string
+	// secret is what this server accepts, minted per test.
+	secret string
 
 	mu      sync.Mutex
 	added   []dns.RR
@@ -35,7 +51,7 @@ type updateServer struct {
 func newUpdateServer(t *testing.T) *updateServer {
 	t.Helper()
 
-	s := &updateServer{rcode: dns.RcodeSuccess}
+	s := &updateServer{rcode: dns.RcodeSuccess, secret: randomSecret(t)}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -43,7 +59,7 @@ func newUpdateServer(t *testing.T) *updateServer {
 
 	server := &dns.Server{
 		Listener:   listener,
-		TsigSecret: map[string]string{testTSIGKey: testTSIGSecret},
+		TsigSecret: map[string]string{testTSIGKey: s.secret},
 		Handler:    dns.HandlerFunc(s.handle),
 		// miekg/dns refuses UPDATE with NOTIMP by default, which is the right
 		// default for a resolver — Kanea's own (§7.1) keeps it, so nobody can
@@ -122,7 +138,7 @@ func newSolver(t *testing.T, server *updateServer, adjust ...func(*acme.RFC2136C
 		Server:     server.addr,
 		Zone:       "apps.example.com.",
 		TSIGKey:    testTSIGKey,
-		TSIGSecret: testTSIGSecret,
+		TSIGSecret: server.secret,
 	}
 	for _, apply := range adjust {
 		apply(&cfg)
@@ -226,9 +242,8 @@ func TestDNS01ReportsARefusal(t *testing.T) {
 
 func TestDNS01RejectsAWrongKey(t *testing.T) {
 	server := newUpdateServer(t)
-	solver := newSolver(t, server, func(cfg *acme.RFC2136Config) {
-		cfg.TSIGSecret = "d3Jvbmctc2VjcmV0LWZvci10ZXN0aW5nLW9ubHk="
-	})
+	wrong := randomSecret(t)
+	solver := newSolver(t, server, func(cfg *acme.RFC2136Config) { cfg.TSIGSecret = wrong })
 
 	// The server refuses the signature; the point is that the solver surfaces
 	// it rather than assuming the record landed.
@@ -242,11 +257,11 @@ func TestNewRFC2136SolverRefusesAnUnsafeConfiguration(t *testing.T) {
 		name string
 		cfg  acme.RFC2136Config
 	}{
-		{"no server", acme.RFC2136Config{TSIGKey: "k", TSIGSecret: "s"}},
-		{"no key", acme.RFC2136Config{Server: "127.0.0.1:53", TSIGSecret: "s"}},
+		{"no server", acme.RFC2136Config{TSIGKey: "k", TSIGSecret: "not-a-key"}},
+		{"no key", acme.RFC2136Config{Server: "127.0.0.1:53", TSIGSecret: "not-a-key"}},
 		{"no secret", acme.RFC2136Config{Server: "127.0.0.1:53", TSIGKey: "k"}},
 		{"unknown algorithm", acme.RFC2136Config{
-			Server: "127.0.0.1:53", TSIGKey: "k", TSIGSecret: "s", TSIGAlgorithm: "hmac-md4",
+			Server: "127.0.0.1:53", TSIGKey: "k", TSIGSecret: "not-a-key", TSIGAlgorithm: "hmac-md4",
 		}},
 	}
 	for _, tc := range tests {
