@@ -143,8 +143,11 @@ type Config struct {
 	Email string
 	// Store persists the account key and the issued certificates.
 	Store Store
-	// Solver answers HTTP-01 challenges.
+	// Solver answers HTTP-01 challenges. Optional when DNSSolver is set.
 	Solver Solver
+	// DNSSolver answers DNS-01 challenges. Required for a wildcard, which
+	// HTTP-01 cannot validate: there is no single host a wildcard resolves to.
+	DNSSolver DNSSolver
 	// Logger receives progress and failures.
 	Logger *slog.Logger
 	// Now is injectable for tests.
@@ -161,6 +164,7 @@ type Manager struct {
 	email     string
 	store     Store
 	solver    Solver
+	dnsSolver DNSSolver
 	log       *slog.Logger
 	now       func() time.Time
 	caBundle  []byte
@@ -177,7 +181,7 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.Store == nil {
 		return nil, fmt.Errorf("%w: a store is required", ErrNotConfigured)
 	}
-	if cfg.Solver == nil {
+	if cfg.Solver == nil && cfg.DNSSolver == nil {
 		return nil, fmt.Errorf("%w: a challenge solver is required", ErrNotConfigured)
 	}
 	if cfg.Logger == nil {
@@ -196,6 +200,7 @@ func New(cfg Config) (*Manager, error) {
 		email:     cfg.Email,
 		store:     cfg.Store,
 		solver:    cfg.Solver,
+		dnsSolver: cfg.DNSSolver,
 		log:       cfg.Logger,
 		now:       cfg.Now,
 		caBundle:  cfg.HTTPClientCA,
@@ -285,8 +290,8 @@ func (m *Manager) obtain(ctx context.Context, req Request) (Certificate, error) 
 	if err != nil {
 		return Certificate{}, err
 	}
-	if err := client.Challenge.SetHTTP01Provider(&legoSolver{ctx: ctx, solver: m.solver}); err != nil {
-		return Certificate{}, fmt.Errorf("install http-01 solver: %w", err)
+	if err := m.installSolver(ctx, client, req); err != nil {
+		return Certificate{}, err
 	}
 
 	res, err := client.Certificate.Obtain(certificate.ObtainRequest{
@@ -309,6 +314,50 @@ func (m *Manager) obtain(ctx context.Context, req Request) (Certificate, error) 
 		NotAfter:  leaf.NotAfter,
 		IssuedAt:  m.now(),
 	}, nil
+}
+
+// SupportsWildcards reports whether this manager can issue one.
+func (m *Manager) SupportsWildcards() bool { return m.dnsSolver != nil }
+
+// installSolver picks the challenge for a request.
+//
+// A wildcard forces DNS-01: there is no host for HTTP-01 to reach, because the
+// name matches hosts that do not exist yet. Everything else prefers HTTP-01 —
+// it needs no credential, it validates in seconds rather than waiting on DNS
+// propagation, and it fails in ways an operator can see from the edge's logs.
+// Only one provider is installed per issuance, so which challenge was used is a
+// decision made here rather than whichever one the CA happened to offer first.
+func (m *Manager) installSolver(ctx context.Context, client *lego.Client, req Request) error {
+	if requiresDNS(req.Domains) {
+		if m.dnsSolver == nil {
+			return fmt.Errorf("%w: %s needs a DNS-01 solver (a wildcard cannot be validated over HTTP)",
+				ErrNotConfigured, strings.Join(req.Domains, ", "))
+		}
+		if err := client.Challenge.SetDNS01Provider(m.dnsSolver); err != nil {
+			return fmt.Errorf("install dns-01 solver: %w", err)
+		}
+		return nil
+	}
+	if m.solver != nil {
+		if err := client.Challenge.SetHTTP01Provider(&legoSolver{ctx: ctx, solver: m.solver}); err != nil {
+			return fmt.Errorf("install http-01 solver: %w", err)
+		}
+		return nil
+	}
+	if err := client.Challenge.SetDNS01Provider(m.dnsSolver); err != nil {
+		return fmt.Errorf("install dns-01 solver: %w", err)
+	}
+	return nil
+}
+
+// requiresDNS reports whether any name in a request is a wildcard.
+func requiresDNS(domains []string) bool {
+	for _, domain := range domains {
+		if strings.HasPrefix(domain, "*.") {
+			return true
+		}
+	}
+	return false
 }
 
 // leafOf decodes the first certificate in a PEM chain.

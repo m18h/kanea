@@ -84,6 +84,15 @@ func runAgent(args []string) error {
 		"extra CA to trust when talking to the ACME directory (for a private or test CA)")
 	acmeVerifyURL := fs.String("acme-verify-url", acmelib.DefaultVerifyURL,
 		"where kanead reaches its own edge to confirm a challenge is being served")
+	acmeDNSServer := fs.String("acme-dns-server", "",
+		"authoritative nameserver for RFC 2136 dynamic updates, host:port (enables DNS-01 and wildcards)")
+	acmeDNSZone := fs.String("acme-dns-zone", "",
+		"zone the challenge records belong to (default: the challenge name's parent)")
+	acmeDNSKey := fs.String("acme-dns-tsig-key", "", "TSIG key name for dynamic updates")
+	acmeDNSSecret := fs.String("acme-dns-tsig-secret", "",
+		"a secret: reference holding the base64 TSIG secret, e.g. secret:shared/tsig")
+	acmeDNSAlgorithm := fs.String("acme-dns-tsig-algorithm", "hmac-sha256.",
+		"TSIG algorithm: hmac-sha256, hmac-sha512, ...")
 	serveDashboard := fs.Bool("dashboard", true, "serve the embedded dashboard on the API listener")
 	wsOrigins := fs.String("dashboard-origins", "",
 		"comma-separated Origins allowed to open the live-data websocket (default: same-origin only)")
@@ -301,8 +310,15 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	dnsSolver, err := buildDNSSolver(ctx, dnsUpdateSettings{
+		server: *acmeDNSServer, zone: *acmeDNSZone, key: *acmeDNSKey,
+		secretRef: *acmeDNSSecret, algorithm: *acmeDNSAlgorithm,
+	}, secretStore, logger)
+	if err != nil {
+		return err
+	}
 	certs, err := buildCertificates(*acmeEmail, *acmeDirectory, *acmeCA, *edgeCerts,
-		*edgeGroup, *acmeVerifyURL, st, logger)
+		*edgeGroup, *acmeVerifyURL, dnsSolver, st, logger)
 	if err != nil {
 		return err
 	}

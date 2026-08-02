@@ -28,11 +28,6 @@ const certCheckInterval = 12 * time.Hour
 // hammer the CA — whose failed-validation limits are the ones that bite.
 const certRetryInterval = 15 * time.Minute
 
-// wildcardThreshold is where PRD §7.3 says per-service certificates stop being
-// the right shape. Until the secrets store lands (M5) there is no DNS-01 and
-// therefore no wildcard, so crossing it is a warning rather than a switch.
-const wildcardThreshold = 20
-
 // runCertificates is kanead's ACME loop: issue what is missing, renew what is
 // due, publish the result for the edge.
 func runCertificates(ctx context.Context, m *acme.Manager, pub *acme.Publisher,
@@ -90,42 +85,52 @@ const certTriggerDelay = 3 * time.Second
 func syncCertificates(ctx context.Context, m *acme.Manager, pub *acme.Publisher,
 	st store.Store, baseDomain string, logger *slog.Logger,
 ) error {
-	requests, err := certRequests(ctx, st, baseDomain, logger)
+	exposures, err := certExposures(ctx, st, baseDomain, logger)
 	if err != nil {
 		return err
 	}
-	if len(requests) > wildcardThreshold {
-		logger.Warn("more exposed services than per-service certificates are meant for",
-			"services", len(requests), "threshold", wildcardThreshold,
-			"detail", "PRD §7.3 switches to a wildcard via DNS-01 here; that needs the "+
-				"secrets store (M5). Watch your Let's Encrypt rate limits until then")
+	plan := acme.PlanRequests(exposures, acme.PlanOptions{
+		BaseDomain: baseDomain,
+		Wildcards:  m.SupportsWildcards(),
+	})
+	if plan.OverThreshold {
+		// The condition §7.3 wants said out loud: past this many certificates a
+		// node is spending its weekly Let's Encrypt allowance on redeploys, and
+		// the fix — a wildcard — needs a DNS-01 solver nobody has configured.
+		logger.Warn("more per-service certificates than Let's Encrypt rate limits are comfortable with",
+			"certificates", plan.PerService, "threshold", acme.DefaultWildcardThreshold,
+			"detail", "configure --acme-dns-server to switch to per-project wildcards (PRD §7.3)")
+	}
+	if plan.Wildcard > 0 {
+		logger.Info("issuing per-project wildcards",
+			"wildcards", plan.Wildcard, "per_service", plan.PerService)
 	}
 
-	certs, err := m.Sync(ctx, requests)
+	certs, err := m.Sync(ctx, plan.Requests)
 	if err != nil {
 		return err
 	}
 	if err := pub.SetCertificates(certs); err != nil {
 		return fmt.Errorf("publish certificates: %w", err)
 	}
-	logger.Info("certificates published", "certificates", len(certs), "requested", len(requests))
+	logger.Info("certificates published", "certificates", len(certs), "requested", len(plan.Requests))
 	return nil
 }
 
-// certRequests reads desired state and returns what needs a certificate.
+// certExposures reads desired state and returns what needs a certificate.
 //
 // The domains come from the same resolution the route table uses, so a service
 // cannot end up with a certificate for a name the edge does not route — which
 // would be an issuance that always fails validation.
-func certRequests(ctx context.Context, st store.Store, baseDomain string,
+func certExposures(ctx context.Context, st store.Store, baseDomain string,
 	logger *slog.Logger,
-) ([]acme.Request, error) {
+) ([]acme.Exposure, error) {
 	services, err := listAllServices(ctx, st)
 	if err != nil {
 		return nil, err
 	}
 
-	var out []acme.Request
+	var out []acme.Exposure
 	for _, d := range services {
 		if d.Expose == nil || !d.Expose.LetsEncrypt {
 			continue
@@ -137,7 +142,14 @@ func certRequests(ctx context.Context, st store.Store, baseDomain string,
 				"detail", "declare expose.domains, or set --base-domain")
 			continue
 		}
-		out = append(out, acme.Request{Domains: domains, Service: d.Project + "/" + d.Service})
+		out = append(out, acme.Exposure{
+			Service: d.Project + "/" + d.Service,
+			Project: d.Project,
+			Domains: domains,
+			// A declared domain is somebody else's zone; only the generated
+			// names of §7.2 can be collapsed into a wildcard.
+			Auto: len(d.Expose.Domains) == 0,
+		})
 	}
 	return out, nil
 }
@@ -250,7 +262,7 @@ type certificates struct {
 // and work. What it must not do is start *and look configured*, so the reason
 // is logged rather than left to be inferred from the absence of certificates.
 func buildCertificates(email, directory, caPath, bundlePath, group, verifyURL string,
-	st store.Store, logger *slog.Logger,
+	dnsSolver acme.DNSSolver, st store.Store, logger *slog.Logger,
 ) (*certificates, error) {
 	if email == "" {
 		logger.Warn("no --acme-email: no certificates will be obtained",
@@ -286,12 +298,14 @@ func buildCertificates(email, directory, caPath, bundlePath, group, verifyURL st
 		Email:        email,
 		Store:        certStoreAdapter{store: st},
 		Solver:       publisher,
+		DNSSolver:    dnsSolver,
 		Logger:       logger,
 		HTTPClientCA: caBundle,
 	})
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("ACME enabled", "email", email, "directory", directory, "bundle", bundlePath)
+	logger.Info("ACME enabled", "email", email, "directory", directory, "bundle", bundlePath,
+		"dns01", dnsSolver != nil)
 	return &certificates{manager: manager, publisher: publisher}, nil
 }
