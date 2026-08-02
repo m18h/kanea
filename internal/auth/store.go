@@ -1,0 +1,446 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/kanea-dev/kanea/internal/store"
+)
+
+// Key prefixes for auth records.
+//
+// They live in the KV bucket rather than a new one: the bucket set is fixed by
+// PRD §5.2.3, and `audit` is for the audit trail — putting credentials there
+// would mean a log reader was also reading password hashes.
+const (
+	userPrefix    = "auth/user/"
+	tokenPrefix   = "auth/token/" // #nosec G101 — a key prefix, not a credential
+	sessionPrefix = "auth/session/"
+)
+
+// authKind is the bucket auth records live in.
+const authKind = store.KindKV
+
+// Store persists users, tokens and sessions.
+type Store struct {
+	store store.Store
+	log   *slog.Logger
+	now   func() time.Time
+
+	limiter *loginLimiter
+}
+
+// StoreConfig configures the auth store.
+type StoreConfig struct {
+	Store  store.Store
+	Logger *slog.Logger
+	Limit  LoginLimit
+	Now    func() time.Time
+}
+
+// NewStore builds the auth store.
+func NewStore(cfg StoreConfig) (*Store, error) {
+	if cfg.Store == nil {
+		return nil, errors.New("auth: a store is required")
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.New(slog.DiscardHandler)
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.Limit.Attempts <= 0 {
+		cfg.Limit = DefaultLoginLimit
+	}
+	return &Store{
+		store:   cfg.Store,
+		log:     cfg.Logger,
+		now:     cfg.Now,
+		limiter: newLoginLimiter(cfg.Limit, cfg.Now),
+	}, nil
+}
+
+// ---- users ----
+
+// PutUser creates or replaces a user from a plaintext password.
+func (s *Store) PutUser(ctx context.Context, name, password string, role Role) error {
+	if err := checkName(name); err != nil {
+		return err
+	}
+	if !role.Valid() {
+		return fmt.Errorf("auth: unknown role %q for %s", role, name)
+	}
+	hash, err := HashPassword(password)
+	if err != nil {
+		return err
+	}
+
+	now := s.now()
+	user := User{Name: name, PasswordHash: hash, Role: role, Created: now, Updated: now}
+	if existing, err := s.User(ctx, name); err == nil {
+		user.Created = existing.Created
+	}
+
+	mut, err := store.PutMutation(authKind, userPrefix+name, user)
+	if err != nil {
+		return err
+	}
+	if _, err := s.store.Apply(ctx, mut); err != nil {
+		return fmt.Errorf("auth: write user %s: %w", name, err)
+	}
+	s.log.Info("user written", "user", name, "role", role)
+	return nil
+}
+
+// User returns one account.
+func (s *Store) User(ctx context.Context, name string) (User, error) {
+	rec, err := s.store.Get(ctx, authKind, userPrefix+name)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return User{}, fmt.Errorf("%w: user %s", ErrNotFound, name)
+		}
+		return User{}, err
+	}
+	return decode[User](rec.Value)
+}
+
+// Users lists every account, without password hashes.
+func (s *Store) Users(ctx context.Context) ([]User, error) {
+	users, err := listPrefix[User](ctx, s.store, userPrefix)
+	if err != nil {
+		return nil, err
+	}
+	for i := range users {
+		// Redacted even though this is an internal call: a hash that never
+		// leaves the store cannot be leaked by a handler that forgets.
+		users[i].PasswordHash = ""
+	}
+	return users, nil
+}
+
+// DeleteUser removes an account.
+func (s *Store) DeleteUser(ctx context.Context, name string) error {
+	if _, err := s.User(ctx, name); err != nil {
+		return err
+	}
+	_, err := s.store.Apply(ctx, store.DeleteMutation(authKind, userPrefix+name))
+	return err
+}
+
+// HasUsers reports whether any account exists.
+//
+// §13.1: a daemon with no auth configured binds locally and warns. This is how
+// it knows which case it is in.
+func (s *Store) HasUsers(ctx context.Context) (bool, error) {
+	users, err := listPrefix[User](ctx, s.store, userPrefix)
+	if err != nil {
+		return false, err
+	}
+	return len(users) > 0, nil
+}
+
+// ---- tokens ----
+
+// CreateToken mints a bearer token and returns its one-time secret.
+func (s *Store) CreateToken(ctx context.Context, name string, role Role, expires time.Time) (Token, string, error) {
+	token, presented, err := NewToken(name, role, expires, s.now())
+	if err != nil {
+		return Token{}, "", err
+	}
+	mut, err := store.PutMutation(authKind, tokenPrefix+token.ID, token)
+	if err != nil {
+		return Token{}, "", err
+	}
+	if _, err := s.store.Apply(ctx, mut); err != nil {
+		return Token{}, "", fmt.Errorf("auth: write token: %w", err)
+	}
+	s.log.Info("token created", "token_id", token.ID, "name", name, "role", role)
+	return token, presented, nil
+}
+
+// Tokens lists tokens, without hashes.
+func (s *Store) Tokens(ctx context.Context) ([]Token, error) {
+	tokens, err := listPrefix[Token](ctx, s.store, tokenPrefix)
+	if err != nil {
+		return nil, err
+	}
+	for i := range tokens {
+		tokens[i].Hash = ""
+	}
+	return tokens, nil
+}
+
+// RevokeToken deletes a token by id.
+func (s *Store) RevokeToken(ctx context.Context, id string) error {
+	if _, err := s.store.Get(ctx, authKind, tokenPrefix+id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: token %s", ErrNotFound, id)
+		}
+		return err
+	}
+	if _, err := s.store.Apply(ctx, store.DeleteMutation(authKind, tokenPrefix+id)); err != nil {
+		return err
+	}
+	s.log.Info("token revoked", "token_id", id)
+	return nil
+}
+
+// ---- sessions ----
+
+// CreateSession issues a dashboard session.
+func (s *Store) CreateSession(ctx context.Context, subject string, role Role) (Session, string, error) {
+	session, cookie, err := NewSession(subject, role, s.now())
+	if err != nil {
+		return Session{}, "", err
+	}
+	mut, err := store.PutMutation(authKind, sessionPrefix+session.Hash, session)
+	if err != nil {
+		return Session{}, "", err
+	}
+	if _, err := s.store.Apply(ctx, mut); err != nil {
+		return Session{}, "", fmt.Errorf("auth: write session: %w", err)
+	}
+	return session, cookie, nil
+}
+
+// Session resolves a cookie value.
+func (s *Store) Session(ctx context.Context, cookieValue string) (Session, error) {
+	rec, err := s.store.Get(ctx, authKind, sessionPrefix+SessionKey(cookieValue))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return Session{}, ErrUnauthenticated
+		}
+		return Session{}, err
+	}
+	session, err := decode[Session](rec.Value)
+	if err != nil {
+		return Session{}, err
+	}
+	if session.Expired(s.now()) {
+		// Removed on read rather than swept: an expired session is discovered
+		// exactly when someone tries to use it, which is when it matters. A
+		// failure to delete is not a failure to reject — the caller is refused
+		// either way, and the sweep will pick it up.
+		if err := s.DeleteSession(ctx, cookieValue); err != nil {
+			s.log.Debug("cannot remove an expired session", "error", err)
+		}
+		return Session{}, ErrUnauthenticated
+	}
+	return session, nil
+}
+
+// DeleteSession revokes one session. This is what logout does, and it is why
+// §13.3 calls for a server-side revocation list rather than a self-contained
+// cookie that cannot be withdrawn.
+func (s *Store) DeleteSession(ctx context.Context, cookieValue string) error {
+	_, err := s.store.Apply(ctx,
+		store.DeleteMutation(authKind, sessionPrefix+SessionKey(cookieValue)))
+	return err
+}
+
+// SweepSessions removes expired sessions.
+func (s *Store) SweepSessions(ctx context.Context) (int, error) {
+	sessions, err := listPrefix[Session](ctx, s.store, sessionPrefix)
+	if err != nil {
+		return 0, err
+	}
+	now := s.now()
+	var muts []store.Mutation
+	for _, session := range sessions {
+		if session.Expired(now) {
+			muts = append(muts, store.DeleteMutation(authKind, sessionPrefix+session.Hash))
+		}
+	}
+	if len(muts) == 0 {
+		return 0, nil
+	}
+	if _, err := s.store.Apply(ctx, muts...); err != nil {
+		return 0, err
+	}
+	return len(muts), nil
+}
+
+// ---- login ----
+
+// Login verifies a password and issues a session.
+//
+// Failures are deliberately indistinguishable: an unknown user and a wrong
+// password return the same error after the same amount of work, so neither the
+// message nor the timing enumerates accounts (§14, A07).
+func (s *Store) Login(ctx context.Context, name, password, source string) (Session, string, error) {
+	if err := s.limiter.check(source, name); err != nil {
+		return Session{}, "", err
+	}
+
+	user, err := s.User(ctx, name)
+	if err != nil {
+		EqualiseTiming(password)
+		s.limiter.fail(source, name)
+		s.log.Warn("login failed", "user", name, "source", source, "reason", "no such user")
+		return Session{}, "", ErrUnauthenticated
+	}
+	if !VerifyPassword(password, user.PasswordHash) {
+		s.limiter.fail(source, name)
+		s.log.Warn("login failed", "user", name, "source", source, "reason", "bad password")
+		return Session{}, "", ErrUnauthenticated
+	}
+
+	s.limiter.succeed(source, name)
+	session, cookie, err := s.CreateSession(ctx, user.Name, user.Role)
+	if err != nil {
+		return Session{}, "", err
+	}
+	s.log.Info("login", "user", user.Name, "role", user.Role, "source", source)
+	return session, cookie, nil
+}
+
+// AuthenticateToken resolves a presented bearer token.
+func (s *Store) AuthenticateToken(ctx context.Context, presented string) (Identity, error) {
+	id, secret, ok := SplitToken(presented)
+	if !ok {
+		return Identity{}, ErrUnauthenticated
+	}
+	rec, err := s.store.Get(ctx, authKind, tokenPrefix+id)
+	if err != nil {
+		return Identity{}, ErrUnauthenticated
+	}
+	token, err := decode[Token](rec.Value)
+	if err != nil {
+		return Identity{}, ErrUnauthenticated
+	}
+	if !VerifySecret(secret, token.Hash) {
+		s.log.Warn("token rejected", "token_id", id, "reason", "bad secret")
+		return Identity{}, ErrUnauthenticated
+	}
+	if token.Expired(s.now()) {
+		s.log.Warn("token rejected", "token_id", id, "reason", "expired")
+		return Identity{}, ErrUnauthenticated
+	}
+	return Identity{Subject: token.Name, Role: token.Role, Via: MethodToken, TokenID: token.ID}, nil
+}
+
+// ---- helpers ----
+
+func checkName(name string) error {
+	switch {
+	case name == "":
+		return errors.New("auth: a user needs a name")
+	case len(name) > 64:
+		return errors.New("auth: user name is too long")
+	case strings.ContainsAny(name, "/ \t\r\n"):
+		// The name is part of a Store key; a slash would make one user's record
+		// look like another's namespace.
+		return fmt.Errorf("auth: user name %q may not contain a slash or whitespace", name)
+	}
+	return nil
+}
+
+func decode[T any](body []byte) (T, error) {
+	var out T
+	if err := json.Unmarshal(body, &out); err != nil {
+		return out, fmt.Errorf("auth: decode: %w", err)
+	}
+	return out, nil
+}
+
+func listPrefix[T any](ctx context.Context, s store.Store, prefix string) ([]T, error) {
+	var out []T
+	opts := store.ListOptions{Prefix: prefix}
+	for {
+		values, page, err := store.ListValues[T](ctx, s, authKind, opts)
+		if err != nil {
+			return nil, fmt.Errorf("auth: list %s: %w", prefix, err)
+		}
+		out = append(out, values...)
+		if !page.More {
+			return out, nil
+		}
+		opts.After = page.NextAfter
+	}
+}
+
+// loginLimiter bounds failed logins per source and per account.
+type loginLimiter struct {
+	mu     sync.Mutex
+	limit  LoginLimit
+	now    func() time.Time
+	counts map[string]*attemptState
+}
+
+type attemptState struct {
+	failures  int
+	first     time.Time
+	lockedTil time.Time
+}
+
+func newLoginLimiter(limit LoginLimit, now func() time.Time) *loginLimiter {
+	return &loginLimiter{limit: limit, now: now, counts: map[string]*attemptState{}}
+}
+
+// check refuses a login that is currently locked out.
+func (l *loginLimiter) check(source, account string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.now()
+	for _, key := range keysFor(source, account) {
+		state, ok := l.counts[key]
+		if ok && now.Before(state.lockedTil) {
+			return ErrRateLimited
+		}
+	}
+	return nil
+}
+
+// fail records a failure against both the source and the account.
+func (l *loginLimiter) fail(source, account string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := l.now()
+	for _, key := range keysFor(source, account) {
+		state, ok := l.counts[key]
+		if !ok || now.Sub(state.first) > l.limit.Window {
+			l.counts[key] = &attemptState{failures: 1, first: now}
+			continue
+		}
+		state.failures++
+		if state.failures >= l.limit.Attempts {
+			state.lockedTil = now.Add(l.limit.Lockout)
+		}
+	}
+	l.prune(now)
+}
+
+// succeed clears the counters after a good login.
+func (l *loginLimiter) succeed(source, account string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, key := range keysFor(source, account) {
+		delete(l.counts, key)
+	}
+}
+
+// prune drops entries that can no longer matter. The caller holds the lock.
+//
+// Without it the map grows with every distinct source address, which is a set
+// chosen by whoever is attacking — the same bound the edge's rate limiter needs.
+func (l *loginLimiter) prune(now time.Time) {
+	for key, state := range l.counts {
+		stale := now.Sub(state.first) > l.limit.Window
+		unlocked := state.lockedTil.IsZero() || now.After(state.lockedTil)
+		if stale && unlocked {
+			delete(l.counts, key)
+		}
+	}
+}
+
+func keysFor(source, account string) [2]string {
+	return [2]string{"src:" + source, "acct:" + account}
+}
