@@ -17,6 +17,8 @@ import (
 
 	acmelib "github.com/kanea-dev/kanea/internal/acme"
 	"github.com/kanea-dev/kanea/internal/api"
+	"github.com/kanea-dev/kanea/internal/audit"
+	"github.com/kanea-dev/kanea/internal/auth"
 	"github.com/kanea-dev/kanea/internal/edge"
 	"github.com/kanea-dev/kanea/internal/logging"
 	"github.com/kanea-dev/kanea/internal/network"
@@ -84,7 +86,11 @@ func runAgent(args []string) error {
 		"where kanead reaches its own edge to confirm a challenge is being served")
 	serveDashboard := fs.Bool("dashboard", true, "serve the embedded dashboard on the API listener")
 	wsOrigins := fs.String("dashboard-origins", "",
-		"comma-separated Origins allowed to open the live-data websocket (default: none)")
+		"comma-separated Origins allowed to open the live-data websocket (default: same-origin only)")
+	insecureCookies := fs.Bool("insecure-cookies", false,
+		"drop the Secure attribute from the session cookie (only for a daemon reached over plain HTTP)")
+	auditRetention := fs.Duration("audit-retention", defaultAuditRetention,
+		"how long audit entries are kept; 0 keeps them forever")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -224,11 +230,35 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// Auth and the audit trail come before the API server, because the server
+	// refuses to authenticate anyone without them and every mutation it accepts
+	// is written to them (PRD §13, §14 A01/A09).
+	users, err := auth.NewStore(auth.StoreConfig{Store: st, Logger: logger})
+	if err != nil {
+		return err
+	}
+	trail, err := audit.Open(ctx, audit.Config{Store: st, Logger: logger})
+	if err != nil {
+		return err
+	}
+	configured, err := users.HasUsers(ctx)
+	if err != nil {
+		return err
+	}
+	if !configured {
+		// §13.1: a daemon with no auth configured is usable, and says so. The
+		// unix socket is the only way in until someone creates an account, which
+		// is the safe end of the trade rather than a silent public listener.
+		logger.Warn("no accounts are configured; the control API accepts only local socket callers",
+			"detail", "create one with `kanea user add` before exposing the API to the network")
+	}
+
 	server, err := api.NewServer(api.ServerConfig{
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
-		Secrets: secretStore,
+		Secrets: secretStore, Auth: users, Audit: trail,
+		InsecureCookies: *insecureCookies,
 	})
 	if err != nil {
 		return err
@@ -272,6 +302,7 @@ func runAgent(args []string) error {
 	// probe of a wedged mount can take seconds to abandon, and convergence must
 	// not wait for it (M0 spike ③).
 	go mounts.Supervise(ctx, storage.DefaultCheckInterval)
+	go sweepAuthState(ctx, users, trail, *auditRetention, logger)
 
 	// Wait for all of them; a context cancellation is a clean shutdown.
 	var firstErr error
@@ -282,6 +313,55 @@ func runAgent(args []string) error {
 	}
 	logger.Info("kanead stopped")
 	return firstErr
+}
+
+// Auth and audit housekeeping.
+const (
+	// defaultAuditRetention is how long audit entries are kept (§14, A09 —
+	// "log retention configurable"). Long enough that an incident found late
+	// still has a trail, short enough that the bucket does not grow forever.
+	defaultAuditRetention = 90 * 24 * time.Hour
+	// sweepInterval is how often expired state is cleared. Neither job is
+	// urgent: an expired session is already refused on use, and a stale audit
+	// entry is only taking space.
+	sweepInterval = time.Hour
+)
+
+// sweepAuthState clears expired sessions and prunes the audit log.
+//
+// Sessions are also removed when a caller presents an expired one, so this is
+// the path for the ones nobody comes back for — the browser tab that was closed
+// and never reopened. Without it, every login leaves a record forever.
+func sweepAuthState(ctx context.Context, users *auth.Store, trail *audit.Log,
+	retention time.Duration, logger *slog.Logger) {
+	ticker := time.NewTicker(sweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		if removed, err := users.SweepSessions(ctx); err != nil {
+			logger.Warn("cannot sweep expired sessions", "error", err)
+		} else if removed > 0 {
+			logger.Debug("swept expired sessions", "sessions", removed)
+		}
+
+		if retention <= 0 {
+			continue
+		}
+		// A prune is a delete of state that exists to be evidence, so it says
+		// what it removed rather than doing it quietly.
+		if pruned, err := trail.Prune(ctx, time.Now().Add(-retention)); err != nil {
+			logger.Warn("cannot prune the audit log", "error", err)
+		} else if pruned > 0 {
+			logger.Info("pruned audit entries past retention",
+				"entries", pruned, "retention", retention)
+		}
+	}
 }
 
 // Network driver names for --network.

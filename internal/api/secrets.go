@@ -57,6 +57,10 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, PathSecrets+"/")
+	// The path, never the value: which secret was written is exactly what an
+	// audit trail should say, and what it was set to is exactly what it must not
+	// (PRD §13.3, §14 A09).
+	auditTarget(r, path)
 	if path == "" {
 		writeError(w, http.StatusBadRequest, errors.New("api: no secret path"))
 		return
@@ -93,6 +97,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, PathSecrets+"/")
+	auditTarget(r, path)
 	if err := s.secrets.Delete(r.Context(), path); err != nil {
 		writeError(w, statusForSecretError(err), err)
 		return

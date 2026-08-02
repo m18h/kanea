@@ -1,15 +1,17 @@
 // Package api is the control-plane API kanead serves and the CLI consumes.
 //
-// M1 scope: a local HTTP API over a unix socket. The socket is the security
-// boundary — it is created 0600, owned by the user running kanead (root), and
-// there is no network listener at all. PRD §14 (A05) requires the API to be
-// authenticated or localhost-only and never an unauthenticated public listener;
-// a root-owned unix socket is the strongest form of that, and M5 adds the
-// TCP listener with tokens/OIDC on the same handlers.
+// Every route is authenticated, deny-by-default, with exactly two exemptions
+// (§5.2.1): health and login. A caller is one of three things — a bearer token,
+// a session cookie, or the local root of §13.1 reaching the 0600 unix socket,
+// where the socket's file mode *is* the credential. Mutations additionally
+// require the admin role, a CSRF token when the credential is a cookie, and an
+// entry in the audit log. See auth.go: the checks live in one wrapper that every
+// route passes through, because "which routes are protected" should not be a
+// question about string matching.
 //
-// The API exists because bbolt is single-writer (PRD §5.2.3): kanead holds the
-// state file open, so the CLI cannot read or write it directly. Every CLI
-// command is a request to the running agent.
+// The socket remains the CLI's transport, and is the only listener until an
+// operator configures one: bbolt is single-writer (PRD §5.2.3), kanead holds the
+// state file open, and so every CLI command is a request to the running agent.
 package api
 
 import (

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -175,6 +176,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) checkOrigin(r *http.Request) error {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
+		return nil
+	}
+	// Same-origin is allowed without configuration: the page came from this
+	// server, so it is the dashboard this daemon is itself serving, and a hijack
+	// needs a *different* origin by definition. Without this, the embedded SPA
+	// could not open its own socket until someone repeated the daemon's own
+	// address back to it in a flag.
+	if u, err := url.Parse(origin); err == nil && u.Host != "" && strings.EqualFold(u.Host, r.Host) {
 		return nil
 	}
 	for _, allowed := range s.wsOrigins {

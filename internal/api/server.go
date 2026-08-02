@@ -56,6 +56,17 @@ type ServerConfig struct {
 	ServeDashboard bool
 	// Secrets backs the write-only secrets surface. Nil disables those routes.
 	Secrets SecretStore
+	// Auth resolves callers. Nil leaves the unix socket as the only credential
+	// the daemon accepts — which is the §13.1 "no auth configured" case, and is
+	// why a network listener without it is refused rather than warned about.
+	Auth Authenticator
+	// Audit is the trail every mutation is written to (§14, A09).
+	Audit AuditLog
+	// InsecureCookies drops the Secure attribute from the session cookie. It
+	// exists for a daemon reached over plain HTTP on a private network, and is
+	// off by default because the safe value should never be the one someone has
+	// to remember to ask for.
+	InsecureCookies bool
 }
 
 // SecretStore is the slice of the secrets store the API needs.
@@ -81,6 +92,10 @@ type Server struct {
 	wsOrigins []string
 	ws        *wsHub
 	secrets   SecretStore
+
+	auth            Authenticator
+	audit           AuditLog
+	insecureCookies bool
 }
 
 // NewServer builds the server. It does not listen yet.
@@ -98,22 +113,36 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
-		secrets: cfg.Secrets,
+		secrets: cfg.Secrets, auth: cfg.Auth, audit: cfg.Audit,
+		insecureCookies: cfg.InsecureCookies,
 	}
 
+	// Every route states what it requires next to where it is registered. The
+	// two `public: true` entries are the whole exemption list (§5.2.1): health,
+	// because a probe must work before anyone can log in, and login itself.
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+PathHealth, s.handleHealth)
-	mux.HandleFunc("GET "+PathServices, s.handleListServices)
-	mux.HandleFunc("PUT "+PathServices, s.handleApply)
-	mux.HandleFunc("DELETE "+PathServices+"/{project}/{service}", s.handleDeleteService)
-	mux.HandleFunc("GET "+PathAllocs, s.handleListAllocs)
-	mux.HandleFunc("GET "+PathLogs, s.handleLogs)
-	mux.HandleFunc("GET "+PathWS, s.handleWS)
+	mux.Handle("GET "+PathHealth, s.route(policy{action: "health", public: true}, s.handleHealth))
+	mux.Handle("POST "+PathLogin, s.route(policy{action: "auth.login", public: true}, s.handleLogin))
+	mux.Handle("POST "+PathLogout,
+		s.route(policy{action: "auth.logout", mutates: true, selfService: true}, s.handleLogout))
+	mux.Handle("GET "+PathSession, s.route(policy{action: "auth.session"}, s.handleSession))
+	mux.Handle("GET "+PathServices, s.route(policy{action: "service.list"}, s.handleListServices))
+	mux.Handle("PUT "+PathServices, s.route(policy{action: "service.apply", mutates: true}, s.handleApply))
+	mux.Handle("DELETE "+PathServices+"/{project}/{service}",
+		s.route(policy{action: "service.delete", mutates: true}, s.handleDeleteService))
+	mux.Handle("GET "+PathAllocs, s.route(policy{action: "alloc.list"}, s.handleListAllocs))
+	mux.Handle("GET "+PathLogs, s.route(policy{action: "logs.read"}, s.handleLogs))
+	mux.Handle("GET "+PathWS, s.route(policy{action: "ws.connect"}, s.handleWS))
+	// The audit log is admin-only to read: it names who did what, and that is
+	// not something a viewer needs (§13.3).
+	mux.Handle("GET "+PathAudit, s.route(policy{action: "audit.list", adminOnly: true}, s.handleAudit))
 	// List and write, never read: there is no GET for an individual secret,
 	// and its absence is the enforcement (PRD §13.3).
-	mux.HandleFunc("GET "+PathSecrets, s.handleListSecrets)
-	mux.HandleFunc("PUT "+PathSecrets+"/{path...}", s.handlePutSecret)
-	mux.HandleFunc("DELETE "+PathSecrets+"/{path...}", s.handleDeleteSecret)
+	mux.Handle("GET "+PathSecrets, s.route(policy{action: "secret.list", adminOnly: true}, s.handleListSecrets))
+	mux.Handle("PUT "+PathSecrets+"/{path...}",
+		s.route(policy{action: "secret.put", mutates: true}, s.handlePutSecret))
+	mux.Handle("DELETE "+PathSecrets+"/{path...}",
+		s.route(policy{action: "secret.delete", mutates: true}, s.handleDeleteSecret))
 	// The SPA is registered last and on the bare prefix, so it catches
 	// everything the API did not claim. A client-side route must reach the app,
 	// and ServeMux's longest-pattern-wins rule keeps /v1/* ahead of it.
@@ -139,7 +168,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	s.http = &http.Server{
-		Handler: mux,
+		Handler: secureHeaders(cfg.ServeDashboard, mux),
+		// The listener decides what "local" means, not the request: a unix
+		// connection is one the kernel proved came from a process that could
+		// open a 0600 socket, and nothing in a request can forge that.
+		ConnContext: withLocalConn,
 		// Slowloris defence, even on a unix socket: a stuck CLI must not pin a
 		// connection forever (PRD §5.2.6 applies the same rule at the edge).
 		ReadHeaderTimeout: 5 * time.Second,
@@ -147,6 +180,15 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 	return s, nil
 }
+
+// Handler is the routed, guarded handler this server serves.
+//
+// Exported because the socket is not the only way these routes are reached: the
+// network listener (§15.1 `bind.api_addr`) and the MCP streamable-HTTP transport
+// (§16.3) serve the same handler, and a route that is only protected on one
+// listener is not protected. Anything mounting it must decide for itself what
+// counts as a local connection — see withLocalConn.
+func (s *Server) Handler() http.Handler { return s.http.Handler }
 
 // Listen creates the socket. Separate from Serve so the caller can report a
 // bind failure before daemonising.
@@ -276,6 +318,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.wake()
+	auditTarget(r, strings.Join(applied, ","))
 	s.log.Info("applied services", "services", applied, "index", index)
 	writeJSON(w, http.StatusOK, ApplyResponse{Applied: applied, Index: index})
 }
@@ -284,6 +327,9 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 	project := r.PathValue("project")
 	service := r.PathValue("service")
 	key := project + "/" + service
+	// Named before the outcome is known: a delete that is refused should still
+	// say what it was aimed at.
+	auditTarget(r, key)
 
 	if _, err := s.store.Get(r.Context(), store.KindService, key); err != nil {
 		if errors.Is(err, store.ErrNotFound) {

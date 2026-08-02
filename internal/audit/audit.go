@@ -169,10 +169,13 @@ func Open(ctx context.Context, cfg Config) (*Log, error) {
 
 // Record appends one entry.
 //
-// It returns an error rather than swallowing one: the caller decides whether an
-// unrecordable action may still proceed. For a mutating API call the answer is
-// no (§14 A09 — an action nobody can account for should not happen), and the
-// api package refuses the request.
+// It returns an error rather than swallowing one, so a caller can decide what an
+// unrecordable action means. The api package records after the handler has run,
+// because the outcome is half of what makes an entry worth keeping; a failure
+// there is logged at error level and counted (api.AuditFailures) rather than
+// hidden. Closing that window properly means writing the entry in the same
+// Store batch as the mutation it describes, which is what a Store-level audited
+// apply would give and is the shape to grow into.
 func (l *Log) Record(ctx context.Context, e Entry) (Entry, error) {
 	if e.Action == "" {
 		return Entry{}, errors.New("audit: an entry needs an action")
