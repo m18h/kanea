@@ -5,7 +5,10 @@
 *.test
 *.out
 coverage.*
-dist/
+# Anchored: an unanchored `dist/` matches every directory of that name, and git
+# cannot re-include a file inside an excluded *directory* — which silently
+# dropped the committed placeholder internal/dashboard needs to compile.
+/dist/
 
 # Go
 vendor/
@@ -13,6 +16,13 @@ vendor/
 # Node / dashboard (M4)
 node_modules/
 dashboard/dist/
+*.tsbuildinfo
+
+# Built dashboard assets are a build artifact, but the directory must not be
+# empty: internal/dashboard embeds it, and go:embed fails to compile on an
+# empty directory. The placeholder is committed for exactly that reason.
+internal/dashboard/dist/*
+!internal/dashboard/dist/placeholder.html
 
 # Secrets & env — never commit (gitleaks enforces)
 .env

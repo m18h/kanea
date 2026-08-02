@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/dashboard"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/store"
 )
@@ -48,6 +49,10 @@ type ServerConfig struct {
 	WSOrigins []string
 	// WSMaxConns caps concurrent websocket connections. Zero means the default.
 	WSMaxConns int
+	// ServeDashboard mounts the embedded SPA. Off by default: the API socket is
+	// a control channel, and a daemon nobody browses should not be answering
+	// HTML on it.
+	ServeDashboard bool
 }
 
 // Server is the control-plane HTTP server.
@@ -89,6 +94,16 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.HandleFunc("GET "+PathAllocs, s.handleListAllocs)
 	mux.HandleFunc("GET "+PathLogs, s.handleLogs)
 	mux.HandleFunc("GET "+PathWS, s.handleWS)
+	// The SPA is registered last and on the bare prefix, so it catches
+	// everything the API did not claim. A client-side route must reach the app,
+	// and ServeMux's longest-pattern-wins rule keeps /v1/* ahead of it.
+	if cfg.ServeDashboard {
+		mux.Handle("GET /", dashboard.Handler("/"))
+		if !dashboard.Built() {
+			cfg.Logger.Warn("serving the dashboard placeholder",
+				"detail", "this binary was built without the UI; run `make dashboard && make build`")
+		}
+	}
 
 	s.http = &http.Server{
 		Handler: mux,

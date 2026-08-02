@@ -38,6 +38,12 @@ linters:
           msg: components log via injected *slog.Logger (internal/logging); CLI output uses fmt.Fprint*(os.Stdout/os.Stderr, ...)
   exclusions:
     generated: lax
+    # node_modules ships Go source in a few npm packages (flatted, for one).
+    # It is vendored third-party code that is never built into kanea, so
+    # linting it reports problems nobody here can fix.
+    paths:
+      - node_modules
+      - dashboard/node_modules
     rules:
       # Tests may ignore errors and use lax patterns. unparam is excluded too:
       # a test helper spells out its arguments so the call site reads as a

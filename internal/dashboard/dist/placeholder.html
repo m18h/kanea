@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kanea — dashboard not built</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #0a0a0b;
+        color: #e5e5e7;
+        font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      main { max-width: 34rem; padding: 2rem; }
+      h1 { font-size: 1.1rem; margin: 0 0 0.75rem; }
+      p { margin: 0 0 0.75rem; color: #a1a1aa; }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #18181b;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        color: #e5e5e7;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>The dashboard was not built into this binary.</h1>
+      <p>
+        This placeholder is committed so the Go package embedding the dashboard
+        compiles before the assets exist — <code>go:embed</code> fails on an
+        empty directory, and a binary that will not build is a worse default
+        than one with a page that explains itself.
+      </p>
+      <p>Build the assets and rebuild the binary:</p>
+      <p><code>make dashboard &amp;&amp; make build</code></p>
+      <p>The REST API and the live socket are unaffected and already serving.</p>
+    </main>
+  </body>
+</html>

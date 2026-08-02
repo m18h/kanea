@@ -40,7 +40,7 @@ security: ## Security gates: gosec + govulncheck + gitleaks (AGENTS.md constrain
 #   GOVULNDB=file://$(CURDIR)/.cache/vulndb make security
 
 .PHONY: dashboard
-dashboard: ## Dashboard gates (skipped until M4 scaffolds dashboard/)
+dashboard: ## Dashboard gates: lint, typecheck, test, build, audit
 	@if [ -f dashboard/package.json ]; then \
 		cd dashboard && npm ci && npm run lint && npm run typecheck && npm test && npm run build && npm audit --audit-level=high; \
 	else \
