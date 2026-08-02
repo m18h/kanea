@@ -162,6 +162,13 @@ type ListOptions struct {
 	Limit int
 	// KeysOnly omits values — cheap existence scans and key enumeration.
 	KeysOnly bool
+	// Reverse walks keys from the highest down. It exists for time-ordered
+	// buckets whose readers want the newest first (the audit log, §14 A09):
+	// without it, "the last 100 entries" means scanning every entry ever
+	// written, which is the one read pattern a bounded-transaction rule
+	// (AGENTS.md #2) cannot afford. After stays exclusive and still means
+	// "resume from here", so paging works the same way in both directions.
+	Reverse bool
 }
 
 // Pagination bounds. A caller that asks for more than MaxListLimit is clamped,

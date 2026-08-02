@@ -193,8 +193,23 @@ func (s *boltStore) List(ctx context.Context, kind Kind, opts ListOptions) (Page
 		cur := tx.Bucket([]byte(kind)).Cursor()
 		prefix := []byte(opts.Prefix)
 
+		step := cur.Next
+		if opts.Reverse {
+			step = cur.Prev
+		}
+
 		var k, v []byte
 		switch {
+		case opts.After != "" && opts.Reverse:
+			// Seek lands on or after After, so one step back is the first key
+			// strictly below it — After stays exclusive. A Seek that falls off
+			// the end means After is above every key, and the scan starts at the
+			// last one.
+			if k, _ = cur.Seek([]byte(opts.After)); k == nil {
+				k, v = cur.Last()
+			} else {
+				k, v = cur.Prev()
+			}
 		case opts.After != "":
 			// Seek lands on or after After; skip the exact match to make After
 			// exclusive and resumption idempotent.
@@ -202,13 +217,25 @@ func (s *boltStore) List(ctx context.Context, kind Kind, opts ListOptions) (Page
 			if k != nil && string(k) == opts.After {
 				k, v = cur.Next()
 			}
+		case opts.Reverse && len(prefix) > 0:
+			// Land just past the prefix range and step back into it. Seeking the
+			// prefix itself would land on its *first* key, which is the wrong end.
+			if end := prefixEnd(prefix); end == nil {
+				k, v = cur.Last()
+			} else if k, _ = cur.Seek(end); k == nil {
+				k, v = cur.Last()
+			} else {
+				k, v = cur.Prev()
+			}
+		case opts.Reverse:
+			k, v = cur.Last()
 		case len(prefix) > 0:
 			k, v = cur.Seek(prefix)
 		default:
 			k, v = cur.First()
 		}
 
-		for ; k != nil; k, v = cur.Next() {
+		for ; k != nil; k, v = step() {
 			if len(prefix) > 0 && !bytes.HasPrefix(k, prefix) {
 				break // keys are ordered: past the prefix means done
 			}
@@ -409,6 +436,22 @@ func Compact(ctx context.Context, s Store, dst string) error {
 	// copy, and the caller is about to swap this file in.
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("compact close %s: %w", dst, err)
+	}
+	return nil
+}
+
+// prefixEnd returns the first key that sorts after every key with this prefix,
+// which is where a reverse scan of the prefix range begins. It is nil when the
+// prefix is all 0xff bytes and therefore has no successor — the caller then
+// starts at the last key in the bucket, which is inside the range anyway.
+func prefixEnd(prefix []byte) []byte {
+	end := make([]byte, len(prefix))
+	copy(end, prefix)
+	for i := len(end) - 1; i >= 0; i-- {
+		if end[i] != 0xff {
+			end[i]++
+			return end[:i+1]
+		}
 	}
 	return nil
 }

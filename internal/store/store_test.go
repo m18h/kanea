@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,6 +298,102 @@ func TestListPaginatesInKeyOrder(t *testing.T) {
 			t.Fatalf("key[%d] = %q, want %q (order or prefix leak)", i, key, want)
 		}
 	}
+}
+
+func TestListReversePaginatesNewestFirst(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+
+	for i := range 10 {
+		put(t, s, store.KindAudit, fmt.Sprintf("a/%02d", i), service{Name: "a"})
+	}
+	// Neighbours on both sides of the prefix range: a reverse scan starts at the
+	// far edge, which is exactly where an off-by-one walks out of the range.
+	put(t, s, store.KindAudit, "a", service{Name: "before"})
+	put(t, s, store.KindAudit, "b/00", service{Name: "after"})
+
+	var seen []string
+	opts := store.ListOptions{Prefix: "a/", Limit: 3, Reverse: true}
+	for pages := 0; ; pages++ {
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+		page, err := s.List(ctx, store.KindAudit, opts)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		for _, rec := range page.Records {
+			seen = append(seen, rec.Key)
+		}
+		if !page.More {
+			break
+		}
+		opts.After = page.NextAfter
+	}
+
+	if len(seen) != 10 {
+		t.Fatalf("saw %d keys, want 10: %v", len(seen), seen)
+	}
+	for i, key := range seen {
+		want := fmt.Sprintf("a/%02d", 9-i)
+		if key != want {
+			t.Fatalf("key[%d] = %q, want %q", i, key, want)
+		}
+	}
+}
+
+func TestListReverseWithoutPrefixStartsAtTheEnd(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	for _, key := range []string{"a", "b", "c"} {
+		put(t, s, store.KindService, key, service{Name: key})
+	}
+
+	page, err := s.List(ctx, store.KindService, store.ListOptions{Reverse: true, Limit: 2})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got := keysOf(page); got != "c,b" {
+		t.Fatalf("first page = %s, want c,b", got)
+	}
+	if !page.More {
+		t.Fatal("More = false with a key left")
+	}
+
+	// After stays exclusive in both directions.
+	page, err = s.List(ctx, store.KindService,
+		store.ListOptions{Reverse: true, Limit: 2, After: page.NextAfter})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got := keysOf(page); got != "a" {
+		t.Fatalf("second page = %s, want a", got)
+	}
+}
+
+func TestListReverseAfterBeyondEveryKey(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	put(t, s, store.KindService, "a", service{Name: "a"})
+
+	// A cursor resumed from above the last key must fall back to the last key
+	// rather than returning nothing: this is what a time-based After does when
+	// the caller asks for "everything before now".
+	page, err := s.List(ctx, store.KindService, store.ListOptions{Reverse: true, After: "zzz"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got := keysOf(page); got != "a" {
+		t.Fatalf("page = %s, want a", got)
+	}
+}
+
+func keysOf(page store.Page) string {
+	keys := make([]string, 0, len(page.Records))
+	for _, rec := range page.Records {
+		keys = append(keys, rec.Key)
+	}
+	return strings.Join(keys, ",")
 }
 
 func TestListLimitIsClamped(t *testing.T) {
