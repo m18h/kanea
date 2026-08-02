@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/dashboard"
+	"github.com/kanea-dev/kanea/internal/ratelimit"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/secrets"
 	"github.com/kanea-dev/kanea/internal/store"
@@ -82,6 +83,17 @@ type ServerConfig struct {
 	// off by default because the safe value should never be the one someone has
 	// to remember to ask for.
 	InsecureCookies bool
+	// PublicLimit and AuthLimit bound requests per source address (§14, A07).
+	// Zero values take the defaults; an explicitly invalid spec disables that
+	// tier, which is a decision an operator has to make deliberately.
+	PublicLimit *ratelimit.Spec
+	AuthLimit   *ratelimit.Spec
+	// RateLimitBuckets caps how many sources are tracked. Zero means the
+	// default; the cap is what keeps the limiter from being its own memory
+	// exhaustion vector.
+	RateLimitBuckets int
+	// Now is injectable for tests of anything time-shaped here.
+	Now func() time.Time
 }
 
 // SecretStore is the slice of the secrets store the API needs.
@@ -117,6 +129,10 @@ type Server struct {
 	authConfigured bool
 	tls            *tls.Config
 	netListener    net.Listener
+
+	limiter     *ratelimit.Limiter
+	publicLimit ratelimit.Spec
+	authLimit   ratelimit.Spec
 }
 
 // NewServer builds the server. It does not listen yet.
@@ -135,7 +151,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
+	publicLimit, authLimit := DefaultPublicLimit, DefaultAuthenticatedLimit
+	if cfg.PublicLimit != nil {
+		publicLimit = *cfg.PublicLimit
+	}
+	if cfg.AuthLimit != nil {
+		authLimit = *cfg.AuthLimit
+	}
+
 	s := &Server{
+		limiter:     ratelimit.New(cfg.RateLimitBuckets, cfg.Now),
+		publicLimit: publicLimit, authLimit: authLimit,
 		listenAddr: cfg.Listen, authConfigured: cfg.AuthConfigured, tls: tlsConfig,
 		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
@@ -324,6 +350,10 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		listeners = append(listeners, s.netListener)
 	}
+
+	stopSweeper := make(chan struct{})
+	defer close(stopSweeper)
+	go s.sweepLimiter(stopSweeper)
 
 	errs := make(chan error, len(listeners))
 	for _, listener := range listeners {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/kanea-dev/kanea/internal/edge"
 	"github.com/kanea-dev/kanea/internal/logging"
+	"github.com/kanea-dev/kanea/internal/ratelimit"
 )
 
 // runEdge is kanea-edge: the public ingress proxy.
@@ -42,7 +43,7 @@ func runEdge(args []string) error {
 		"bound on an upstream starting to answer (does not bound the body)")
 	securityHeaders := fs.Bool("security-headers", true,
 		"add the default security response headers (PRD §14 A05)")
-	limiterCap := fs.Int("rate-limit-buckets", edge.DefaultLimiterCapacity,
+	limiterCap := fs.Int("rate-limit-buckets", ratelimit.DefaultCapacity,
 		"maximum tracked rate-limit buckets before least-recently-used eviction")
 	memLimit := fs.String("memory-limit", "", "GOMEMLIMIT for this process, e.g. 128MiB")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")

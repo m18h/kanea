@@ -381,9 +381,9 @@ func (s *Server) sweepLimiters(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if dropped := s.proxy.limits.sweep(); dropped > 0 {
+			if dropped := s.proxy.limits.Sweep(); dropped > 0 {
 				s.log.Debug("swept idle rate limit buckets",
-					"dropped", dropped, "remaining", s.proxy.limits.len())
+					"dropped", dropped, "remaining", s.proxy.limits.Len())
 			}
 		}
 	}

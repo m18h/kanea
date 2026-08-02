@@ -133,6 +133,10 @@ func isLocalConn(ctx context.Context) bool {
 // authorize, then verify the request was intended, then act, then record.
 func (s *Server) route(p policy, h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// First, before any work this request could make the daemon do.
+		if !s.checkRateLimit(w, r, p) {
+			return
+		}
 		if p.public {
 			h(w, r)
 			return
@@ -288,7 +292,10 @@ func (s *Server) refuse(w http.ResponseWriter, r *http.Request, p policy, id aut
 	writeError(w, status, errRefused)
 }
 
-var errRefused = errors.New("api: not authorised")
+var (
+	errRefused     = errors.New("api: not authorised")
+	errRateLimited = errors.New("api: too many requests")
+)
 
 // presentedSomething reports whether the caller offered a credential at all.
 func presentedSomething(r *http.Request) bool {

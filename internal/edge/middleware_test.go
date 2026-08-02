@@ -404,12 +404,12 @@ func TestCompileRejectsMalformedMiddleware(t *testing.T) {
 // An omitted `per` means per-address, which is the useful default and the one
 // PRD §6.1 writes out.
 func TestRateLimitDefaultsToPerAddress(t *testing.T) {
-	spec, err := compileRateLimit(RateLimit{Requests: 5, Window: "1m"})
+	_, per, err := compileRateLimit(RateLimit{Requests: 5, Window: "1m"})
 	if err != nil {
 		t.Fatalf("compileRateLimit: %v", err)
 	}
-	if spec.Per != RateLimitPerIP {
-		t.Errorf("Per = %q, want %q", spec.Per, RateLimitPerIP)
+	if per != RateLimitPerIP {
+		t.Errorf("per = %q, want %q", per, RateLimitPerIP)
 	}
 }
 

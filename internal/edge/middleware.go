@@ -7,6 +7,8 @@ import (
 	"net/textproto"
 	"strings"
 	"time"
+
+	"github.com/kanea-dev/kanea/internal/ratelimit"
 )
 
 // compiled is a route with its middleware parsed once, at reload, rather than
@@ -24,7 +26,11 @@ type compiled struct {
 	deny  []netip.Prefix
 
 	// limit is nil when the service has no rate limit.
-	limit *rateSpec
+	limit *ratelimit.Spec
+	// per is what the limit is keyed by: an address, the service, or a header
+	// value. It shapes the key the limiter is called with rather than the limit
+	// itself, which is why it lives here and not in the Spec.
+	per string
 
 	// requestSet and responseSet are pre-canonicalised so the request path does
 	// not re-normalise header names.
@@ -32,35 +38,6 @@ type compiled struct {
 	requestRemove  []string
 	responseSet    map[string]string
 	responseRemove []string
-}
-
-// rateSpec is a validated rate limit.
-type rateSpec struct {
-	Requests int
-	Window   time.Duration
-	Per      string
-	Burst    int
-}
-
-// rate returns tokens per second.
-func (r rateSpec) rate() float64 {
-	return float64(r.Requests) / r.Window.Seconds()
-}
-
-// capacity is the bucket size: the burst if one was asked for, otherwise the
-// full allowance, so a client may spend a whole window's budget at once.
-func (r rateSpec) capacity() float64 {
-	if r.Burst > 0 {
-		return float64(r.Requests + r.Burst)
-	}
-	return float64(r.Requests)
-}
-
-// equal reports whether two specs describe the same limit. Used on reload to
-// decide whether a bucket's accumulated state is still meaningful.
-func (r rateSpec) equal(other rateSpec) bool {
-	return r.Requests == other.Requests && r.Window == other.Window &&
-		r.Per == other.Per && r.Burst == other.Burst
 }
 
 // compile parses a route's middleware, or reports why it cannot be served.
@@ -78,11 +55,11 @@ func compile(r Route) (compiled, error) {
 	}
 
 	if r.RateLimit != nil {
-		spec, err := compileRateLimit(*r.RateLimit)
+		spec, per, err := compileRateLimit(*r.RateLimit)
 		if err != nil {
 			return compiled{}, fmt.Errorf("%s: rate_limit: %w", r.Name(), err)
 		}
-		out.limit = &spec
+		out.limit, out.per = &spec, per
 	}
 
 	if h := r.Headers; h != nil {
@@ -103,19 +80,19 @@ func compile(r Route) (compiled, error) {
 	return out, nil
 }
 
-func compileRateLimit(rl RateLimit) (rateSpec, error) {
+func compileRateLimit(rl RateLimit) (ratelimit.Spec, string, error) {
 	if rl.Requests <= 0 {
-		return rateSpec{}, fmt.Errorf("requests = %d must be positive", rl.Requests)
+		return ratelimit.Spec{}, "", fmt.Errorf("requests = %d must be positive", rl.Requests)
 	}
 	if rl.Burst < 0 {
-		return rateSpec{}, fmt.Errorf("burst = %d must not be negative", rl.Burst)
+		return ratelimit.Spec{}, "", fmt.Errorf("burst = %d must not be negative", rl.Burst)
 	}
 	window, err := time.ParseDuration(rl.Window)
 	if err != nil {
-		return rateSpec{}, fmt.Errorf("window %q: %w", rl.Window, err)
+		return ratelimit.Spec{}, "", fmt.Errorf("window %q: %w", rl.Window, err)
 	}
 	if window <= 0 {
-		return rateSpec{}, fmt.Errorf("window %q must be positive", rl.Window)
+		return ratelimit.Spec{}, "", fmt.Errorf("window %q must be positive", rl.Window)
 	}
 
 	per := strings.TrimSpace(rl.Per)
@@ -126,14 +103,14 @@ func compileRateLimit(rl RateLimit) (rateSpec, error) {
 	case per == RateLimitPerIP, per == RateLimitPerService:
 	case strings.HasPrefix(per, RateLimitPerHeaderPrefix):
 		if name := strings.TrimPrefix(per, RateLimitPerHeaderPrefix); !validHeaderName(name) {
-			return rateSpec{}, fmt.Errorf("per %q names an invalid header", rl.Per)
+			return ratelimit.Spec{}, "", fmt.Errorf("per %q names an invalid header", rl.Per)
 		}
 	default:
-		return rateSpec{}, fmt.Errorf("per %q must be %q, %q or %q",
+		return ratelimit.Spec{}, "", fmt.Errorf("per %q must be %q, %q or %q",
 			rl.Per, RateLimitPerIP, RateLimitPerService, RateLimitPerHeaderPrefix+"<name>")
 	}
 
-	return rateSpec{Requests: rl.Requests, Window: window, Per: per, Burst: rl.Burst}, nil
+	return ratelimit.Spec{Requests: rl.Requests, Window: window, Burst: rl.Burst}, per, nil
 }
 
 // Rate limit keys, matching the job spec vocabulary (PRD §7.2.1).
@@ -272,13 +249,13 @@ func (c compiled) allowsAddress(addr netip.Addr) bool {
 // rateKey is the bucket subject for one request, or "" when the request cannot
 // be keyed (a missing header, say) and should not be limited.
 func (c compiled) rateKey(r *http.Request, addr netip.Addr) string {
-	switch spec := c.limit; {
-	case spec == nil:
+	switch {
+	case c.limit == nil:
 		return ""
-	case spec.Per == RateLimitPerService:
+	case c.per == RateLimitPerService:
 		return "service"
-	case strings.HasPrefix(spec.Per, RateLimitPerHeaderPrefix):
-		name := strings.TrimPrefix(spec.Per, RateLimitPerHeaderPrefix)
+	case strings.HasPrefix(c.per, RateLimitPerHeaderPrefix):
+		name := strings.TrimPrefix(c.per, RateLimitPerHeaderPrefix)
 		if value := r.Header.Get(name); value != "" {
 			return "h:" + value
 		}

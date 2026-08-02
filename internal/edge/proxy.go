@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/kanea-dev/kanea/internal/ratelimit"
 )
 
 // Proxy is the request path: Host match → upstream.
@@ -29,7 +31,7 @@ type Proxy struct {
 	// a reload, so deploying a service does not hand every client that was
 	// being throttled a fresh allowance — which would make the rate limit
 	// trivially evadable by anyone who can trigger a redeploy.
-	limits *limiter
+	limits *ratelimit.Limiter
 
 	// bodyTimeout bounds how long a request body may take to arrive. Zero
 	// disables it.
@@ -100,7 +102,7 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 
 	p := &Proxy{
 		log:             cfg.Logger,
-		limits:          newLimiter(cfg.LimiterCapacity, cfg.Now),
+		limits:          ratelimit.New(cfg.LimiterCapacity, cfg.Now),
 		bodyTimeout:     cfg.BodyTimeout,
 		securityHeaders: cfg.SecurityHeaders,
 	}
@@ -212,7 +214,7 @@ func (p *Proxy) withinRateLimit(w http.ResponseWriter, r *http.Request, route co
 		return true
 	}
 
-	ok, retry := p.limits.allow(route.Name()+"\x00"+key, *route.limit)
+	ok, retry := p.limits.Allow(route.Name()+"\x00"+key, *route.limit)
 	if ok {
 		return true
 	}
