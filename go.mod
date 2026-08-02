@@ -9,13 +9,16 @@ require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/typeurl/v2 v2.2.3
 	github.com/containernetworking/cni v1.3.0
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/distribution/reference v0.6.0
 	github.com/go-acme/lego/v4 v4.35.2
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/zclconf/go-cty v1.16.3
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.54.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
@@ -36,7 +39,6 @@ require (
 	github.com/containerd/plugin v1.1.0 // indirect
 	github.com/containerd/ttrpc v1.2.8 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

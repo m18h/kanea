@@ -43,6 +43,11 @@ type Health struct {
 	// "why is this daemon busy" and "did my dashboard actually connect"
 	// without reading the log.
 	WSConnections int `json:"ws_connections"`
+	// OIDC describes the identity provider, when one is configured. It is here
+	// rather than on a route of its own because §5.2.1 fixes the list of
+	// unauthenticated routes, and a client needs this answer before it has a
+	// credential to ask with.
+	OIDC *OIDCStatus `json:"oidc,omitempty"`
 }
 
 // ApplyRequest replaces the desired state of the services it names. Services

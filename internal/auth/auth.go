@@ -138,14 +138,15 @@ func (s Session) Expired(now time.Time) bool { return now.After(s.Expires) }
 // is recognisable as a credential to revoke rather than an opaque string.
 const TokenPrefix = "kanea_"
 
-// tokenIDBytes and tokenSecretBytes size the two halves of a token.
+// Sizes of the random values this package mints.
 //
-// The id is public and only has to be unique; the secret carries the entropy.
+// A token's id is public and only has to be unique, so it is short; everything
+// else carries the entropy and is one size, because "how many bytes was this
+// one again" is not a question worth having per credential. 32 bytes is past
+// the point where a birthday bound or a guess is worth anyone's time.
 const (
-	tokenIDBytes     = 8
-	tokenSecretBytes = 32
-	sessionIDBytes   = 32
-	csrfBytes        = 32
+	tokenIDBytes = 8
+	secretBytes  = 32
 )
 
 // NewToken mints a token and returns it with its one-time secret.
@@ -165,7 +166,7 @@ func NewToken(name string, role Role, expires time.Time, now time.Time) (Token, 
 	if err != nil {
 		return Token{}, "", err
 	}
-	secret, err := randomURLSafe(tokenSecretBytes)
+	secret, err := randomSecret()
 	if err != nil {
 		return Token{}, "", err
 	}
@@ -219,11 +220,11 @@ func hashSecret(secret string) string {
 
 // NewSession mints a session and returns it with the cookie value.
 func NewSession(subject string, role Role, now time.Time) (Session, string, error) {
-	id, err := randomURLSafe(sessionIDBytes)
+	id, err := randomSecret()
 	if err != nil {
 		return Session{}, "", err
 	}
-	csrf, err := randomURLSafe(csrfBytes)
+	csrf, err := randomSecret()
 	if err != nil {
 		return Session{}, "", err
 	}
@@ -248,8 +249,9 @@ func randomHex(n int) (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func randomURLSafe(n int) (string, error) {
-	buf := make([]byte, n)
+// randomSecret returns a URL-safe random string of secretBytes bytes.
+func randomSecret() (string, error) {
+	buf := make([]byte, secretBytes)
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("auth: random: %w", err)
 	}

@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { useSession } from '@/hooks/useSession'
 import { login } from '@/lib/session'
+import { fetchHealth } from '@/lib/api'
 
 /**
  * The login screen (PRD §13.2, basic auth).
@@ -14,6 +16,10 @@ import { login } from '@/lib/session'
  */
 export function Login() {
   const { signIn } = useSession()
+  // Health is public, so this is the one thing the app can ask before it has a
+  // credential — including which sign-in methods exist.
+  const health = useQuery({ queryKey: ['health'], queryFn: ({ signal }) => fetchHealth(signal) })
+  const provider = health.data?.oidc?.enabled ? health.data.oidc : null
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -84,8 +90,39 @@ export function Login() {
               {busy ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
+
+          {provider?.start_path ? (
+            <div className="mt-4 space-y-3 border-t pt-4">
+              {/* A full navigation, not a fetch: the provider answers with a
+                  redirect to its own login page, which only the browser can
+                  follow. The daemon sets the handle cookie on the way out. */}
+              <a
+                href={provider.start_path}
+                className="flex h-9 w-full items-center justify-center rounded-md border text-sm font-medium hover:bg-muted"
+              >
+                Sign in with your identity provider
+              </a>
+              <p className="text-center text-xs text-muted-foreground">{issuerHost(provider.issuer)}</p>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>
   )
+}
+
+/**
+ * issuerHost renders the provider as its host name.
+ *
+ * The daemon supplies this string, and React escapes it either way — but a
+ * whole URL on a login screen reads like something to click, and this one is
+ * not a link.
+ */
+function issuerHost(issuer: string | undefined): string {
+  if (!issuer) return ''
+  try {
+    return new URL(issuer).host
+  } catch {
+    return issuer
+  }
 }

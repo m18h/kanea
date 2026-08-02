@@ -54,17 +54,32 @@ export const logLineSchema = z.object({
   line: z.string(),
 })
 
+/**
+ * What sign-in methods the daemon offers.
+ *
+ * It rides on health because that is the one route reachable without a
+ * credential (PRD §5.2.1), and the login screen needs the answer before it has
+ * one to ask with.
+ */
+export const oidcStatusSchema = z.object({
+  enabled: z.boolean(),
+  issuer: z.string().optional(),
+  start_path: z.string().optional(),
+})
+
 export const healthSchema = z.object({
   status: z.string(),
   version: z.string(),
   store_index: z.number(),
   ws_connections: z.number(),
+  oidc: oidcStatusSchema.nullish(),
 })
 
 export type Service = z.infer<typeof serviceSchema>
 export type Alloc = z.infer<typeof allocSchema>
 export type LogLine = z.infer<typeof logLineSchema>
 export type Health = z.infer<typeof healthSchema>
+export type OIDCStatus = z.infer<typeof oidcStatusSchema>
 
 /** Topics the live socket carries (PRD §12.1). */
 export const Topic = {

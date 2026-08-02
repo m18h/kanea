@@ -66,6 +66,13 @@ type ServerConfig struct {
 	Audit AuditLog
 	// Accounts backs the user and token routes. Nil disables them.
 	Accounts Accounts
+	// OIDC is the identity provider, when one is configured (§13.2). Nil leaves
+	// the provider routes answering 501 rather than 404: "this daemon has no
+	// provider" and "this daemon has no such feature" are different answers.
+	OIDC Provider
+	// Sessions issues a session for an identity another mechanism vouched for.
+	// Required with OIDC, which authenticates without a password to check.
+	Sessions SessionIssuer
 	// Listen is the network address for the API (§15.1, `bind.api_addr`).
 	// Empty means the unix socket is the only way in, which is the default and
 	// the only configuration that needs no further decisions.
@@ -123,6 +130,8 @@ type Server struct {
 	auth            Authenticator
 	audit           AuditLog
 	accounts        Accounts
+	oidc            Provider
+	sessions        SessionIssuer
 	insecureCookies bool
 
 	listenAddr     string
@@ -167,7 +176,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, auth: cfg.Auth, audit: cfg.Audit,
-		accounts: cfg.Accounts, insecureCookies: cfg.InsecureCookies,
+		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
+		insecureCookies: cfg.InsecureCookies,
 	}
 
 	// Every route states what it requires next to where it is registered. The
@@ -179,6 +189,14 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST "+PathLogout,
 		s.route(policy{action: "auth.logout", mutates: true, selfService: true}, s.handleLogout))
 	mux.Handle("GET "+PathSession, s.route(policy{action: "auth.session"}, s.handleSession))
+	// The provider routes are public for the same reason login is: nobody has a
+	// credential yet. They are rate limited on the strict public tier, and the
+	// callback proves itself with the state, nonce and PKCE verifier this daemon
+	// minted rather than with anything the caller supplies (§13.2).
+	mux.Handle("GET "+PathOIDCStart,
+		s.route(policy{action: "auth.oidc.start", public: true}, s.handleOIDCStart))
+	mux.Handle("GET "+PathOIDCCallback,
+		s.route(policy{action: "auth.oidc.callback", public: true}, s.handleOIDCCallback))
 	mux.Handle("GET "+PathServices, s.route(policy{action: "service.list"}, s.handleListServices))
 	mux.Handle("PUT "+PathServices, s.route(policy{action: "service.apply", mutates: true}, s.handleApply))
 	mux.Handle("DELETE "+PathServices+"/{project}/{service}",
@@ -394,10 +412,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, Health{
+	health := Health{
 		Status: "ok", Version: s.version, StoreIndex: index,
 		WSConnections: s.ws.count(),
-	})
+	}
+	// What sign-in methods exist is part of what a client needs before it can
+	// authenticate, and health is the one route it can ask without a credential.
+	// It names the issuer and nothing else: a provider URL is public by
+	// definition — every browser sent there sees it.
+	if s.oidc != nil {
+		health.OIDC = &OIDCStatus{Enabled: true, Issuer: s.oidc.Issuer(), StartPath: PathOIDCStart}
+	}
+	writeJSON(w, http.StatusOK, health)
 }
 
 func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {

@@ -95,6 +95,20 @@ func runAgent(args []string) error {
 		"drop the Secure attribute from the session cookie (only for a daemon reached over plain HTTP)")
 	auditRetention := fs.Duration("audit-retention", defaultAuditRetention,
 		"how long audit entries are kept; 0 keeps them forever")
+	oidcIssuer := fs.String("oidc-issuer", "",
+		"identity provider base URL, e.g. https://accounts.google.com (default: password login only)")
+	oidcClientID := fs.String("oidc-client-id", "", "OAuth client id registered with the provider")
+	oidcClientSecret := fs.String("oidc-client-secret", "",
+		"a secret: reference holding the client secret, e.g. secret:shared/oidc (omit for a public PKCE client)")
+	oidcRedirect := fs.String("oidc-redirect-url", "",
+		"the exact redirect URI registered with the provider, e.g. https://kanea.example.com"+api.PathOIDCCallback)
+	oidcScopes := fs.String("oidc-scopes", "profile,email", "comma-separated scopes beyond openid")
+	oidcRoleClaim := fs.String("oidc-role-claim", auth.DefaultRoleClaim,
+		"claim consulted for authorization")
+	oidcAdmins := fs.String("oidc-admin-claims", "",
+		"comma-separated claim values granted the admin role")
+	oidcViewers := fs.String("oidc-viewer-claims", "",
+		"comma-separated claim values granted the viewer role")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -257,11 +271,24 @@ func runAgent(args []string) error {
 			"detail", "create one with `kanea user add` before exposing the API to the network")
 	}
 
+	// The provider is built before the API so a bad issuer, an unreachable
+	// discovery document or a missing role mapping fails at startup, in front
+	// of the operator, rather than at the first login in front of a user.
+	provider, err := buildOIDC(ctx, oidcSettings{
+		issuer: *oidcIssuer, clientID: *oidcClientID, secretRef: *oidcClientSecret,
+		redirect: *oidcRedirect, scopes: splitList(*oidcScopes), roleClaim: *oidcRoleClaim,
+		admins: splitList(*oidcAdmins), viewers: splitList(*oidcViewers),
+	}, secretStore, logger)
+	if err != nil {
+		return err
+	}
+
 	server, err := api.NewServer(api.ServerConfig{
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
 		Secrets: secretStore, Auth: users, Accounts: users, Audit: trail,
+		OIDC: provider, Sessions: users,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
 		AuthConfigured: configured, InsecureCookies: *insecureCookies,
 	})

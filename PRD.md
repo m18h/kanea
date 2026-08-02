@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.18 |
+| **Status** | Draft v1.19 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
 | **Last updated** | 2026-08-02 |
 | **Document type** | Product Requirements Document (PRD) |
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.19 amendments** — separates **GitHub from OIDC** (§13.2). v1.1 listed "generic OIDC plus presets for GitHub and GitLab OAuth" under one bullet whose guarantees are ID-token guarantees: signature, issuer, audience, expiry, nonce. GitLab is an OIDC provider and gets all of them. **GitHub is not** — its OAuth issues no ID token, so an identity from it can only be a `GET /user` call carrying an access token, which is a different trust argument wearing the same word. Shipping it as a "preset" would make two unlike things look alike in the config file, which is where that difference stops being visible. Generic OIDC ships in M5; GitHub gets its own implementation and its own review.
 
 > **v1.18 amendments** — moves **accounts out of the config file and into the Store** (§13.1, §13.2, §15.1). v1.1's basic-auth stanza had `kanea user add` edit `kanea.hcl` and the daemon read accounts at start; that makes adding a user a config edit plus a reload, makes revoking one a race between the editor and the reader, and gives credentials a second home outside the single writer that already owns state — which then has to be reconciled during a restore (§15.3). Users now live in the `kv` bucket alongside tokens and sessions, are managed at runtime over the authenticated API (`kanea user add|list|delete`), and replicate and restore with everything else. What the config still decides is what config should decide: **where the API listens** (`bind.api_addr`) and **who the OIDC provider is** (§13.2) — settings, not identities. `kanea init` still creates the first admin, but by calling the same API rather than by writing a stanza. The §13.1 rule is unchanged and now enforced in the middleware rather than at startup: with no account configured, the only way in is the local unix socket, and a network listener is refused rather than opened unauthenticated.
 
@@ -747,7 +749,8 @@ Sources:                              Aggregation:                      Consumer
 ### 13.2 Mechanisms (either or both)
 
 - **Basic auth:** accounts in the **Store** with **bcrypt** (or argon2id) password hashes; `kanea user add` creates them at runtime over the authenticated API — no config edit, no reload, and one writer for both credentials and state (v1.18).
-- **OAuth2/OIDC:** generic OIDC (Google, Keycloak, Authentik, …) plus presets for **GitHub** and **GitLab** OAuth. Authorization-code flow with **PKCE**, `state` + `nonce` validation, full ID-token verification (signature, issuer, audience, expiry), restricted redirect URIs, deny-by-default claim→role mapping.
+- **OAuth2/OIDC:** generic OIDC (Google, Keycloak, Authentik, GitLab, …) — authorization-code flow with **PKCE**, `state` + `nonce` validation, full ID-token verification (signature, issuer, audience, expiry), restricted redirect URIs, deny-by-default claim→role mapping. An account the provider authenticates but no claim maps is **refused**: authenticated is not authorized.
+- **GitHub is a separate path, not a preset** (v1.19). GitHub's OAuth issues no ID token, so there is nothing signed to verify — an identity from it can only be a `GET /user` call carrying an access token. That is a different trust argument from the one above and gets its own implementation and its own review, rather than being hidden behind a config preset that makes two unlike things look alike.
 
 ### 13.3 Sessions, tokens, roles
 
