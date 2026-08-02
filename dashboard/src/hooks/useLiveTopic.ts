@@ -1,18 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { z } from 'zod'
-import { LiveSocket, socketURL } from '@/lib/socket'
+import { liveSocket } from '@/lib/live'
 import type { SubscribeRequest } from '@/lib/api'
-
-/**
- * The page's single socket (PRD §12.1). Created lazily so importing this module
- * in a test does not open a connection.
- */
-let shared: LiveSocket | null = null
-
-function socket(): LiveSocket {
-  shared ??= new LiveSocket(socketURL())
-  return shared
-}
 
 export interface LiveState<T> {
   data: T | null
@@ -46,7 +35,7 @@ export function useLiveTopic<S extends z.ZodTypeAny>(
     if (service !== undefined) request.service = service
     if (tail !== undefined) request.tail = tail
 
-    return socket().subscribe(request, (frame) => {
+    return liveSocket().subscribe(request, (frame) => {
       if (frame.type === 'error') {
         setState({ data: null, error: frame.error ?? 'unknown error', connected: true })
         return

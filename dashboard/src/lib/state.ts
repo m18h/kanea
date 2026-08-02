@@ -30,3 +30,33 @@ export function groupAllocs(allocs: Alloc[]): Map<string, Alloc[]> {
   }
   return out
 }
+
+export interface Health {
+  label: string
+  /** settled is false while anything is still converging. */
+  settled: boolean
+}
+
+/**
+ * serviceHealth summarises a service the way `kanea status` does.
+ *
+ * "ok" means settled, not merely "nothing has failed yet" — a service that is
+ * still starting is not ok, or the dashboard would look green during exactly
+ * the window an operator is watching it.
+ */
+export function serviceHealth(service: { Count: number }, allocs: Alloc[]): Health {
+  const running = allocs.filter((a) => a.State === 'running').length
+  const backoff = allocs.filter((a) => a.State === 'backoff').length
+  const failed = allocs.filter((a) => a.State === 'failed').length
+
+  if (failed > 0) return { label: `${failed} failed`, settled: false }
+  if (backoff > 0) return { label: `${backoff} restarting`, settled: false }
+  if (service.Count === 0) {
+    return running === 0
+      ? { label: 'stopped', settled: true }
+      : { label: 'stopping', settled: false }
+  }
+  if (running > service.Count) return { label: 'stopping', settled: false }
+  if (running < service.Count) return { label: 'starting', settled: false }
+  return { label: 'ok', settled: true }
+}

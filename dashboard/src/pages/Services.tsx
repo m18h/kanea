@@ -1,3 +1,4 @@
+import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
@@ -64,8 +65,13 @@ function ServiceRow({ service, allocs }: { service: Service; allocs: Alloc[] }) 
 
   return (
     <tr className="border-t border-border/60">
-      <td className="py-2 pr-4 font-mono text-xs">
-        {service.Project}/{service.Service}
+      <td className="py-2 pr-4">
+        <Link
+          to={`/services/${service.Project}/${service.Service}`}
+          className="font-mono text-xs hover:underline"
+        >
+          {service.Project}/{service.Service}
+        </Link>
       </td>
       {/* Every value here comes from a job spec and is rendered as text. */}
       <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">{service.Image}</td>
