@@ -87,6 +87,10 @@ func runAgent(args []string) error {
 	serveDashboard := fs.Bool("dashboard", true, "serve the embedded dashboard on the API listener")
 	wsOrigins := fs.String("dashboard-origins", "",
 		"comma-separated Origins allowed to open the live-data websocket (default: same-origin only)")
+	listen := fs.String("listen", "",
+		"network address for the control API, e.g. "+api.DefaultListenAddr+" (default: unix socket only)")
+	listenCert := fs.String("listen-cert", "", "TLS certificate for --listen (required beyond loopback)")
+	listenKey := fs.String("listen-key", "", "TLS private key for --listen")
 	insecureCookies := fs.Bool("insecure-cookies", false,
 		"drop the Secure attribute from the session cookie (only for a daemon reached over plain HTTP)")
 	auditRetention := fs.Duration("audit-retention", defaultAuditRetention,
@@ -258,7 +262,8 @@ func runAgent(args []string) error {
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
 		Secrets: secretStore, Auth: users, Accounts: users, Audit: trail,
-		InsecureCookies: *insecureCookies,
+		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
+		AuthConfigured: configured, InsecureCookies: *insecureCookies,
 	})
 	if err != nil {
 		return err

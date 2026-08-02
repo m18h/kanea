@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,6 +65,18 @@ type ServerConfig struct {
 	Audit AuditLog
 	// Accounts backs the user and token routes. Nil disables them.
 	Accounts Accounts
+	// Listen is the network address for the API (§15.1, `bind.api_addr`).
+	// Empty means the unix socket is the only way in, which is the default and
+	// the only configuration that needs no further decisions.
+	Listen string
+	// TLSCert and TLSKey are the listener's certificate. Required for anything
+	// beyond loopback: see listenNetwork.
+	TLSCert string
+	TLSKey  string
+	// AuthConfigured reports whether any account exists. The daemon asks its
+	// auth store at startup; the API only needs the answer, and the network
+	// listener is refused when it is false (§13.1).
+	AuthConfigured bool
 	// InsecureCookies drops the Secure attribute from the session cookie. It
 	// exists for a daemon reached over plain HTTP on a private network, and is
 	// off by default because the safe value should never be the one someone has
@@ -99,6 +112,11 @@ type Server struct {
 	audit           AuditLog
 	accounts        Accounts
 	insecureCookies bool
+
+	listenAddr     string
+	authConfigured bool
+	tls            *tls.Config
+	netListener    net.Listener
 }
 
 // NewServer builds the server. It does not listen yet.
@@ -112,7 +130,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if cfg.Socket == "" {
 		cfg.Socket = DefaultSocket
 	}
+	tlsConfig, err := loadTLS(cfg.TLSCert, cfg.TLSKey)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Server{
+		listenAddr: cfg.Listen, authConfigured: cfg.AuthConfigured, tls: tlsConfig,
 		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
@@ -203,8 +227,12 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 // counts as a local connection — see withLocalConn.
 func (s *Server) Handler() http.Handler { return s.http.Handler }
 
-// Listen creates the socket. Separate from Serve so the caller can report a
+// Listen creates the listeners. Separate from Serve so the caller can report a
 // bind failure before daemonising.
+//
+// A refused network listener is not a failed Listen: the socket still binds and
+// the daemon still runs, because the socket is where the account that would
+// unrefuse it gets created. The caller is told which listeners it actually got.
 func (s *Server) Listen() error {
 	if err := os.MkdirAll(filepath.Dir(s.socket), 0o750); err != nil {
 		return fmt.Errorf("api: socket dir: %w", err)
@@ -220,12 +248,58 @@ func (s *Server) Listen() error {
 	if err != nil {
 		return fmt.Errorf("api: listen on %s: %w", s.socket, err)
 	}
-	// 0600: the socket is the authentication boundary in M1.
+	// 0600: reaching this socket is the local-root credential of §13.1.
 	if err := os.Chmod(s.socket, 0o600); err != nil {
 		return errors.Join(fmt.Errorf("api: chmod socket: %w", err), listener.Close())
 	}
 	s.listener = listener
+
+	network, err := s.listenNetwork()
+	switch {
+	case errors.Is(err, ErrNoAuthConfigured), errors.Is(err, ErrInsecureListener):
+		// The refusals of §13.1/§14 A05. Loud, with the remedy, and not fatal.
+		s.log.Error("the network listener was refused; the API is reachable only over the unix socket",
+			"listen", s.listenAddr, "error", err,
+			"remedy", "create an account with `kanea user add`, then restart kanead")
+	case err != nil:
+		// A genuine bind failure — port in use, bad address, unreadable
+		// certificate — is the operator's configuration not working, and
+		// starting anyway would hide it.
+		return errors.Join(err, listener.Close())
+	default:
+		s.netListener = network
+	}
 	return nil
+}
+
+// NetworkAddr reports the network listener's address, or "" when there is none
+// — because it was not configured, or because §13.1 refused it.
+//
+// The resolved address, not the requested one: a caller that asked for port 0
+// still needs to know where to point a browser.
+func (s *Server) NetworkAddr() string {
+	if s.netListener == nil {
+		return ""
+	}
+	return s.netListener.Addr().String()
+}
+
+// Close releases the listeners without serving. Serve does this itself; this is
+// for a caller that bound early and then failed to start for another reason.
+func (s *Server) Close() error {
+	var errs []error
+	for _, listener := range []net.Listener{s.listener, s.netListener} {
+		if listener == nil {
+			continue
+		}
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			errs = append(errs, err)
+		}
+	}
+	if err := os.Remove(s.socket); err != nil && !errors.Is(err, os.ErrNotExist) {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // Serve blocks until the context is cancelled or the server fails.
@@ -237,14 +311,30 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	s.log.Info("api listening", "socket", s.socket)
 
-	errs := make(chan error, 1)
-	go func() {
-		if err := s.http.Serve(s.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errs <- err
-			return
+	// One http.Server across both listeners: the routes, the middleware and the
+	// shutdown are then the same by construction rather than by remembering to
+	// keep two copies in step. Serve may be called on several listeners.
+	listeners := []net.Listener{s.listener}
+	if s.netListener != nil {
+		s.log.Info("api listening on the network",
+			"listen", s.netListener.Addr().String(), "tls", s.tls != nil)
+		if s.tls == nil {
+			s.log.Warn("the network listener has no TLS; credentials cross it in clear text",
+				"detail", "loopback only — put kanea-edge in front, or pass a certificate")
 		}
-		errs <- nil
-	}()
+		listeners = append(listeners, s.netListener)
+	}
+
+	errs := make(chan error, len(listeners))
+	for _, listener := range listeners {
+		go func() {
+			if err := s.http.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errs <- err
+				return
+			}
+			errs <- nil
+		}()
+	}
 
 	// Removing the socket on the way out keeps the next start clean. A failure
 	// is reported, not swallowed: a socket we cannot remove will confuse the
