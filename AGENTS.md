@@ -71,7 +71,7 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
 /internal/mcp/         # MCP server (tools, resources, transports)
 /dashboard/            # React SPA (own package.json; build → go:embed) — scaffolded in M4
 /spikes/               # M0 throwaway validation code (own go.mod per spike)
-/docs/                 # THREAT_MODEL.md, DR_RUNBOOK.md (stubs; M5/M10)
+/docs/                 # THREAT_MODEL.md (M5, written), DR_RUNBOOK.md (stub; M10)
 ```
 
 ## Commands
@@ -109,7 +109,7 @@ Each milestone's definition-of-done: OWASP §14 checks reviewed, `govulncheck` c
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.4) — the north star |
+| `PRD.md` | Full product requirements (v1.20) — the north star |
 | `AGENTS.md` | This file |
-| `docs/THREAT_MODEL.md` | Threat model (to be written during M5) |
+| `docs/THREAT_MODEL.md` | Threat model — boundaries, adversaries, §14 status as built (M5) |
 | `docs/DR_RUNBOOK.md` | Disaster recovery procedure (to be written during M10) |
