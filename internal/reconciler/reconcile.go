@@ -105,6 +105,9 @@ type Config struct {
 	// Network is optional; nil means allocs run with a bare private netns.
 	Network Network
 	Logger  *slog.Logger
+	// Breaker pauses rollouts when the node is failing broadly (§4.3). Nil
+	// disables it, which is what a test that is not about it wants.
+	Breaker *Breaker
 	// Interval is how often the loop runs without an external trigger.
 	// Defaults to 10s — PRD §21 requires drift to heal within 30s.
 	Interval time.Duration
@@ -148,6 +151,7 @@ type Reconciler struct {
 	driver  Driver
 	network Network
 	log     *slog.Logger
+	breaker *Breaker
 	now     func() time.Time
 
 	vips   *vipAllocator
@@ -193,6 +197,7 @@ func New(cfg Config) (*Reconciler, error) {
 		driver:        cfg.Driver,
 		network:       cfg.Network,
 		log:           cfg.Logger,
+		breaker:       cfg.Breaker,
 		now:           cfg.Now,
 		interval:      cfg.Interval,
 		stopGrace:     cfg.StopGrace,
@@ -301,6 +306,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		}
 		world.Records = records
 		result.Observed = len(changed)
+		// The breaker is fed here rather than inside Observe, which is a pure
+		// function on purpose: recording a fact and reacting to it are separate
+		// jobs, and a pure observer is what makes the planner testable.
+		//
+		// Backoff and Failed are exactly the transitions a crash produces, and
+		// *both* are counted — a node where every alloc dies on first start
+		// never reaches a restart budget, which is precisely the case §4.3's
+		// breaker exists for.
+		r.recordFailures(changed)
 	}
 
 	actions := Plan(world)
@@ -557,6 +571,18 @@ func (r *Reconciler) reapNetwork(ctx context.Context, w World, attachments map[s
 		r.log.Info("reaped orphaned network attachment", "alloc", id)
 	}
 	return reaped
+}
+
+// recordFailures feeds crash transitions to the circuit breaker.
+func (r *Reconciler) recordFailures(changed map[string]AllocRecord) {
+	if r.breaker == nil {
+		return
+	}
+	for _, record := range changed {
+		if record.State == AllocBackoff || record.State == AllocFailed {
+			r.breaker.RecordFailure(record.Project + "/" + record.Service)
+		}
+	}
 }
 
 // Observe turns "what containerd reports" into durable facts: crashes recorded,

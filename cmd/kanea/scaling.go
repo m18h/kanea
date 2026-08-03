@@ -209,6 +209,7 @@ type metricsSettings struct {
 	autoscale     bool
 	store         store.Store
 	notify        chan<- struct{}
+	breaker       scaling.Breaker
 }
 
 // off disables a scrape target.
@@ -283,6 +284,7 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 	loop, err := scaling.NewLoop(scaling.LoopConfig{
 		Evaluator: evaluator,
 		Fleet:     storeFleet{store: cfg.store, notify: cfg.notify, log: logger},
+		Breaker:   cfg.breaker,
 		Logger:    logger,
 	})
 	if err != nil {

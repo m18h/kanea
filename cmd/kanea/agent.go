@@ -250,6 +250,11 @@ func runAgent(args []string) error {
 	// in-memory time series the scrapers write and the autoscaler reads.
 	metrics := scaling.NewMetrics(scaling.MetricsConfig{})
 
+	// One breaker, fed by the reconciler and read by the autoscaler (§4.3).
+	// Two of them would each see half the node's failures and neither would
+	// trip on a fault both were watching.
+	breaker := reconciler.NewBreaker(reconciler.BreakerConfig{Logger: logger})
+
 	rec, err := reconciler.New(reconciler.Config{
 		Store:         st,
 		Driver:        driver,
@@ -261,6 +266,7 @@ func runAgent(args []string) error {
 		ResolvConfDir: filepath.Join(*dataDir, resolvSubdir),
 		Nameserver:    nameserverOf(dns),
 		Prober:        reconciler.NewProber(driver),
+		Breaker:       breaker,
 		Mounts:        mounts,
 		EdgeSnapshot:  routesPath,
 		BaseDomain:    *baseDomain,
