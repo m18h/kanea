@@ -428,6 +428,17 @@ func (s *Server) statusMux() http.Handler {
 			"certificates": s.certs.get().len(),
 		})
 	})
+	// The L7 signal §9.1 makes primary for exposed services. It lives on the
+	// loopback status listener, not on :80 or :443: request rates and latency
+	// percentiles describe how a business is doing, and they are not something
+	// the internet gets to read off a public port.
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		if _, err := s.proxy.Metrics().WriteTo(w); err != nil {
+			// The header is already out, so this cannot become a status code.
+			s.log.Debug("write metrics", "error", err)
+		}
+	})
 	// Expiry is the question an operator asks about certificates, and asking it
 	// should not mean reading a file full of private keys.
 	mux.HandleFunc("GET /certs", func(w http.ResponseWriter, _ *http.Request) {

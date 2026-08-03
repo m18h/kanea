@@ -1,8 +1,10 @@
 package edge
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net"
@@ -32,6 +34,9 @@ type Proxy struct {
 	// being throttled a fresh allowance — which would make the rate limit
 	// trivially evadable by anyone who can trigger a redeploy.
 	limits *ratelimit.Limiter
+	// metrics is the L7 signal §9.1 makes primary for exposed services.
+	metrics *Metrics
+	now     func() time.Time
 
 	// bodyTimeout bounds how long a request body may take to arrive. Zero
 	// disables it.
@@ -100,9 +105,15 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 		cfg.MaxIdleConnsPerHost = DefaultMaxIdleConnsPerHost
 	}
 
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
 	p := &Proxy{
 		log:             cfg.Logger,
 		limits:          ratelimit.New(cfg.LimiterCapacity, cfg.Now),
+		metrics:         NewMetrics(),
+		now:             now,
 		bodyTimeout:     cfg.BodyTimeout,
 		securityHeaders: cfg.SecurityHeaders,
 	}
@@ -137,9 +148,25 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 	return p
 }
 
+// Metrics is the per-service L7 collector kanead scrapes over the status
+// listener (§9.1).
+func (p *Proxy) Metrics() *Metrics { return p.metrics }
+
 // SetTable swaps in a new route table. Requests already in flight finish
 // against the table they started with.
-func (p *Proxy) SetTable(t *Table) { p.table.Store(t) }
+//
+// Counters for services that left the table are dropped with it: the route
+// table is the only bound on how many services this collector tracks, and a
+// project deleted a hundred times over a year should not still be in it.
+func (p *Proxy) SetTable(t *Table) {
+	p.table.Store(t)
+
+	keep := make(map[string]bool, t.Len())
+	for _, service := range t.Services() {
+		keep[service] = true
+	}
+	p.metrics.Retain(keep)
+}
 
 // Table returns the table currently serving.
 func (p *Proxy) Table() *Table { return p.table.Load() }
@@ -189,17 +216,64 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !route.allowsAddress(addr) {
 		p.log.Debug("address refused by ip_restriction",
 			"service", route.Name(), "host", host, "remote", addr.String())
+		p.metrics.Refused(route.Name())
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
 	if !p.withinRateLimit(w, r, route, addr) {
+		p.metrics.Refused(route.Name())
 		return
 	}
 
 	p.applyDeadline(w, r)
-	p.rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), routeKey{}, route)))
+	// Timed around the upstream call only. What §9.1 wants is how long the
+	// service takes, and folding the middleware's own microseconds into that
+	// would make the edge's own cost look like the service's latency.
+	started := p.now()
+	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	p.rp.ServeHTTP(recorder, r.WithContext(context.WithValue(r.Context(), routeKey{}, route)))
+	p.metrics.Observe(route.Name(), p.now().Sub(started), recorder.status)
 }
+
+// statusRecorder remembers the status for the metrics observation.
+//
+// It forwards Flush and Hijack rather than swallowing them: a server-sent
+// events stream and a websocket upgrade both pass through this proxy, and a
+// wrapper that dropped either would break them in a way no metric would show.
+type statusRecorder struct {
+	http.ResponseWriter
+	status  int
+	written bool
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if !w.written {
+		w.status, w.written = status, true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(b []byte) (int, error) {
+	w.written = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *statusRecorder) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("edge: %T cannot be hijacked", w.ResponseWriter)
+	}
+	return h.Hijack()
+}
+
+func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // withinRateLimit spends a token, answering 429 if there is none. It reports
 // whether the request may continue.

@@ -3,6 +3,7 @@ package edge
 import (
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 )
 
@@ -58,6 +59,23 @@ func (t *Table) lookup(host string) (compiled, bool) {
 
 // Len is the number of distinct hostnames served.
 func (t *Table) Len() int { return len(t.byHost) }
+
+// Services lists the distinct services this table routes to, which is the
+// bound on anything keyed by service — the L7 metrics collector, for one.
+func (t *Table) Services() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(t.byHost))
+	for _, c := range t.byHost {
+		// Several hostnames map to one service, so this is a set rather than a
+		// list of routes.
+		if name := c.Name(); !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Index is the Store index this table was projected from.
 func (t *Table) Index() uint64 { return t.index }
