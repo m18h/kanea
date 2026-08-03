@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/auth"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/scaling"
+	"github.com/kanea-dev/kanea/internal/store"
 )
 
 // withMetrics gives the harness a metrics store seeded by the test.
@@ -136,5 +139,84 @@ func TestExporterIsUnavailableWithoutAPipeline(t *testing.T) {
 
 	if resp, body := h.do(t, req); resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503: %s", resp.StatusCode, body)
+	}
+}
+
+func TestStatsTopicStreamsAServiceAndItsAllocs(t *testing.T) {
+	now := time.Now()
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		m := scaling.NewMetrics(scaling.MetricsConfig{})
+		m.Record(scaling.Key{Subject: "shop/web", Metric: scaling.MetricCPU}, now, 55)
+		m.Record(scaling.Key{Subject: "shop/web", Metric: scaling.MetricRPS}, now, 300)
+		m.Record(scaling.Key{Subject: "shop/web/shop-web-0", Metric: scaling.MetricCPU}, now, 60)
+		cfg.Metrics = m
+	})
+	// An alloc with a record but no samples yet: it must still appear, or a
+	// freshly started alloc looks like it does not exist.
+	rec := reconciler.AllocRecord{
+		ID: "shop-web-0", Project: "shop", Service: "web", Index: 0,
+		State: reconciler.AllocRunning,
+	}
+	if _, err := store.PutValue(context.Background(), h.store, store.KindAlloc, rec.Key(), rec); err != nil {
+		t.Fatal(err)
+	}
+	second := reconciler.AllocRecord{
+		ID: "shop-web-1", Project: "shop", Service: "web", Index: 1,
+		State: reconciler.AllocPending,
+	}
+	if _, err := store.PutValue(context.Background(), h.store, store.KindAlloc, second.Key(), second); err != nil {
+		t.Fatal(err)
+	}
+
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+	send(t, conn, api.ClientFrame{Type: "subscribe", Topic: api.TopicStats, Project: "shop", Service: "web"})
+
+	frame := receive(t, conn)
+	var sample api.StatsSample
+	if err := json.Unmarshal(frame.Data, &sample); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if sample.CPU == nil || *sample.CPU != 55 {
+		t.Errorf("service cpu = %v, want 55", sample.CPU)
+	}
+	if sample.RPS == nil || *sample.RPS != 300 {
+		t.Errorf("service rps = %v, want 300", sample.RPS)
+	}
+	// "No data" is a gap, not a zero: a chart that draws them the same way
+	// tells an operator a stopped scraper is an idle service.
+	if sample.Memory != nil {
+		t.Errorf("memory = %v, want absent — nothing was recorded", *sample.Memory)
+	}
+	if len(sample.Allocs) != 2 {
+		t.Fatalf("allocs = %+v, want both records", sample.Allocs)
+	}
+	for _, alloc := range sample.Allocs {
+		switch alloc.AllocID {
+		case "shop-web-0":
+			if alloc.CPU == nil || *alloc.CPU != 60 {
+				t.Errorf("alloc cpu = %v, want 60", alloc.CPU)
+			}
+		case "shop-web-1":
+			if alloc.CPU != nil {
+				t.Errorf("an alloc with no samples reported cpu = %v", *alloc.CPU)
+			}
+		}
+	}
+}
+
+func TestStatsTopicNeedsAServiceAndAPipeline(t *testing.T) {
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		cfg.Metrics = scaling.NewMetrics(scaling.MetricsConfig{})
+	})
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+
+	// Unscoped: the topic is per service, and a subscription for "everything"
+	// would be every alloc on the node every five seconds.
+	send(t, conn, api.ClientFrame{Type: "subscribe", Topic: api.TopicStats})
+	if frame := receive(t, conn); frame.Type != "error" {
+		t.Fatalf("frame = %+v, want an error for an unscoped stats subscription", frame)
 	}
 }

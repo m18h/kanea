@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/kanea-dev/kanea/internal/scaling"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -39,9 +40,111 @@ func (s *Server) feedFor(frame ClientFrame) (feedFunc, error) {
 			return nil, fmt.Errorf("api: the %s topic needs a project and a service", TopicLogs)
 		}
 		return s.feedLogs(frame), nil
+	case TopicStats:
+		if s.metrics == nil {
+			return nil, fmt.Errorf("api: the %s topic needs the metrics pipeline", TopicStats)
+		}
+		if frame.Project == "" || frame.Service == "" {
+			return nil, fmt.Errorf("api: the %s topic needs a project and a service", TopicStats)
+		}
+		return s.feedStats(frame), nil
 	default:
 		return nil, fmt.Errorf("api: unknown topic %q", frame.Topic)
 	}
+}
+
+// StatsSample is one service's live numbers.
+//
+// Sent whole rather than as a stream of individual points: a dashboard drawing
+// four series wants them from the same instant, and reassembling that from
+// interleaved single-metric frames is work every client would have to repeat.
+type StatsSample struct {
+	Service string    `json:"service"`
+	At      time.Time `json:"at"`
+	// Service-level values. Absent when the metric has nothing recent, which a
+	// chart draws as a gap rather than as a zero.
+	CPU    *float64 `json:"cpu,omitempty"`
+	Memory *float64 `json:"memory,omitempty"`
+	RPS    *float64 `json:"rps,omitempty"`
+	P95    *float64 `json:"p95_latency_ms,omitempty"`
+	// Allocs carries the per-alloc breakdown the service detail page shows.
+	Allocs []AllocStats `json:"allocs,omitempty"`
+}
+
+// AllocStats is one alloc's resource use.
+type AllocStats struct {
+	AllocID     string   `json:"alloc_id"`
+	CPU         *float64 `json:"cpu,omitempty"`
+	Memory      *float64 `json:"memory,omitempty"`
+	MemoryBytes *float64 `json:"memory_bytes,omitempty"`
+}
+
+// feedStats streams live samples for one service.
+func (s *Server) feedStats(frame ClientFrame) feedFunc {
+	service := frame.Project + "/" + frame.Service
+
+	return func(ctx context.Context, emit emitFunc) {
+		// Sampled on the scrape interval rather than the Store's poll: these
+		// numbers change every five seconds by construction, and emitting more
+		// often would send the same values repeatedly.
+		ticker := time.NewTicker(scaling.RawInterval)
+		defer ticker.Stop()
+
+		emit(s.statsFor(ctx, service))
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				emit(s.statsFor(ctx, service))
+			}
+		}
+	}
+}
+
+// statsFor gathers one sample for a service and its allocs.
+func (s *Server) statsFor(ctx context.Context, service string) StatsSample {
+	sample := StatsSample{Service: service, At: time.Now()}
+	sample.CPU = s.latestValue(service, scaling.MetricCPU)
+	sample.Memory = s.latestValue(service, scaling.MetricMemory)
+	sample.RPS = s.latestValue(service, scaling.MetricRPS)
+	sample.P95 = s.latestValue(service, scaling.MetricP95)
+
+	// The alloc list comes from the Store rather than from the metric subjects:
+	// an alloc that started a second ago has a record and no samples yet, and
+	// leaving it out of the table would make it look like it does not exist.
+	allocs, err := listAll[reconciler.AllocRecord](ctx, s.store, store.KindAlloc)
+	if err != nil {
+		s.log.Debug("stats feed: cannot list allocs", "error", err)
+		return sample
+	}
+	for _, alloc := range allocs {
+		if alloc.Project+"/"+alloc.Service != service {
+			continue
+		}
+		subject := service + "/" + alloc.ID
+		sample.Allocs = append(sample.Allocs, AllocStats{
+			AllocID:     alloc.ID,
+			CPU:         s.latestValue(subject, scaling.MetricCPU),
+			Memory:      s.latestValue(subject, scaling.MetricMemory),
+			MemoryBytes: s.latestValue(subject, scaling.MetricMemoryBytes),
+		})
+	}
+	return sample
+}
+
+// latestValue reads one current metric, or nil when there is nothing recent.
+//
+// A pointer rather than a zero: "no data" and "zero" are different facts, and a
+// chart that draws them the same way tells an operator a stopped scraper is an
+// idle service.
+func (s *Server) latestValue(subject, metric string) *float64 {
+	point, ok := s.metrics.Latest(scaling.Key{Subject: subject, Metric: metric})
+	if !ok || time.Since(point.At) > metricStaleAfter {
+		return nil
+	}
+	value := point.Value
+	return &value
 }
 
 // feedServices streams the desired-state set whenever it changes.

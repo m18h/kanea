@@ -29,6 +29,9 @@ const (
 	TopicAllocs = "allocs"
 	// TopicLogs carries workload log lines for one service.
 	TopicLogs = "logs"
+	// TopicStats carries live resource and traffic samples for one service and
+	// its allocs (PRD §12.2's service detail graphs).
+	TopicStats = "stats"
 )
 
 // WS frame types. Client frames are requests; server frames are data or errors.
