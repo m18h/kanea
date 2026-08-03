@@ -125,6 +125,9 @@ func runAgent(args []string) error {
 		"containerd's Prometheus endpoint (\"off\" disables cgroup metrics)")
 	edgeMetrics := fs.String("edge-metrics", scaling.DefaultEdgeMetricsURL,
 		"kanea-edge's metrics endpoint (\"off\" disables the L7 signal)")
+	hubbleMetrics := fs.String("hubble-metrics", "",
+		"cilium-agent's Hubble endpoint for east-west metrics, e.g. "+
+			scaling.DefaultHubbleMetricsURL+" (default: off — Hubble costs CPU per request, PRD §9.1)")
 	autoscale := fs.Bool("autoscale", true, "act on the scaling policies services declare (PRD §9.2)")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
@@ -374,6 +377,7 @@ func runAgent(args []string) error {
 		metrics:       metrics,
 		containerdURL: *containerdMetrics,
 		edgeURL:       *edgeMetrics,
+		hubbleURL:     *hubbleMetrics,
 		interval:      *metricsInterval,
 		autoscale:     *autoscale,
 		store:         st,

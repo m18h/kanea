@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
@@ -200,11 +201,46 @@ func listAllAllocs(ctx context.Context, st store.Store) ([]reconciler.AllocRecor
 	}
 }
 
+// probeHubble reports at startup whether Hubble is actually usable.
+//
+// Three outcomes, and they need different words because they need different
+// fixes: unreachable means the agent has no Hubble listener, no flow data means
+// the `--hubble-metrics` flag was written in a form cilium-agent accepts and
+// ignores, and success means the pipeline is live.
+func probeHubble(ctx context.Context, scraper *scaling.HubbleScraper, url string, logger *slog.Logger) {
+	probeCtx, cancel := context.WithTimeout(ctx, hubbleProbeTimeout)
+	defer cancel()
+
+	switch _, err := scraper.Scrape(probeCtx); {
+	case errors.Is(err, scaling.ErrHubbleNoFlows):
+		logger.Error("hubble answers but reports no flows; east-west metrics will stay empty",
+			"url", url,
+			"fix", "cilium-agent's --hubble-metrics takes a space-separated list inside one "+
+				"value: --hubble-metrics='flow drop'. A comma-separated list is read as one "+
+				"unknown metric name, and a repeated flag keeps only the last — both silently")
+	case err != nil:
+		// Not fatal: kanead does not supervise cilium-agent, and an agent that
+		// is still starting is a normal thing to find at boot.
+		logger.Warn("hubble is not answering yet; east-west metrics will start when it does",
+			"url", url, "error", err)
+	default:
+		logger.Info("scraping east-west metrics from hubble", "url", url,
+			"detail", "per-service attribution needs a label context on the agent, e.g. "+
+				"--hubble-metrics='flow:destinationContext=labels drop:destinationContext=labels'; "+
+				"without one, flows are recorded against the node")
+	}
+}
+
+// hubbleProbeTimeout bounds the startup probe. It is a diagnostic, and kanead
+// starts either way.
+const hubbleProbeTimeout = 3 * time.Second
+
 // metricsSettings is what startMetrics needs to build the pipeline.
 type metricsSettings struct {
 	metrics       *scaling.Metrics
 	containerdURL string
 	edgeURL       string
+	hubbleURL     string
 	interval      time.Duration
 	autoscale     bool
 	store         store.Store
@@ -252,6 +288,27 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 		}
 	} else {
 		logger.Warn("edge metrics are disabled; rps and latency scaling rules will never fire")
+	}
+
+	// Hubble is opt-in and off unless an operator names its endpoint. §21's
+	// footprint budget is why: M0 spike ① measured cilium-agent at 152.8 MiB
+	// with Hubble on, the largest resident component on the node, and §9.1
+	// makes the edge the primary signal precisely so this is a choice rather
+	// than a requirement.
+	if cfg.hubbleURL != "" {
+		scraper, err := scaling.NewHubbleScraper(scaling.HubbleConfig{
+			URL: cfg.hubbleURL, Metrics: cfg.metrics, Logger: logger,
+		})
+		if err != nil {
+			logger.Error("cannot start the hubble metrics scrape", "error", err)
+		} else {
+			// Probed once at startup, in front of the operator who just typed
+			// the flag, rather than leaving them to notice a warning five
+			// seconds into a log. M0 spike ① asked for this check by name: the
+			// failure it catches serves 200 OK and looks like success.
+			probeHubble(ctx, scraper, cfg.hubbleURL, logger)
+			go scraper.Run(ctx, cfg.interval)
+		}
 	}
 
 	// Sweeping is housekeeping: Forget covers the services that leave cleanly,

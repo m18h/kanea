@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -397,21 +398,84 @@ func splitExpositionLine(line []byte) (name, labels, value []byte, ok bool) {
 	return name, labels, rest, true
 }
 
-// labelValue extracts one label. The returned string is a copy, because it
-// becomes a map key that outlives the scanner's buffer.
+// labelValue extracts one label from a raw Prometheus label set.
+//
+// Quote-aware, and it has to be: a label *value* may contain commas, and
+// Hubble's label context uses that — it renders a whole identity into one
+// value, `destination="k8s:io.kubernetes.pod.namespace=shop,project=shop,..."`.
+// Splitting on commas first truncates that at the first one, which reads as a
+// perfectly plausible label and attributes every flow to the wrong subject.
+//
+// The returned string is a copy, because it outlives the scanner's buffer.
 func labelValue(labels []byte, want string) string {
-	for len(labels) > 0 {
-		var pair []byte
-		if cut := bytes.IndexByte(labels, ','); cut >= 0 {
-			pair, labels = labels[:cut], labels[cut+1:]
-		} else {
-			pair, labels = labels, nil
-		}
-		key, value, found := bytes.Cut(pair, []byte("="))
-		if !found || string(bytes.TrimSpace(key)) != want {
+	for i := 0; i < len(labels); {
+		// Skip separators left by the previous pair.
+		if labels[i] == ',' || labels[i] == ' ' {
+			i++
 			continue
 		}
-		return string(bytes.Trim(bytes.TrimSpace(value), `"`))
+		eq := bytes.IndexByte(labels[i:], '=')
+		if eq < 0 {
+			return ""
+		}
+		key := bytes.TrimSpace(labels[i : i+eq])
+		rest := labels[i+eq+1:]
+
+		var value []byte
+		var consumed int
+		if len(rest) > 0 && rest[0] == '"' {
+			end := 1
+			for end < len(rest) {
+				if rest[end] == '\\' {
+					// An escaped character, whatever it is, cannot end the value.
+					end += 2
+					continue
+				}
+				if rest[end] == '"' {
+					break
+				}
+				end++
+			}
+			if end > len(rest) {
+				end = len(rest)
+			}
+			value, consumed = rest[1:end], end+1
+		} else {
+			end := bytes.IndexByte(rest, ',')
+			if end < 0 {
+				end = len(rest)
+			}
+			value, consumed = rest[:end], end
+		}
+
+		if string(key) == want {
+			return unescapeLabel(string(value))
+		}
+		i += eq + 1 + consumed
 	}
 	return ""
+}
+
+// unescapeLabel undoes the exposition format's escaping.
+func unescapeLabel(value string) string {
+	if !strings.Contains(value, "\\") {
+		return value
+	}
+	var b strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\\' || i+1 >= len(value) {
+			b.WriteByte(value[i])
+			continue
+		}
+		i++
+		switch value[i] {
+		case 'n':
+			b.WriteByte('\n')
+		default:
+			// \" and \\ are the only others the format defines; anything else
+			// is passed through as written rather than guessed at.
+			b.WriteByte(value[i])
+		}
+	}
+	return b.String()
 }
