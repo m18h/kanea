@@ -3,13 +3,23 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useLiveLog, MaxLogLines } from '@/hooks/useLiveLog'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
-import { Topic, allocsResponseSchema, servicesResponseSchema } from '@/lib/api'
+import {
+  Topic,
+  allocsResponseSchema,
+  servicesResponseSchema,
+  statsSampleSchema,
+  type AllocStats,
+  type StatsSample,
+} from '@/lib/api'
 import { allocStateVariant, groupAllocs, serviceHealth } from '@/lib/state'
+import { Sparkline } from '@/components/Sparkline'
+import { useSeries } from '@/hooks/useSeries'
 
 export function ServiceDetail({ project, service }: { project: string; service: string }) {
 
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
+  const stats = useLiveTopic({ topic: Topic.Stats, project, service }, statsSampleSchema)
 
   const key = `${project}/${service}`
   const desired = (services.data?.services ?? []).find(
@@ -52,6 +62,8 @@ export function ServiceDetail({ project, service }: { project: string; service: 
         </CardContent>
       </Card>
 
+      <StatsPanel sample={stats.data} />
+
       <Card>
         <CardHeader>
           <CardTitle>Allocations</CardTitle>
@@ -65,18 +77,21 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                 <tr>
                   <th className="pb-2 pr-4 font-medium">Alloc</th>
                   <th className="pb-2 pr-4 font-medium">State</th>
-                  <th className="pb-2 font-medium">Restarts</th>
+                  <th className="pb-2 pr-4 font-medium">Restarts</th>
+                  <th className="pb-2 pr-4 font-medium">CPU</th>
+                  <th className="pb-2 font-medium">Memory</th>
                 </tr>
               </thead>
               <tbody>
                 {mine.map((alloc) => (
-                  <tr key={alloc.ID} className="border-t border-border/60">
-                    <td className="py-2 pr-4 font-mono text-xs">{alloc.ID}</td>
-                    <td className="py-2 pr-4">
-                      <Badge variant={allocStateVariant(alloc.State)}>{alloc.State}</Badge>
-                    </td>
-                    <td className="py-2 tabular-nums">{alloc.Restarts ?? 0}</td>
-                  </tr>
+                  <AllocRow
+                    key={alloc.ID}
+                    id={alloc.ID}
+                    state={alloc.State}
+                    restarts={alloc.Restarts ?? 0}
+                    stats={(stats.data?.allocs ?? []).find((a) => a.alloc_id === alloc.ID)}
+                    at={stats.data?.at ?? ''}
+                  />
                 ))}
               </tbody>
             </table>
@@ -86,6 +101,98 @@ export function ServiceDetail({ project, service }: { project: string; service: 
 
       <LogPanel project={project} service={service} />
     </div>
+  )
+}
+
+/**
+ * StatsPanel shows the service-level numbers a scaling rule is written against
+ * (PRD §6.1), so the graph and the policy talk about the same quantities.
+ */
+function StatsPanel({ sample }: { sample: StatsSample | null }) {
+  const at = sample?.at ?? ''
+  const cpu = useSeries(sample?.cpu, at)
+  const memory = useSeries(sample?.memory, at)
+  const rps = useSeries(sample?.rps, at)
+  const p95 = useSeries(sample?.p95_latency_ms, at)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Live</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* CPU and memory are percentages of the declared limit, so the scale
+            is fixed at 100: a flat 2% line and a flat 90% one must not look
+            the same. Rate and latency have no natural ceiling and scale to
+            their own range. */}
+        <Metric label="CPU" unit="%" points={cpu} max={100} latest={sample?.cpu} />
+        <Metric label="Memory" unit="%" points={memory} max={100} latest={sample?.memory} />
+        <Metric label="Requests" unit="/s" points={rps} latest={sample?.rps} />
+        <Metric label="p95" unit=" ms" points={p95} latest={sample?.p95_latency_ms} />
+      </CardContent>
+    </Card>
+  )
+}
+
+function Metric({
+  label,
+  unit,
+  points,
+  max,
+  latest,
+}: {
+  label: string
+  unit: string
+  points: (number | undefined)[]
+  max?: number | undefined
+  latest?: number | undefined
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between">
+        <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
+        <span className="font-mono text-sm tabular-nums">
+          {/* An em dash, not a zero: the daemon omits a metric it has nothing
+              recent for, and "0" would be a claim about the service. */}
+          {latest === undefined ? '—' : `${latest.toFixed(latest < 10 ? 1 : 0)}${unit}`}
+        </span>
+      </div>
+      <Sparkline points={points} max={max} label={`${label} over the last few minutes`} />
+    </div>
+  )
+}
+
+/** AllocRow is one alloc, with its own resource history. */
+function AllocRow({
+  id,
+  state,
+  restarts,
+  stats,
+  at,
+}: {
+  id: string
+  state: string
+  restarts: number
+  stats: AllocStats | undefined
+  at: string
+}) {
+  const cpu = useSeries(stats?.cpu, at)
+  const memory = useSeries(stats?.memory, at)
+
+  return (
+    <tr className="border-t border-border/60">
+      <td className="py-2 pr-4 font-mono text-xs">{id}</td>
+      <td className="py-2 pr-4">
+        <Badge variant={allocStateVariant(state)}>{state}</Badge>
+      </td>
+      <td className="py-2 pr-4 tabular-nums">{restarts}</td>
+      <td className="py-2 pr-4">
+        <Sparkline points={cpu} max={100} className="h-6 w-20" label={`CPU for ${id}`} />
+      </td>
+      <td className="py-2">
+        <Sparkline points={memory} max={100} className="h-6 w-20" label={`Memory for ${id}`} />
+      </td>
+    </tr>
   )
 }
 

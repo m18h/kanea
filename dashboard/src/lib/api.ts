@@ -81,11 +81,40 @@ export type LogLine = z.infer<typeof logLineSchema>
 export type Health = z.infer<typeof healthSchema>
 export type OIDCStatus = z.infer<typeof oidcStatusSchema>
 
+/**
+ * Live resource and traffic samples for one service (PRD §9.1, §12.2).
+ *
+ * Every value is optional on purpose: the daemon omits a metric it has nothing
+ * recent for, and a chart draws that as a gap. "No data" and "no load" are
+ * different facts, and drawing them alike says a stopped scraper is an idle
+ * service.
+ */
+export const allocStatsSchema = z.object({
+  alloc_id: z.string(),
+  cpu: z.number().optional(),
+  memory: z.number().optional(),
+  memory_bytes: z.number().optional(),
+})
+
+export const statsSampleSchema = z.object({
+  service: z.string(),
+  at: z.string(),
+  cpu: z.number().optional(),
+  memory: z.number().optional(),
+  rps: z.number().optional(),
+  p95_latency_ms: z.number().optional(),
+  allocs: z.array(allocStatsSchema).nullish(),
+})
+
+export type StatsSample = z.infer<typeof statsSampleSchema>
+export type AllocStats = z.infer<typeof allocStatsSchema>
+
 /** Topics the live socket carries (PRD §12.1). */
 export const Topic = {
   Services: 'services',
   Allocs: 'allocs',
   Logs: 'logs',
+  Stats: 'stats',
 } as const
 
 export type TopicName = (typeof Topic)[keyof typeof Topic]
