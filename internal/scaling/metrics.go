@@ -149,7 +149,13 @@ func (m *Metrics) Record(key Key, at time.Time, value float64) {
 	pair.pendingCount++
 }
 
-// Latest returns the most recent sample within the raw window.
+// Latest returns the most recent sample, if there is one inside the raw window.
+//
+// The window bound is the point: a ring that nobody has written to for two
+// hours still *holds* its last value, and returning that as "latest" would let
+// a caller publish a stale number as current. "Latest" has to mean latest
+// within the retention this tier promises, or every caller has to remember to
+// check a timestamp — and one of them will not.
 func (m *Metrics) Latest(key Key) (Point, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -158,7 +164,11 @@ func (m *Metrics) Latest(key Key) (Point, bool) {
 	if !ok {
 		return Point{}, false
 	}
-	return pair.raw.latest()
+	point, found := pair.raw.latest()
+	if !found || m.now().Sub(point.At) > RawWindow {
+		return Point{}, false
+	}
+	return point, true
 }
 
 // Average is the mean over a trailing window, and how many points it covered.

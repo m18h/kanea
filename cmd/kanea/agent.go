@@ -316,6 +316,7 @@ func runAgent(args []string) error {
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
 		Secrets: secretStore, Auth: users, Accounts: users, Audit: trail,
 		OIDC: provider, Sessions: users,
+		Metrics: metrics, Breaker: breaker,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
 		AuthConfigured: configured, InsecureCookies: *insecureCookies,
 	})

@@ -66,6 +66,11 @@ type ServerConfig struct {
 	Audit AuditLog
 	// Accounts backs the user and token routes. Nil disables them.
 	Accounts Accounts
+	// Metrics backs the Prometheus exporter and the live stats topic. Nil
+	// disables both.
+	Metrics MetricsSource
+	// Breaker reports the circuit breaker's state to the exporter.
+	Breaker BreakerSource
 	// OIDC is the identity provider, when one is configured (§13.2). Nil leaves
 	// the provider routes answering 501 rather than 404: "this daemon has no
 	// provider" and "this daemon has no such feature" are different answers.
@@ -130,6 +135,8 @@ type Server struct {
 	auth            Authenticator
 	audit           AuditLog
 	accounts        Accounts
+	metrics         MetricsSource
+	breaker         BreakerSource
 	oidc            Provider
 	sessions        SessionIssuer
 	insecureCookies bool
@@ -177,6 +184,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, auth: cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
+		metrics: cfg.Metrics, breaker: cfg.Breaker,
 		insecureCookies: cfg.InsecureCookies,
 	}
 
@@ -204,6 +212,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST "+PathServices+"/{project}/{service}/scale",
 		s.route(policy{action: "service.scale", mutates: true}, s.handleScale))
 	mux.Handle("GET "+PathAllocs, s.route(policy{action: "alloc.list"}, s.handleListAllocs))
+	mux.Handle("GET "+PathMetrics, s.route(policy{action: "metrics.read"}, s.handleMetrics))
 	mux.Handle("GET "+PathLogs, s.route(policy{action: "logs.read"}, s.handleLogs))
 	mux.Handle("GET "+PathWS, s.route(policy{action: "ws.connect"}, s.handleWS))
 	// The audit log is admin-only to read: it names who did what, and that is
