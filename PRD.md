@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.20 |
+| **Status** | Draft v1.21 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
 | **Last updated** | 2026-08-02 |
 | **Document type** | Product Requirements Document (PRD) |
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.21 amendments** — restates the **scale-decision latency budget** (§21, §9.2) from 15 s to **20 s from a sustained breach**, because 15 s was not reachable without giving up the guardrail that makes the number trustworthy. The pipeline is: containerd and the edge are scraped every 5 s; a rule averages over a window before acting; the evaluator ticks. The averaging window exists so a single anomalous scrape cannot move a service, and three samples is the smallest window that does that — which at 5 s resolution is 15 s, plus one 5 s evaluation tick. **Reacting faster means reacting to one or two samples**, which is how an autoscaler chases noise instead of load, and a service that flaps between 2 and 8 replicas every minute is worse than one that reacts five seconds later. The 20 s is a ceiling on a *sustained* breach; a large spike crosses its target sooner, because the average moves faster the further the load is from the target. §9.2's guardrails are now stated with their defaults: 10% tolerance band, 2×/0.5× step caps, 5-minute scale-down stabilization, 2-minute cooldown.
 
 > **v1.20 amendments** — settles **which DNS-01 providers ship** (§7.3) and **drops TLS-ALPN-01 from M5**. v1.1 said "lego (supports many DNS providers)", and lego does — but importing its provider catalogue links every vendor SDK it knows into a binary whose whole premise is being one small file, and even its `rfc2136` provider drags a Kerberos stack in for the GSS-TSIG case Kanea does not use. So DNS-01 ships as a **direct RFC 2136 solver**, TSIG-signed, written against `miekg/dns` — which Kanea already carries for its own resolver (§7.1). That covers BIND, Knot and PowerDNS with no new dependency. **Hosted providers (Cloudflare, Route 53, …) are a curated list**, added one at a time with the weight of each SDK weighed against the operators it serves — not a catalogue import. Unsigned updates are refused outright: a dynamic update nobody authenticates is a passing ACME challenge for every name in the zone. **TLS-ALPN-01 is deferred past M5**, on the reasoning §7.3 already gives for it: it exists for a node that does not own port 80, and Kanea's edge does. It buys nothing here and would be a second challenge path to keep correct.
 
@@ -672,7 +674,13 @@ Sources:                              Aggregation:                      Consumer
 - Per-service `scaling` block (§6.1): `min`, `max`, one or more metric rules, `cooldown`.
 - Evaluator loop (every 10 s): computes desired replicas per rule = `ceil(current × value/target)` (HPA-style proportional), takes the max across rules, applies stabilization window (scale-up fast, scale-down cautious — separate windows configurable).
 - Scale actions go through the reconciler (health-gated); every action emits an event + optional notification.
-- **Guardrails:** hard min/max, max scale-step per evaluation (default 2× up / 0.5× down), flapping protection via cooldown, plus the global circuit breaker (§4.3).
+- **Guardrails**, each against a specific failure mode, with the defaults they ship with (v1.21):
+  - **Tolerance, 10%** — a service at 71% against a 70% target needs no replica. Without a dead band every evaluation is a change and the count oscillates forever.
+  - **Step caps, 2× up / 0.5× down** — one bad reading and a real surge look identical for one evaluation, so neither may take a service from 2 replicas to 200. The cap bounds a single evaluation, not the trend: sustained load still converges over several.
+  - **Asymmetric stabilization** — scale-up is immediate; scale-down only to the highest count seen in a **5-minute** window. Scaling up late costs an outage now; scaling down early costs the same outage when the traffic returns.
+  - **Cooldown, 2 minutes** — a rollout must finish and appear in the metrics before the next decision is based on them. The cooldown starts when a change is *applied*, so one the reconciler refused is retried rather than counted as done.
+  - **No data is never zero** — a rule whose metric has no samples is skipped. Treating it as zero means a broken metrics pipeline scales every service to its minimum.
+  - Plus hard min/max and the global circuit breaker (§4.3).
 
 ---
 
@@ -1047,7 +1055,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 | **Footprint** | kanea idle RSS ≤ 150 MiB, **total platform ≤ 1 GiB including cilium-agent, etcd, containerd, and kanea-edge** (Hubble off by default) — the 1 GiB budget is the default `system_reserve_memory` (§5.2.11); dashboard bundle ≤ 1.5 MiB gzipped. M0 measurement: cilium-agent 153 MiB (Hubble **on**, spike ①) + **rootless `buildkitd` 157 MiB (spike ④)** + containerd 42 MiB + etcd 23 MiB ≈ 375 MiB before Kanea's own processes — cilium-agent and buildkitd are the two largest resident components and the reserve must cover both |
 | **Storage** | S3 volumes cost **one object-store round trip per file operation** (~30 ms typical): creating or listing a 200-file directory takes tens of seconds, and a FUSE call with a dead backend blocks for tens of seconds uninterruptibly — S3 volumes are for bulk/read-mostly data, never for hot paths or many small files (M0 spike ③) |
 | **Scale** | ≥ 500 services / ≥ 2000 allocs per node; reconcile loop ≤ 1 s at that scale |
-| **Performance** | API p95 ≤ 100 ms (local); log stream latency ≤ 500 ms; scale decision ≤ 15 s from metric breach |
+| **Performance** | API p95 ≤ 100 ms (local); log stream latency ≤ 500 ms; **scale decision ≤ 20 s from a sustained metric breach** (v1.21: a 15 s averaging window — three samples at the 5 s scrape resolution — plus one 5 s evaluation tick; a large spike decides sooner) |
 | **Durability** | RPO ≤ 5 min (S3 change segments); RTO: **control plane ≤ 15 min**, workload convergence best-effort (image re-pull bound); backup verify = restore test in CI; master key escrowed at `init` |
 | **Security** | §14 gates in CI; signed releases; SBOM published |
 | **Reliability** | `kanead` restart disturbs neither running allocs **nor north-south traffic** (separate `kanea-edge` process); reconciler heals drift ≤ 30 s; log drains never backpressure workloads; workloads can never starve or OOM-kill the control plane (cgroup memory floor + OOM-killer policy, §5.2.11); disk watermark alerts at 80/90% |
