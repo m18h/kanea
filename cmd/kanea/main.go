@@ -41,7 +41,7 @@ var commands = []command{
 	{"status", "service and platform status", runStatus},
 	{"logs", "stream service logs", runLogs},
 	{"exec", "debug shell into an alloc (admin-only, audited)", todo},
-	{"scale", "manually scale a service", todo},
+	{"scale", "manually scale a service", runScale},
 	{"build", "trigger a build pipeline", todo},
 	{"project", "project operations (sync, ...)", todo},
 	{"backup", "backup create|list|verify", todo},

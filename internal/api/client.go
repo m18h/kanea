@@ -77,6 +77,15 @@ func (c *Client) DeleteService(ctx context.Context, project, service string) (Ap
 	return out, err
 }
 
+// Scale sets a service's replica count.
+func (c *Client) Scale(ctx context.Context, project, service string, count int) (ApplyResponse, error) {
+	var out ApplyResponse
+	path := fmt.Sprintf("%s/%s/%s/scale", PathServices,
+		url.PathEscape(project), url.PathEscape(service))
+	err := c.do(ctx, http.MethodPost, path, ScaleRequest{Count: count}, &out)
+	return out, err
+}
+
 // Allocs lists alloc records, optionally filtered.
 func (c *Client) Allocs(ctx context.Context, project, service string) ([]reconciler.AllocRecord, error) {
 	q := url.Values{}

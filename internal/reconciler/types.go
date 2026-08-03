@@ -56,6 +56,13 @@ type Desired struct {
 	DependsOn []string
 	// Check is the service's health probe, if it declared one.
 	Check *HealthCheck
+	// Scaling is the autoscaling policy, or nil for a service whose count is
+	// whatever was declared (PRD §9.2).
+	//
+	// It lives on the desired state rather than in a table of its own because
+	// it is part of what the operator declared, and because the evaluator has
+	// to read it beside the count it is deciding about.
+	Scaling *ScalingPolicy
 	// ResolvConfPath is the host file bind-mounted at /etc/resolv.conf. It is
 	// filled in by the reconciler rather than the spec: which resolver an alloc
 	// talks to is a property of the node, not of the job.
@@ -146,6 +153,27 @@ func (p RestartPolicy) delayFor(n int) time.Duration {
 		n = len(schedule)
 	}
 	return schedule[n-1]
+}
+
+// ScalingPolicy is a service's autoscaling configuration, as §6.1 declares it.
+//
+// A copy of the shape rather than internal/scaling's own type: this struct is
+// serialised into the Store, so its JSON is a storage format that has to stay
+// stable independently of what the evaluator finds convenient.
+type ScalingPolicy struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+	// Metrics are the targets to drive toward. An empty list means no
+	// autoscaling, whatever min and max say.
+	Metrics []ScalingMetric `json:"metrics,omitempty"`
+	// Cooldown is the minimum time between changes, as a duration string.
+	Cooldown string `json:"cooldown,omitempty"`
+}
+
+// ScalingMetric is one metric target.
+type ScalingMetric struct {
+	Name   string  `json:"name"`
+	Target float64 `json:"target"`
 }
 
 // Volume is one local volume mounted into every alloc of a service.

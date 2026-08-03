@@ -51,6 +51,8 @@ var implemented = map[string]bool{
 	"edge": true,
 	// M5 auth & secrets:
 	"secret": true, "user": true, "token": true,
+	// M6 metrics & autoscaling:
+	"scale": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {

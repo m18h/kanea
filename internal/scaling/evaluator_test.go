@@ -37,6 +37,20 @@ func (h *evalHarness) feed(service, metric string, value float64, n int) {
 	}
 }
 
+// feedAll records samples for several services over the same span of time.
+//
+// feed advances the clock as it goes, so feeding two services in sequence would
+// leave the first one's samples outside the trailing average window by the time
+// the second finished — which looks exactly like a service with no metrics.
+func (h *evalHarness) feedAll(metric string, value float64, n int, services ...string) {
+	for range n {
+		for _, service := range services {
+			h.metrics.Record(scaling.Key{Subject: service, Metric: metric}, h.clock.at, value)
+		}
+		h.clock.advance(scaling.RawInterval)
+	}
+}
+
 // cpuPolicy is the shape §6.1 writes: `metric "cpu" { target = 70 }`.
 func cpuPolicy(minReplicas, maxReplicas int) scaling.Policy {
 	return scaling.Policy{

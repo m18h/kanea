@@ -57,6 +57,11 @@ type ApplyRequest struct {
 	Services []reconciler.Desired `json:"services"`
 }
 
+// ScaleRequest sets a service's replica count.
+type ScaleRequest struct {
+	Count int `json:"count"`
+}
+
 // ApplyResponse reports what the apply changed.
 type ApplyResponse struct {
 	Applied []string `json:"applied"`

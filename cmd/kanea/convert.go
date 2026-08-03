@@ -59,6 +59,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				PidsLimit:   DefaultPidsLimit,
 			},
 		}
+		desired.Scaling = convertScaling(svc)
 		desired.DependsOn = append(desired.DependsOn, svc.Dependencies...)
 		if check := convertHealthCheck(svc); check != nil {
 			desired.Check = check
@@ -173,6 +174,24 @@ func convertExpose(svc *jobspec.Service) *reconciler.Expose {
 // Only the first is used. The spec allows several blocks, but "healthy" is one
 // bit and combining checks needs a rule (all? any?) the PRD does not state —
 // inventing one here would be a stealth spec decision.
+// convertScaling carries the `scaling` block onto the desired state.
+func convertScaling(svc *jobspec.Service) *reconciler.ScalingPolicy {
+	if svc.Scaling == nil {
+		return nil
+	}
+	policy := &reconciler.ScalingPolicy{
+		Min:      svc.Scaling.Min,
+		Max:      svc.Scaling.Max,
+		Cooldown: svc.Scaling.Cooldown,
+	}
+	for _, m := range svc.Scaling.Metrics {
+		policy.Metrics = append(policy.Metrics, reconciler.ScalingMetric{
+			Name: m.Name, Target: float64(m.Target),
+		})
+	}
+	return policy
+}
+
 func convertHealthCheck(svc *jobspec.Service) *reconciler.HealthCheck {
 	if len(svc.HealthChecks) == 0 {
 		return nil

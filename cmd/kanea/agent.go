@@ -24,6 +24,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/kanea-dev/kanea/internal/scaling"
 	"github.com/kanea-dev/kanea/internal/secrets"
 	"github.com/kanea-dev/kanea/internal/storage"
 	"github.com/kanea-dev/kanea/internal/store"
@@ -118,6 +119,13 @@ func runAgent(args []string) error {
 		"comma-separated claim values granted the admin role")
 	oidcViewers := fs.String("oidc-viewer-claims", "",
 		"comma-separated claim values granted the viewer role")
+	metricsInterval := fs.Duration("metrics-interval", scaling.RawInterval,
+		"how often containerd and the edge are scraped for metrics")
+	containerdMetrics := fs.String("containerd-metrics", scaling.DefaultContainerdMetricsURL,
+		"containerd's Prometheus endpoint (\"off\" disables cgroup metrics)")
+	edgeMetrics := fs.String("edge-metrics", scaling.DefaultEdgeMetricsURL,
+		"kanea-edge's metrics endpoint (\"off\" disables the L7 signal)")
+	autoscale := fs.Bool("autoscale", true, "act on the scaling policies services declare (PRD §9.2)")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -238,6 +246,10 @@ func runAgent(args []string) error {
 			"detail", "only services with an explicit expose.domains will be routable")
 	}
 
+	// The metrics pipeline never touches the Store (AGENTS.md #2): it is an
+	// in-memory time series the scrapers write and the autoscaler reads.
+	metrics := scaling.NewMetrics(scaling.MetricsConfig{})
+
 	rec, err := reconciler.New(reconciler.Config{
 		Store:         st,
 		Driver:        driver,
@@ -351,6 +363,15 @@ func runAgent(args []string) error {
 	// not wait for it (M0 spike ③).
 	go mounts.Supervise(ctx, storage.DefaultCheckInterval)
 	go sweepAuthState(ctx, users, trail, *auditRetention, logger)
+	startMetrics(ctx, metricsSettings{
+		metrics:       metrics,
+		containerdURL: *containerdMetrics,
+		edgeURL:       *edgeMetrics,
+		interval:      *metricsInterval,
+		autoscale:     *autoscale,
+		store:         st,
+		notify:        notify,
+	}, logger)
 
 	// Wait for all of them; a context cancellation is a clean shutdown.
 	var firstErr error

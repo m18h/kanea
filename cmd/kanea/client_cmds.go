@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -493,6 +494,54 @@ func runStop(args []string) error {
 	o := newOut()
 	o.printf("stopped %s/%s (count 0; use --rm to delete the service)\n",
 		target.Project, target.Service)
+	return o.Err()
+}
+
+// runScale sets a service's replica count.
+//
+// The same operation the autoscaler performs, through the same route: a manual
+// scale and an automatic one cannot disagree about what the count means,
+// because there is only one way to change it.
+func runScale(args []string) error {
+	fs := flag.NewFlagSet("scale", flag.ContinueOnError)
+	socket := socketFlag(fs)
+	project := fs.String("project", "", "project name")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("usage: kanea scale [--project P] <service> <count>")
+	}
+	count, err := strconv.Atoi(fs.Arg(1))
+	if err != nil || count < 0 {
+		return fmt.Errorf("count %q must be a number, zero or more", fs.Arg(1))
+	}
+
+	ctx := context.Background()
+	client := api.NewClient(*socket)
+
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	target, err := findService(services, *project, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+
+	if _, err := client.Scale(ctx, target.Project, target.Service, count); err != nil {
+		return err
+	}
+
+	o := newOut()
+	o.printf("scaled %s/%s from %d to %d\n", target.Project, target.Service, target.Count, count)
+	if p := target.Scaling; p != nil && p.Max > 0 && len(p.Metrics) > 0 {
+		// Worth saying out loud: the autoscaler owns this number, and a manual
+		// count that its rules disagree with will not survive the next pass.
+		o.printf("note: %s/%s autoscales between %d and %d; this count holds only "+
+			"until the next evaluation disagrees\n",
+			target.Project, target.Service, p.Min, p.Max)
+	}
 	return o.Err()
 }
 

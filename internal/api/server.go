@@ -201,6 +201,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("PUT "+PathServices, s.route(policy{action: "service.apply", mutates: true}, s.handleApply))
 	mux.Handle("DELETE "+PathServices+"/{project}/{service}",
 		s.route(policy{action: "service.delete", mutates: true}, s.handleDeleteService))
+	mux.Handle("POST "+PathServices+"/{project}/{service}/scale",
+		s.route(policy{action: "service.scale", mutates: true}, s.handleScale))
 	mux.Handle("GET "+PathAllocs, s.route(policy{action: "alloc.list"}, s.handleListAllocs))
 	mux.Handle("GET "+PathLogs, s.route(policy{action: "logs.read"}, s.handleLogs))
 	mux.Handle("GET "+PathWS, s.route(policy{action: "ws.connect"}, s.handleWS))
@@ -506,6 +508,70 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 	s.wake()
 	s.log.Info("deleted service", "service", key, "index", index)
 	writeJSON(w, http.StatusOK, ApplyResponse{Applied: []string{key}, Index: index})
+}
+
+// handleScale sets a service's replica count.
+//
+// One number, written to the same record everything else reads. A manual scale
+// and an autoscaler decision are the same operation by construction, so there
+// is no path by which they can disagree about what "the count" means.
+func (s *Server) handleScale(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("project") + "/" + r.PathValue("service")
+	auditTarget(r, key)
+
+	var req ScaleRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode request: %w", err))
+		return
+	}
+	if req.Count < 0 {
+		writeError(w, http.StatusBadRequest, errors.New("count must be zero or more"))
+		return
+	}
+
+	desired, index, err := store.GetValue[reconciler.Desired](r.Context(), s.store, store.KindService, key)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, fmt.Errorf("no such service %s", key))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// A count outside the declared bounds is refused rather than clamped: the
+	// autoscaler would undo it within seconds, and silently doing something
+	// other than what was asked is worse than saying no.
+	if p := desired.Scaling; p != nil && p.Max > 0 && len(p.Metrics) > 0 {
+		if req.Count < p.Min || req.Count > p.Max {
+			writeError(w, http.StatusConflict, fmt.Errorf(
+				"%s autoscales between %d and %d; the autoscaler would undo a count of %d",
+				key, p.Min, p.Max, req.Count))
+			return
+		}
+	}
+
+	previous := desired.Count
+	desired.Count = req.Count
+	mut, err := store.UpdateMutation(store.KindService, key, desired, index)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	appliedIndex, err := s.store.Apply(r.Context(), mut)
+	if err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			// Someone else changed the service between the read and the write.
+			writeError(w, http.StatusConflict, fmt.Errorf("%s changed while scaling; try again", key))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	s.wake()
+	s.log.Info("scaled service", "service", key, "from", previous, "to", req.Count)
+	writeJSON(w, http.StatusOK, ApplyResponse{Applied: []string{key}, Index: appliedIndex})
 }
 
 func (s *Server) handleListAllocs(w http.ResponseWriter, r *http.Request) {

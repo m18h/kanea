@@ -537,3 +537,92 @@ func (h *harness) raw(t *testing.T, method, path string) (int, string) {
 	}
 	return resp.StatusCode, string(body)
 }
+
+func TestScaleSetsTheCount(t *testing.T) {
+	h := newHarness(t)
+	h.putService(t, "shop", "web", 2)
+
+	resp, err := h.client.Scale(context.Background(), "shop", "web", 5)
+	if err != nil {
+		t.Fatalf("Scale: %v", err)
+	}
+	if len(resp.Applied) != 1 || resp.Applied[0] != "shop/web" {
+		t.Fatalf("applied = %v, want shop/web", resp.Applied)
+	}
+
+	services, err := h.client.Services(context.Background())
+	if err != nil {
+		t.Fatalf("Services: %v", err)
+	}
+	if services[0].Count != 5 {
+		t.Fatalf("count = %d, want 5", services[0].Count)
+	}
+	// Scaling changes one number and nothing else: a blind write built from a
+	// partial view would drop the image and everything else on the record.
+	if services[0].Image == "" || services[0].Resources.MemoryBytes == 0 {
+		t.Fatalf("scaling clobbered the rest of the service: %+v", services[0])
+	}
+}
+
+func TestScaleWakesTheReconciler(t *testing.T) {
+	h := newHarness(t)
+	h.putService(t, "shop", "web", 2)
+	drainNotify(h.notify)
+
+	if _, err := h.client.Scale(context.Background(), "shop", "web", 3); err != nil {
+		t.Fatalf("Scale: %v", err)
+	}
+	select {
+	case <-h.notify:
+	case <-time.After(time.Second):
+		t.Fatal("a scale did not wake the reconciler; the change would wait out an interval")
+	}
+}
+
+func TestScaleRefusesToFightTheAutoscaler(t *testing.T) {
+	h := newHarness(t)
+	// A service that autoscales between 2 and 6. A manual count outside that
+	// range would be undone within seconds, so it is refused rather than
+	// silently clamped: doing something other than what was asked is worse.
+	d := testService("web", 2)
+	d.Scaling = &reconciler.ScalingPolicy{
+		Min: 2, Max: 6,
+		Metrics: []reconciler.ScalingMetric{{Name: "cpu", Target: 70}},
+	}
+	if _, err := store.PutValue(context.Background(), h.store,
+		store.KindService, "shop/web", d); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.client.Scale(context.Background(), "shop", "web", 20); err == nil {
+		t.Fatal("a count past the autoscaling max was accepted")
+	}
+	// Inside the declared range it is allowed: an operator nudging a service
+	// within its own bounds is a normal thing to do.
+	if _, err := h.client.Scale(context.Background(), "shop", "web", 4); err != nil {
+		t.Fatalf("a count inside the bounds was refused: %v", err)
+	}
+}
+
+func TestScaleRejectsBadRequests(t *testing.T) {
+	h := newHarness(t)
+	h.putService(t, "shop", "web", 1)
+
+	if _, err := h.client.Scale(context.Background(), "shop", "web", -1); err == nil {
+		t.Error("a negative count was accepted")
+	}
+	if _, err := h.client.Scale(context.Background(), "shop", "ghost", 2); err == nil {
+		t.Error("scaling a service that does not exist was accepted")
+	}
+}
+
+// drainNotify empties the wake channel so a test can watch for a fresh signal.
+func drainNotify(ch chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
