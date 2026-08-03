@@ -10,7 +10,25 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 ## Current status
 
-**M0 complete, pre-features.** The repository contains `PRD.md`, this file, a compilable Go skeleton (`cmd/kanea` + `/internal` package placeholders that encode the architecture), the `internal/logging` foundation, full tooling (Makefile, golangci-lint, gitleaks, CI), doc stubs, and the four **M0 spike reports**. Git is initialized (conventional commits apply).
+**M0–M6 complete. M7 (GitOps & pipelines) is next.**
+
+| Milestone | State | What landed |
+|---|---|---|
+| M0 spikes | ✅ | Four GO reports in `spikes/*/REPORT.md`; drove PRD v1.5–v1.9 |
+| M1 runtime core | ✅ | Store, reconciler, containerd driver, HCL parser, CLI, local volumes |
+| M2 networking & storage | ✅ | Cilium endpoints/policy/LB, internal DNS, NFS/SMB/S3 volumes |
+| M3 ingress & TLS | ✅ | `kanea-edge`, middleware, ACME HTTP-01 |
+| M4 dashboard | ✅ | React SPA, live websocket, log streaming |
+| M5 auth & OWASP | ✅ | Deny-by-default auth, audit log, OIDC+PKCE, rate limits, DNS-01 + wildcards, `docs/THREAT_MODEL.md` |
+| M6 metrics & autoscaling | ✅ | In-memory TS, three scrapers, evaluator + guardrails, circuit breaker, Prometheus exporter |
+
+Things a future change is most likely to trip over:
+
+- **Metrics never touch the Store** (constraint #2). `internal/scaling` is an in-memory ring, ~27 MiB at the 2 000-alloc target, measured by `TestFootprintAtTargetScale`.
+- **"No data" is never zero** — in the time series, the evaluator, the exporter and the dashboard alike. A missing metric and an idle service lead to opposite decisions, and each layer has a test saying so.
+- **The autoscaler is not a second scheduler.** It writes one number; the reconciler converges. `kanea scale` uses the same route.
+- **The scale-decision budget is 20 s** from a sustained breach (PRD v1.21), not the 15 s v1.1 promised — see the amendment for why 15 s costs more than it buys.
+- **Accounts live in the Store, not the config file** (PRD v1.18), and `--oidc-client-secret` / `--acme-dns-tsig-secret` are `secret:` references, never literals.
 
 **M0 — technical spikes** (PRD §20), all four GO:
 
@@ -19,7 +37,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 3. ~~S3 FUSE mount choice (s3fs vs goofys vs rclone)~~ — **done, GO** ([`spikes/s3-fuse/REPORT.md`](./spikes/s3-fuse/REPORT.md); drove **PRD v1.6**). Decision: **mountpoint-s3** default (read-mostly), **s3fs** opt-in read-write, **goofys dropped** (unmaintained since 2020, amd64-only), **rclone mount rejected** as a built-in (uploads land ~6 s after `close()` → data loss when an alloc stops). Key M2 notes: no `truncate` on any driver (**s3fs silently no-ops it**); mount helper must **supervise + remount** (s3fs serves stale `ENOENT` after an outage); every control-plane touch of a mount needs a timeout (FUSE blocks 40 s–2 min uninterruptibly with a dead backend); `user_allow_other` + per-helper 0600 credential files are `kanea init` prerequisites
 4. ~~kaniko executor running as a containerd task~~ — **done, GO** ([`spikes/kaniko-build/REPORT.md`](./spikes/kaniko-build/REPORT.md), 11/11 daemon + 26/27 task forms; drove **PRD v1.7–v1.9**). Decision: **BuildKit as a rootless `buildkitd` host service is the ONLY build driver** — unprivileged and non-root end to end, 546 ms warm builds. kaniko removed (upstream archived, cache saves nothing); buildah measured as a working drop-in but **not shipped** (one builder to pin and patch). Key M7 notes: **`Containerfile` and `Dockerfile` both work — Containerfile wins when both exist**, and the runner must pass `--opt filename=` because BuildKit's frontend defaults to `Dockerfile`; the daemon socket must live **outside** rootlesskit's copy-up'd `/run` (namespace-private tmpfs → invisible to clients) and is root-only (`0750` home); `--net=host` keeps a node-local registry reachable; the daemon has its **own content store** at `$HOME/.local/share/buildkit` that containerd's GC does not cover; **build isolation is collective** (one systemd cap on the unit + `--oci-max-parallelism`), not per build; ~157 MiB permanently resident inside the §21 reserve; **no §14 hardening exception is needed** (that is what decided the driver); digest via `buildctl --metadata-file` (JSON `containerimage.digest`)
 
-**M0 is complete — all four spikes are GO** (reports in `spikes/*/REPORT.md`; they drove PRD v1.5–v1.7). **M1 (runtime core) is the next milestone.** Spike code is throwaway: keep it in `spikes/<topic>/` with its own `go.mod` and a `REPORT.md` (see `spikes/README.md`).
+Spike code is throwaway: keep it in `spikes/<topic>/` with its own `go.mod` and a `REPORT.md` (see `spikes/README.md`). Two spike findings are still load-bearing in M6 code: containerd's metrics endpoint carries 47 families per task (hence the streaming, allowlisting parser), and `--hubble-metrics` silently ignores a comma-separated list (hence the startup probe).
 
 ## Binding constraints (never violate these)
 
@@ -49,7 +67,7 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
 | ACME | `github.com/go-acme/lego/v4` |
 | Dashboard | React 18+, Vite, TypeScript strict, Tailwind CSS, **shadcn/ui**, TanStack Query, zod — embedded via `go:embed` |
 | MCP | streamable HTTP transport on the API server + stdio via `kanea mcp` |
-| Builds | kaniko executor (digest-pinned) as a containerd task |
+| Builds | rootless `buildkitd` + `buildctl` (M0 spike ④ replaced kaniko) |
 
 ## Repository layout (created)
 
@@ -109,7 +127,7 @@ Each milestone's definition-of-done: OWASP §14 checks reviewed, `govulncheck` c
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.20) — the north star |
+| `PRD.md` | Full product requirements (v1.21) — the north star |
 | `AGENTS.md` | This file |
 | `docs/THREAT_MODEL.md` | Threat model — boundaries, adversaries, §14 status as built (M5) |
 | `docs/DR_RUNBOOK.md` | Disaster recovery procedure (to be written during M10) |
