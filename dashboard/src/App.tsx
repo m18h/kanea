@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { Overview } from '@/pages/Overview'
 import { Services } from '@/pages/Services'
 import { ServiceDetail } from '@/pages/ServiceDetail'
+import { Pipelines } from '@/pages/Pipelines'
+import { PipelineDetail } from '@/pages/PipelineDetail'
 import { Login } from '@/pages/Login'
 import { fetchHealth } from '@/lib/api'
 import { SessionProvider } from '@/lib/session-provider'
@@ -17,6 +19,7 @@ import { cn } from '@/lib/utils'
 const nav = [
   { to: '/', label: 'Overview', exact: true },
   { to: '/services', label: 'Services', exact: false },
+  { to: '/pipelines', label: 'Pipelines', exact: false },
 ]
 
 export function App() {
@@ -136,6 +139,13 @@ function Page({ path }: { path: string }) {
   const detail = matchPath('/services/:project/:service', path)
   if (detail?.project && detail.service) {
     return <ServiceDetail project={detail.project} service={detail.service} />
+  }
+
+  if (matchPath('/pipelines', path)) return <Pipelines />
+
+  const run = matchPath('/pipelines/:project/:service/:id', path)
+  if (run?.project && run.service && run.id) {
+    return <PipelineDetail project={run.project} service={run.service} id={run.id} />
   }
 
   // A deep link the server handed to the app but the app does not know: say so

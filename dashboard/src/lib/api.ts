@@ -149,3 +149,152 @@ export async function fetchHealth(signal?: AbortSignal): Promise<Health> {
   if (!resp.ok) throw new Error(`health: ${resp.status}`)
   return healthSchema.parse(await resp.json())
 }
+
+/**
+ * A pipeline run (PRD §10.2).
+ *
+ * Every optional field really is optional on the wire: a queued run has no
+ * commit, a failed one has no image, and a step that is still going has no
+ * finish time. Making them required would have the dashboard reject the exact
+ * records an operator most wants to look at.
+ */
+export const runStepSchema = z.object({
+  name: z.string(),
+  state: z.string(),
+  started_at: z.string(),
+  finished_at: z.string().optional(),
+  error: z.string().optional(),
+})
+
+export const runSchema = z.object({
+  id: z.string(),
+  project: z.string(),
+  service: z.string(),
+  state: z.string(),
+  trigger: z.string(),
+  triggered_by: z.string().optional(),
+  commit: z.string().optional(),
+  ref: z.string().optional(),
+  image: z.string().optional(),
+  digest: z.string().optional(),
+  steps: z.array(runStepSchema).optional(),
+  started_at: z.string(),
+  finished_at: z.string().optional(),
+  error: z.string().optional(),
+})
+
+export const runsResponseSchema = z.object({
+  runs: z.array(runSchema),
+})
+
+export type Run = z.infer<typeof runSchema>
+export type RunStep = z.infer<typeof runStepSchema>
+
+/** Terminal run states — the ones that will not change again. */
+const terminalRunStates = new Set(['succeeded', 'failed', 'cancelled'])
+
+export function isRunFinished(run: Run): boolean {
+  return terminalRunStates.has(run.state)
+}
+
+/** List pipeline runs, newest first. */
+export async function fetchRuns(
+  opts: { project?: string; service?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<Run[]> {
+  const query = new URLSearchParams()
+  if (opts.project) query.set('project', opts.project)
+  if (opts.service) query.set('service', opts.service)
+  if (opts.limit) query.set('limit', String(opts.limit))
+
+  const suffix = query.toString() ? `?${query}` : ''
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch(`/v1/pipelines${suffix}`, init)
+  // 503 is "this daemon has no builder", which is a normal configuration and
+  // not an error worth a red banner. It reads as an empty list.
+  if (resp.status === 503) return []
+  if (!resp.ok) throw new Error(`pipelines: ${resp.status}`)
+  return runsResponseSchema.parse(await resp.json()).runs
+}
+
+/** Fetch one run. */
+export async function fetchRun(
+  project: string,
+  service: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<Run> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch(`/v1/pipelines/${enc(project)}/${enc(service)}/${enc(id)}`, init)
+  if (!resp.ok) throw new Error(`run: ${resp.status}`)
+  return runSchema.parse(await resp.json())
+}
+
+/**
+ * Fetch a run's build log as text.
+ *
+ * Polled rather than streamed, unlike workload logs. A build log is at most a
+ * few hundred kilobytes and finishes on its own, so re-reading it costs less
+ * than a second websocket topic that would exist for one page.
+ */
+export async function fetchRunLog(
+  project: string,
+  service: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch(
+    `/v1/pipelines/${enc(project)}/${enc(service)}/${enc(id)}/logs`,
+    init,
+  )
+  // A queued run has no log file yet, which is not a failure.
+  if (resp.status === 404) return ''
+  if (!resp.ok) throw new Error(`build log: ${resp.status}`)
+  return await resp.text()
+}
+
+/** Queue a build. */
+export async function triggerBuild(
+  project: string,
+  service: string,
+  deploy: boolean,
+): Promise<Run> {
+  const resp = await fetch(`/v1/pipelines/${enc(project)}/${enc(service)}/build`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deploy }),
+  })
+  if (!resp.ok) throw new Error(await refusalText(resp, 'build'))
+  return runSchema.parse(await resp.json())
+}
+
+/** Sync a project's git source. */
+export async function syncProject(project: string): Promise<void> {
+  const resp = await fetch(`/v1/projects/${enc(project)}/sync`, { method: 'POST' })
+  if (!resp.ok) throw new Error(await refusalText(resp, 'sync'))
+}
+
+/**
+ * refusalText turns a refusal into something an operator can act on.
+ *
+ * The daemon's message says which of several conditions failed — no build
+ * block, no git source, queue full — and a bare status code says none of it.
+ */
+async function refusalText(resp: Response, what: string): Promise<string> {
+  try {
+    const body: unknown = await resp.json()
+    if (body && typeof body === 'object' && 'error' in body) {
+      const message = body.error
+      if (typeof message === 'string' && message) return message
+    }
+  } catch {
+    // Not JSON. The status is all there is.
+  }
+  return `${what}: ${resp.status}`
+}
+
+/** enc escapes one path segment. Names are DNS-1123, but URLs are URLs. */
+function enc(segment: string): string {
+  return encodeURIComponent(segment)
+}
