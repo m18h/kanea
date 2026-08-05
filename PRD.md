@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.21 |
+| **Status** | Draft v1.22 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
 | **Last updated** | 2026-08-02 |
 | **Document type** | Product Requirements Document (PRD) |
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.22 amendments** — corrects the **§6.1 example's `git.auth_ref`**, which read `secret:git/github-deploy-key` and contradicted **R5** — the rule that says a reference names the declaring project's scope or `shared/`, and that "git, registry, storage, and notification credentials follow the same scoping". `git/` is neither; under R5's semantics it names a project called `git`. The example is now `secret:shop/…`, and M7's parse-time validation enforces R5 on project-level git credentials, so a spec that copied the old example fails `kanea plan` with the reason rather than failing sixty seconds later inside a poll loop nobody is watching. Also adds `git.webhook_secret_ref`, `git.poll_interval` and `git.require_approval` to the block §6.1 sketches: §10.1 requires all three and the schema had none of them. The webhook secret is deliberately a **separate** reference from `auth_ref` — one lets Kanea read the repository, the other lets the repository tell Kanea something, and reusing a deploy key as a webhook secret would put a credential that can read source into a header on every push.
 
 > **v1.21 amendments** — restates the **scale-decision latency budget** (§21, §9.2) from 15 s to **20 s from a sustained breach**, because 15 s was not reachable without giving up the guardrail that makes the number trustworthy. The pipeline is: containerd and the edge are scraped every 5 s; a rule averages over a window before acting; the evaluator ticks. The averaging window exists so a single anomalous scrape cannot move a service, and three samples is the smallest window that does that — which at 5 s resolution is 15 s, plus one 5 s evaluation tick. **Reacting faster means reacting to one or two samples**, which is how an autoscaler chases noise instead of load, and a service that flaps between 2 and 8 replicas every minute is worse than one that reacts five seconds later. The 20 s is a ceiling on a *sustained* breach; a large spike crosses its target sooner, because the average moves faster the further the load is from the target. §9.2's guardrails are now stated with their defaults: 10% tolerance band, 2×/0.5× step caps, 5-minute scale-down stabilization, 2-minute cooldown.
 
@@ -308,7 +310,7 @@ project "shop" {
     url      = "https://github.com/example/shop-deploy.git"
     branch   = "main"
     path     = ".kanea/"
-    auth_ref = "secret:git/github-deploy-key"
+    auth_ref = "secret:shop/github-deploy-key"   # R5 scoping: own project or shared/
   }
 
   notifications {

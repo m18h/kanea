@@ -1439,3 +1439,71 @@ service "web" {
 		})
 	}
 }
+
+// gitSpec is a project with a git block, for the validation cases below.
+func gitSpec(block string) string {
+	return `
+spec_version = 1
+
+project "shop" {
+  git {
+    url = "https://github.com/example/deploy.git"
+    ` + block + `
+  }
+}
+`
+}
+
+// R5 says a reference names the declaring project's scope or `shared/`, and
+// that git, registry, storage and notification credentials all follow it. The
+// PRD's own §6.1 example did not, which is what this catches (v1.22).
+func TestGitCredentialsAreProjectScoped(t *testing.T) {
+	valid := []struct{ name, block string }{
+		{"own project", `auth_ref = "secret:shop/deploy-key"`},
+		{"shared", `auth_ref = "secret:shared/deploy-key"`},
+		{"webhook secret in scope", `webhook_secret_ref = "secret:shop/hook"`},
+	}
+	for _, tc := range valid {
+		t.Run(tc.name, func(t *testing.T) {
+			parse(t, gitSpec(tc.block))
+		})
+	}
+
+	invalid := []struct{ name, block, want string }{
+		{"another project", `auth_ref = "secret:blog/deploy-key"`, "Cross-project"},
+		{"inlined credential", `auth_ref = "ghp_averyrealtokenpastedinline"`, "not a secret reference"},
+		{"malformed reference", `auth_ref = "secret:deploy-key"`, "Malformed"},
+		{"webhook secret out of scope", `webhook_secret_ref = "secret:blog/hook"`, "Cross-project"},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseErr(t, gitSpec(tc.block)); !strings.Contains(got, tc.want) {
+				t.Fatalf("diagnostics = %s\nwant something about %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGitPollIntervalMustParse(t *testing.T) {
+	// A typo should fail `kanea plan`, in front of the person who made it, not
+	// sixty seconds later inside a poll loop nobody is watching.
+	got := parseErr(t, gitSpec(`poll_interval = "every so often"`))
+	if !strings.Contains(got, "poll_interval") {
+		t.Fatalf("diagnostics = %s; they do not name the field", got)
+	}
+}
+
+func TestGitSourceNeedsAURL(t *testing.T) {
+	src := `
+spec_version = 1
+
+project "shop" {
+  git {
+    url = ""
+  }
+}
+`
+	if got := parseErr(t, src); !strings.Contains(got, "url") {
+		t.Fatalf("diagnostics = %s", got)
+	}
+}

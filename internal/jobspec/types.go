@@ -94,12 +94,23 @@ type Project struct {
 	DefRange hcl.Range
 }
 
-// Git is the optional GitOps source for a project (PRD §10).
+// Git is the optional GitOps source for a project (PRD §10.1).
 type Git struct {
-	URL     string
-	Branch  string
-	Path    string
+	URL    string
+	Branch string
+	Path   string
+	// AuthRef is a `secret:` reference to a deploy key or token for cloning.
 	AuthRef string
+	// WebhookSecretRef is the shared secret push webhooks are authenticated
+	// with. It is deliberately separate from AuthRef: one lets Kanea read the
+	// repository, the other lets the repository tell Kanea something. Reusing
+	// a deploy key as a webhook secret would put a credential that can read
+	// source into a header on every push.
+	WebhookSecretRef string
+	// PollInterval overrides the default sync cadence, as a duration string.
+	PollInterval string
+	// RequireApproval holds a synced change instead of applying it (§10.1).
+	RequireApproval bool
 }
 
 // Notifications configures per-project channels and the events they fire on.

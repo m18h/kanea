@@ -87,7 +87,75 @@ func validateProjects(spec *Spec) hcl.Diagnostics {
 			continue
 		}
 		seen[p.Name] = p.DefRange
+		diags = append(diags, validateGit(p)...)
 	}
+	return diags
+}
+
+// validateGit checks a project's GitOps source (PRD §10.1).
+//
+// The credentials are checked for shape here rather than at sync time for the
+// same reason every other reference is: a typo should fail `kanea plan`, in
+// front of the person who made it, not sixty seconds later inside a poll loop
+// nobody is watching.
+func validateGit(p *Project) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if p.Git == nil {
+		return diags
+	}
+
+	if p.Git.URL == "" {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Git source has no url",
+			Detail:   fmt.Sprintf("Project %q declares a git block with no url.", p.Name),
+			Subject:  p.DefRange.Ptr(),
+		})
+	}
+
+	for field, ref := range map[string]string{
+		"auth_ref":           p.Git.AuthRef,
+		"webhook_secret_ref": p.Git.WebhookSecretRef,
+	} {
+		if ref == "" {
+			continue
+		}
+		if !strings.HasPrefix(ref, SecretPrefix) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Git credential is not a secret reference",
+				Detail: fmt.Sprintf("Project %q sets git.%s = %q. Credentials are referenced, "+
+					"never inlined (R3): use secret:%s/<name> or secret:%s/<name>.",
+					p.Name, field, ref, p.Name, SharedSecretScope),
+				Subject: p.DefRange.Ptr(),
+			})
+			continue
+		}
+		scope, rest, found := strings.Cut(strings.TrimPrefix(ref, SecretPrefix), "/")
+		if !found || scope == "" || rest == "" {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Malformed secret reference",
+				Detail: fmt.Sprintf("Project %q sets git.%s = %q; references look like "+
+					"secret:<project>/<name>.", p.Name, field, ref),
+				Subject: p.DefRange.Ptr(),
+			})
+			continue
+		}
+		// Same scoping rule as a service's (R5): a project may read its own
+		// secrets and the shared ones, and nobody else's.
+		if scope != p.Name && scope != SharedSecretScope {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Cross-project secret reference",
+				Detail: fmt.Sprintf("Project %q sets git.%s = %q. It may only read secret:%s/… "+
+					"or secret:%s/….", p.Name, field, ref, p.Name, SharedSecretScope),
+				Subject: p.DefRange.Ptr(),
+			})
+		}
+	}
+
+	diags = append(diags, validateDuration("poll_interval", p.Git.PollInterval, p.DefRange)...)
 	return diags
 }
 

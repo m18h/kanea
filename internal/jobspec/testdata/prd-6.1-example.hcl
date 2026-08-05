@@ -9,7 +9,7 @@ project "shop" {
     url      = "https://github.com/example/shop-deploy.git"
     branch   = "main"
     path     = ".kanea/"
-    auth_ref = "secret:git/github-deploy-key"
+    auth_ref = "secret:shop/github-deploy-key"
   }
 
   notifications {

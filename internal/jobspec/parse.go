@@ -66,10 +66,13 @@ type hclProject struct {
 }
 
 type hclGit struct {
-	URL     string `hcl:"url"`
-	Branch  string `hcl:"branch,optional"`
-	Path    string `hcl:"path,optional"`
-	AuthRef string `hcl:"auth_ref,optional"`
+	URL              string `hcl:"url"`
+	Branch           string `hcl:"branch,optional"`
+	Path             string `hcl:"path,optional"`
+	AuthRef          string `hcl:"auth_ref,optional"`
+	WebhookSecretRef string `hcl:"webhook_secret_ref,optional"`
+	PollInterval     string `hcl:"poll_interval,optional"`
+	RequireApproval  bool   `hcl:"require_approval,optional"`
 }
 
 type hclNotifications struct {
@@ -335,7 +338,12 @@ func varContext(vars map[string]string) *hcl.EvalContext {
 func convertProject(p *hclProject) *Project {
 	out := &Project{Name: p.Name, Description: p.Description, DefRange: p.DefRange}
 	if p.Git != nil {
-		out.Git = &Git{URL: p.Git.URL, Branch: p.Git.Branch, Path: p.Git.Path, AuthRef: p.Git.AuthRef}
+		out.Git = &Git{
+			URL: p.Git.URL, Branch: p.Git.Branch, Path: p.Git.Path, AuthRef: p.Git.AuthRef,
+			WebhookSecretRef: p.Git.WebhookSecretRef,
+			PollInterval:     p.Git.PollInterval,
+			RequireApproval:  p.Git.RequireApproval,
+		}
 	}
 	if p.Notifications != nil {
 		out.Notifications = &Notifications{On: p.Notifications.On}
