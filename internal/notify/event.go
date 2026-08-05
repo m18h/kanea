@@ -223,11 +223,11 @@ func (e Event) String() string {
 	return b.String()
 }
 
-// New builds an event, filling in the severity and the timestamp.
+// NewEvent builds an event, filling in the severity and the timestamp.
 //
 // The only constructor: an Event assembled by hand would carry the zero
 // severity, which is info, which is the one a severity floor lets through.
-func New(name, project, service, message string, at time.Time) Event {
+func NewEvent(name, project, service, message string, at time.Time) Event {
 	return Event{
 		ID:       eventID(at),
 		Name:     name,

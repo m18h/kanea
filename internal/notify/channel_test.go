@@ -70,7 +70,7 @@ func testEgress() notify.EgressPolicy {
 func batch() []notify.Event {
 	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	return []notify.Event{
-		notify.New(notify.EventDeployFailed, "shop", "web", "image pull failed", at),
+		notify.NewEvent(notify.EventDeployFailed, "shop", "web", "image pull failed", at),
 	}
 }
 
@@ -287,7 +287,7 @@ func TestNtfyMapsSeverityToPriority(t *testing.T) {
 				t.Fatalf("NewNtfy: %v", err)
 			}
 			at := time.Now()
-			ev := notify.New(tc.name, "shop", "web", "x", at)
+			ev := notify.NewEvent(tc.name, "shop", "web", "x", at)
 			if err := ch.Send(context.Background(), []notify.Event{ev}); err != nil {
 				t.Fatalf("Send: %v", err)
 			}
@@ -304,7 +304,7 @@ func TestRenderDigestsABatch(t *testing.T) {
 	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	var events []notify.Event
 	for i := range 3 {
-		events = append(events, notify.New(notify.EventServiceCrashed, "shop", "web",
+		events = append(events, notify.NewEvent(notify.EventServiceCrashed, "shop", "web",
 			"alloc exited", at.Add(time.Duration(i)*time.Minute)))
 	}
 
@@ -364,7 +364,7 @@ func TestSMTPRefusesHeaderInjection(t *testing.T) {
 	}
 
 	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
-	evil := notify.New(notify.EventDeployFailed, "shop",
+	evil := notify.NewEvent(notify.EventDeployFailed, "shop",
 		"web\r\nBcc: attacker@example.com", "boom", at)
 
 	msg := string(notify.MessageForTest(ch, []notify.Event{evil}))
@@ -405,7 +405,7 @@ func TestSMTPDotStuffsTheBody(t *testing.T) {
 	}
 
 	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
-	ev := notify.New(notify.EventDeployFailed, "shop", "web", "before\n.\nafter", at)
+	ev := notify.NewEvent(notify.EventDeployFailed, "shop", "web", "before\n.\nafter", at)
 
 	msg := string(notify.MessageForTest(ch, []notify.Event{ev}))
 	_, body, _ := strings.Cut(msg, "\r\n\r\n")

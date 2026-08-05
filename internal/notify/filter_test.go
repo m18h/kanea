@@ -9,7 +9,7 @@ import (
 )
 
 func event(name string) notify.Event {
-	return notify.New(name, "shop", "web", "something happened", time.Now())
+	return notify.NewEvent(name, "shop", "web", "something happened", time.Now())
 }
 
 func TestFilterMatchesGlobs(t *testing.T) {
@@ -135,9 +135,9 @@ func TestEventIDsAreTimeOrderedAndUnique(t *testing.T) {
 	// "the last 50 events" a full scan. And a burst — a fleet restart emits
 	// one per alloc — must not collide within a nanosecond.
 	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
-	first := notify.New(notify.EventServiceCrashed, "shop", "web", "one", at)
-	same := notify.New(notify.EventServiceCrashed, "shop", "api", "two", at)
-	later := notify.New(notify.EventServiceCrashed, "shop", "web", "three", at.Add(time.Second))
+	first := notify.NewEvent(notify.EventServiceCrashed, "shop", "web", "one", at)
+	same := notify.NewEvent(notify.EventServiceCrashed, "shop", "api", "two", at)
+	later := notify.NewEvent(notify.EventServiceCrashed, "shop", "web", "three", at.Add(time.Second))
 
 	if first.ID == same.ID {
 		t.Fatal("two events in the same nanosecond share an id")
