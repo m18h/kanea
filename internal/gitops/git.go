@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -196,6 +198,64 @@ func (s *Syncer) Fetch(ctx context.Context, src Source) (Checkout, error) {
 		Commit:  head.Hash().String(),
 		Ref:     head.Name().Short(),
 		Specs:   specs,
+		Message: strings.SplitN(strings.TrimSpace(commit.Message), "\n", 2)[0],
+		Author:  commit.Author.Name,
+		At:      commit.Author.When,
+	}, nil
+}
+
+// Materialize clones the source into a directory and returns the same metadata
+// Fetch does.
+//
+// This is the one case that needs a working tree: a build context is the repo's
+// files, and BuildKit reads them from disk. `.git` is removed before the
+// directory is handed on — §10.2's build hygiene rule, and not a fussy one. A
+// `COPY .` in a Containerfile would otherwise put the repository's entire
+// history, including any credential ever committed and later removed, inside
+// the published image.
+func (s *Syncer) Materialize(ctx context.Context, src Source, dir string) (Checkout, error) {
+	if src.URL == "" {
+		return Checkout{}, errors.New("gitops: a git source needs a url")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	auth, err := s.auth(ctx, src)
+	if err != nil {
+		return Checkout{}, err
+	}
+
+	opts := &gogit.CloneOptions{
+		URL: src.URL, Depth: 1, SingleBranch: true, Auth: auth, Tags: gogit.NoTags,
+	}
+	if src.Branch != "" {
+		opts.ReferenceName = plumbing.NewBranchReferenceName(src.Branch)
+	}
+
+	repo, err := gogit.PlainCloneContext(ctx, dir, false, opts)
+	if err != nil {
+		return Checkout{}, cloneError(src, err)
+	}
+
+	head, err := repo.Head()
+	if err != nil {
+		return Checkout{}, fmt.Errorf("gitops: read HEAD of %s: %w", src.URL, err)
+	}
+	commit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		return Checkout{}, fmt.Errorf("gitops: read commit %s: %w", head.Hash(), err)
+	}
+
+	// Removed rather than excluded: an ignore file is a thing the build could
+	// override, and this must not be overridable.
+	if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
+		return Checkout{}, fmt.Errorf("gitops: remove .git from the build context: %w", err)
+	}
+
+	return Checkout{
+		Commit:  head.Hash().String(),
+		Ref:     head.Name().Short(),
 		Message: strings.SplitN(strings.TrimSpace(commit.Message), "\n", 2)[0],
 		Author:  commit.Author.Name,
 		At:      commit.Author.When,
