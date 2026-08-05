@@ -1115,6 +1115,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 - `github.com/hashicorp/hcl/v2` — job specs & config
 - `go.etcd.io/bbolt` — state
 - `github.com/go-acme/lego/v4` — ACME
+- `github.com/go-git/go-git/v5` — Git-backed projects (§10.1), in-process rather than shelling out to `git`. The deciding property is that a deploy key never touches the filesystem and never enters a child process's environment: `git` would need an askpass script, a key file for `GIT_SSH_COMMAND -i`, or a token in the environment, and `/proc/<pid>/environ` is readable by the same user. Every other credential in Kanea is in-memory or materialised to 0600 only where a separate process forces it (§6.2 R3). It also removes `git` as a host prerequisite. The cost is a dependency tail, which §14 A06 gates on `govulncheck`
 - `moby/buildkit` (digest-pinned image; `buildkitd`/`buildctl`/`rootlesskit` extracted to the host) — builds, run rootless as a host service (the only build driver)
 - React 18+, Vite, Tailwind CSS, shadcn/ui, TanStack Query, zod
 
