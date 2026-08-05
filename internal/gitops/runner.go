@@ -146,15 +146,28 @@ func (r *Runner) LogPath(run Run) string {
 // where the *record itself* could not be written, which is the only kind of
 // failure a caller can do nothing about.
 func (r *Runner) Run(ctx context.Context, req Request) (Run, error) {
-	run, err := r.runs.Create(ctx, Run{
+	run, err := r.Queue(ctx, req)
+	if err != nil {
+		return Run{}, err
+	}
+	return r.Execute(ctx, run, req)
+}
+
+// Queue records a run as queued without starting it.
+//
+// Separate from Execute so a caller can be told *which* run it just asked for
+// before the build begins: a build takes minutes, and `kanea build` needs an id
+// to follow logs by long before there is a result to report.
+func (r *Runner) Queue(ctx context.Context, req Request) (Run, error) {
+	return r.runs.Create(ctx, Run{
 		Project: req.Project, Service: req.Service,
 		Trigger: req.Trigger, TriggeredBy: req.TriggeredBy,
 		Ref: req.Source.Branch,
 	})
-	if err != nil {
-		return Run{}, err
-	}
+}
 
+// Execute carries out a queued run.
+func (r *Runner) Execute(ctx context.Context, run Run, req Request) (Run, error) {
 	// 0600: kanead is the only reader. The CLI and the dashboard both reach
 	// build logs through the API, so there is no group that needs this file.
 	logs, err := os.OpenFile(r.LogPath(run), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 — a path this runner composed

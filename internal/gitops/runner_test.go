@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kanea-dev/kanea/internal/gitops"
 )
@@ -419,4 +420,139 @@ func TestNewRunnerRequiresItsCollaborators(t *testing.T) {
 	if _, err := gitops.NewRunner(gitops.RunnerConfig{Runs: runs}); err == nil {
 		t.Error("a runner with no syncer was accepted")
 	}
+}
+
+func newQueue(t *testing.T, h *runnerHarness) *gitops.Queue {
+	t.Helper()
+	q, err := gitops.NewQueue(gitops.QueueConfig{Runner: h.runner, Depth: 2, Now: h.clock.now})
+	if err != nil {
+		t.Fatalf("NewQueue: %v", err)
+	}
+	return q
+}
+
+func TestQueueReturnsARunIDImmediately(t *testing.T) {
+	h := newRunner(t, writeMetadata, nil)
+	q := newQueue(t, h)
+
+	// A build takes minutes and an HTTP request must not: the caller needs an
+	// id to follow logs by long before there is a result.
+	run, err := q.Submit(context.Background(), gitops.Request{
+		Project: "shop", Service: "web", Source: gitops.Source{URL: buildRepo(t)},
+		Build: gitops.BuildSpec{Context: "./web", Target: "registry.example.com/shop/web"},
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if run.ID == "" || run.State != gitops.RunQueued {
+		t.Fatalf("run = %+v, want a queued run with an id", run)
+	}
+	if q.Depth() != 1 {
+		t.Fatalf("depth = %d, want 1", q.Depth())
+	}
+}
+
+func TestQueueRunsSubmittedBuilds(t *testing.T) {
+	h := newRunner(t, writeMetadata, nil)
+	q := newQueue(t, h)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	run, err := q.Submit(ctx, gitops.Request{
+		Project: "shop", Service: "web", Source: gitops.Source{URL: buildRepo(t)},
+		Build: gitops.BuildSpec{Context: "./web", Target: "registry.example.com/shop/web"},
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() { defer close(done); q.Run(ctx) }()
+
+	waitFor(t, func() bool {
+		got, err := h.runs.Get(context.Background(), "shop", "web", run.ID)
+		return err == nil && got.State.Terminal()
+	}, "the queued build to finish")
+
+	got, err := h.runs.Get(context.Background(), "shop", "web", run.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != gitops.RunSucceeded || got.Digest == "" {
+		t.Fatalf("run = %+v", got)
+	}
+	cancel()
+	<-done
+}
+
+func TestAFullQueueIsRefusedAndRecorded(t *testing.T) {
+	h := newRunner(t, writeMetadata, nil)
+	q := newQueue(t, h) // depth 2, and nothing is working it
+
+	req := gitops.Request{
+		Project: "shop", Service: "web", Source: gitops.Source{URL: buildRepo(t)},
+		Build: gitops.BuildSpec{Context: "./web", Target: "registry.example.com/shop/web"},
+	}
+	for range 2 {
+		if _, err := q.Submit(context.Background(), req); err != nil {
+			t.Fatalf("Submit: %v", err)
+		}
+	}
+
+	// Refused rather than blocked: a webhook handler that waits on a full
+	// queue holds a connection the provider will time out.
+	run, err := q.Submit(context.Background(), req)
+	if !errors.Is(err, gitops.ErrQueueFull) {
+		t.Fatalf("err = %v, want ErrQueueFull", err)
+	}
+	// And the record says so, rather than sitting at "queued" for a build
+	// nothing will ever pick up.
+	if run.State != gitops.RunCancelled {
+		t.Fatalf("state = %q, want cancelled", run.State)
+	}
+}
+
+func TestShutdownCancelsWhatIsStillQueued(t *testing.T) {
+	h := newRunner(t, writeMetadata, nil)
+	q := newQueue(t, h)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	req := gitops.Request{
+		Project: "shop", Service: "web", Source: gitops.Source{URL: buildRepo(t)},
+		Build: gitops.BuildSpec{Context: "./web", Target: "registry.example.com/shop/web"},
+	}
+	run, err := q.Submit(ctx, req)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	// The daemon stops before the worker ever starts. A queued run nothing will
+	// pick up would otherwise sit at "queued" forever, and after a restart an
+	// operator would see a build that never happened with no sign it never will.
+	cancel()
+	q.Run(ctx)
+
+	got, err := h.runs.Get(context.Background(), "shop", "web", run.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != gitops.RunCancelled {
+		t.Fatalf("state = %q, want cancelled", got.State)
+	}
+	if got.Error == "" {
+		t.Error("a cancelled run gives no reason")
+	}
+}
+
+// waitFor polls a condition with a deadline.
+func waitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
