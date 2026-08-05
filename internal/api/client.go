@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/auth"
+	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/secrets"
 )
@@ -63,10 +64,103 @@ func (c *Client) Services(ctx context.Context) ([]reconciler.Desired, error) {
 }
 
 // Apply declares services. Services not named are left alone.
-func (c *Client) Apply(ctx context.Context, services []reconciler.Desired) (ApplyResponse, error) {
+func (c *Client) Apply(
+	ctx context.Context, services []reconciler.Desired, pipelines []gitops.Config,
+) (ApplyResponse, error) {
 	var out ApplyResponse
-	err := c.do(ctx, http.MethodPut, PathServices, ApplyRequest{Services: services}, &out)
+	err := c.do(ctx, http.MethodPut, PathServices,
+		ApplyRequest{Services: services, Pipelines: pipelines}, &out)
 	return out, err
+}
+
+// Runs lists pipeline runs, newest first. Empty project or service means all.
+func (c *Client) Runs(ctx context.Context, project, service string, limit int) ([]gitops.Run, error) {
+	q := url.Values{}
+	if project != "" {
+		q.Set("project", project)
+	}
+	if service != "" {
+		q.Set("service", service)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := PathPipelines
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out RunsResponse
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out.Runs, err
+}
+
+// Run returns one pipeline run.
+func (c *Client) Run(ctx context.Context, project, service, id string) (gitops.Run, error) {
+	var out gitops.Run
+	path := fmt.Sprintf("%s/%s/%s/%s", PathPipelines,
+		url.PathEscape(project), url.PathEscape(service), url.PathEscape(id))
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+// Build queues a build and returns the queued run.
+func (c *Client) Build(ctx context.Context, project, service string, deploy bool) (gitops.Run, error) {
+	var out gitops.Run
+	path := fmt.Sprintf("%s/%s/%s/build", PathPipelines,
+		url.PathEscape(project), url.PathEscape(service))
+	err := c.do(ctx, http.MethodPost, path, BuildRequest{Deploy: deploy}, &out)
+	return out, err
+}
+
+// Sync fetches a project's git source and applies what it finds.
+func (c *Client) Sync(ctx context.Context, project string) (SyncResponse, error) {
+	var out SyncResponse
+	path := fmt.Sprintf("%s/%s/sync", PathProjects, url.PathEscape(project))
+	err := c.do(ctx, http.MethodPost, path, nil, &out)
+	return out, err
+}
+
+// BuildLogs streams a run's log to w, following it while the run is going.
+//
+// Streamed rather than fetched whole: a build log is written as it happens and
+// the reason to watch one is to see it happen.
+func (c *Client) BuildLogs(
+	ctx context.Context, project, service, id string, follow bool, w io.Writer,
+) (err error) {
+	path := fmt.Sprintf("%s/%s/%s/%s/logs", PathPipelines,
+		url.PathEscape(project), url.PathEscape(service), url.PathEscape(id))
+	if follow {
+		path += "?follow=true"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://kanead"+path, nil)
+	if err != nil {
+		return err
+	}
+	// Following has no deadline, like alloc logs: a build takes minutes and the
+	// client streams until the run ends or the user stops it.
+	client := c.http
+	if follow {
+		clone := *c.http
+		clone.Timeout = 0
+		client = &clone
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return c.dialError(err)
+	}
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
+
+	if resp.StatusCode != http.StatusOK {
+		return decodeError(resp)
+	}
+	if _, cerr := io.Copy(w, resp.Body); cerr != nil {
+		if ctx.Err() != nil {
+			return nil // the user stopped following; not an error
+		}
+		return cerr
+	}
+	return nil
 }
 
 // DeleteService removes a service and, in turn, its allocs.
@@ -204,9 +298,29 @@ func (c *Client) dialError(err error) error {
 func decodeError(resp *http.Response) error {
 	var body Error
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err == nil && body.Error != "" {
-		return fmt.Errorf("kanead: %s", body.Error)
+		return &StatusError{Status: resp.StatusCode, Message: body.Error}
 	}
-	return fmt.Errorf("kanead: %s", resp.Status)
+	return &StatusError{Status: resp.StatusCode, Message: resp.Status}
+}
+
+// StatusError is a refusal from the daemon, with the status it came with.
+//
+// The status is carried rather than folded into the message because callers act
+// on it: a queued build refused with 429 is worth retrying in a moment, and the
+// same refusal at 409 — no build block, no git source — never will be. Without
+// the code the two are one indistinguishable string.
+type StatusError struct {
+	Status  int
+	Message string
+}
+
+func (e *StatusError) Error() string { return "kanead: " + e.Message }
+
+// Retryable reports whether trying the same call again could succeed.
+func (e *StatusError) Retryable() bool {
+	return e.Status == http.StatusTooManyRequests ||
+		e.Status == http.StatusServiceUnavailable ||
+		e.Status >= http.StatusInternalServerError
 }
 
 // ListSecrets returns metadata for the secrets that exist.

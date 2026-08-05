@@ -170,6 +170,13 @@ type Build struct {
 	Target     string
 	Tag        string
 	CacheRepo  string
+	// RegistryAuthRef names the secret holding a docker config.json used to
+	// push the built image. It is scoped by R5 like every other reference, and
+	// it is materialised as a file for the duration of the build — never put in
+	// the build context, and never a --build-arg (build args survive in image
+	// history, §10.2).
+	RegistryAuthRef string
+	DefRange        hcl.Range
 }
 
 // Task is the container that runs. v1 allows exactly one per service.

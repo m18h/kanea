@@ -10,7 +10,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 ## Current status
 
-**M0–M6 complete. M7 (GitOps & pipelines) is next.**
+**M0–M7 complete. M8 (notifications) is next.**
 
 | Milestone | State | What landed |
 |---|---|---|
@@ -21,6 +21,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 | M4 dashboard | ✅ | React SPA, live websocket, log streaming |
 | M5 auth & OWASP | ✅ | Deny-by-default auth, audit log, OIDC+PKCE, rate limits, DNS-01 + wildcards, `docs/THREAT_MODEL.md` |
 | M6 metrics & autoscaling | ✅ | In-memory TS, three scrapers, evaluator + guardrails, circuit breaker, Prometheus exporter |
+| M7 GitOps & pipelines | ✅ | Run objects, git sync (in-process go-git), signed webhooks, BuildKit runner, serialised queue, coordinator, API/CLI/dashboard |
 
 Things a future change is most likely to trip over:
 
@@ -29,6 +30,11 @@ Things a future change is most likely to trip over:
 - **The autoscaler is not a second scheduler.** It writes one number; the reconciler converges. `kanea scale` uses the same route.
 - **The scale-decision budget is 20 s** from a sustained breach (PRD v1.21), not the 15 s v1.1 promised — see the amendment for why 15 s costs more than it buys.
 - **Accounts live in the Store, not the config file** (PRD v1.18), and `--oidc-client-secret` / `--acme-dns-tsig-secret` are `secret:` references, never literals.
+- **A repository speaks for its own project and no other** (PRD v1.23). `gitops.parseCheckout` refuses a synced spec that declares another project — it is the same boundary R5 draws for secrets, and it is the only thing between "can push to one repo" and "owns every service on the node".
+- **The git webhook route is the one non-§13 authentication** (`docs/THREAT_MODEL.md` §3.8): a per-project HMAC over the raw body, replay-rejected, audited. It never deploys from the request — it marks the project and the sync loop re-reads the source over Kanea's own credential.
+- **Builds are serialised and refused when full, never blocked** — §10.2 makes isolation collective, so a second concurrent build shares the first's budget. `queued` is a real state, and shutdown cancels what is still waiting.
+- **go-git ≥ 5.19.1 and go-billy ≥ 5.9.0 are security floors**, not preferences (GO-2026-5693, GO-2026-5597). The billy one is a path traversal in the chroot filesystem `Materialize` clones a working tree through — repository-controlled paths written to disk. A downgrade fails `make security`, which is how it should be found.
+- **A service with a `build` block and no `task.image` is legitimate** (§6.2 R8) and the reconciler skips it until the first build pins a digest. `${GIT_SHA_SHORT}` and its siblings survive parsing as literal references — their value only exists once a commit is checked out.
 
 **M0 — technical spikes** (PRD §20), all four GO:
 

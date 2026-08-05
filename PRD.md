@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.22 |
+| **Status** | Draft v1.23 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-08-02 |
+| **Last updated** | 2026-08-05 |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.23 amendments** — adds **`build.registry_auth_ref`** to the §6.1 build block and states the **repository/project boundary** in §10.1. §10.2 required the registry push credential to come from the secrets store as a materialised `config.json` but named no field for it, so there was no way to write down which secret that is; the field is scoped by **R5** like every other reference. §10.1 now says explicitly that **a repository speaks for its own project and no other**: a synced spec that declares services in another project is refused, because otherwise write access to one project's git source is write access to every service on the node — the same cross-project escalation R5 blocks for secrets, arriving through a different door. Also records that **`${GIT_SHA_SHORT}` and its siblings survive parsing as literal references** when nobody supplies them: R2 lists them as built-ins, but their value only exists once a commit is checked out, which is the pipeline runner — long after the file is parsed. Without that, the PRD's own §6.1 example (`tag = "${GIT_SHA_SHORT}"`) failed to parse in `kanea plan`, `kanea run` and every sync.
 
 > **v1.22 amendments** — corrects the **§6.1 example's `git.auth_ref`**, which read `secret:git/github-deploy-key` and contradicted **R5** — the rule that says a reference names the declaring project's scope or `shared/`, and that "git, registry, storage, and notification credentials follow the same scoping". `git/` is neither; under R5's semantics it names a project called `git`. The example is now `secret:shop/…`, and M7's parse-time validation enforces R5 on project-level git credentials, so a spec that copied the old example fails `kanea plan` with the reason rather than failing sixty seconds later inside a poll loop nobody is watching. Also adds `git.webhook_secret_ref`, `git.poll_interval` and `git.require_approval` to the block §6.1 sketches: §10.1 requires all three and the schema had none of them. The webhook secret is deliberately a **separate** reference from `auth_ref` — one lets Kanea read the repository, the other lets the repository tell Kanea something, and reusing a deploy key as a webhook secret would put a credential that can read source into a header on every push.
 
@@ -348,6 +350,9 @@ service "web" {
     target     = "registry.example.com/shop/web"
     tag        = "${GIT_SHA_SHORT}"        # built-in variable
     cache_repo = "registry.example.com/shop/web-cache"
+    # registry_auth_ref = "secret:shop/registry"   # push credential (R5-scoped);
+                                                   # materialised as a config.json
+                                                   # for the build, never in the context
   }
 
   task "app" {
@@ -695,6 +700,7 @@ Sources:                              Aggregation:                      Consumer
 - Repo layout convention: job specs in `.kanea/*.hcl` (or a single `kanea.hcl` at root).
 - Flow: commit → sync → `plan` (diff) → auto-apply (or manual approval if `git { require_approval = true }`) → events + notifications.
 - Git credentials in secrets store (deploy keys / PATs), never in job files or logs.
+- **A repository speaks for its own project and no other.** A synced spec that declares a `project` or a service in a project other than the one whose `git` block pointed at it is refused, and the sync fails naming the project it would not accept. Without this, write access to one project's source is write access to every service on the node — the cross-project escalation R5 blocks for secrets, reached through a different door.
 
 ### 10.2 Build pipelines (BuildKit)
 

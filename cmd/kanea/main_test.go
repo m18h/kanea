@@ -53,6 +53,8 @@ var implemented = map[string]bool{
 	"secret": true, "user": true, "token": true,
 	// M6 metrics & autoscaling:
 	"scale": true,
+	// M7 GitOps & pipelines:
+	"build": true, "project": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {

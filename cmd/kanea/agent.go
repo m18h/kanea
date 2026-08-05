@@ -20,6 +20,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/audit"
 	"github.com/kanea-dev/kanea/internal/auth"
 	"github.com/kanea-dev/kanea/internal/edge"
+	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/logging"
 	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/reconciler"
@@ -129,6 +130,14 @@ func runAgent(args []string) error {
 		"cilium-agent's Hubble endpoint for east-west metrics, e.g. "+
 			scaling.DefaultHubbleMetricsURL+" (default: off — Hubble costs CPU per request, PRD §9.1)")
 	autoscale := fs.Bool("autoscale", true, "act on the scaling policies services declare (PRD §9.2)")
+	buildkit := fs.String("buildkit", gitops.DefaultBuildkitSocket,
+		"rootless buildkitd address (\"off\" disables GitOps and builds, PRD §10.2)")
+	buildLogDir := fs.String("build-log-dir", "",
+		"where build logs are written (default <data-dir>/builds)")
+	syncInterval := fs.Duration("sync-interval", DefaultSyncInterval,
+		"how often projects with a git source are polled; a webhook makes a push land sooner")
+	insecureRegistry := fs.Bool("insecure-registry", false,
+		"allow pushing built images over plain HTTP — for a node-local registry only")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -313,11 +322,25 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	pipelines, buildQueue, err := buildPipelines(pipelineSettings{
+		buildkit:   *buildkit,
+		logDir:     resolveBuildLogDir(*buildLogDir, *dataDir),
+		interval:   *syncInterval,
+		baseDomain: *baseDomain,
+		insecure:   *insecureRegistry,
+		store:      st,
+		secrets:    secretStore,
+		notify:     notify,
+	}, logger)
+	if err != nil {
+		return err
+	}
+
 	server, err := api.NewServer(api.ServerConfig{
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
-		Secrets: secretStore, Auth: users, Accounts: users, Audit: trail,
+		Secrets: secretStore, Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		OIDC: provider, Sessions: users,
 		Metrics: metrics, Breaker: breaker,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
@@ -373,6 +396,13 @@ func runAgent(args []string) error {
 	// not wait for it (M0 spike ③).
 	go mounts.Supervise(ctx, storage.DefaultCheckInterval)
 	go sweepAuthState(ctx, users, trail, *auditRetention, logger)
+	if pipelines != nil {
+		// The queue worker and the sync loop are separate goroutines on
+		// purpose: a build that takes four minutes must not stop the loop
+		// noticing that another project moved.
+		go buildQueue.Run(ctx)
+		go runSync(ctx, pipelines, *syncInterval, logger)
+	}
 	startMetrics(ctx, metricsSettings{
 		metrics:       metrics,
 		containerdURL: *containerdMetrics,

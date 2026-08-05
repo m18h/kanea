@@ -113,6 +113,10 @@ type hclBuild struct {
 	Target     string `hcl:"target,optional"`
 	Tag        string `hcl:"tag,optional"`
 	CacheRepo  string `hcl:"cache_repo,optional"`
+	// RegistryAuthRef is the push credential. §10.2 requires the registry
+	// credential to come from the secrets store as a materialised
+	// config.json; this is the reference that names it.
+	RegistryAuthRef string `hcl:"registry_auth_ref,optional"`
 }
 
 type hclTask struct {
@@ -329,11 +333,27 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 // varContext exposes -var-file values and built-ins as ${NAME} variables (R2).
 func varContext(vars map[string]string) *hcl.EvalContext {
 	ctx := &hcl.EvalContext{Variables: map[string]cty.Value{}}
+	// The build-time built-ins resolve to themselves when nobody supplied them.
+	//
+	// R2 lists GIT_SHA_SHORT among the built-in variables, but the value only
+	// exists once a commit has been checked out — which is the pipeline runner,
+	// long after the file is parsed. Without this, the PRD's own §6.1 example
+	// (`tag = "${GIT_SHA_SHORT}"`) fails to parse everywhere: `kanea plan`,
+	// `kanea run` and every GitOps sync. Passing the reference through unchanged
+	// leaves it for gitops.ExpandTag, and a caller that *does* know the value —
+	// `-var-file`, or a sync that has the checkout — still overrides it here.
+	for _, name := range BuildTimeVars {
+		ctx.Variables[name] = cty.StringVal("${" + name + "}")
+	}
 	for k, v := range vars {
 		ctx.Variables[k] = cty.StringVal(v)
 	}
 	return ctx
 }
+
+// BuildTimeVars are the built-ins whose value is only known once a commit is
+// checked out (R2). They survive parsing as literal references.
+var BuildTimeVars = []string{"GIT_SHA_SHORT", "GIT_SHA", "GIT_BRANCH"}
 
 func convertProject(p *hclProject) *Project {
 	out := &Project{Name: p.Name, Description: p.Description, DefRange: p.DefRange}
@@ -396,11 +416,13 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 
 	if s.Build != nil {
 		out.Build = &Build{
-			Context:    s.Build.Context,
-			Dockerfile: s.Build.Dockerfile,
-			Target:     s.Build.Target,
-			Tag:        s.Build.Tag,
-			CacheRepo:  s.Build.CacheRepo,
+			Context:         s.Build.Context,
+			Dockerfile:      s.Build.Dockerfile,
+			Target:          s.Build.Target,
+			Tag:             s.Build.Tag,
+			CacheRepo:       s.Build.CacheRepo,
+			RegistryAuthRef: s.Build.RegistryAuthRef,
+			DefRange:        s.DefRange,
 		}
 	}
 	if s.Network != nil {
@@ -517,4 +539,40 @@ func sortUnique(in []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ParseContents parses a set of in-memory job specs as one applied set.
+//
+// It exists for GitOps (§10.1): a sync reads the specs out of the repository
+// object database and never writes them to disk, so there is no path to hand
+// ParseFiles. Keeping them in memory is the point — a checkout materialised
+// under a temp directory is one more place a spec, and whatever a spec quotes,
+// can be read from.
+//
+// Keys are the paths the content came from and are used in diagnostics, so an
+// error still points at `.kanea/web.hcl` line 12.
+func ParseContents(opts Options, files map[string][]byte) (*Spec, hcl.Diagnostics) {
+	parser := hclparse.NewParser()
+	var diags hcl.Diagnostics
+
+	// Sorted, so a diagnostic set from two files comes out in the same order
+	// every time and a repeated sync does not look like a changing error.
+	paths := make([]string, 0, len(files))
+	for path := range files {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	parsed := make([]*hcl.File, 0, len(paths))
+	for _, path := range paths {
+		file, fileDiags := parser.ParseHCL(files[path], path)
+		diags = append(diags, fileDiags...)
+		if file != nil {
+			parsed = append(parsed, file)
+		}
+	}
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	return parseFiles(opts, parsed, diags)
 }

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/dashboard"
+	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/ratelimit"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/secrets"
@@ -58,6 +59,10 @@ type ServerConfig struct {
 	ServeDashboard bool
 	// Secrets backs the write-only secrets surface. Nil disables those routes.
 	Secrets SecretStore
+	// Pipelines is optional: a daemon with no builder configured serves the
+	// pipeline routes with 503 rather than not routing them at all, so a
+	// dashboard can tell "not configured" from "wrong URL".
+	Pipelines Pipelines
 	// Auth resolves callers. Nil leaves the unix socket as the only credential
 	// the daemon accepts — which is the §13.1 "no auth configured" case, and is
 	// why a network listener without it is refused rather than warned about.
@@ -131,6 +136,7 @@ type Server struct {
 	wsOrigins []string
 	ws        *wsHub
 	secrets   SecretStore
+	pipelines Pipelines
 
 	auth            Authenticator
 	audit           AuditLog
@@ -182,15 +188,20 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
-		secrets: cfg.Secrets, auth: cfg.Auth, audit: cfg.Audit,
+		secrets: cfg.Secrets, pipelines: cfg.Pipelines,
+		auth: cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		metrics: cfg.Metrics, breaker: cfg.Breaker,
 		insecureCookies: cfg.InsecureCookies,
 	}
 
-	// Every route states what it requires next to where it is registered. The
-	// two `public: true` entries are the whole exemption list (§5.2.1): health,
-	// because a probe must work before anyone can log in, and login itself.
+	// Every route states what it requires next to where it is registered, and
+	// the `public: true` entries are the whole exemption list (§5.2.1). Four of
+	// them are "nobody has a credential yet" — health, because a probe must work
+	// before anyone can log in, login itself, and the two OIDC legs. The fifth,
+	// the git webhook, is public in the routing sense only: it authenticates
+	// itself with a per-project HMAC because the caller is a provider rather
+	// than a person (docs/THREAT_MODEL.md §3.8).
 	mux := http.NewServeMux()
 	mux.Handle("GET "+PathHealth, s.route(policy{action: "health", public: true}, s.handleHealth))
 	mux.Handle("POST "+PathLogin, s.route(policy{action: "auth.login", public: true}, s.handleLogin))
@@ -230,6 +241,28 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		s.route(policy{action: "token.revoke", mutates: true}, s.handleRevokeToken))
 	// List and write, never read: there is no GET for an individual secret,
 	// and its absence is the enforcement (PRD §13.3).
+	// Pipelines (§10). Reading runs and logs is an ordinary authenticated read;
+	// asking for a build or a sync mutates, because both end in a deploy.
+	mux.Handle("GET "+PathPipelines, s.route(policy{action: "pipeline.list"}, s.handleListRuns))
+	mux.Handle("GET "+PathPipelines+"/{project}/{service}/{run}",
+		s.route(policy{action: "pipeline.get"}, s.handleGetRun))
+	mux.Handle("GET "+PathPipelines+"/{project}/{service}/{run}/logs",
+		s.route(policy{action: "pipeline.logs"}, s.handleRunLogs))
+	mux.Handle("POST "+PathPipelines+"/{project}/{service}/build",
+		s.route(policy{action: "pipeline.build", mutates: true}, s.handleBuild))
+	mux.Handle("POST "+PathProjects+"/{project}/sync",
+		s.route(policy{action: "project.sync", mutates: true}, s.handleSync))
+	// The third exemption, and the only one that is not "nobody has a credential
+	// yet": a git push comes from a provider, not a person, so it carries a
+	// per-project HMAC instead of a session. handleGitWebhook authenticates it
+	// itself — see the comment there. CSRF does not apply for the same reason it
+	// does not apply to a bearer token: nothing is taken from a cookie.
+	//
+	// Not marked `mutates`, deliberately: a public route returns before that
+	// flag is read, so setting it would only suggest an automatic audit entry
+	// that never fires. The handler records its own, refusals included.
+	mux.Handle("POST "+PathWebhooks+"/{project}",
+		s.route(policy{action: "webhook.receive", public: true}, s.handleGitWebhook))
 	mux.Handle("GET "+PathSecrets, s.route(policy{action: "secret.list", adminOnly: true}, s.handleListSecrets))
 	mux.Handle("PUT "+PathSecrets+"/{path...}",
 		s.route(policy{action: "secret.put", mutates: true}, s.handlePutSecret))
@@ -478,6 +511,27 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		}
 		muts = append(muts, mut)
 		applied = append(applied, key)
+	}
+
+	for _, pipeline := range req.Pipelines {
+		if pipeline.Project == "" {
+			writeError(w, http.StatusBadRequest, errors.New("every pipeline config needs a project"))
+			return
+		}
+		// Merged rather than replaced: LastCommit and LastSyncAt belong to the
+		// sync loop, and an apply that overwrote them with zero values would
+		// make the next poll re-apply a commit it already applied.
+		merged := pipeline
+		if current, _, err := store.GetValue[gitops.Config](
+			r.Context(), s.store, store.KindProject, pipeline.Project); err == nil {
+			merged.LastCommit, merged.LastSyncAt = current.LastCommit, current.LastSyncAt
+		}
+		mut, err := store.PutMutation(store.KindProject, pipeline.Project, merged)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		muts = append(muts, mut)
 	}
 
 	// One batch: a multi-service apply lands atomically, so the reconciler never

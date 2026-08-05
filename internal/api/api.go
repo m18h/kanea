@@ -17,6 +17,7 @@ package api
 import (
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 )
 
@@ -55,6 +56,12 @@ type Health struct {
 // everything declared in another.
 type ApplyRequest struct {
 	Services []reconciler.Desired `json:"services"`
+	// Pipelines carries the project-level `git` block and the per-service
+	// `build` blocks from the same file (§10). They travel with the services
+	// because they came from one spec: a service with a build block whose
+	// source the daemon does not know is a service that can never be rebuilt,
+	// and that is exactly what splitting them into two calls would allow.
+	Pipelines []gitops.Config `json:"pipelines,omitempty"`
 }
 
 // ScaleRequest sets a service's replica count.

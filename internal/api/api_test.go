@@ -136,7 +136,7 @@ func TestApplyAndListServices(t *testing.T) {
 	resp, err := h.client.Apply(ctx, []reconciler.Desired{
 		testService("web", 2),
 		testService("api", 1),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestApplyAndListServices(t *testing.T) {
 func TestApplyWakesTheReconciler(t *testing.T) {
 	// A deploy must converge immediately, not after the next tick.
 	h := newHarness(t)
-	if _, err := h.client.Apply(context.Background(), []reconciler.Desired{testService("web", 1)}); err != nil {
+	if _, err := h.client.Apply(context.Background(), []reconciler.Desired{testService("web", 1)}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	select {
@@ -175,10 +175,10 @@ func TestApplyIsPartial(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	if _, err := h.client.Apply(ctx, []reconciler.Desired{testService("web", 1)}); err != nil {
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{testService("web", 1)}, nil); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
-	if _, err := h.client.Apply(ctx, []reconciler.Desired{testService("api", 1)}); err != nil {
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{testService("api", 1)}, nil); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 
@@ -195,10 +195,10 @@ func TestApplyRejectsBadRequests(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	if _, err := h.client.Apply(ctx, nil); err == nil {
+	if _, err := h.client.Apply(ctx, nil, nil); err == nil {
 		t.Error("empty apply should be rejected")
 	}
-	if _, err := h.client.Apply(ctx, []reconciler.Desired{{Service: "web"}}); err == nil {
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{{Service: "web"}}, nil); err == nil {
 		t.Error("service without a project should be rejected")
 	}
 }
@@ -207,7 +207,7 @@ func TestDeleteService(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	if _, err := h.client.Apply(ctx, []reconciler.Desired{testService("web", 1)}); err != nil {
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{testService("web", 1)}, nil); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if _, err := h.client.DeleteService(ctx, "shop", "web"); err != nil {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/api"
+	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/jobspec"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
@@ -30,10 +31,12 @@ func socketFlag(fs *flag.FlagSet) *string {
 // one-service spec from the --image/--name/--project flags. PRD §6 calls the
 // image-only path first-class: `kanea run --image=nginx --name web` must work
 // with no file at all.
-func loadSpec(files []string, image, name, project string, count int) ([]reconciler.Desired, error) {
+func loadSpec(
+	files []string, image, name, project string, count int,
+) ([]reconciler.Desired, []gitops.Config, error) {
 	if image != "" {
 		if name == "" || project == "" {
-			return nil, errors.New("--image also needs --name and --project")
+			return nil, nil, errors.New("--image also needs --name and --project")
 		}
 		return []reconciler.Desired{{
 			Project: project,
@@ -45,10 +48,10 @@ func loadSpec(files []string, image, name, project string, count int) ([]reconci
 				MemoryBytes: int64(jobspec.DefaultMemory) << 20,
 				PidsLimit:   DefaultPidsLimit,
 			},
-		}}, nil
+		}}, nil, nil
 	}
 	if len(files) == 0 {
-		return nil, errors.New("give a job spec file, or --image with --name and --project")
+		return nil, nil, errors.New("give a job spec file, or --image with --name and --project")
 	}
 
 	spec, diags := jobspec.ParseFiles(jobspec.Options{}, files...)
@@ -56,11 +59,35 @@ func loadSpec(files []string, image, name, project string, count int) ([]reconci
 		// Diagnostics carry file:line:column; print them as-is and fail without
 		// adding a second, vaguer error on top.
 		if _, werr := fmt.Fprint(os.Stderr, jobspec.FormatDiagnostics(diags)); werr != nil {
-			return nil, werr
+			return nil, nil, werr
 		}
-		return nil, fmt.Errorf("%d problem(s) in the job spec", len(diags))
+		return nil, nil, fmt.Errorf("%d problem(s) in the job spec", len(diags))
 	}
-	return toDesired(spec)
+	desired, err := toDesired(spec)
+	if err != nil {
+		return nil, nil, err
+	}
+	return desired, pipelineConfigs(spec), nil
+}
+
+// pipelineConfigs extracts the per-project pipeline configuration from a spec.
+//
+// The git and build blocks travel with the services they were declared beside:
+// a daemon that received the services alone would hold a service with a build
+// block it has no source for, which is a service nobody can rebuild.
+func pipelineConfigs(spec *jobspec.Spec) []gitops.Config {
+	seen := map[string]bool{}
+	var out []gitops.Config
+	for _, svc := range spec.Services {
+		if seen[svc.Project] {
+			continue
+		}
+		seen[svc.Project] = true
+		if cfg, ok := gitops.ConfigFromSpec(spec, svc.Project); ok {
+			out = append(out, cfg)
+		}
+	}
+	return out
 }
 
 // runRun implements `kanea run`.
@@ -76,14 +103,14 @@ func runRun(args []string) error {
 		return err
 	}
 
-	desired, err := loadSpec(fs.Args(), *image, *name, *project, *count)
+	desired, pipelines, err := loadSpec(fs.Args(), *image, *name, *project, *count)
 	if err != nil {
 		return err
 	}
 
 	ctx := context.Background()
 	client := api.NewClient(*socket)
-	resp, err := client.Apply(ctx, desired)
+	resp, err := client.Apply(ctx, desired, pipelines)
 	if err != nil {
 		return err
 	}
@@ -166,7 +193,7 @@ func runPlan(args []string) error {
 		return err
 	}
 
-	desired, err := loadSpec(fs.Args(), *image, *name, *project, *count)
+	desired, _, err := loadSpec(fs.Args(), *image, *name, *project, *count)
 	if err != nil {
 		return err
 	}
@@ -488,7 +515,7 @@ func runStop(args []string) error {
 	// Scaling to zero keeps the declaration, so `kanea run` (or a scale up)
 	// brings it back without re-declaring it.
 	target.Count = 0
-	if _, err := client.Apply(ctx, []reconciler.Desired{target}); err != nil {
+	if _, err := client.Apply(ctx, []reconciler.Desired{target}, nil); err != nil {
 		return err
 	}
 	o := newOut()

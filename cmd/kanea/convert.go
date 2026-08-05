@@ -37,12 +37,14 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			return nil, fmt.Errorf("service %s/%s has no task", svc.Project, svc.Name)
 		}
 		image := svc.Task.Image
-		if image == "" {
-			// R8 allows a build block with no image, but M1 has no pipeline: the
-			// image would never materialise, so say so rather than fail later
-			// with a confusing pull error.
-			return nil, fmt.Errorf("service %s/%s has no task.image; building from source "+
-				"arrives in M7, so an image reference is required for now", svc.Project, svc.Name)
+		if image == "" && svc.Build == nil {
+			// R8 allows a build block with no image — the first successful build
+			// pins the digest (§10.2). Without one, nothing will ever fill it
+			// in, so say so here rather than fail later with a confusing pull
+			// error for an empty reference.
+			return nil, fmt.Errorf("service %s/%s has no task.image and no build block; "+
+				"give it an image to pull, or a build block to produce one",
+				svc.Project, svc.Name)
 		}
 
 		desired := reconciler.Desired{

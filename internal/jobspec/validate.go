@@ -363,6 +363,17 @@ func validateTask(svc *Service) hcl.Diagnostics {
 // reads are an IDOR-class exfiltration path (PRD §14, A01).
 func validateSecretRefs(svc *Service) hcl.Diagnostics {
 	var diags hcl.Diagnostics
+
+	// The registry push credential is scoped by R5 like everything else. It is
+	// checked here rather than in validateTask because a service may have a
+	// build block and no task worth validating yet.
+	if svc.Build != nil && svc.Build.RegistryAuthRef != "" {
+		diags = append(diags, checkSecretRef(
+			svc.Build.RegistryAuthRef, svc.Project,
+			fmt.Sprintf("build.registry_auth_ref in service %q", svc.Name),
+			svc.Build.DefRange)...)
+	}
+
 	if svc.Task == nil {
 		return diags
 	}
@@ -871,4 +882,44 @@ func validateHostPath(st *Storage) hcl.Diagnostics {
 		return reject("mounting the whole root filesystem is never permitted.")
 	}
 	return nil
+}
+
+// checkSecretRef enforces R3 (referenced, never inlined) and R5 (project-scoped)
+// on one reference.
+//
+// `where` names the field in a way that reads in a diagnostic — the operator
+// needs to know which of several references in a spec is the wrong one.
+func checkSecretRef(ref, project, where string, rng hcl.Range) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if !strings.HasPrefix(ref, SecretPrefix) {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Credential is not a secret reference",
+			Detail: fmt.Sprintf("%s is %q. Credentials are referenced, never inlined (R3): "+
+				"use secret:%s/<name> or secret:%s/<name>.",
+				where, ref, project, SharedSecretScope),
+			Subject: rng.Ptr(),
+		})
+	}
+	scope, rest, found := strings.Cut(strings.TrimPrefix(ref, SecretPrefix), "/")
+	if !found || scope == "" || rest == "" {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Malformed secret reference",
+			Detail: fmt.Sprintf("%s is %q; references look like secret:<project>/<name>.",
+				where, ref),
+			Subject: rng.Ptr(),
+		})
+	}
+	if scope != project && scope != SharedSecretScope {
+		return append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Cross-project secret reference",
+			Detail: fmt.Sprintf("%s references %q, which belongs to another project. "+
+				"Only secret:%s/… or secret:%s/… may be read here (R5).",
+				where, ref, project, SharedSecretScope),
+			Subject: rng.Ptr(),
+		})
+	}
+	return diags
 }

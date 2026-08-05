@@ -1439,3 +1439,34 @@ func TestHostVolumeRejectedByTheAllowlistFailsTheAlloc(t *testing.T) {
 		t.Fatal("an alloc started with a host path the operator did not allow")
 	}
 }
+
+func TestReconcileWaitsForAServiceWithNoImageYet(t *testing.T) {
+	// A service declared with a `build` block and no `task.image` is legitimate
+	// (§6.2 R8): the first successful build pins the digest. Until then there is
+	// nothing to pull, and scheduling it anyway would fail an alloc against an
+	// empty reference on every backoff for as long as the build takes — which
+	// looks to an operator exactly like a broken deploy rather than a pending one.
+	h := newHarness(t)
+	waiting := desired(2)
+	waiting.Image = ""
+	h.setDesired(t, waiting)
+
+	if res := h.reconcile(t); res.Planned != 0 {
+		t.Fatalf("planned %d actions for a service with no image, want 0", res.Planned)
+	}
+
+	// And it starts as soon as the build gives it one, with no other change.
+	built := desired(2)
+	built.Image = "registry.example.com/shop/web@sha256:cafebabe"
+	h.setDesired(t, built)
+
+	if res := h.reconcile(t); res.Planned != 2 || res.Applied != 2 {
+		t.Fatalf("result = %+v, want 2 planned and applied once the image exists", res)
+	}
+	for i := range 2 {
+		id := reconciler.AllocID("shop", "web", i)
+		if got := h.driver.state(id); got != runtime.StateRunning {
+			t.Errorf("%s state = %q, want running", id, got)
+		}
+	}
+}

@@ -882,7 +882,19 @@ func (r *Reconciler) loadDesired(ctx context.Context) ([]Desired, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, values...)
+		for _, d := range values {
+			// A service declared with a `build` block and no `task.image` has
+			// nothing to run until its first build lands and the deployer pins
+			// a digest (§6.2 R8, §10.2). Skipping it is what makes that a
+			// legitimate declaration rather than an alloc that fails to pull
+			// "" every backoff for as long as the build takes.
+			if d.Image == "" {
+				r.log.Debug("service has no image yet; waiting for a build",
+					"service", d.Project+"/"+d.Service)
+				continue
+			}
+			out = append(out, d)
+		}
 		if !page.More {
 			return out, nil
 		}

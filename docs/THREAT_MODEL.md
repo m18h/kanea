@@ -188,6 +188,47 @@ say what they may do). The post-login return path is bounded to this origin,
 rejecting `//host` and `/\host` alike, because an open redirect on a login page
 is a phishing hop with this daemon's name on it.
 
+### 3.8 Git push webhooks (A01, A08)
+
+`POST /v1/webhooks/git/{project}` is **the only route authenticated by something
+other than §13**, and the exception is structural rather than convenient: a push
+notification comes from GitHub or GitLab, not from a person, so no session
+cookie and no bearer token can carry it. Calling it public would be wrong — it
+is authenticated, just differently.
+
+What guards it:
+
+- **A per-project HMAC.** The signature is verified over the **raw request
+  body** before anything is parsed, with a constant-time comparison, against a
+  secret named by `git.webhook_secret_ref`. A body that has been through a
+  decoder is no longer the bytes that were signed, which is why the handler
+  reads bytes and hands bytes over.
+- **A separate secret from the deploy key.** `auth_ref` lets Kanea read the
+  repository; `webhook_secret_ref` lets the repository tell Kanea something.
+  Reusing one for the other would put a credential that can read source into a
+  header on every push.
+- **An unsigned delivery is refused,** never treated as an anonymous ping.
+- **Replays are rejected** by delivery id, within a bounded, time-evicted cache.
+  A retry of a delivery already processed answers **200**, not an error, because
+  an error makes the provider retry a push that was already handled — forever.
+- **The body is bounded** before it is read, because the sender chooses its size.
+- **Every refusal is audited** as a security event with the same weight as a
+  rejected token: a stream of them is someone guessing a secret.
+- **The response says nothing.** A refused delivery gets a status and "not
+  authorised"; which check failed is logged locally and never returned.
+
+A valid delivery does **not** deploy anything by itself. It marks the project
+for the sync loop, which then re-reads the source over the credential Kanea
+holds — so a forged-but-somehow-valid delivery still cannot inject content, only
+ask Kanea to look at a repository it already trusts. A push to a branch other
+than the watched one is accepted and ignored.
+
+**The project boundary is enforced at sync, not at delivery.** A synced spec
+that declares services in another project is refused outright (PRD §10.1,
+v1.23). Without that, write access to one project's git source would be write
+access to every service on the node — the cross-project escalation R5 blocks for
+secrets, arriving through a different door.
+
 ---
 
 ## 4. Attack walkthroughs
@@ -196,6 +237,13 @@ is a phishing hop with this daemon's name on it.
 Thirty requests a minute, then 429 with `Retry-After`. Nothing is written to the
 audit log, so the log cannot be used to fill the disk. If no account is
 configured, the listener does not exist at all.
+
+**Someone forges a push webhook.** Without the project's webhook secret the
+HMAC fails, the delivery is refused with 401 and audited, and nothing is read or
+built. With a *replayed* valid delivery the id is already in the cache and the
+answer is 200 with no work done. Even a delivery that passes every check only
+schedules a sync: the content that would be deployed comes from the repository
+Kanea clones with its own credential, not from the request body.
 
 **An operator's laptop opens a malicious page.** It cannot read the session
 cookie (`HttpOnly`), cannot set the CSRF header cross-origin without a preflight
