@@ -117,17 +117,51 @@ type Git struct {
 type Notifications struct {
 	Telegram *TelegramChannel
 	Webhook  *WebhookChannel
-	On       []string
+	Slack    *SlackChannel
+	Ntfy     *NtfyChannel
+	SMTP     *SMTPChannel
+	// On is the event filter (§11): glob patterns like "deploy.*".
+	On []string
+	// Severity is a floor beneath which nothing is sent, whatever On says.
+	Severity string
+	DefRange hcl.Range
 }
 
 // TelegramChannel targets a chat; the bot token comes from the secret store.
 type TelegramChannel struct {
-	ChatID string
+	ChatID   string
+	TokenRef string
 }
 
-// WebhookChannel posts events to a URL.
+// WebhookChannel posts a signed JSON payload to a URL.
 type WebhookChannel struct {
 	URL string
+	// SecretRef signs the payload with HMAC-SHA256.
+	SecretRef string
+}
+
+// SlackChannel posts to a Slack or Discord incoming webhook.
+//
+// The URL is a reference, not a literal, and there is no field to inline one
+// into: an incoming-webhook URL is a credential in path form (R3).
+type SlackChannel struct {
+	URLRef string
+}
+
+// NtfyChannel publishes to an ntfy topic.
+type NtfyChannel struct {
+	URL      string
+	TokenRef string
+}
+
+// SMTPChannel sends email.
+type SMTPChannel struct {
+	Host        string
+	Port        string
+	From        string
+	To          []string
+	Username    string
+	PasswordRef string
 }
 
 // Service is one deployable unit: N identical allocs of a task.

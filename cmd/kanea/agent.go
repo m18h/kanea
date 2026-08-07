@@ -23,6 +23,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/logging"
 	"github.com/kanea-dev/kanea/internal/network"
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/runtime"
 	"github.com/kanea-dev/kanea/internal/scaling"
@@ -136,6 +137,12 @@ func runAgent(args []string) error {
 		"where build logs are written (default <data-dir>/builds)")
 	syncInterval := fs.Duration("sync-interval", DefaultSyncInterval,
 		"how often projects with a git source are polled; a webhook makes a push land sooner")
+	notifyAllowPrivate := fs.Bool("notify-allow-private", false,
+		"allow notification targets on private/loopback addresses — for an internal chat server (PRD §11)")
+	notifyAllowHTTP := fs.Bool("notify-allow-http", false,
+		"allow plain-http notification targets; https is required by default")
+	eventRetention := fs.Int("event-retention", notify.DefaultRetention,
+		"how many notification events are kept in the store")
 	insecureRegistry := fs.Bool("insecure-registry", false,
 		"allow pushing built images over plain HTTP — for a node-local registry only")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
@@ -265,6 +272,17 @@ func runAgent(args []string) error {
 	// One breaker, fed by the reconciler and read by the autoscaler (§4.3).
 	// Two of them would each see half the node's failures and neither would
 	// trip on a fault both were watching.
+	notifier, feed, err := buildNotifier(ctx, notifySettings{
+		store:        st,
+		secrets:      secretStore,
+		allowPrivate: *notifyAllowPrivate,
+		allowHTTP:    *notifyAllowHTTP,
+		retention:    *eventRetention,
+	}, logger)
+	if err != nil {
+		return err
+	}
+
 	breaker := reconciler.NewBreaker(reconciler.BreakerConfig{Logger: logger})
 
 	rec, err := reconciler.New(reconciler.Config{
@@ -279,6 +297,7 @@ func runAgent(args []string) error {
 		Nameserver:    nameserverOf(dns),
 		Prober:        reconciler.NewProber(driver),
 		Breaker:       breaker,
+		Emit:          notifier.Publish,
 		Mounts:        mounts,
 		EdgeSnapshot:  routesPath,
 		BaseDomain:    *baseDomain,
@@ -331,6 +350,7 @@ func runAgent(args []string) error {
 		store:      st,
 		secrets:    secretStore,
 		notify:     notify,
+		emit:       notifier.Publish,
 	}, logger)
 	if err != nil {
 		return err
@@ -341,6 +361,7 @@ func runAgent(args []string) error {
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
 		Secrets: secretStore, Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
+		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
 		OIDC: provider, Sessions: users,
 		Metrics: metrics, Breaker: breaker,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
@@ -388,7 +409,8 @@ func runAgent(args []string) error {
 	}
 	if certs != nil {
 		go func() {
-			errs <- runCertificates(ctx, certs.manager, certs.publisher, st, *baseDomain, certNotify, logger)
+			errs <- runCertificates(ctx, certs.manager, certs.publisher, st, *baseDomain,
+				certNotify, logger, notifier.Publish)
 		}()
 	}
 	// The mount supervisor runs alongside, not inside, the reconcile loop: a
@@ -396,6 +418,10 @@ func runAgent(args []string) error {
 	// not wait for it (M0 spike ③).
 	go mounts.Supervise(ctx, storage.DefaultCheckInterval)
 	go sweepAuthState(ctx, users, trail, *auditRetention, logger)
+	// The dispatcher owns its own goroutine so a wedged channel cannot stall
+	// anything that emits: Publish is non-blocking and everything slow happens
+	// behind it (AGENTS.md #8).
+	go notifier.Run(ctx)
 	if pipelines != nil {
 		// The queue worker and the sync loop are separate goroutines on
 		// purpose: a build that takes four minutes must not stop the loop
@@ -412,6 +438,7 @@ func runAgent(args []string) error {
 		autoscale:     *autoscale,
 		store:         st,
 		notify:        notify,
+		emit:          notifier.Publish,
 	}, logger)
 
 	// Wait for all of them; a context cancellation is a clean shutdown.

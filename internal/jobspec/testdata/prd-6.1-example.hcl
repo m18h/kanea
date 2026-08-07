@@ -13,9 +13,15 @@ project "shop" {
   }
 
   notifications {
-    telegram { chat_id = "-1001234567890" }   # bot token from secrets
-    webhook  { url = "https://hooks.slack.com/services/…" }
+    telegram {
+      chat_id   = "-1001234567890"
+      token_ref = "secret:shop/telegram-bot"
+    }
+    # A Slack/Discord incoming-webhook URL is a credential in path form —
+    # referenced, never inlined (R3, R5).
+    slack { url_ref = "secret:shop/slack-webhook" }
     on       = ["deploy.failed", "service.unhealthy", "scale.*"]
+    severity = "warning"
   }
 }
 

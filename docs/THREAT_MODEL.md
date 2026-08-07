@@ -229,6 +229,47 @@ v1.23). Without that, write access to one project's git source would be write
 access to every service on the node — the cross-project escalation R5 blocks for
 secrets, arriving through a different door.
 
+### 3.9 Outbound notifications (A10)
+
+Everything above defends what reaches *in*. Notifications are the one subsystem
+that deliberately reaches *out*, on the say-so of a job spec — which is server-
+side request forgery unless it is bounded. A spec is not always written by the
+person who owns the node, and the addresses worth reaching from inside one are
+exactly those a firewall was meant to protect: `169.254.169.254`, the rest of
+the internal network, localhost.
+
+- **https only**, and **private, loopback, link-local, multicast and
+  unique-local destinations are refused**, with an explicit opt-out for an
+  operator genuinely running an internal chat server.
+- **The address check runs at dial time, on every resolved candidate.** A
+  hostname is not a destination: the same name can resolve publicly when it is
+  validated and to 127.0.0.1 when it is connected to, and a name answering with
+  both a public and a private address is how a check on one result is bypassed.
+- **Redirects are refused.** An allowed target answering `302` to the metadata
+  service would otherwise walk past every check above.
+- **NAT64 (`64:ff9b::/96`) is decoded**, because it carries an IPv4 address in
+  its low 32 bits and every ordinary predicate calls it public.
+
+**Channel credentials are `secret:` references, project-scoped like every
+other** (R3, R5) — bot tokens, signing keys, SMTP passwords, and Slack/Discord
+incoming-webhook URLs, the last because that URL *is* the credential. Telegram's
+token necessarily sits in the request URL, so its transport errors are replaced
+with the channel name rather than returned: an error carrying the URL would put
+a bot token in the daemon log.
+
+Two things in the mail path are Kanea's rather than the standard library's.
+**Header injection**: a subject carries a service name and an error string,
+either of which can hold a newline, and a newline in a header is a second header
+— an alert becomes a way to add recipients. **Dot-stuffing**: a line that is a
+single `.` ends the DATA command, so an event message containing one would
+truncate the mail and leave the rest to be read as SMTP commands.
+
+Notifications are also a **denial-of-service surface pointed at Kanea itself**.
+Emitting never blocks the emitter, per-channel rate limits keep a crash-looping
+fleet from getting the bot blocked, and events coalesce into digests — so a
+storm produces one message rather than one per alloc, and a full queue drops
+with a counter rather than growing without bound.
+
 ---
 
 ## 4. Attack walkthroughs
@@ -237,6 +278,13 @@ secrets, arriving through a different door.
 Thirty requests a minute, then 429 with `Retry-After`. Nothing is written to the
 audit log, so the log cannot be used to fill the disk. If no account is
 configured, the listener does not exist at all.
+
+**A tenant points a notification webhook at the metadata service.** The scheme
+check refuses anything but https at parse time. If the target is an https name
+that resolves to `169.254.169.254`, the dialer refuses it at connect time, on
+every candidate address the name returns. If a public target answers 302 to it,
+the redirect is refused. Nothing is fetched and nothing is returned to the
+caller — a failed delivery is logged, not echoed.
 
 **Someone forges a push webhook.** Without the project's webhook secret the
 HMAC fails, the delivery is refused with 401 and audited, and nothing is read or

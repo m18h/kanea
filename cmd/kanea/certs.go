@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/user"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/acme"
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/store"
 )
@@ -32,11 +34,17 @@ const certRetryInterval = 15 * time.Minute
 // due, publish the result for the edge.
 func runCertificates(ctx context.Context, m *acme.Manager, pub *acme.Publisher,
 	st store.Store, baseDomain string, trigger <-chan struct{}, logger *slog.Logger,
+	emit func(notify.Event),
 ) error {
+	// What each certificate's issuance time was on the previous pass. A
+	// certificate whose IssuedAt moved was obtained during this pass, which is
+	// how "issued" and "renewed" are told apart without reaching inside the
+	// ACME manager for a callback it does not have.
+	seen := map[string]time.Time{}
 	// Publish immediately, before the first issuance. A restart must put the
 	// certificates it already holds back in front of the edge without waiting
 	// for the CA to answer — or every kanead restart is a TLS outage.
-	if err := syncCertificates(ctx, m, pub, st, baseDomain, logger); err != nil {
+	if err := syncCertificates(ctx, m, pub, st, baseDomain, logger, emit, seen); err != nil {
 		logger.Error("certificate pass failed", "error", err)
 	}
 
@@ -64,7 +72,7 @@ func runCertificates(ctx context.Context, m *acme.Manager, pub *acme.Publisher,
 		}
 
 		next := certCheckInterval
-		if err := syncCertificates(ctx, m, pub, st, baseDomain, logger); err != nil {
+		if err := syncCertificates(ctx, m, pub, st, baseDomain, logger, emit, seen); err != nil {
 			logger.Error("certificate pass failed", "error", err, "retry_in", certRetryInterval)
 			next = certRetryInterval
 		}
@@ -84,6 +92,7 @@ const certTriggerDelay = 3 * time.Second
 // syncCertificates runs one pass.
 func syncCertificates(ctx context.Context, m *acme.Manager, pub *acme.Publisher,
 	st store.Store, baseDomain string, logger *slog.Logger,
+	emit func(notify.Event), seen map[string]time.Time,
 ) error {
 	exposures, err := certExposures(ctx, st, baseDomain, logger)
 	if err != nil {
@@ -108,13 +117,57 @@ func syncCertificates(ctx context.Context, m *acme.Manager, pub *acme.Publisher,
 
 	certs, err := m.Sync(ctx, plan.Requests)
 	if err != nil {
+		// A renewal that fails is an outage with a date on it, which is why
+		// §11 files cert.failed as an error rather than a warning.
+		emitCert(emit, notify.EventCertFailed, "", "certificate issuance failed: "+err.Error())
 		return err
 	}
+	emitCertChanges(emit, certs, seen)
 	if err := pub.SetCertificates(certs); err != nil {
 		return fmt.Errorf("publish certificates: %w", err)
 	}
 	logger.Info("certificates published", "certificates", len(certs), "requested", len(plan.Requests))
 	return nil
+}
+
+// emitCertChanges publishes an event for each certificate obtained this pass.
+func emitCertChanges(emit func(notify.Event), certs []acme.Certificate, seen map[string]time.Time) {
+	if emit == nil {
+		return
+	}
+	for _, cert := range certs {
+		if len(cert.Domains) == 0 {
+			continue
+		}
+		primary := cert.Domains[0]
+		previous, known := seen[primary]
+		seen[primary] = cert.IssuedAt
+		if known && !cert.IssuedAt.After(previous) {
+			continue // unchanged since the last pass
+		}
+		// First time this daemon has seen it is "issued"; a later issuance for
+		// a name it already held is a renewal. A restart therefore reports the
+		// certificates it loads as issued once, which is the honest answer —
+		// it does not know what happened before it started.
+		name := notify.EventCertIssued
+		if known {
+			name = notify.EventCertRenewed
+		}
+		emitCert(emit, name, primary, fmt.Sprintf("%s valid until %s",
+			strings.Join(cert.Domains, ", "), cert.NotAfter.Format(time.DateOnly)))
+	}
+}
+
+// emitCert publishes one certificate event.
+//
+// Certificates are node-level: a wildcard covers a whole project and an
+// exposure can name a domain that belongs to no service, so there is no service
+// to attribute one to.
+func emitCert(emit func(notify.Event), name, domain, message string) {
+	if emit == nil {
+		return
+	}
+	emit(notify.NewEvent(name, "", "", message, time.Now()).WithDetail(domain))
 }
 
 // certExposures reads desired state and returns what needs a certificate.

@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/scaling"
 	"github.com/kanea-dev/kanea/internal/store"
@@ -22,6 +24,7 @@ import (
 type storeFleet struct {
 	store  store.Store
 	notify chan<- struct{}
+	emit   func(notify.Event)
 	log    *slog.Logger
 }
 
@@ -53,6 +56,7 @@ func (f storeFleet) SetCount(ctx context.Context, service string, count int) err
 	if err != nil {
 		return fmt.Errorf("read %s: %w", service, err)
 	}
+	previous := current.Count
 	current.Count = count
 
 	mut, err := store.UpdateMutation(store.KindService, service, current, index)
@@ -64,6 +68,19 @@ func (f storeFleet) SetCount(ctx context.Context, service string, count int) err
 	// decision made against the version before it.
 	if _, err := f.store.Apply(ctx, mut); err != nil {
 		return fmt.Errorf("scale %s: %w", service, err)
+	}
+
+	if f.emit != nil {
+		// Named by direction rather than by "scale": §11 lists scale.up and
+		// scale.down separately because an operator filtering notifications
+		// usually cares about one of them and not the other.
+		name := notify.EventScaleUp
+		if count < previous {
+			name = notify.EventScaleDown
+		}
+		project, svc, _ := strings.Cut(service, "/")
+		f.emit(notify.NewEvent(name, project, svc,
+			fmt.Sprintf("scaled %d → %d", previous, count), time.Now()))
 	}
 
 	// The reconciler converges on its own schedule; this only stops the change
@@ -245,6 +262,7 @@ type metricsSettings struct {
 	autoscale     bool
 	store         store.Store
 	notify        chan<- struct{}
+	emit          func(notify.Event)
 	breaker       scaling.Breaker
 }
 
@@ -340,7 +358,7 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 	}
 	loop, err := scaling.NewLoop(scaling.LoopConfig{
 		Evaluator: evaluator,
-		Fleet:     storeFleet{store: cfg.store, notify: cfg.notify, log: logger},
+		Fleet:     storeFleet{store: cfg.store, notify: cfg.notify, emit: cfg.emit, log: logger},
 		Breaker:   cfg.breaker,
 		Logger:    logger,
 	})

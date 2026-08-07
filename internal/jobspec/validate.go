@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+
+	"github.com/kanea-dev/kanea/internal/notify"
 )
 
 // SpecVersion is the schema revision this binary speaks (R6, PRD §15.4).
@@ -88,6 +90,7 @@ func validateProjects(spec *Spec) hcl.Diagnostics {
 		}
 		seen[p.Name] = p.DefRange
 		diags = append(diags, validateGit(p)...)
+		diags = append(diags, validateNotifications(p)...)
 	}
 	return diags
 }
@@ -156,6 +159,164 @@ func validateGit(p *Project) hcl.Diagnostics {
 	}
 
 	diags = append(diags, validateDuration("poll_interval", p.Git.PollInterval, p.DefRange)...)
+	return diags
+}
+
+// validateNotifications checks a project's notification channels (PRD §11).
+//
+// Every check here exists to fail at `kanea plan` rather than at 3am. A channel
+// with a bad filter is silent, and a silent notification channel looks exactly
+// like a system with nothing to report — so a pattern matching no known event
+// is a spec error, not a warning.
+func validateNotifications(p *Project) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	n := p.Notifications
+	if n == nil {
+		return diags
+	}
+	rng := n.DefRange
+
+	// Credentials are references and are scoped like every other reference
+	// (R3, R5). Git, registry, storage and notification credentials all follow
+	// the same rule; this is the notification half of it.
+	refs := map[string]string{}
+	if t := n.Telegram; t != nil {
+		if t.ChatID == "" {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Telegram channel has no chat_id",
+				Detail:   fmt.Sprintf("Project %q declares a telegram block with no chat_id.", p.Name),
+				Subject:  rng.Ptr(),
+			})
+		}
+		refs["telegram.token_ref"] = t.TokenRef
+	}
+	if w := n.Webhook; w != nil {
+		diags = append(diags, validateNotifyURL(p.Name, "webhook.url", w.URL, rng)...)
+		if w.SecretRef != "" {
+			refs["webhook.secret_ref"] = w.SecretRef
+		}
+	}
+	if s := n.Slack; s != nil {
+		refs["slack.url_ref"] = s.URLRef
+	}
+	if nt := n.Ntfy; nt != nil {
+		diags = append(diags, validateNotifyURL(p.Name, "ntfy.url", nt.URL, rng)...)
+		if nt.TokenRef != "" {
+			refs["ntfy.token_ref"] = nt.TokenRef
+		}
+	}
+	if sm := n.SMTP; sm != nil {
+		diags = append(diags, validateSMTP(p.Name, sm, rng)...)
+		if sm.PasswordRef != "" {
+			refs["smtp.password_ref"] = sm.PasswordRef
+		}
+	}
+
+	for field, ref := range refs {
+		if ref == "" {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Notification channel has no credential reference",
+				Detail: fmt.Sprintf("Project %q needs notifications.%s. Credentials are "+
+					"referenced, never inlined (R3): use secret:%s/<name>.", p.Name, field, p.Name),
+				Subject: rng.Ptr(),
+			})
+			continue
+		}
+		diags = append(diags, checkSecretRef(ref, p.Name,
+			fmt.Sprintf("notifications.%s in project %q", field, p.Name), rng)...)
+	}
+
+	if len(n.On) == 0 && anyChannel(n) {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Notification channel has no event filter",
+			Detail: fmt.Sprintf("Project %q declares notification channels but no `on`. "+
+				"A channel nobody has told what to send is silent, which is "+
+				"indistinguishable from a system with nothing to report. "+
+				"Events are: %s.", p.Name, strings.Join(notify.KnownEvents(), ", ")),
+			Subject: rng.Ptr(),
+		})
+	}
+	for _, pattern := range n.On {
+		if err := notify.ValidatePattern(pattern); err != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unknown notification event",
+				Detail:   fmt.Sprintf("Project %q: %s", p.Name, err),
+				Subject:  rng.Ptr(),
+			})
+		}
+	}
+	if _, err := notify.ParseSeverity(n.Severity); n.Severity != "" && err != nil {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Unknown notification severity",
+			Detail: fmt.Sprintf("Project %q sets notifications.severity = %q; "+
+				"expected info, warning or error.", p.Name, n.Severity),
+			Subject: rng.Ptr(),
+		})
+	}
+	return diags
+}
+
+// anyChannel reports whether any channel is configured.
+func anyChannel(n *Notifications) bool {
+	return n.Telegram != nil || n.Webhook != nil || n.Slack != nil ||
+		n.Ntfy != nil || n.SMTP != nil
+}
+
+// validateNotifyURL enforces https on the targets that carry one literally.
+//
+// The same rule the egress guard applies at send time, checked here so it fails
+// in front of the person who wrote it (§14 A10).
+func validateNotifyURL(project, field, raw string, rng hcl.Range) hcl.Diagnostics {
+	if raw == "" {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Notification channel has no url",
+			Detail:   fmt.Sprintf("Project %q declares %s with no value.", project, field),
+			Subject:  rng.Ptr(),
+		}}
+	}
+	if !strings.HasPrefix(raw, "https://") {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Notification target is not https",
+			Detail: fmt.Sprintf("Project %q sets notifications.%s = %q. Notification "+
+				"targets must use https: a payload over cleartext is one anyone on "+
+				"the path can read, and a signature only proves it was not altered.",
+				project, field, raw),
+			Subject: rng.Ptr(),
+		}}
+	}
+	return nil
+}
+
+// validateSMTP checks the mail channel's required fields.
+func validateSMTP(project string, sm *SMTPChannel, rng hcl.Range) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	missing := func(field string) {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Incomplete smtp channel",
+			Detail:   fmt.Sprintf("Project %q declares an smtp block with no %s.", project, field),
+			Subject:  rng.Ptr(),
+		})
+	}
+	if sm.Host == "" {
+		missing("host")
+	}
+	if sm.From == "" {
+		missing("from")
+	}
+	if len(sm.To) == 0 {
+		missing("to")
+	}
+	if sm.Username != "" && sm.PasswordRef == "" {
+		missing("password_ref (a username needs one)")
+	}
 	return diags
 }
 

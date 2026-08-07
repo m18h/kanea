@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft v1.23 |
+| **Status** | Draft v1.24 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-08-05 |
+| **Last updated** | 2026-08-07 |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.24 amendments** — corrects the **§6.1 `notifications` block**, which had the same defect §10's blocks had twice before: it named credentials it gave no field for, and inlined one it should have referenced. The sketch said "bot token from secrets" while the schema had nowhere to put the reference (`telegram.token_ref` now exists), and its `webhook { url = "https://hooks.slack.com/services/…" }` example **inlined a Slack incoming-webhook URL — which is a credential in path form**: anyone holding it can post as the app. Slack is now its own block taking `url_ref`, and there is no field to inline one into. Adds the channels §11 always listed but the schema never had — `slack`, `ntfy`, `smtp` — plus a `severity` floor that composes with `on` as an AND, so `on = ["*"]` with `severity = "warning"` means "everything that matters", which is the configuration most operators actually want. **An empty `on` is a spec error**, not a permissive default: a channel nobody has told what to send is silent, and a silent notification channel is indistinguishable from a system with nothing to report. Patterns are validated against the event vocabulary at parse time for the same reason. Also records that **notification targets are https-only with private, loopback and link-local destinations refused** (§14 A10) — checked at *dial* time rather than on the hostname, because a name that resolves publicly when it is validated can resolve to 127.0.0.1 when it is connected to.
 
 > **v1.23 amendments** — adds **`build.registry_auth_ref`** to the §6.1 build block and states the **repository/project boundary** in §10.1. §10.2 required the registry push credential to come from the secrets store as a materialised `config.json` but named no field for it, so there was no way to write down which secret that is; the field is scoped by **R5** like every other reference. §10.1 now says explicitly that **a repository speaks for its own project and no other**: a synced spec that declares services in another project is refused, because otherwise write access to one project's git source is write access to every service on the node — the same cross-project escalation R5 blocks for secrets, arriving through a different door. Also records that **`${GIT_SHA_SHORT}` and its siblings survive parsing as literal references** when nobody supplies them: R2 lists them as built-ins, but their value only exists once a commit is checked out, which is the pipeline runner — long after the file is parsed. Without that, the PRD's own §6.1 example (`tag = "${GIT_SHA_SHORT}"`) failed to parse in `kanea plan`, `kanea run` and every sync.
 
@@ -316,9 +318,15 @@ project "shop" {
   }
 
   notifications {
-    telegram { chat_id = "-1001234567890" }   # bot token from secrets
-    webhook  { url = "https://hooks.slack.com/services/…" }
+    telegram {
+      chat_id   = "-1001234567890"
+      token_ref = "secret:shop/telegram-bot"
+    }
+    # A Slack/Discord incoming-webhook URL is a credential in path form —
+    # referenced, never inlined (R3, R5).
+    slack { url_ref = "secret:shop/slack-webhook" }
     on       = ["deploy.failed", "service.unhealthy", "scale.*"]
+    severity = "warning"        # floor; composes with `on` as an AND
   }
 }
 
@@ -725,7 +733,8 @@ Sources:                              Aggregation:                      Consumer
 - Config at server level (defaults) and project level (overrides), with event filters (glob patterns, e.g. `on = ["deploy.*", "scale.up"]`).
 - Delivery: at-least-once with retry/backoff; failures logged, never block the control plane.
 - **Storm protection:** events are coalesced into digests under load ("42 allocs restarted in 5m" — one message, not 42), with per-channel rate limits and severity floors; a crash-looping fleet must never get the Telegram bot rate-limited or blocked.
-- Outbound webhook targets: **https-only, RFC1918/link-local destinations blocked by default** (explicit opt-out for internal chat servers) — §14, A10.
+- Outbound webhook targets: **https-only, RFC1918/link-local destinations blocked by default** (explicit opt-out for internal chat servers) — §14, A10. The address check runs at **dial time, on every resolved candidate**, not on the hostname: a name that resolves publicly when it is validated can resolve to 127.0.0.1 when it is connected to. Redirects are refused, since an allowed target answering 302 to the metadata service would walk past every check.
+- **Channel credentials are `secret:` references and project-scoped** like every other credential (R3, R5): bot tokens, webhook signing keys, SMTP passwords, and Slack/Discord incoming-webhook URLs — the last because that URL *is* the credential.
 - All channels also mirrored into the dashboard notification feed.
 
 ---

@@ -78,15 +78,47 @@ type hclGit struct {
 type hclNotifications struct {
 	Telegram *hclTelegram `hcl:"telegram,block"`
 	Webhook  *hclWebhook  `hcl:"webhook,block"`
+	Slack    *hclSlack    `hcl:"slack,block"`
+	Ntfy     *hclNtfy     `hcl:"ntfy,block"`
+	SMTP     *hclSMTP     `hcl:"smtp,block"`
 	On       []string     `hcl:"on,optional"`
+	// Severity is a floor: nothing below it is sent whatever `on` says.
+	Severity string    `hcl:"severity,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclTelegram struct {
 	ChatID string `hcl:"chat_id"`
+	// TokenRef names the bot token. §11 always said it comes from the secrets
+	// store; this is the field that says which secret.
+	TokenRef string `hcl:"token_ref"`
 }
 
 type hclWebhook struct {
 	URL string `hcl:"url"`
+	// SecretRef signs the payload. Optional — a receiver that authenticates by
+	// URL alone is legitimate.
+	SecretRef string `hcl:"secret_ref,optional"`
+}
+
+type hclSlack struct {
+	// URLRef, never a url. An incoming-webhook URL is a credential in path
+	// form: anyone holding it can post as the app.
+	URLRef string `hcl:"url_ref"`
+}
+
+type hclNtfy struct {
+	URL      string `hcl:"url"`
+	TokenRef string `hcl:"token_ref,optional"`
+}
+
+type hclSMTP struct {
+	Host        string   `hcl:"host"`
+	Port        string   `hcl:"port,optional"`
+	From        string   `hcl:"from"`
+	To          []string `hcl:"to"`
+	Username    string   `hcl:"username,optional"`
+	PasswordRef string   `hcl:"password_ref,optional"`
 }
 
 type hclService struct {
@@ -365,13 +397,27 @@ func convertProject(p *hclProject) *Project {
 			RequireApproval:  p.Git.RequireApproval,
 		}
 	}
-	if p.Notifications != nil {
-		out.Notifications = &Notifications{On: p.Notifications.On}
-		if t := p.Notifications.Telegram; t != nil {
-			out.Notifications.Telegram = &TelegramChannel{ChatID: t.ChatID}
+	if n := p.Notifications; n != nil {
+		out.Notifications = &Notifications{
+			On: n.On, Severity: n.Severity, DefRange: n.DefRange,
 		}
-		if w := p.Notifications.Webhook; w != nil {
-			out.Notifications.Webhook = &WebhookChannel{URL: w.URL}
+		if t := n.Telegram; t != nil {
+			out.Notifications.Telegram = &TelegramChannel{ChatID: t.ChatID, TokenRef: t.TokenRef}
+		}
+		if w := n.Webhook; w != nil {
+			out.Notifications.Webhook = &WebhookChannel{URL: w.URL, SecretRef: w.SecretRef}
+		}
+		if sl := n.Slack; sl != nil {
+			out.Notifications.Slack = &SlackChannel{URLRef: sl.URLRef}
+		}
+		if nt := n.Ntfy; nt != nil {
+			out.Notifications.Ntfy = &NtfyChannel{URL: nt.URL, TokenRef: nt.TokenRef}
+		}
+		if sm := n.SMTP; sm != nil {
+			out.Notifications.SMTP = &SMTPChannel{
+				Host: sm.Host, Port: sm.Port, From: sm.From, To: sm.To,
+				Username: sm.Username, PasswordRef: sm.PasswordRef,
+			}
 		}
 	}
 	return out

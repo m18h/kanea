@@ -35,12 +35,18 @@ var (
 	ErrForeignProject = errors.New("gitops: spec declares another project")
 )
 
-// Config is a project's pipeline configuration as stored.
+// Config is a project's stored configuration.
 //
 // It lives under store.KindProject, keyed by project name, and is written by
-// the same apply that writes the services — the git block and the build blocks
-// come from the same file, and splitting them across two round-trips would let
-// a service exist with a build block whose source Kanea does not know.
+// the same apply that writes the services — the git block, the build blocks and
+// the notifications block come from the same file, and splitting them across
+// round-trips would let a service exist with a build block whose source Kanea
+// does not know.
+//
+// It carries notifications as well as pipelines because it is *the* project
+// record, not a pipelines record. The type living in this package is history —
+// pipelines needed it first. If a third concern lands on it, move the type
+// somewhere neutral rather than growing a third package's field here.
 type Config struct {
 	Project string `json:"project"`
 	// Source is the git remote. A zero Source means the project deploys by
@@ -56,6 +62,11 @@ type Config struct {
 	RequireApproval bool `json:"require_approval,omitempty"`
 	// Builds is the per-service build spec, keyed by service name.
 	Builds map[string]BuildSpec `json:"builds,omitempty"`
+
+	// Notifications is the project's `notifications` block (§11). Held as the
+	// parsed spec type rather than resolved channels: a channel holds a
+	// credential and an HTTP client, neither of which belongs in the Store.
+	Notifications *jobspec.Notifications `json:"notifications,omitempty"`
 
 	// LastCommit is the revision the last successful sync applied. It is what
 	// makes a poll loop cheap: an unchanged remote does no work at all.
@@ -310,6 +321,11 @@ func (s *Service) Sync(ctx context.Context, project, by string) (SyncResult, err
 	// The build blocks in the spec are authoritative from here: the apply just
 	// wrote them, so re-reading the stored config would race with itself.
 	cfg.Builds = buildSpecs(spec)
+	for _, p := range spec.Projects {
+		if p.Name == project {
+			cfg.Notifications = p.Notifications
+		}
+	}
 	cfg.LastCommit = checkout.Commit
 	cfg.LastSyncAt = s.now()
 	if _, err := store.PutValue(ctx, s.store, store.KindProject, project, cfg); err != nil {
@@ -476,9 +492,15 @@ func ConfigFromSpec(spec *jobspec.Spec, project string) (Config, bool) {
 		}
 	}
 
-	for name, spec := range buildSpecs(spec) {
-		cfg.Builds[name] = spec
+	for name, bspec := range buildSpecs(spec) {
+		cfg.Builds[name] = bspec
 		found = true
+	}
+	for _, p := range spec.Projects {
+		if p.Name == project && p.Notifications != nil {
+			cfg.Notifications = p.Notifications
+			found = true
+		}
 	}
 	return cfg, found
 }

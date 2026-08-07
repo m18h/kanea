@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/network"
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/runtime"
 	"github.com/kanea-dev/kanea/internal/storage"
 	"github.com/kanea-dev/kanea/internal/store"
@@ -125,6 +126,10 @@ type Config struct {
 	// Nameserver is the address allocs are pointed at for DNS. Empty means
 	// allocs keep whatever resolv.conf their image ships.
 	Nameserver string
+	// Emit publishes notification events (§11). Nil disables them, which is
+	// what every test that is not about notifications wants. It must never
+	// block: the reconcile loop is not a place to wait on Telegram.
+	Emit func(notify.Event)
 	// Prober runs health checks. Nil disables health checking entirely, which
 	// makes every running service count as healthy for dependency gating.
 	Prober Prober
@@ -152,6 +157,7 @@ type Reconciler struct {
 	network Network
 	log     *slog.Logger
 	breaker *Breaker
+	emit    func(notify.Event)
 	now     func() time.Time
 
 	vips   *vipAllocator
@@ -198,6 +204,7 @@ func New(cfg Config) (*Reconciler, error) {
 		network:       cfg.Network,
 		log:           cfg.Logger,
 		breaker:       cfg.Breaker,
+		emit:          cfg.Emit,
 		now:           cfg.Now,
 		interval:      cfg.Interval,
 		stopGrace:     cfg.StopGrace,
@@ -575,13 +582,23 @@ func (r *Reconciler) reapNetwork(ctx context.Context, w World, attachments map[s
 
 // recordFailures feeds crash transitions to the circuit breaker.
 func (r *Reconciler) recordFailures(changed map[string]AllocRecord) {
-	if r.breaker == nil {
-		return
-	}
 	for _, record := range changed {
-		if record.State == AllocBackoff || record.State == AllocFailed {
+		crashed := record.State == AllocBackoff || record.State == AllocFailed
+		if crashed && r.breaker != nil {
 			r.breaker.RecordFailure(record.Project + "/" + record.Service)
 		}
+		if !crashed || r.emit == nil {
+			continue
+		}
+		// One event per alloc, not per service. Forty allocs of one service
+		// crashing is forty facts; turning that into one message is the
+		// dispatcher's job, and it does it better knowing how many there were
+		// (§11 storm coalescing).
+		r.emit(notify.NewEvent(notify.EventServiceCrashed,
+			record.Project, record.Service,
+			fmt.Sprintf("alloc %d exited with code %d",
+				record.Index, record.LastExitCode), r.now()).
+			WithDetail(fmt.Sprintf("restart %d", record.Restarts)))
 	}
 }
 
@@ -1065,11 +1082,30 @@ func (r *Reconciler) probeHealth(ctx context.Context, w World, attachments map[s
 			defer mu.Unlock()
 			if record, ok := applyProbe(j.record, j.check, err, w.Now); ok {
 				changed[record.ID] = record
+				// Only the transition, not every failing probe. A service that
+				// is unhealthy for an hour is one event, not one every five
+				// seconds — the check interval must not become a message rate.
+				if record.Healthy != j.record.Healthy {
+					r.emitHealth(record)
+				}
 			}
 		}()
 	}
 	wg.Wait()
 	return changed
+}
+
+// emitHealth publishes a health transition (§11).
+func (r *Reconciler) emitHealth(record AllocRecord) {
+	if r.emit == nil {
+		return
+	}
+	name, message := notify.EventServiceHealthy, "health check passing"
+	if !record.Healthy {
+		name, message = notify.EventServiceUnhealthy, record.HealthMessage
+	}
+	r.emit(notify.NewEvent(name, record.Project, record.Service,
+		fmt.Sprintf("alloc %d: %s", record.Index, message), r.now()))
 }
 
 // applyProbe folds one probe result into a record, reporting whether anything

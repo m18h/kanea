@@ -20,6 +20,7 @@ import (
 
 	"github.com/kanea-dev/kanea/internal/dashboard"
 	"github.com/kanea-dev/kanea/internal/gitops"
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/ratelimit"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/secrets"
@@ -63,6 +64,13 @@ type ServerConfig struct {
 	// pipeline routes with 503 rather than not routing them at all, so a
 	// dashboard can tell "not configured" from "wrong URL".
 	Pipelines Pipelines
+	// Events backs the notification feed. Nil serves an empty feed rather than
+	// an error: a daemon with no notification channels still has a dashboard.
+	Events Events
+	// NotifyStats reports the dispatcher's counters.
+	NotifyStats func() notify.Stats
+	// Publish emits notification events. Nil disables them.
+	Publish func(notify.Event)
 	// Auth resolves callers. Nil leaves the unix socket as the only credential
 	// the daemon accepts — which is the §13.1 "no auth configured" case, and is
 	// why a network listener without it is refused rather than warned about.
@@ -137,6 +145,12 @@ type Server struct {
 	ws        *wsHub
 	secrets   SecretStore
 	pipelines Pipelines
+	events    Events
+	// notifyStats reports the dispatcher's counters, so the feed can say when
+	// it is quiet because nothing happened rather than because the queue
+	// overflowed.
+	notifyStats func() notify.Stats
+	publish     func(notify.Event)
 
 	auth            Authenticator
 	audit           AuditLog
@@ -189,6 +203,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, pipelines: cfg.Pipelines,
+		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
 		auth: cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		metrics: cfg.Metrics, breaker: cfg.Breaker,
@@ -263,6 +278,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// that never fires. The handler records its own, refusals included.
 	mux.Handle("POST "+PathWebhooks+"/{project}",
 		s.route(policy{action: "webhook.receive", public: true}, s.handleGitWebhook))
+	mux.Handle("GET "+PathEvents, s.route(policy{action: "event.list"}, s.handleEvents))
 	mux.Handle("GET "+PathSecrets, s.route(policy{action: "secret.list", adminOnly: true}, s.handleListSecrets))
 	mux.Handle("PUT "+PathSecrets+"/{path...}",
 		s.route(policy{action: "secret.put", mutates: true}, s.handlePutSecret))
@@ -543,8 +559,26 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 	s.wake()
 	auditTarget(r, strings.Join(applied, ","))
+	// One event per service, not one per apply. A three-service deploy is
+	// three things an operator filters and routes independently, and the
+	// dispatcher coalesces them back into one message anyway.
+	for _, key := range applied {
+		project, service, _ := strings.Cut(key, "/")
+		s.emit(notify.EventDeploySucceeded, project, service, "applied desired state")
+	}
 	s.log.Info("applied services", "services", applied, "index", index)
 	writeJSON(w, http.StatusOK, ApplyResponse{Applied: applied, Index: index})
+}
+
+// emit publishes a notification event, if the daemon has a dispatcher.
+//
+// Fire-and-forget by construction: Publish never blocks and never fails, so
+// there is nothing here for an HTTP handler to do about it (AGENTS.md #8).
+func (s *Server) emit(name, project, service, message string) {
+	if s.publish == nil {
+		return
+	}
+	s.publish(notify.NewEvent(name, project, service, message, time.Now()))
 }
 
 func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {

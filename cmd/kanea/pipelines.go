@@ -10,6 +10,7 @@ import (
 
 	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/jobspec"
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/store"
 )
@@ -42,6 +43,7 @@ type pipelineSettings struct {
 	store   store.Store
 	secrets gitops.Resolver
 	notify  chan<- struct{}
+	emit    func(notify.Event)
 }
 
 // buildPipelines assembles the pipeline stack.
@@ -84,7 +86,16 @@ func buildPipelines(cfg pipelineSettings, logger *slog.Logger) (*gitops.Service,
 	if err != nil {
 		return nil, nil, err
 	}
-	queue, err := gitops.NewQueue(gitops.QueueConfig{Runner: runner, Logger: logger})
+	queue, err := gitops.NewQueue(gitops.QueueConfig{
+		Runner: runner, Logger: logger,
+		// The adapter that keeps gitops free of a notify dependency: it hands
+		// out strings, and the event vocabulary stays in one package.
+		Emit: func(project, service, name, message string) {
+			if cfg.emit != nil {
+				cfg.emit(notify.NewEvent(name, project, service, message, time.Now()))
+			}
+		},
+	})
 	if err != nil {
 		return nil, nil, err
 	}

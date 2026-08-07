@@ -16,6 +16,7 @@ import (
 
 	"github.com/kanea-dev/kanea/internal/audit"
 	"github.com/kanea-dev/kanea/internal/auth"
+	"github.com/kanea-dev/kanea/internal/notify"
 )
 
 // Auth routes (PRD §16.1).
@@ -406,6 +407,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.record(r, audit.Entry{
 			Action: "auth.login", Target: req.User, Result: audit.ResultDenied, Status: status,
 		}, auth.Identity{})
+		// Node-level, with no project: a failed login belongs to nobody's
+		// project. The attempted name is included for the same reason the audit
+		// entry carries it — a brute force is only visible as a pattern of
+		// names — and one failure is a typo, which is why §11 files this as a
+		// warning and the dispatcher coalesces it into a count.
+		s.emit(notify.EventAuthLoginFailed, "", "",
+			fmt.Sprintf("failed login for %q from %s", req.User, sourceOf(r)))
 		writeError(w, status, errRefused)
 		return
 	}

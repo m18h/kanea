@@ -64,6 +64,15 @@ func (f Filter) Patterns() []string { return f.patterns }
 // Floor returns the severity floor.
 func (f Filter) Floor() Severity { return f.floor }
 
+// ValidatePattern is the exported form, so the job spec parser checks a filter
+// against the same vocabulary the dispatcher matches against.
+//
+// One table, one matcher. Two implementations of "is this a known event" drift,
+// and the way they drift is that a spec passes `kanea plan` and then matches
+// nothing at runtime — which is the silent-channel failure this all exists to
+// prevent.
+func ValidatePattern(p string) error { return validatePattern(p) }
+
 // validatePattern rejects a pattern that cannot match anything.
 //
 // Checked at configuration time, in front of the person who wrote it. A pattern

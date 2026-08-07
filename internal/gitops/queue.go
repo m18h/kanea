@@ -41,6 +41,8 @@ type Queue struct {
 	work   chan queued
 	log    *slog.Logger
 	now    func() time.Time
+	// emit publishes build events (§11). Nil disables them.
+	emit func(project, service, name, message string)
 }
 
 // QueueConfig configures the build queue.
@@ -50,6 +52,10 @@ type QueueConfig struct {
 	Depth  int
 	Logger *slog.Logger
 	Now    func() time.Time
+	// Emit publishes build events. The signature is strings rather than a
+	// notify.Event so this package does not depend on notify — the daemon
+	// adapts, which keeps the dependency pointing one way.
+	Emit func(project, service, name, message string)
 }
 
 // NewQueue builds the queue.
@@ -68,7 +74,7 @@ func NewQueue(cfg QueueConfig) (*Queue, error) {
 	}
 	return &Queue{
 		runner: cfg.Runner, work: make(chan queued, cfg.Depth),
-		log: cfg.Logger, now: cfg.Now,
+		log: cfg.Logger, now: cfg.Now, emit: cfg.Emit,
 	}, nil
 }
 
@@ -120,14 +126,55 @@ func (q *Queue) Run(ctx context.Context) {
 				q.cancel(context.WithoutCancel(ctx), item, "kanead stopped before this build started")
 				continue
 			}
+			q.notify(item.run, "build.started",
+				"build "+ShortID(item.run.ID)+" started")
+
 			// One at a time, deliberately. The error is already recorded on the
 			// run by Execute; what comes back here is a failure to write the
 			// record, which is all this can usefully log.
-			if _, err := q.runner.Execute(ctx, item.run, item.req); err != nil {
+			done, err := q.runner.Execute(ctx, item.run, item.req)
+			if err != nil {
 				q.log.Error("cannot record a build result",
 					"service", item.run.ServiceKey(), "run", item.run.ID, "error", err)
 			}
+			q.notifyResult(item.run, done)
 		}
+	}
+}
+
+// notify publishes one build event.
+func (q *Queue) notify(run Run, name, message string) {
+	if q.emit == nil {
+		return
+	}
+	q.emit(run.Project, run.Service, name, message)
+}
+
+// notifyResult publishes the outcome of a finished build.
+//
+// Reads the state rather than the error, because a cancelled build is neither a
+// success nor a failure and only the record knows which it was.
+func (q *Queue) notifyResult(queued Run, done Run) {
+	run := done
+	if run.ID == "" {
+		run = queued
+	}
+	switch run.State {
+	case RunSucceeded:
+		message := "build " + ShortID(run.ID) + " succeeded"
+		if run.Image != "" {
+			message += " → " + run.Image
+		}
+		q.notify(run, "build.succeeded", message)
+	case RunFailed:
+		message := "build " + ShortID(run.ID) + " failed"
+		if run.Error != "" {
+			message += ": " + run.Error
+		}
+		q.notify(run, "build.failed", message)
+	default:
+		// Cancelled, or a state nothing is waiting on. Not a notification:
+		// somebody asked for it, so they already know.
 	}
 }
 
