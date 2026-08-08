@@ -128,6 +128,10 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
 /dashboard/            # React SPA (own package.json; build → go:embed) — scaffolded in M4
 /spikes/               # M0 throwaway validation code (own go.mod per spike)
 /docs/                 # THREAT_MODEL.md (M5, written), DR_RUNBOOK.md (stub; M10)
+/site/                 # the landing page (GitHub Pages, M10) — hand-written, no build step.
+                       # install.sh there is COPIED from scripts/ by .github/workflows/pages.yml
+                       # and gitignored: two copies drift, and the one that drifts is curled
+/scripts/install.sh    # the installer; its asset names are a contract with .github/workflows/release.yml
 ```
 
 ## Commands
@@ -165,7 +169,10 @@ Each milestone's definition-of-done: OWASP §14 checks reviewed, `govulncheck` c
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.21) — the north star |
+| `PRD.md` | Full product requirements (v1.28) — the north star |
 | `AGENTS.md` | This file |
+| `README.md` | The public front door: install, quickstart, requirements |
+| `SECURITY.md` | How to report a vulnerability; what is in and out of scope |
+| `LICENSE` | Apache-2.0 |
 | `docs/THREAT_MODEL.md` | Threat model — boundaries, adversaries, §14 status as built (M5) |
 | `docs/DR_RUNBOOK.md` | Disaster recovery procedure (to be written during M10) |

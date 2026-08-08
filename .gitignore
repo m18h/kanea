@@ -10,6 +10,11 @@ coverage.*
 # dropped the committed placeholder internal/dashboard needs to compile.
 /dist/
 
+# The Pages workflow copies scripts/install.sh here at deploy time. Committing a
+# second copy would let the two drift, and the one that drifts is the one
+# everybody curls.
+/site/install.sh
+
 # Go
 vendor/
 

@@ -1,0 +1,57 @@
+# GitHub Pages — the landing page and the hosted installer (PRD §20 M10).
+#
+# The installer this publishes is `scripts/install.sh`, copied into the artefact
+# at build time rather than committed twice. A second checked-in copy would
+# drift from the first, and the one that drifts is the one everybody curls.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/install.sh"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  # The OIDC token deploy-pages exchanges for its deployment credential.
+  id-token: write
+
+# Never cancel a deployment in flight: the site is what a `curl | bash` reads
+# from, and a half-replaced artefact is worse than a stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the site
+        run: |
+          set -euo pipefail
+          cp scripts/install.sh site/install.sh
+          # A syntax error in the installer must fail the deployment, not every
+          # installation. This is the same `bash -n` a reviewer would run.
+          bash -n site/install.sh
+          # The page advertises the piped command; if the script ever stops
+          # being the thing that command fetches, say so here.
+          grep -q "^#!/usr/bin/env bash" site/install.sh
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
