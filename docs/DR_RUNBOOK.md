@@ -284,10 +284,6 @@ something that tells you rather than something you check.
 
 Stated here rather than discovered during an incident:
 
-- **`kanea upgrade`.** §15.4's binary-upgrade flow — drain the edge, restart it,
-  then restart kanead — is not implemented as a command. The state-migration
-  half is (see "A migration failed" above); the orchestration half is
-  `systemctl restart kanea-edge kanead` by hand.
 - **Signed archives.** Archives are authenticated (AEAD) and hashed, so
   tampering is detected on read. There is no separate signature, so an archive
   cannot be attributed to a node cryptographically.

@@ -1,0 +1,118 @@
+# Release (PRD §14 A08, §20 M10).
+#
+# The binary this publishes runs as root on someone's node with access to every
+# container and every secret on it. So the artefacts are signed, and the
+# signature is keyless: a long-lived signing key in a repository secret is a
+# credential that has to be rotated, guarded and eventually leaked, whereas
+# Sigstore binds the signature to *this workflow in this repository* and the
+# proof is in a public transparency log.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # The OIDC token cosign exchanges for a short-lived certificate. This is
+      # what makes the signature attributable without a key to look after.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags and full history: the version stamp is derived from them, and a
+          # shallow clone would produce a binary that reports the wrong one.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The gates are release gates (AGENTS.md #7), so they run here too rather
+      # than being assumed from the commit's CI. A tag can be pushed at any
+      # commit, including one CI never saw.
+      # `make check` includes the dashboard build, which is what go:embed picks
+      # up — so it has to run before the binaries are built, not merely before
+      # they are published.
+      - name: Gates
+        run: make check
+
+      - name: Build release binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for platform in linux/amd64 linux/arm64; do
+            os="${platform%/*}"; arch="${platform#*/}"
+            echo "building ${os}/${arch}"
+            # CGO off: the whole premise is one static binary that runs on any
+            # glibc or musl host without a runtime dependency to chase.
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath \
+                -ldflags "-s -w -X main.version=${VERSION}" \
+                -o "dist/kanea" ./cmd/kanea
+            tar -C dist -czf "dist/kanea_${VERSION#v}_${os}_${arch}.tar.gz" kanea
+            rm dist/kanea
+          done
+
+      - name: Checksums
+        run: |
+          cd dist
+          # No leading "./" on the names: scripts/install.sh selects its line
+          # with `grep " <archive>$"`, and "  ./kanea_…" would not match.
+          sha256sum kanea_*.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Only checksums.txt is signed, and every archive is covered by it. One
+      # signature over a manifest of hashes is the same guarantee as a signature
+      # per artefact, with one thing to verify instead of N.
+      - name: Sign the checksums
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cd dist
+          cosign sign-blob \
+            --output-signature checksums.txt.sig \
+            --output-certificate checksums.txt.pem \
+            checksums.txt
+
+      - name: Verify what we are about to publish
+        run: |
+          cd dist
+          # The same verification scripts/install.sh performs. Running it here
+          # means a signature that cannot be verified fails the release rather
+          # than every installation.
+          cosign verify-blob \
+            --certificate checksums.txt.pem \
+            --signature checksums.txt.sig \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            checksums.txt
+          sha256sum -c checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem

@@ -164,3 +164,25 @@ func TestKeyCeremoryRefusesWhenTheKeyIsNotTypedBack(t *testing.T) {
 		t.Error("a key was written despite the confirmation failing")
 	}
 }
+
+func TestDashboardURLIsSomethingABrowserCanUse(t *testing.T) {
+	// A wildcard bind is not an address anyone can visit, and printing it is
+	// how `kanea ui` becomes a command whose output does not work.
+	cases := map[string]struct {
+		listen string
+		secure bool
+		want   string
+	}{
+		"wildcard port only": {":8600", false, "http://localhost:8600"},
+		"all interfaces":     {"0.0.0.0:8600", false, "http://localhost:8600"},
+		"all v6 interfaces":  {"[::]:8600", true, "https://localhost:8600"},
+		"a real address":     {"10.0.0.5:8600", true, "https://10.0.0.5:8600"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := dashboardURL(tc.listen, tc.secure); got != tc.want {
+				t.Errorf("dashboardURL(%q, %v) = %q, want %q", tc.listen, tc.secure, got, tc.want)
+			}
+		})
+	}
+}

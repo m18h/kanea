@@ -49,9 +49,9 @@ var commands = []command{
 	{"secret", "manage secrets: put, ls, rm (write-only — there is no get)", runSecret},
 	{"user", "manage accounts: add, ls, rm", runUser},
 	{"token", "manage API tokens: create, ls, rm", runToken},
-	{"upgrade", "drain edge, restart services, run state migrations", todo},
+	{"upgrade", "drain edge, restart services, run state migrations", runUpgrade},
 	{"mcp", "stdio MCP server for local AI agents (PRD §16.3)", runMCP},
-	{"ui", "open the dashboard URL", todo},
+	{"ui", "open the dashboard URL", runUI},
 	{"version", "print version and exit", runVersion},
 }
 

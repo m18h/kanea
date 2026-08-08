@@ -527,6 +527,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	health := Health{
 		Status: "ok", Version: s.version, StoreIndex: index,
 		WSConnections: s.ws.count(),
+		Listen:        s.listenAddr, TLS: s.tls != nil,
 	}
 	// What sign-in methods exist is part of what a client needs before it can
 	// authenticate, and health is the one route it can ask without a credential.

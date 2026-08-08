@@ -57,6 +57,16 @@ type Health struct {
 	// unauthenticated routes, and a client needs this answer before it has a
 	// credential to ask with.
 	OIDC *OIDCStatus `json:"oidc,omitempty"`
+	// Listen and TLS describe the network listener, for a client that reached
+	// the daemon over the unix socket and needs somewhere to point a browser
+	// (`kanea ui`). Empty when the socket is the only way in.
+	//
+	// Reported on the unauthenticated route for the same reason the issuer is:
+	// it is needed before there is a credential to ask with, and it is not a
+	// secret — a caller on the network already knows an address that works, and
+	// a caller on the socket is the local root of §13.1.
+	Listen string `json:"listen,omitempty"`
+	TLS    bool   `json:"tls,omitempty"`
 }
 
 // ApplyRequest replaces the desired state of the services it names. Services

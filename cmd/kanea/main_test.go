@@ -59,6 +59,7 @@ var implemented = map[string]bool{
 	"mcp": true,
 	// M10 hardening & packaging:
 	"backup": true, "restore": true, "init": true, "doctor": true,
+	"upgrade": true, "ui": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {
