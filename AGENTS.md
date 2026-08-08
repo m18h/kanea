@@ -61,7 +61,6 @@ Things a future change is most likely to trip over:
 **Not yet built** (v1.0 gaps, stated so they are not rediscovered):
 
 - **Multipart upload** — an archive above 5 GiB is refused by name rather than split.
-- **A dashboard page for the event feed and for backups** — the API routes exist; the React pages do not.
 
 **M0 — technical spikes** (PRD §20), all four GO:
 

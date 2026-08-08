@@ -10,6 +10,8 @@ import { Services } from '@/pages/Services'
 import { ServiceDetail } from '@/pages/ServiceDetail'
 import { Pipelines } from '@/pages/Pipelines'
 import { PipelineDetail } from '@/pages/PipelineDetail'
+import { Events } from '@/pages/Events'
+import { Backups } from '@/pages/Backups'
 import { Login } from '@/pages/Login'
 import { fetchHealth } from '@/lib/api'
 import { SessionProvider } from '@/lib/session-provider'
@@ -20,6 +22,8 @@ const nav = [
   { to: '/', label: 'Overview', exact: true },
   { to: '/services', label: 'Services', exact: false },
   { to: '/pipelines', label: 'Pipelines', exact: false },
+  { to: '/events', label: 'Events', exact: false },
+  { to: '/backups', label: 'Backups', exact: false },
 ]
 
 export function App() {
@@ -147,6 +151,9 @@ function Page({ path }: { path: string }) {
   if (run?.project && run.service && run.id) {
     return <PipelineDetail project={run.project} service={run.service} id={run.id} />
   }
+
+  if (matchPath('/events', path)) return <Events />
+  if (matchPath('/backups', path)) return <Backups />
 
   // A deep link the server handed to the app but the app does not know: say so
   // rather than render a blank page.

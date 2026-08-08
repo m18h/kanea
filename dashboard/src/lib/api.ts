@@ -298,3 +298,118 @@ async function refusalText(resp: Response, what: string): Promise<string> {
 function enc(segment: string): string {
   return encodeURIComponent(segment)
 }
+
+// ---- events (PRD §11, §12) ----
+
+export const eventSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  // Severity arrives as a name — the Go side marshals it that way so a feed is
+  // readable without a lookup table.
+  severity: z.enum(['info', 'warning', 'error']).catch('warning'),
+  project: z.string().optional(),
+  service: z.string().optional(),
+  message: z.string(),
+  detail: z.string().optional(),
+  at: z.string(),
+})
+
+export const eventsResponseSchema = z.object({
+  events: z.array(eventSchema).default([]),
+  // How many events the dispatcher could not queue. Surfaced rather than
+  // hidden: a feed that is quiet because everything is fine and one that is
+  // quiet because the queue overflowed look identical otherwise.
+  dropped: z.number().optional(),
+})
+
+export type KaneaEvent = z.infer<typeof eventSchema>
+export type EventsResponse = z.infer<typeof eventsResponseSchema>
+
+/** Read the notification feed, newest first. */
+export async function fetchEvents(
+  opts: { project?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<EventsResponse> {
+  const query = new URLSearchParams()
+  if (opts.project) query.set('project', opts.project)
+  if (opts.limit) query.set('limit', String(opts.limit))
+
+  const suffix = query.toString() ? `?${query}` : ''
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch(`/v1/events${suffix}`, init)
+  if (!resp.ok) throw new Error(`events: ${resp.status}`)
+  return eventsResponseSchema.parse(await resp.json())
+}
+
+// ---- backups (PRD §15.3) ----
+
+export const backupPartSchema = z.object({
+  name: z.string(),
+  size: z.number(),
+  sha256: z.string(),
+})
+
+export const backupSchema = z.object({
+  id: z.string(),
+  key_id: z.string().optional(),
+  created_at: z.string(),
+  index: z.number(),
+  reason: z.string().optional(),
+  node: z.string().optional(),
+  version: z.string().optional(),
+  snapshot: backupPartSchema,
+  counts: z.record(z.string(), z.number()).optional(),
+})
+
+export const replicationStatusSchema = z.object({
+  sink: z.string().default(''),
+  shipped_to: z.number().default(0),
+  last_segment_at: z.string().optional(),
+  last_snapshot_at: z.string().optional(),
+  failures: z.number().default(0),
+})
+
+export const backupsResponseSchema = z.object({
+  backups: z.array(backupSchema).default([]),
+  replication: replicationStatusSchema.default({
+    sink: '',
+    shipped_to: 0,
+    failures: 0,
+  }),
+})
+
+export type Backup = z.infer<typeof backupSchema>
+export type ReplicationStatus = z.infer<typeof replicationStatusSchema>
+export type BackupsResponse = z.infer<typeof backupsResponseSchema>
+
+/**
+ * List archives and report replication health.
+ *
+ * A 503 means no backup destination is configured, which is a supported (if
+ * regrettable) state rather than a failure. The page says so explicitly — an
+ * empty list with no explanation reads as "backups are fine and there are none
+ * yet", which is the opposite of the truth.
+ */
+export async function fetchBackups(signal?: AbortSignal): Promise<BackupsResponse | null> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch('/v1/backups', init)
+  if (resp.status === 503) return null
+  if (!resp.ok) throw new Error(`backups: ${resp.status}`)
+  return backupsResponseSchema.parse(await resp.json())
+}
+
+/** Take an on-demand archive. */
+export async function createBackup(reason: string): Promise<void> {
+  const resp = await fetch('/v1/backups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  })
+  if (!resp.ok) throw new Error(await refusalText(resp, 'backup'))
+}
+
+/** Check an archive against its manifest. */
+export async function verifyBackup(id: string): Promise<void> {
+  const resp = await fetch(`/v1/backups/${enc(id)}/verify`)
+  if (!resp.ok) throw new Error(await refusalText(resp, 'verify'))
+}
