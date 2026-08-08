@@ -230,9 +230,10 @@ func registry() []*tool {
 		},
 		{
 			name: "get_node_stats", tier: tierRead,
-			description: "Summarise the node: version, how much is declared, how much is running, " +
-				"how much is failing, the metrics pipeline's health and whether the circuit " +
-				"breaker is open.",
+			description: "Summarise the node: version, how much is declared, how much is " +
+				"running, how much is failing, the machine's own CPU, memory and load, the " +
+				"metrics pipeline's health and whether the circuit breaker is open. A missing " +
+				"value means no reading, which is not the same as zero.",
 			schema: object(nil),
 			run:    runNodeStats,
 		},

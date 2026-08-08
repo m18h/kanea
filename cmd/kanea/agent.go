@@ -461,7 +461,7 @@ func runAgent(args []string) error {
 		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
 		Backups: backups,
 		OIDC:    provider, Sessions: users,
-		Metrics: metrics, Breaker: breaker,
+		Metrics: metrics, Breaker: breaker, Node: scaling.NewNodeReader(""),
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
 		AuthConfigured: configured, InsecureCookies: *insecureCookies,
 	})

@@ -100,6 +100,9 @@ type ServerConfig struct {
 	Metrics MetricsSource
 	// Breaker reports the circuit breaker's state to the exporter.
 	Breaker BreakerSource
+	// Node reads the machine's own CPU, memory and load (§17). Nil omits them,
+	// which is what a non-Linux build gets.
+	Node NodeSource
 	// OIDC is the identity provider, when one is configured (§13.2). Nil leaves
 	// the provider routes answering 501 rather than 404: "this daemon has no
 	// provider" and "this daemon has no such feature" are different answers.
@@ -175,6 +178,7 @@ type Server struct {
 	accounts        Accounts
 	metrics         MetricsSource
 	breaker         BreakerSource
+	node            NodeSource
 	oidc            Provider
 	sessions        SessionIssuer
 	insecureCookies bool
@@ -225,7 +229,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		notifier: cfg.Notifier, backups: cfg.Backups,
 		auth: cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
-		metrics: cfg.Metrics, breaker: cfg.Breaker,
+		metrics: cfg.Metrics, breaker: cfg.Breaker, node: cfg.Node,
 		insecureCookies: cfg.InsecureCookies,
 	}
 

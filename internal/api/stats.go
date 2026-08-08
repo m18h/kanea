@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/kanea-dev/kanea/internal/scaling"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -17,12 +18,8 @@ import (
 // tools are single request/response by construction.
 const PathStats = "/v1/stats"
 
-// NodeStats is the node's own summary.
-//
-// Counts and health, not CPU and memory: Kanea does not scrape the node itself
-// (§17 lists procfs node stats; no scraper collects them, so nothing here
-// invents numbers for them). What this reports is what the control plane
-// actually knows — how much it is running and how much of that is working.
+// NodeStats is the node's own summary: what is declared, what is running, and
+// how the machine underneath is doing (§17).
 type NodeStats struct {
 	Version string `json:"version"`
 	// Projects, Services and Allocs are what is declared.
@@ -42,8 +39,12 @@ type NodeStats struct {
 	// inaction.
 	BreakerOpen bool `json:"breaker_open"`
 	// EventsDropped counts notification events the dispatcher could not queue.
-	EventsDropped int64     `json:"events_dropped,omitempty"`
-	At            time.Time `json:"at"`
+	EventsDropped int64 `json:"events_dropped,omitempty"`
+	// Node is the machine's own CPU, memory and load. Absent when procfs cannot
+	// be read — which is a different fact from an idle node, and the pointer
+	// fields inside it say so individually.
+	Node *scaling.NodeStats `json:"node,omitempty"`
+	At   time.Time          `json:"at"`
 }
 
 // MetricsHealth describes the time series.
@@ -125,5 +126,18 @@ func (s *Server) nodeStats(r *http.Request) (NodeStats, error) {
 	if s.notifyStats != nil {
 		out.EventsDropped = s.notifyStats().Dropped
 	}
+	if s.node != nil {
+		reading := s.node.Read()
+		out.Node = &reading
+	}
 	return out, nil
+}
+
+// NodeSource reads the machine's own statistics.
+//
+// An interface for one method, so the API depends on "hand me a reading" rather
+// than on procfs — which is what lets a non-Linux build, and every test, omit
+// it entirely rather than fake a filesystem.
+type NodeSource interface {
+	Read() scaling.NodeStats
 }

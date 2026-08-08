@@ -61,7 +61,6 @@ Things a future change is most likely to trip over:
 
 - **`kanea exec`** — still `todo` in the command table. §14 requires it to be admin-only and audited.
 - **Multipart upload** — an archive above 5 GiB is refused by name rather than split.
-- **Node CPU/memory stats** — §17 lists procfs node stats; no scraper collects them, and `get_node_stats` reports control-plane facts instead of inventing them.
 - **A dashboard page for the event feed and for backups** — the API routes exist; the React pages do not.
 
 **M0 — technical spikes** (PRD §20), all four GO:
