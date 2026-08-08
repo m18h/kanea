@@ -280,17 +280,20 @@ something that tells you rather than something you check.
 
 ---
 
-## 8. What is not yet built
+## 8. Limits, stated so they are not discovered during an incident
 
-Stated here rather than discovered during an incident:
-
-- **Signed archives.** Archives are authenticated (AEAD) and hashed, so
-  tampering is detected on read. There is no separate signature, so an archive
-  cannot be attributed to a node cryptographically.
-- **Multipart upload.** An archive above 5 GiB is refused by name rather than
-  split. A single node's Store is far below that; a node that reaches it needs
-  this built.
-- **Interoperability beyond MinIO.** CI runs the S3 client against MinIO, which
-  verifies SigV4 — so the signature is known to be one a real service accepts.
-  AWS S3, R2, B2 and Wasabi have not been in the loop, and each has its own
-  quirks around addressing style and region handling.
+- **Interoperability is established against MinIO only.** CI runs the S3 client
+  against MinIO, which verifies SigV4 — so the signature is known to be one a
+  real service accepts. AWS S3, R2, B2 and Wasabi have not been in the loop, and
+  each has quirks around addressing style and region handling. **Run
+  `kanea backup verify` after configuring a new destination**, before you rely
+  on it.
+- **An archive above 5 GiB is refused rather than split.** Multipart upload is
+  not implemented. A single node's Store is orders of magnitude below the limit;
+  the error names the number if you ever meet it.
+- **Archives are authenticated, not signed.** Tampering is detected on read
+  because every chunk is AEAD-sealed and the manifest carries a hash. There is
+  no signature, so an archive cannot be cryptographically attributed to the node
+  that wrote it — which matters only for a bucket several nodes write to.
+- **Local volumes are not in an archive.** See §1. A service that keeps data in
+  a volume needs its own backup for that volume.

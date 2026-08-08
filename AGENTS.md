@@ -58,9 +58,15 @@ Things a future change is most likely to trip over:
 - **Cancelling a context a websocket read is blocked on closes the connection.** That is coder/websocket's documented behaviour — a half-read frame leaves the stream unusable — so an exec read loop scoped to the exec itself tears the socket down the moment the process exits, and the exit frame is written to a dead connection. The loop is scoped to the handler for that reason. It presented as an exit code that was always zero, which every test but one silently accepted.
 - **The systemd units carry constraint #11**, not the Go code. `MemoryMin` and `OOMScoreAdjust` are systemd's to set, and `kanea-edge` must never gain an `After=kanead.service` — north-south traffic surviving a control-plane restart is why it is a separate process at all. The units use `Type=exec`: nothing sends `sd_notify`.
 
-**Not yet built** (v1.0 gaps, stated so they are not rediscovered):
+**Deliberately not built** — decisions, not gaps, so they are not "fixed" by someone who mistakes them for oversights:
 
-- **Multipart upload** — an archive above 5 GiB is refused by name rather than split.
+- **Multipart upload.** An archive above 5 GiB is refused *by name* rather than split. A single node's Store is orders of magnitude below that, and multipart is a second protocol with its own abort-and-clean-up failure modes — carrying it for a case that does not arise costs more than the case does. Revisit if a real node ever hits the limit; the error names the number so it is unmissable.
+- **A restore button in the dashboard.** A restore replaces everything on the node and happens on a stopped one. It belongs at a terminal.
+- **Signed archives.** Archives are AEAD-authenticated and hashed, so tampering is detected on read. There is no separate signature, so an archive cannot be *attributed* to a node cryptographically — which matters only for a bucket several nodes write to, and none do.
+
+**Known limits** (true today, not decisions):
+
+- **S3 interoperability is established against MinIO only.** CI runs the client against it and MinIO verifies SigV4, so the signature is one a real service accepts. AWS S3, R2, B2 and Wasabi have not been in the loop, and each has quirks around addressing style and region handling.
 
 **M0 — technical spikes** (PRD §20), all four GO:
 
