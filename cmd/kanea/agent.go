@@ -220,6 +220,12 @@ func runAgent(args []string) error {
 		}
 	}()
 
+	// Before anything reads or writes through the Store, and after it is open:
+	// the one window where a copy can be taken and a migration has not started.
+	if err := migrateAtStart(ctx, st, *dataDir, logger); err != nil {
+		return err
+	}
+
 	driver, err := runtime.New(runtime.Config{Socket: *containerdSocket, Logger: logger})
 	if err != nil {
 		return fmt.Errorf("containerd: %w", err)

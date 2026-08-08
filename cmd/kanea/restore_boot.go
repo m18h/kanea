@@ -12,6 +12,7 @@ import (
 
 	"github.com/kanea-dev/kanea/internal/backup"
 	"github.com/kanea-dev/kanea/internal/secrets"
+	"github.com/kanea-dev/kanea/internal/store"
 )
 
 // Restore at start (PRD §15.3).
@@ -128,5 +129,44 @@ func restoreAtStart(ctx context.Context, opts bootRestoreOptions) error {
 		"requested_by", request.RequestedBy,
 		"detail", "the Cilium kvstore is derived state and is rebuilt, not restored; "+
 			"images are re-pulled as services converge")
+	return nil
+}
+
+// migrateAtStart runs pending schema migrations, after taking the copy that
+// makes a bad one survivable (PRD §15.4).
+//
+// The ordering is the whole point and it is why the Store does not migrate
+// itself at Open: a migration rewrites state in place, and the only way back
+// from one that goes wrong is a copy of what was there. That copy needs the
+// database open, and the migration must not have started — which leaves exactly
+// this window.
+func migrateAtStart(ctx context.Context, st store.Store, dataDir string, log *slog.Logger) error {
+	pending, err := store.PendingMigration(ctx, st)
+	if err != nil {
+		return err
+	}
+	if !pending.Needed() {
+		return nil
+	}
+
+	copyPath := filepath.Join(dataDir,
+		fmt.Sprintf("%s.pre-v%d-%s", stateFile, pending.To, time.Now().UTC().Format("20060102T150405Z")))
+	// A local file copy, not an archive: it needs no key, no bucket and no
+	// network, and the operator putting it back is a `mv`. The replicator's own
+	// snapshot happens too, when one is configured — but a migration must not
+	// depend on a bucket being reachable to be safe.
+	if err := store.Compact(ctx, st, copyPath); err != nil {
+		return fmt.Errorf("cannot take the pre-migration copy: %w", err)
+	}
+	log.Warn("migrating the state schema",
+		"plan", pending.Describe(), "copy", copyPath,
+		"detail", "to roll back: stop kanead, move this copy over "+
+			filepath.Join(dataDir, stateFile)+", and run the previous binary")
+
+	if _, err := store.Migrate(ctx, st); err != nil {
+		return fmt.Errorf("%w — the pre-migration copy is at %s", err, copyPath)
+	}
+	log.Info("state schema migrated", "to", pending.To, "copy", copyPath,
+		"detail", "delete the copy once the upgrade is confirmed good")
 	return nil
 }

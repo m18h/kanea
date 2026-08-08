@@ -16,10 +16,16 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// schemaVersion is the on-disk layout version. Migrations are forward-only and
-// run at open (PRD §15.4); an unknown-newer version is refused rather than
-// guessed at, because a downgrade that silently rewrites state is unrecoverable.
-const schemaVersion = 1
+// schemaVersion is the on-disk layout version (PRD §15.4). Migrations are
+// forward-only and run at startup; an unknown-newer version is refused rather
+// than guessed at, because a downgrade that silently rewrites state is
+// unrecoverable.
+//
+// A var rather than a const so a test can stand a future schema up against the
+// migration machinery, which otherwise could not be exercised until the first
+// real migration existed — which is the worst moment to find out it is wrong.
+// It is package-private and nothing writes to it outside a test.
+var schemaVersion uint64 = 1
 
 // Internal buckets. The leading underscore keeps them out of the Kind space, so
 // a caller can never address them through the public API.
@@ -124,14 +130,27 @@ func (s *boltStore) init() error {
 			return nil
 		}
 
-		switch have := decodeUint64(found); {
-		case have > schemaVersion:
+		have := decodeUint64(found)
+		if have > schemaVersion {
+			// The one version mismatch that is always fatal. A newer database
+			// opened by an older binary is a downgrade, and a downgrade that
+			// silently writes is unrecoverable — the fields the newer version
+			// added are dropped by the older one's encoder on the first update.
 			return fmt.Errorf("%w: on-disk schema v%d is newer than this binary's v%d — upgrade kanea",
 				ErrInvalid, have, schemaVersion)
-		case have < schemaVersion:
-			// Forward-only migrations land here (PRD §15.4). None yet: v1 is
-			// the first schema, so any lower value is impossible.
-			return fmt.Errorf("%w: no migration path from schema v%d", ErrInvalid, have)
+		}
+		if have < schemaVersion {
+			// Not migrated here (PRD §15.4). Opening and migrating in one step
+			// would leave nowhere to put the copy that makes a bad migration
+			// survivable — and taking that copy needs the database open. So Open
+			// checks that a path exists and the caller runs it: see
+			// PendingMigration and Migrate.
+			if _, err := planMigration(have); err != nil {
+				return err
+			}
+			s.log.Warn("the state schema is out of date",
+				"on_disk", have, "binary", schemaVersion,
+				"detail", "kanead migrates it at startup, after taking a copy")
 		}
 		return nil
 	})
