@@ -106,3 +106,30 @@ func checkKeyPermissions(path string) error {
 	}
 	return nil
 }
+
+// LoadKey reads an existing master key, without creating one.
+//
+// The distinction from loadOrCreateKey matters at exactly one moment: a restore
+// on a fresh node. Creating a key there would succeed, encrypt nothing, and
+// leave the operator holding a node that cannot read a single one of its own
+// backups — with no error to tell them why. So this refuses, and the message
+// points at the ceremony that produced the key they need to put back.
+func LoadKey(path string) ([]byte, error) {
+	body, err := os.ReadFile(path) // #nosec G304 — the path is operator configuration
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%w: no master key at %s — restore the one escrowed by "+
+			"`kanea init` before continuing (docs/DR_RUNBOOK.md starts with this step)",
+			ErrKeyUnusable, path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: read %s: %w", ErrKeyUnusable, path, err)
+	}
+	if err := checkKeyPermissions(path); err != nil {
+		return nil, err
+	}
+	if len(body) != chacha20poly1305.KeySize {
+		return nil, fmt.Errorf("%w: %s holds %d bytes, want %d",
+			ErrKeyUnusable, path, len(body), chacha20poly1305.KeySize)
+	}
+	return body, nil
+}
