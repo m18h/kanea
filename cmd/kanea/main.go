@@ -40,7 +40,7 @@ var commands = []command{
 	{"ps", "list allocations", runPs},
 	{"status", "service and platform status", runStatus},
 	{"logs", "stream service logs", runLogs},
-	{"exec", "debug shell into an alloc (admin-only, audited)", todo},
+	{"exec", "debug shell into an alloc (admin-only, audited)", runExec},
 	{"scale", "manually scale a service", runScale},
 	{"build", "trigger a build pipeline", runBuild},
 	{"project", "project operations: sync, builds", runProject},
@@ -56,10 +56,20 @@ var commands = []command{
 }
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "kanea:", err)
-		os.Exit(1)
+	err := run(os.Args[1:])
+	if err == nil {
+		return
 	}
+	// A command that ran something else propagates its exit code and says
+	// nothing: `kanea exec web -- test -f /x` has to be usable in a script, and
+	// printing "kanea: exit status 1" over a program's own output would make it
+	// unusable in one.
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) {
+		os.Exit(coded.ExitCode())
+	}
+	fmt.Fprintln(os.Stderr, "kanea:", err)
+	os.Exit(1)
 }
 
 func run(args []string) error {

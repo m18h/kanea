@@ -1,10 +1,13 @@
 package main
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kanea-dev/kanea/internal/api"
 )
 
 func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
@@ -184,5 +187,53 @@ func TestDashboardURLIsSomethingABrowserCanUse(t *testing.T) {
 				t.Errorf("dashboardURL(%q, %v) = %q, want %q", tc.listen, tc.secure, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestExecArgumentsRequireTheSeparator(t *testing.T) {
+	// Without `--`, `kanea exec web ls -la` is ambiguous: -la could be one of
+	// kanea's flags. Guessing produces the failure where a flag meant for the
+	// remote command is silently eaten here.
+	if _, _, err := splitExecArgs([]string{"web", "ls", "-la"}); err == nil {
+		t.Error("a command without `--` was accepted")
+	} else if !strings.Contains(err.Error(), "--") {
+		t.Errorf("the error does not show the fix: %v", err)
+	}
+
+	service, command, err := splitExecArgs([]string{"web", "--", "ls", "-la"})
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if service != "web" {
+		t.Errorf("service = %q", service)
+	}
+	// The remote flags survive intact — that is the whole point of the
+	// separator.
+	if len(command) != 2 || command[1] != "-la" {
+		t.Errorf("command = %q, want [ls -la]", command)
+	}
+
+	for _, args := range [][]string{{}, {"web"}, {"web", "--"}} {
+		if _, _, err := splitExecArgs(args); err == nil {
+			t.Errorf("accepted %q", args)
+		}
+	}
+}
+
+func TestExecQueryRoundTrips(t *testing.T) {
+	// The command is repeated parameters rather than one joined string:
+	// joining means the server has to split, and every splitting rule is wrong
+	// for some argument someone will eventually pass.
+	query := api.ExecQuery("shop", "shop-web-0",
+		[]string{"/bin/sh", "-c", "echo hello world & true"}, true, "1000")
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := values["command"]; len(got) != 3 || got[2] != "echo hello world & true" {
+		t.Errorf("command = %q, want the argument array intact including the ampersand", got)
+	}
+	if values.Get("tty") != "true" || values.Get("user") != "1000" {
+		t.Errorf("query lost its options: %s", query)
 	}
 }

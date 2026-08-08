@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -505,4 +506,139 @@ func decodeExit(env *events.Envelope) (Exit, error) {
 		ExitCode: exit.ExitStatus,
 		ExitedAt: exit.ExitedAt.AsTime(),
 	}, nil
+}
+
+// ExecStream runs a command inside a running alloc with its streams attached.
+//
+// This is the debug shell of PRD §16.2, and it differs from the health-check
+// Exec above in every respect that matters: it carries a person's terminal, it
+// has no deadline, and its output goes somewhere. What it shares is the rule
+// that matters most — the command is an argument array executed directly, never
+// a shell string, so the only shell involved is one the operator named.
+//
+// The exec process inherits the task's namespaces and cgroup, so a debug shell
+// counts against the alloc's own limits rather than escaping them. That is not
+// a detail: an exec that ran outside the cgroup would be a way to use memory
+// the workload was refused.
+func (d *containerdDriver) ExecStream(
+	ctx context.Context, project, id string, opts ExecOptions,
+) (uint32, error) {
+	if len(opts.Command) == 0 {
+		return 0, fmt.Errorf("%w: empty exec command", ErrInvalidSpec)
+	}
+	ctx = scope(ctx, project)
+
+	task, err := d.task(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	spec, err := task.Spec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("spec of %s: %w", id, err)
+	}
+
+	// Start from the task's own process spec so the exec keeps the workload's
+	// user, environment and working directory. An operator debugging a service
+	// wants the service's world, not a default one.
+	process := *spec.Process
+	process.Args = opts.Command
+	process.Terminal = opts.TTY
+	if opts.User != "" {
+		// Deliberately narrow: a numeric uid only. Resolving a name would mean
+		// reading the container's /etc/passwd from the host, and a
+		// container-controlled file deciding which uid the control plane runs a
+		// process as is not a thing to build.
+		uid, err := strconv.ParseUint(opts.User, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("%w: exec user must be a numeric uid, got %q",
+				ErrInvalidSpec, opts.User)
+		}
+		process.User.UID = uint32(uid)
+	}
+
+	streams := cio.NewCreator(execStreamOpts(opts)...)
+	execID := "kanea-exec-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+
+	proc, err := task.Exec(ctx, execID, &process, streams)
+	if err != nil {
+		return 0, fmt.Errorf("exec in %s: %w", id, err)
+	}
+	defer func() {
+		// Always reap. A leaked exec process holds the task's resources and
+		// counts against the alloc's pids limit — and a debug shell someone
+		// closed the laptop lid on is exactly how that happens.
+		if _, delErr := proc.Delete(context.WithoutCancel(ctx), containerd.WithProcessKill); delErr != nil {
+			d.log.Debug("cleaning up exec", "alloc", id, "exec", execID, "error", delErr)
+		}
+	}()
+
+	statusC, err := proc.Wait(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("wait exec in %s: %w", id, err)
+	}
+	if err := proc.Start(ctx); err != nil {
+		return 0, fmt.Errorf("start exec in %s: %w", id, err)
+	}
+
+	// Resizes are pumped on their own goroutine and stop when the exec does.
+	// A terminal that stays the wrong size after the window changed is a small
+	// thing that makes a debug session feel broken.
+	if opts.TTY && opts.Resize != nil {
+		done := make(chan struct{})
+		defer close(done)
+		go pumpResize(ctx, proc, opts.Resize, done, d.log)
+	}
+
+	select {
+	case <-ctx.Done():
+		// The caller hung up. The deferred Delete kills the process, so a
+		// closed terminal does not leave a shell running in the container.
+		return 0, fmt.Errorf("exec in %s: %w", id, ctx.Err())
+	case status := <-statusC:
+		code, _, err := status.Result()
+		if err != nil {
+			return 0, fmt.Errorf("exec in %s: %w", id, err)
+		}
+		return code, nil
+	}
+}
+
+// execStreamOpts builds the cio options for an attached exec.
+func execStreamOpts(opts ExecOptions) []cio.Opt {
+	stdin, stdout, stderr := opts.Stdin, opts.Stdout, opts.Stderr
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	out := []cio.Opt{cio.WithStreams(stdin, stdout, stderr)}
+	if opts.TTY {
+		out = append(out, cio.WithTerminal)
+	}
+	return out
+}
+
+// pumpResize forwards terminal size changes until the exec ends.
+func pumpResize(
+	ctx context.Context, proc containerd.Process,
+	sizes <-chan TerminalSize, done <-chan struct{}, log *slog.Logger,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case size, ok := <-sizes:
+			if !ok {
+				return
+			}
+			if err := proc.Resize(ctx, uint32(size.Width), uint32(size.Height)); err != nil {
+				// Not fatal: a terminal at the wrong size is a nuisance, and
+				// killing the session over it would be worse.
+				log.Debug("cannot resize an exec terminal", "error", err)
+			}
+		}
+	}
 }

@@ -462,6 +462,7 @@ func runAgent(args []string) error {
 		Backups: backups,
 		OIDC:    provider, Sessions: users,
 		Metrics: metrics, Breaker: breaker, Node: scaling.NewNodeReader(""),
+		Exec:   driver,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
 		AuthConfigured: configured, InsecureCookies: *insecureCookies,
 	})

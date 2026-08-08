@@ -633,3 +633,11 @@ func (w *recordingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (w *recordingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// auditDetail records extra context on the audit entry — for exec, the command
+// that was asked for, which is the whole point of auditing an exec at all.
+func auditDetail(r *http.Request, detail string) {
+	if f, ok := r.Context().Value(auditFieldsKey{}).(*auditFields); ok {
+		f.detail = detail
+	}
+}

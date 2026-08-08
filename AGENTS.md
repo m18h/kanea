@@ -55,11 +55,11 @@ Things a future change is most likely to trip over:
 - **A restore is staged, never performed in place.** `internal/api`'s `Backups` interface has no method that restores; the daemon does it at the next start, before anything opens the Store. That is the interface, not a check.
 - **`buildReplication` returns `api.Backups`, not `*backupService`.** A nil concrete pointer in an interface field is a non-nil interface: every "is a destination configured" test would answer yes and then panic.
 - **A Sink's `Put` does not own the reader it is given.** `net/http` uses an `io.ReadCloser` request body directly and the transport closes it, so passing an `*os.File` hands the caller's handle to net/http. That defect uploaded every S3 snapshot successfully and then failed before writing the manifest — an invisible archive, every time — and no fake server could catch it, because every unit test passed a `strings.Reader`. The `s3-interop` CI job against MinIO is what found it.
+- **Cancelling a context a websocket read is blocked on closes the connection.** That is coder/websocket's documented behaviour — a half-read frame leaves the stream unusable — so an exec read loop scoped to the exec itself tears the socket down the moment the process exits, and the exit frame is written to a dead connection. The loop is scoped to the handler for that reason. It presented as an exit code that was always zero, which every test but one silently accepted.
 - **The systemd units carry constraint #11**, not the Go code. `MemoryMin` and `OOMScoreAdjust` are systemd's to set, and `kanea-edge` must never gain an `After=kanead.service` — north-south traffic surviving a control-plane restart is why it is a separate process at all. The units use `Type=exec`: nothing sends `sd_notify`.
 
 **Not yet built** (v1.0 gaps, stated so they are not rediscovered):
 
-- **`kanea exec`** — still `todo` in the command table. §14 requires it to be admin-only and audited.
 - **Multipart upload** — an archive above 5 GiB is refused by name rather than split.
 - **A dashboard page for the event feed and for backups** — the API routes exist; the React pages do not.
 

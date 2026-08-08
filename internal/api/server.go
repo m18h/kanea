@@ -103,6 +103,9 @@ type ServerConfig struct {
 	// Node reads the machine's own CPU, memory and load (§17). Nil omits them,
 	// which is what a non-Linux build gets.
 	Node NodeSource
+	// Exec attaches a debug shell to an alloc (§16.2). Nil answers 503: a
+	// daemon with no runtime driver has nothing to attach to.
+	Exec Execer
 	// OIDC is the identity provider, when one is configured (§13.2). Nil leaves
 	// the provider routes answering 501 rather than 404: "this daemon has no
 	// provider" and "this daemon has no such feature" are different answers.
@@ -179,6 +182,7 @@ type Server struct {
 	metrics         MetricsSource
 	breaker         BreakerSource
 	node            NodeSource
+	exec            Execer
 	oidc            Provider
 	sessions        SessionIssuer
 	insecureCookies bool
@@ -229,7 +233,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		notifier: cfg.Notifier, backups: cfg.Backups,
 		auth: cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
-		metrics: cfg.Metrics, breaker: cfg.Breaker, node: cfg.Node,
+		metrics: cfg.Metrics, breaker: cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
 		insecureCookies: cfg.InsecureCookies,
 	}
 
@@ -276,6 +280,12 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET "+PathMetrics, s.route(policy{action: "metrics.read"}, s.handleMetrics))
 	mux.Handle("GET "+PathLogs, s.route(policy{action: "logs.read"}, s.handleLogs))
 	mux.Handle("GET "+PathWS, s.route(policy{action: "ws.connect"}, s.handleWS))
+	// The most privileged route here, and §14 names it: an exec is a shell
+	// inside a workload, with the workload's filesystem and credentials. Marked
+	// mutating so it is admin-only and audited — the entry is written whether
+	// or not the session worked, because "someone tried to open a shell on
+	// production" is worth keeping either way.
+	mux.Handle("GET "+PathExec, s.route(policy{action: "alloc.exec", mutates: true}, s.handleExec))
 	// The audit log is admin-only to read: it names who did what, and that is
 	// not something a viewer needs (§13.3).
 	mux.Handle("GET "+PathAudit, s.route(policy{action: "audit.list", adminOnly: true}, s.handleAudit))

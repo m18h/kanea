@@ -24,6 +24,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -122,6 +123,39 @@ type Status struct {
 	Image string
 }
 
+// ExecOptions describes an attached exec.
+//
+// Separate from the health check's signature because the two differ in every
+// respect that matters: one discards output and has a deadline, the other
+// carries a person's terminal and lasts as long as they keep typing.
+type ExecOptions struct {
+	// Command is an argument array, executed directly. Never a shell string —
+	// that is the same command-injection rule the health check follows (§14
+	// A03), and it matters more here, where the input reaches a real shell only
+	// because the operator asked for one by name.
+	Command []string
+	// TTY allocates a pseudo-terminal, which merges stdout and stderr and lets
+	// the remote process behave interactively.
+	TTY bool
+	// Stdin is closed by the caller to signal EOF. Nil means no stdin.
+	Stdin io.Reader
+	// Stdout and Stderr receive output. With TTY set, everything arrives on
+	// Stdout, because that is what a pseudo-terminal does.
+	Stdout io.Writer
+	Stderr io.Writer
+	// Resize delivers terminal size changes. Nil means the size never changes,
+	// which is what a non-interactive exec wants.
+	Resize <-chan TerminalSize
+	// User overrides the container's own user. Empty keeps it.
+	User string
+}
+
+// TerminalSize is a pseudo-terminal's dimensions.
+type TerminalSize struct {
+	Width  uint16
+	Height uint16
+}
+
 // Exit reports a task that has stopped. The reconciler's crash signal.
 type Exit struct {
 	ID       string
@@ -154,6 +188,9 @@ type Driver interface {
 	// Exec runs a command inside a running alloc and returns its exit code.
 	// It backs the `exec` health check (R7): argument array, never a shell.
 	Exec(ctx context.Context, project, id string, cmd []string, timeout time.Duration) (uint32, error)
+	// ExecStream runs a command with its streams attached — the debug shell of
+	// PRD §16.2, as opposed to the health check above, which discards output.
+	ExecStream(ctx context.Context, project, id string, opts ExecOptions) (uint32, error)
 	// Wait blocks until the alloc exits or the context is cancelled.
 	Wait(ctx context.Context, project, id string) (Exit, error)
 	// Exits streams task exits for a project — the reconciler's crash signal,
