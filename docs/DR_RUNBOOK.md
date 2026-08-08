@@ -294,6 +294,7 @@ Stated here rather than discovered during an incident:
 - **Multipart upload.** An archive above 5 GiB is refused by name rather than
   split. A single node's Store is far below that; a node that reaches it needs
   this built.
-- **Interoperability testing against real object stores.** The S3 client is
-  exercised against a fake service in CI. The signature is the part a real
-  endpoint would disagree with, and no real endpoint has been in the loop.
+- **Interoperability beyond MinIO.** CI runs the S3 client against MinIO, which
+  verifies SigV4 — so the signature is known to be one a real service accepts.
+  AWS S3, R2, B2 and Wasabi have not been in the loop, and each has its own
+  quirks around addressing style and region handling.

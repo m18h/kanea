@@ -25,6 +25,11 @@ import (
 type Sink interface {
 	// Put writes an object. It must be atomic from a reader's point of view:
 	// a concurrent List must never see a half-written object.
+	//
+	// It reads the body and does not own it: the caller closes. Stated because
+	// the natural S3 implementation gets this wrong — net/http closes a request
+	// body that is already an io.ReadCloser, which silently takes the caller's
+	// file handle with it.
 	Put(ctx context.Context, name string, size int64, body io.Reader) error
 	// Get opens an object for reading.
 	Get(ctx context.Context, name string) (io.ReadCloser, error)

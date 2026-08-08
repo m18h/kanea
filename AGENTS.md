@@ -54,6 +54,7 @@ Things a future change is most likely to trip over:
 - **The Store does not migrate itself at Open** (§15.4). A migration rewrites state in place, and the copy that makes a bad one survivable needs the database open and the migration not started — exactly one window, between `Open` and `Migrate`. Each step's data change and version bump share a transaction.
 - **A restore is staged, never performed in place.** `internal/api`'s `Backups` interface has no method that restores; the daemon does it at the next start, before anything opens the Store. That is the interface, not a check.
 - **`buildReplication` returns `api.Backups`, not `*backupService`.** A nil concrete pointer in an interface field is a non-nil interface: every "is a destination configured" test would answer yes and then panic.
+- **A Sink's `Put` does not own the reader it is given.** `net/http` uses an `io.ReadCloser` request body directly and the transport closes it, so passing an `*os.File` hands the caller's handle to net/http. That defect uploaded every S3 snapshot successfully and then failed before writing the manifest — an invisible archive, every time — and no fake server could catch it, because every unit test passed a `strings.Reader`. The `s3-interop` CI job against MinIO is what found it.
 - **The systemd units carry constraint #11**, not the Go code. `MemoryMin` and `OOMScoreAdjust` are systemd's to set, and `kanea-edge` must never gain an `After=kanead.service` — north-south traffic surviving a control-plane restart is why it is a separate process at all. The units use `Type=exec`: nothing sends `sd_notify`.
 
 **Not yet built** (v1.0 gaps, stated so they are not rediscovered):
@@ -61,7 +62,6 @@ Things a future change is most likely to trip over:
 - **`kanea upgrade`** — §15.4's binary-upgrade orchestration (drain the edge, restart it, then kanead). The state-migration half is built; the sequencing half is `systemctl restart` by hand.
 - **`kanea exec`** and **`kanea ui`** — still `todo` in the command table.
 - **Signed releases** — the installer verifies a checksum and prefers a cosign signature; nothing publishes one yet.
-- **S3 interoperability** — the client is exercised against a fake service. The signature is the part a real endpoint would disagree with, and no real endpoint has been in the loop.
 - **Multipart upload** — an archive above 5 GiB is refused by name rather than split.
 - **Node CPU/memory stats** — §17 lists procfs node stats; no scraper collects them, and `get_node_stats` reports control-plane facts instead of inventing them.
 - **A dashboard page for the event feed and for backups** — the API routes exist; the React pages do not.

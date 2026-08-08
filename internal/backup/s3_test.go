@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -397,5 +399,36 @@ func TestS3RefusesAnObjectAboveTheSingleUploadLimit(t *testing.T) {
 	err := sink.Put(context.Background(), "snapshots/huge.snap", maxSingleObject+1, strings.NewReader(""))
 	if err == nil || !strings.Contains(err.Error(), "single-upload limit") {
 		t.Fatalf("err = %v, want the limit named", err)
+	}
+}
+
+func TestS3PutDoesNotCloseTheCallersReader(t *testing.T) {
+	// The regression the fake server could not catch on its own. net/http uses
+	// an io.ReadCloser body directly rather than wrapping it, and the transport
+	// closes what it was given — so an *os.File passed here would be closed out
+	// from under the caller. It surfaced as an upload that succeeded and an
+	// archive whose manifest was never written: invisible, every time.
+	//
+	// The existing tests all passed strings.Reader, which is not an
+	// io.ReadCloser, so NewRequest wrapped it and the bug stayed hidden.
+	ctx := context.Background()
+	fake := newFakeS3()
+	sink, _ := newS3Sink(t, fake)
+
+	path := filepath.Join(t.TempDir(), "body")
+	if err := os.WriteFile(path, []byte("archive bytes"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	file, err := os.Open(path) // #nosec G304 — a test path
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	if err := sink.Put(ctx, "snapshots/a.snap", 13, file); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	// The caller still owns it, so its own Close must be the first one.
+	if err := file.Close(); err != nil {
+		t.Fatalf("Put closed the caller's file: %v", err)
 	}
 }

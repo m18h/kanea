@@ -171,7 +171,14 @@ func (s *S3Sink) Put(ctx context.Context, name string, size int64, body io.Reade
 			name, size, int64(maxSingleObject))
 	}
 
-	req, err := s.request(ctx, http.MethodPut, s.key(name), nil, body)
+	// NopCloser is not cosmetic. http.NewRequest uses an io.ReadCloser body
+	// directly rather than wrapping it, and the transport closes what it was
+	// given — so passing an *os.File here hands the caller's file handle to
+	// net/http, which closes it, and the caller's own Close then fails. That
+	// surfaced as an upload that succeeded and an archive whose manifest was
+	// never written: invisible, every time. The Sink contract is that Put reads
+	// the body and does not own it.
+	req, err := s.request(ctx, http.MethodPut, s.key(name), io.NopCloser(body))
 	if err != nil {
 		return err
 	}
@@ -190,7 +197,7 @@ const maxSingleObject = 5 << 30
 
 // Get downloads an object.
 func (s *S3Sink) Get(ctx context.Context, name string) (io.ReadCloser, error) {
-	req, err := s.request(ctx, http.MethodGet, s.key(name), nil, nil)
+	req, err := s.request(ctx, http.MethodGet, s.key(name), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +217,7 @@ func (s *S3Sink) Get(ctx context.Context, name string) (io.ReadCloser, error) {
 // Delete removes an object. S3 answers 204 whether or not it existed, which is
 // exactly the idempotence the Sink contract asks for.
 func (s *S3Sink) Delete(ctx context.Context, name string) (err error) {
-	req, err := s.request(ctx, http.MethodDelete, s.key(name), nil, nil)
+	req, err := s.request(ctx, http.MethodDelete, s.key(name), nil)
 	if err != nil {
 		return err
 	}
@@ -278,7 +285,7 @@ func (s *S3Sink) List(ctx context.Context, prefix string) ([]Object, error) {
 }
 
 func (s *S3Sink) listPage(ctx context.Context, query url.Values) (_ listResult, err error) {
-	req, reqErr := s.request(ctx, http.MethodGet, "", query, nil)
+	req, reqErr := s.requestWithQuery(ctx, http.MethodGet, "", query, nil)
 	if reqErr != nil {
 		return listResult{}, reqErr
 	}
@@ -351,8 +358,15 @@ func (s *S3Sink) expect(resp *http.Response, what string, allowed ...int) error 
 
 // ---- request signing ----
 
-// request builds a signed request.
+// request builds a signed request with no query string.
 func (s *S3Sink) request(
+	ctx context.Context, method, key string, body io.Reader,
+) (*http.Request, error) {
+	return s.requestWithQuery(ctx, method, key, nil, body)
+}
+
+// requestWithQuery builds a signed request.
+func (s *S3Sink) requestWithQuery(
 	ctx context.Context, method, key string, query url.Values, body io.Reader,
 ) (*http.Request, error) {
 	target := *s.endpoint
