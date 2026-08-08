@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/auth"
-	"github.com/kanea-dev/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/secrets"
 )
 
 // oidcSettings is the provider configuration as the flags express it.

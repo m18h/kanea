@@ -12,7 +12,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/gitops"
 )
 
 // repo builds a real git repository on disk and returns its path.

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // The end-to-end test M10's exit criterion asks for: a node's state, shipped to

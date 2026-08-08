@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/kanea-dev/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/edge"
 )
 
 // syncEdgeRoutes publishes the route table kanea-edge serves from.

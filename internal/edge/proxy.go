@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/ratelimit"
+	"github.com/m18h/kanea/internal/ratelimit"
 )
 
 // Proxy is the request path: Host match → upstream.

@@ -3,7 +3,7 @@ package runtime_test
 import (
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // R8 promises that the minimal service is just an image, and every PRD example

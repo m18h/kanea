@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/scaling"
 )
 
 // PathMetrics is the Prometheus exporter (PRD §9.1).

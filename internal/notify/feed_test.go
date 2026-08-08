@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/store"
 )
 
 func newFeed(t *testing.T, retention int) (*notify.Feed, store.Store) {

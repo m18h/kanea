@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // The replicator (PRD §15.3): ship change segments continuously, snapshot

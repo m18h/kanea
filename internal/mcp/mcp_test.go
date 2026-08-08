@@ -9,10 +9,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/mcp"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/mcp"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // fakeAPI stands in for kanead. It records what the tools asked for, which is

@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/network"
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/runtime"
-	"github.com/kanea-dev/kanea/internal/storage"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/network"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/storage"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Store is the slice of the state store this package needs. Declaring it here

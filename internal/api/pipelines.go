@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/audit"
-	"github.com/kanea-dev/kanea/internal/auth"
-	"github.com/kanea-dev/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/audit"
+	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/gitops"
 )
 
 // Pipeline routes (PRD §16.1, §10.2).

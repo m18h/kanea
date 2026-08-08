@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/audit"
-	"github.com/kanea-dev/kanea/internal/auth"
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/audit"
+	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // fakeExecer stands in for the containerd driver.

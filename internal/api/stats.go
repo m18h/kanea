@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/scaling"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // PathStats serves a point-in-time metrics sample (PRD §9.1, §16.1).

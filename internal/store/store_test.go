@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 type service struct {

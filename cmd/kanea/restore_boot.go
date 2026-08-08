@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/backup"
-	"github.com/kanea-dev/kanea/internal/secrets"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Restore at start (PRD §15.3).

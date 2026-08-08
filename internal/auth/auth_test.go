@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/auth"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/store"
 )
 
 const goodPassword = "correct-horse-battery-staple"

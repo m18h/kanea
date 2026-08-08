@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/scaling"
 )
 
 // hubbleHarness serves a body a test can swap between scrapes.

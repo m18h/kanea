@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/gitops"
 )
 
 const webhookSecretRef = "secret:git/webhook"

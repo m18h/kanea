@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 var testNow = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)

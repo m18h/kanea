@@ -12,9 +12,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/kanea-dev/kanea/internal/edge"
-	"github.com/kanea-dev/kanea/internal/logging"
-	"github.com/kanea-dev/kanea/internal/ratelimit"
+	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/logging"
+	"github.com/m18h/kanea/internal/ratelimit"
 )
 
 // runEdge is kanea-edge: the public ingress proxy.

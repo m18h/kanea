@@ -11,7 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
+	"github.com/m18h/kanea/internal/api"
 )
 
 // runSecret is `kanea secret <put|ls|rm>`.

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/scaling"
 )
 
 // evalHarness is an evaluator over a metrics store both share a clock with.

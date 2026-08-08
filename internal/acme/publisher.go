@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/edge"
 )
 
 // Publisher owns the edge's certificate projection: it is the only writer.

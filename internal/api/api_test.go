@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/runtime"
-	"github.com/kanea-dev/kanea/internal/secrets"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/store"
 )
 
 type harness struct {

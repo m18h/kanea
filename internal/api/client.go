@@ -13,11 +13,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/auth"
-	"github.com/kanea-dev/kanea/internal/backup"
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/secrets"
 )
 
 // Client talks to a running kanead over its unix socket.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/dashboard"
+	"github.com/m18h/kanea/internal/dashboard"
 )
 
 func get(t *testing.T, h http.Handler, path string) *http.Response {

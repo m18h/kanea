@@ -13,7 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // PathExec is the debug-shell route (PRD §16.2, §14 A01).

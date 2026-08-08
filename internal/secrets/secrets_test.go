@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/secrets"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/store"
 )
 
 func newStore(t *testing.T) (*secrets.Store, string, store.Store) {

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // The archive layout (PRD §15.3).

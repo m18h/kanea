@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/backup"
-	"github.com/kanea-dev/kanea/internal/logging"
-	"github.com/kanea-dev/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/logging"
+	"github.com/m18h/kanea/internal/secrets"
 )
 
 // runBackup is `kanea backup <create|list|verify>`.

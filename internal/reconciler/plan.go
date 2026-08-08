@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // World is everything the planner needs to decide. It is a value, not an

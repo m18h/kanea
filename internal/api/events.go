@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/kanea-dev/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/notify"
 )
 
 // PathEvents serves the notification feed (PRD §11, §12).

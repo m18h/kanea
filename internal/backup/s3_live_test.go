@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Interoperability tests against a real S3-compatible service.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/edge"
 )
 
 // Renewal starts two thirds into the certificate's life, not a fixed number of

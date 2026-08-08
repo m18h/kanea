@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Change segments (PRD §15.3).

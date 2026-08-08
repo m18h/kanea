@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/notify"
 )
 
 func TestAllowedIPRefusesEverythingNotPubliclyRoutable(t *testing.T) {

@@ -21,7 +21,7 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Prefix marks a secret reference in a job spec.

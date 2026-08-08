@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/scaling"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // emitFunc delivers one payload to a subscriber.

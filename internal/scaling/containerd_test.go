@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/scaling"
 )
 
 // allocMap resolves container ids the way the daemon does from the Store.

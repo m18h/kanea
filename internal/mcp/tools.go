@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/reconciler"
 )
 
 // The tool set (PRD §16.3).

@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"sort"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // DefaultServiceCIDR is the pool service frontends are allocated from

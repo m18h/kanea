@@ -9,8 +9,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/reconciler"
 )
 
 // SpecVersion is the schema revision this binary speaks (R6, PRD §15.4).

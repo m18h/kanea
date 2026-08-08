@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // settled builds a record for an alloc that has been up long enough to count as

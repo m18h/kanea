@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/backup"
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/secrets"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Backup wiring (PRD §15.3): turning flags into a sink, and the running daemon

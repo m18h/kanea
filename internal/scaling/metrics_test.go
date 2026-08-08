@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/scaling"
 )
 
 // clock drives the store's notion of now. Every property here is about what

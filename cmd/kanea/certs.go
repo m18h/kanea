@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/acme"
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/acme"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // certCheckInterval is how often the renewal pass runs.

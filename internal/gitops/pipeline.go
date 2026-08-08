@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Pipeline runs are first-class objects (PRD §10.2).

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/audit"
-	"github.com/kanea-dev/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/audit"
+	"github.com/m18h/kanea/internal/auth"
 )
 
 // OIDC routes (PRD §16.1, §13.2).

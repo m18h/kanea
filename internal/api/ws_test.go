@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/kanea-dev/kanea/internal/api"
+	"github.com/m18h/kanea/internal/api"
 )
 
 // dialWS opens the live-data socket over the harness's unix socket.

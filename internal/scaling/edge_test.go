@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/edge"
-	"github.com/kanea-dev/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/scaling"
 )
 
 // edgeHarness runs a real edge collector behind an HTTP server, and scrapes it.

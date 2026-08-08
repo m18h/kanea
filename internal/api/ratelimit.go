@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/ratelimit"
+	"github.com/m18h/kanea/internal/ratelimit"
 )
 
 // Default request limits, per source address (PRD §5.2.1, §14 A07).

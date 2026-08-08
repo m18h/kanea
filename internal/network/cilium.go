@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // Config configures the Cilium network driver.

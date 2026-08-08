@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/logging"
+	"github.com/m18h/kanea/internal/logging"
 )
 
 func TestNewZeroConfig(t *testing.T) {

@@ -9,11 +9,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/jobspec"
-	"github.com/kanea-dev/kanea/internal/logging"
-	"github.com/kanea-dev/kanea/internal/mcp"
-	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/logging"
+	"github.com/m18h/kanea/internal/mcp"
+	"github.com/m18h/kanea/internal/reconciler"
 )
 
 // runMCP serves the MCP stdio transport (PRD §16.3).

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/acme"
+	"github.com/m18h/kanea/internal/acme"
 )
 
 // autoExposures builds n generated-FQDN services in one project.

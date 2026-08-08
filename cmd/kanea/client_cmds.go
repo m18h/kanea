@@ -15,11 +15,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/jobspec"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // socketFlag adds the shared --socket flag.

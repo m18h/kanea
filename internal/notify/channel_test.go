@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/notify"
 )
 
 // resolver is a stub secrets store.

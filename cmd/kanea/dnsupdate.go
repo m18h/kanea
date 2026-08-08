@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/kanea-dev/kanea/internal/acme"
-	"github.com/kanea-dev/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/acme"
+	"github.com/m18h/kanea/internal/secrets"
 )
 
 // dnsUpdateSettings is the DNS-01 solver as the flags express it.

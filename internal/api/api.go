@@ -21,8 +21,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/reconciler"
 )
 
 // DefaultSocket is where kanead listens.

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
+	"github.com/m18h/kanea/internal/api"
 )
 
 // runUpgrade is `kanea upgrade` (PRD §15.4).

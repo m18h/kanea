@@ -15,9 +15,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/edge"
-	"github.com/kanea-dev/kanea/internal/runtime"
-	"github.com/kanea-dev/kanea/internal/storage"
+	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/storage"
 )
 
 // Desired is one service's target state, derived from the job spec.

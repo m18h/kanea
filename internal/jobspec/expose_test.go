@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/jobspec"
 )
 
 // exposeSpec builds a one-service spec with the given network and expose bodies.

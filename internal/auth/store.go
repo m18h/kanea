@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Key prefixes for auth records.

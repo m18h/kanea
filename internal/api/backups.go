@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/auth"
-	"github.com/kanea-dev/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/backup"
 )
 
 // PathBackups is the archive surface (PRD §15.3, §16.1).

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/ratelimit"
+	"github.com/m18h/kanea/internal/ratelimit"
 )
 
 // compiled is a route with its middleware parsed once, at reload, rather than

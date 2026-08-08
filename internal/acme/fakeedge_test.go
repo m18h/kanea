@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/edge"
 )
 
 // servedBundle stands in for kanea-edge: it answers ACME challenge requests

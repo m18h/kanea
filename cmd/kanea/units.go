@@ -75,7 +75,7 @@ func kaneaSlice(opts unitOptions) string {
 	return heredoc(`
 		[Unit]
 		Description=Kanea control plane
-		Documentation=https://github.com/kanea-dev/kanea
+		Documentation=https://github.com/m18h/kanea
 		Before=slices.target
 
 		[Slice]
@@ -96,7 +96,7 @@ func workloadSlice() string {
 	return heredoc(`
 		[Unit]
 		Description=Kanea workloads
-		Documentation=https://github.com/kanea-dev/kanea
+		Documentation=https://github.com/m18h/kanea
 		Before=slices.target
 
 		[Slice]
@@ -114,7 +114,7 @@ func kaneadService(opts unitOptions) string {
 	return heredoc(`
 		[Unit]
 		Description=Kanea control plane (kanead)
-		Documentation=https://github.com/kanea-dev/kanea
+		Documentation=https://github.com/m18h/kanea
 		After=network-online.target containerd.service
 		Wants=network-online.target
 		# Not a hard dependency: kanead retries containerd and reports it, which
@@ -163,7 +163,7 @@ func edgeService(opts unitOptions) string {
 	return heredoc(`
 		[Unit]
 		Description=Kanea edge proxy (kanea-edge)
-		Documentation=https://github.com/kanea-dev/kanea
+		Documentation=https://github.com/m18h/kanea
 		After=network-online.target
 		Wants=network-online.target
 		# Deliberately not After=kanead.service. The edge reads a route snapshot

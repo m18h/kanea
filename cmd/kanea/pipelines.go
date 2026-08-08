@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/jobspec"
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // GitOps and build pipelines in kanead (PRD §10).

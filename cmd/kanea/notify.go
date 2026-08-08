@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/jobspec"
-	"github.com/kanea-dev/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/notify"
 )
 
 // Building routes from a project's `notifications` block (PRD §6.1, §11).

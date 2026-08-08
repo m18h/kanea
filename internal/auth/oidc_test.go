@@ -17,7 +17,7 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/kanea-dev/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/auth"
 )
 
 // fakeProvider is a minimal but honest OIDC provider: real discovery, a real

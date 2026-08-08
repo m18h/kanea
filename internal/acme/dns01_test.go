@@ -11,7 +11,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/kanea-dev/kanea/internal/acme"
+	"github.com/m18h/kanea/internal/acme"
 )
 
 const testTSIGKey = "kanea-update."

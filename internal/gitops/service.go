@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/jobspec"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // The pipeline coordinator.

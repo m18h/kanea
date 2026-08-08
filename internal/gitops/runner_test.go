@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/gitops"
 )
 
 // deployer records what a successful build asked to deploy.

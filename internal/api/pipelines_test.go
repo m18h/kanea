@@ -11,8 +11,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/gitops"
 )
 
 // fakePipelines stands in for the coordinator. The API's job is routing,

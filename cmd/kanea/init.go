@@ -11,10 +11,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/kanea-dev/kanea/internal/backup"
-	"github.com/kanea-dev/kanea/internal/network"
-	"github.com/kanea-dev/kanea/internal/runtime"
-	"github.com/kanea-dev/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/network"
+	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/secrets"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 

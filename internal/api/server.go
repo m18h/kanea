@@ -18,13 +18,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/dashboard"
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/ratelimit"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/secrets"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/dashboard"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/ratelimit"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // Store is the slice of the state store the API needs.

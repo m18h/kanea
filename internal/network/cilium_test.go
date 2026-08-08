@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // fakeNode records what Attach and Detach do to the node, in order. The order

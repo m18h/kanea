@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/api"
+	"github.com/m18h/kanea/internal/api"
 )
 
 func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {

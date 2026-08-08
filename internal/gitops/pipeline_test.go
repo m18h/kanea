@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // clock is a controllable time source: run ordering and retention are both

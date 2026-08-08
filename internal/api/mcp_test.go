@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/audit"
-	"github.com/kanea-dev/kanea/internal/auth"
-	"github.com/kanea-dev/kanea/internal/mcp"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/audit"
+	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/mcp"
 )
 
 // The MCP transport is mounted on this server and its tools call back into it.

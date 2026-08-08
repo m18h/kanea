@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/auth"
 )
 
 // Account management routes (PRD §13.2, §13.3).

@@ -1,4 +1,4 @@
-module github.com/kanea-dev/kanea
+module github.com/m18h/kanea
 
 go 1.26.3
 

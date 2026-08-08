@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/reconciler"
 )
 
 type breakerClock struct{ at time.Time }

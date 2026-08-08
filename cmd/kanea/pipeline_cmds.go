@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/gitops"
 )
 
 // `kanea build` and `kanea project` (PRD §10, §16.2).

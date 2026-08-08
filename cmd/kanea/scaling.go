@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/notify"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/scaling"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // storeFleet is the autoscaler's view of desired state.

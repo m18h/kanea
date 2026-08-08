@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/edge"
-	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/reconciler"
 )
 
 // routeHarness is a reconciler that publishes an edge route table.

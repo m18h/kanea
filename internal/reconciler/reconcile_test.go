@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/network"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/runtime"
-	"github.com/kanea-dev/kanea/internal/storage"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/network"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/storage"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // fakeDriver is an in-memory containerd stand-in. It models the states the

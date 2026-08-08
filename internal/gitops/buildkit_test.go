@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/gitops"
 )
 
 // fakeBuildctl writes a stand-in for buildctl that records its argv and

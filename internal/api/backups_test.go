@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/backup"
 )
 
 // fakeBackups stands in for the daemon's archiver.

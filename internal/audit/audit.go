@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // auditKind is the bucket audit entries live in (PRD §5.2.3).

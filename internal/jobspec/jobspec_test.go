@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kanea-dev/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/jobspec"
 )
 
 // parse is the common harness: parse one source and require success.

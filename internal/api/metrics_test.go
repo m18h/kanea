@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/auth"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/scaling"
-	"github.com/kanea-dev/kanea/internal/store"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // withMetrics gives the harness a metrics store seeded by the test.

@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/kanea-dev/kanea/internal/api"
-	"github.com/kanea-dev/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/reconciler"
 )
 
 // runExec is `kanea exec` (PRD §16.2): a debug shell inside a running alloc.

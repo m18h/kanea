@@ -5,11 +5,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kanea-dev/kanea/internal/edge"
-	"github.com/kanea-dev/kanea/internal/jobspec"
-	"github.com/kanea-dev/kanea/internal/reconciler"
-	"github.com/kanea-dev/kanea/internal/runtime"
-	"github.com/kanea-dev/kanea/internal/storage"
+	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/storage"
 )
 
 // NominalCoreMHz maps the job spec's `resources.cpu` (MHz, PRD §6.1) onto the

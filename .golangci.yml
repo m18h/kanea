@@ -31,7 +31,7 @@ linters:
             - "**/*.go"
           deny:
             - pkg: log$
-              desc: use log/slog via github.com/kanea-dev/kanea/internal/logging (AGENTS.md conventions)
+              desc: use log/slog via github.com/m18h/kanea/internal/logging (AGENTS.md conventions)
     forbidigo:
       forbid:
         - pattern: ^fmt\.Print
