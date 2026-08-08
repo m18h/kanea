@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Docs — Kanea</title>
-<meta name="description" content="Kanea documentation: the concepts, the shape of a deployment, and where everything lives.">
+<title>Documentation — Kanea</title>
+<meta name="description" content="Kanea documentation: concepts, architecture, the complete job spec reference, and every CLI command.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2314b8a6'/><path d='M10 8v16M22 8L12.5 16 22 24' stroke='%2309090b' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
 <link rel="stylesheet" href="../style.css">
 </head>
@@ -31,29 +31,73 @@
 <div class="wrap">
 <div class="docs-shell">
 
-  <aside class="sidebar">
-    <h4>Documentation</h4>
-    <a href="./" aria-current="page">Overview</a>
-    <a href="architecture/">Architecture</a>
-    <a href="jobspec/">Job spec reference</a>
-    <a href="cli/">CLI reference</a>
-    <h4>On this page</h4>
-    <a href="#concepts">Concepts</a>
-    <a href="#naming">Naming</a>
-    <a href="#lifecycle">Lifecycle</a>
-    <a href="#deploy">What a deploy is</a>
-    <a href="#secrets">Secrets</a>
-    <a href="#first">Your first service</a>
-    <h4>Repository</h4>
-    <a href="https://github.com/m18h/kanea/blob/main/PRD.md">PRD.md&nbsp;↗</a>
-    <a href="https://github.com/m18h/kanea/blob/main/docs/THREAT_MODEL.md">Threat model&nbsp;↗</a>
-    <a href="https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md">DR runbook&nbsp;↗</a>
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list">
+    <a class="part" href="#overview">Overview</a>
+    <a class="sub" href="#overview-concepts">Concepts</a>
+    <a class="sub" href="#overview-naming">Naming</a>
+    <a class="sub" href="#overview-lifecycle">Lifecycle</a>
+    <a class="sub" href="#overview-deploy">What counts as a deploy</a>
+    <a class="sub" href="#overview-secrets">Secrets</a>
+    <a class="sub" href="#overview-first">Your first service</a>
+    <a class="part" href="#arch">Architecture</a>
+    <a class="sub" href="#arch-shape">The shape</a>
+    <a class="sub" href="#arch-processes">Two processes, one binary</a>
+    <a class="sub" href="#arch-store">The Store</a>
+    <a class="sub" href="#arch-runtime">Runtime driver — containerd</a>
+    <a class="sub" href="#arch-network">Network driver — standalone Cilium</a>
+    <a class="sub" href="#arch-edge">The edge</a>
+    <a class="sub" href="#arch-isolation">Resource isolation</a>
+    <a class="sub" href="#arch-metrics">Metrics and autoscaling</a>
+    <a class="sub" href="#arch-backup">State replication and restore</a>
+    <a class="sub" href="#arch-mcp">API, dashboard and MCP</a>
+    <a class="part" href="#spec">Job spec reference</a>
+    <a class="sub" href="#spec-top-level">Top level</a>
+    <a class="sub" href="#spec-project">project</a>
+    <a class="sub" href="#spec-storage">storage</a>
+    <a class="sub" href="#spec-service">service</a>
+    <a class="sub" href="#spec-task">task</a>
+    <a class="sub" href="#spec-network">network</a>
+    <a class="sub" href="#spec-expose">expose</a>
+    <a class="sub" href="#spec-health_check">health_check</a>
+    <a class="sub" href="#spec-volume">volume</a>
+    <a class="sub" href="#spec-scaling">scaling</a>
+    <a class="sub" href="#spec-update">update and restart</a>
+    <a class="sub" href="#spec-build">build</a>
+    <a class="sub" href="#spec-interpolation">Interpolation</a>
+    <a class="sub" href="#spec-rules">Validation rules</a>
+    <a class="sub" href="#spec-example">Full example</a>
+    <a class="part" href="#cli">CLI reference</a>
+    <a class="sub" href="#cli-setup">Setup</a>
+    <a class="sub" href="#cli-deploy">Deploying</a>
+    <a class="sub" href="#cli-inspect">Inspecting</a>
+    <a class="sub" href="#cli-scale">Scaling and builds</a>
+    <a class="sub" href="#cli-secrets">Secrets and accounts</a>
+    <a class="sub" href="#cli-backup">Backup and restore</a>
+    <a class="sub" href="#cli-daemons">Daemons</a>
+    <a class="sub" href="#cli-agents">MCP</a>
+      <h4>Repository</h4>
+      <a class="sub" href="https://github.com/m18h/kanea/blob/main/PRD.md">PRD.md&nbsp;↗</a>
+      <a class="sub" href="https://github.com/m18h/kanea/blob/main/docs/THREAT_MODEL.md">Threat model&nbsp;↗</a>
+      <a class="sub" href="https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md">DR runbook&nbsp;↗</a>
+    </nav>
   </aside>
 
   <main class="prose">
     <p class="eyebrow">Documentation</p>
-    <h1>Overview</h1>
+    <h1>Kanea documentation</h1>
     <p>
+      Everything on one page: what the concepts are, how the system is put together, the
+      complete job spec reference, and every CLI command. The contents on the left track
+      where you are — and the whole thing is one document, so your browser's find works
+      across all of it.
+    </p>
+
+    <!-- ================= overview ================= -->
+    <h2 id="overview">Overview</h2>
+
+<p>
       Kanea runs containers on one machine and gives that machine the things a platform
       normally needs a cluster for: service discovery, load balancing, network policy,
       TLS, autoscaling, GitOps, backups. It is one static binary, and the concepts it
@@ -66,7 +110,7 @@
       know what you are looking at.
     </p>
 
-    <h2 id="concepts">Concepts</h2>
+    <h3 id="overview-concepts">Concepts</h3>
     <p>
       Kanea borrows from Nomad and Kubernetes and keeps the smallest set of concepts that
       covers the work. If you know either system, the middle columns tell you what maps
@@ -96,7 +140,7 @@
       a separate containerd namespace, and its DNS names sit under a separate suffix.
     </p>
 
-    <h2 id="naming">Naming</h2>
+    <h3 id="overview-naming">Naming</h3>
     <p>
       Project and service names <b>must be DNS-1123 labels</b>: lowercase alphanumeric and
       <code>-</code>, starting and ending alphanumeric, at most 63 characters. This is
@@ -117,7 +161,7 @@
       </p>
     </div>
 
-    <h2 id="lifecycle">Lifecycle</h2>
+    <h3 id="overview-lifecycle">Lifecycle</h3>
     <p>
       Nothing in Kanea is applied directly to the runtime. A spec becomes desired state in
       the Store, and a reconciler converges the world toward it — continuously, not once.
@@ -155,7 +199,7 @@
         an event and a notification.</li>
     </ul>
 
-    <h2 id="deploy">What counts as a deploy</h2>
+    <h3 id="overview-deploy">What counts as a deploy</h3>
     <p>
       A deploy is a <b>spec-hash mismatch</b>. The reconciler hashes the parts of a service
       that are baked into a container at creation time; if an alloc's recorded hash differs
@@ -183,7 +227,7 @@
       </p>
     </div>
 
-    <h2 id="secrets">Secrets</h2>
+    <h3 id="overview-secrets">Secrets</h3>
     <p>
       Secrets are never written in a spec. They are referenced as
       <code>secret:&lt;path&gt;</code> and resolved when an alloc starts:
@@ -210,7 +254,7 @@
       not for an operator, not for an agent, at any permission tier.
     </p>
 
-    <h2 id="first">Your first service</h2>
+    <h3 id="overview-first">Your first service</h3>
     <p>
       The smallest useful thing needs no file at all:
     </p>
@@ -220,16 +264,1066 @@ kanea logs -f demo/web</pre>
     <p>
       When you want it written down, the same deployment as a spec is three lines plus a
       wrapper — and from there every block in the
-      <a href="jobspec/">job spec reference</a> is additive. Run
+      <a href="#spec">job spec reference</a> is additive. Run
       <code>kanea plan</code> first; it prints the create/change/destroy diff, and it is
       where every validation rule fires.
     </p>
 
-    <div class="pagenav">
-      <a href="architecture/"><small>Next</small><b>Architecture →</b></a>
-      <a href="jobspec/"><small>Reference</small><b>Job spec →</b></a>
-      <a href="cli/"><small>Reference</small><b>CLI →</b></a>
+
+    <!-- ================= arch ================= -->
+    <h2 id="arch">Architecture</h2>
+
+<p>
+      One binary produces two long-running processes and a CLI. Everything else on the node
+      — containerd, cilium-agent, etcd, buildkitd — is software Kanea drives rather than
+      software it contains.
+    </p>
+
+    <h3 id="arch-shape">The shape</h3>
+
+<pre class="diagram">                    ┌──────────────── kanead (control plane) ────────────────┐
+                    │                                                        │
+Browser ──HTTPS──▶  │ ┌────────────┐ ┌───────────┐ ┌──────────┐ ┌─────────┐  │
+CLI ──────HTTPS──▶  │ │ API server │ │ Dashboard │ │Reconciler│ │Autoscale│  │
+Webhooks ────────▶  │ │ REST + WS  │ │ (embedded)│ │          │ │ (eBPF)  │  │
+                    │ └─────┬──────┘ └───────────┘ └────┬─────┘ └────┬────┘  │
+                    │       └─────────────┬─────────────┴────────────┘       │
+                    │            ┌────────┴─────────┐                        │
+                    │            │ Store  (bbolt)   │                        │
+                    │            └────────┬─────────┘                        │
+                    │   ┌─────────┬───────┼────────┬──────────┐              │
+                    │   │ Runtime │Network│ GitOps │ Notifier │              │
+                    │   │containerd│Cilium│BuildKit│          │              │
+                    │   └────┬────┴───┬───┴────┬───┴──────────┘              │
+                    └────────┼────────┼────────┼───────────────┬─────────────┘
+                             │        │        │               ▼
+                             │        │        │      State replicator ──▶ S3
+                             ▼        ▼        ▼
+
+┌── kanea-edge (separate process; reads a projection, never the Store) ──┐
+│  L7 routing · TLS termination · middleware · request metrics           │ ◀── :80/:443
+└────────────────────────────────────────────────────────────────────────┘
+
+External:  containerd  ·  cilium-agent  ·  etcd  ·  Linux kernel (eBPF, cgroups v2)</pre>
+
+    <h3 id="arch-processes">Two processes, one binary</h3>
+    <p>
+      <code>kanead</code> is the control plane: API, dashboard, reconciler, autoscaler,
+      GitOps, notifications, backups. <code>kanea-edge</code> is the ingress proxy, and it
+      is a <b>separate systemd unit running as a separate unprivileged user</b>.
+    </p>
+    <p>
+      That split is the single most consequential design decision in the system, and it buys
+      two things:
+    </p>
+    <ul>
+      <li>Restarting, upgrading or crashing the control plane <b>does not interrupt public
+        traffic</b>. The edge unit deliberately has no <code>After=kanead.service</code>.</li>
+      <li>The process that terminates untrusted public traffic <b>cannot mutate the
+        platform</b>. It has no Store access and no write path at all.</li>
+    </ul>
+    <div class="callout">
+      <b class="label">How the edge learns anything</b>
+      <p>
+        bbolt takes a lock on the whole database file, so a second process opening it —
+        even read-only — would block until <code>kanead</code> exits. So the edge does not
+        open it. <code>kanead</code> <b>projects</b> what the edge needs into
+        <code>/run/kanea-edge/</code>: <code>routes.json</code> (0644, host → service
+        frontend; nothing secret, the domains are in public DNS) and
+        <code>certs.json</code> (0640, private keys). Two files, two permission sets,
+        so neither has to compromise for the other.
+      </p>
+      <p>
+        Both are written temp-then-<code>rename(2)</code>, so a half-written file is never
+        observable. The projection carries the Store index it was built from, which is how a
+        stale snapshot can be recognised rather than merely suspected.
+      </p>
+      <p>
+        A missing or stale snapshot is not an outage: the edge keeps serving the last table
+        it loaded for as long as <code>kanead</code> is away, and starts with an empty table
+        rather than refusing to start. "The control plane is down" must never become "the
+        site is down".
+      </p>
     </div>
+
+    <h3 id="arch-store">The Store</h3>
+    <p>
+      One embedded bbolt database holds every mutation, behind a <code>Store</code> interface
+      with monotonic indexes. Buckets: projects, services, allocs, events, certs, secrets,
+      pipelines, audit, kv.
+    </p>
+    <ul>
+      <li><b>Single writer.</b> All mutations serialise. Reads are bounded and paginated,
+        because a long read transaction blocks the writer.</li>
+      <li><b>Raft-shaped on purpose.</b> The interface and its index semantics are what a
+        Raft FSM would need, so a clustered implementation can replace it without touching
+        call sites.</li>
+      <li><b>Metrics and logs never touch it.</b> Time series live in a bounded in-memory
+        ring; logs go to file pipelines with non-blocking drains. This is a hard constraint,
+        not a performance preference — a metrics write that contends with the reconciler's
+        writer would make observability and convergence share a failure mode.</li>
+      <li><b>Migrations are explicit.</b> The Store does not migrate itself at open. A
+        migration rewrites state in place, and the copy that makes a bad migration survivable
+        needs the database open and the migration not yet started — exactly one window,
+        between <code>Open</code> and <code>Migrate</code>.</li>
+    </ul>
+
+    <h3 id="arch-runtime">Runtime driver — containerd</h3>
+    <ul>
+      <li>Driven over its socket with the official Go client. <b>One containerd namespace per
+        project</b> (<code>kanea-&lt;project&gt;</code>), which makes image and container
+        isolation free rather than enforced.</li>
+      <li>Responsibilities: image pull (credentials from the secrets store, digest pinning
+        supported), task lifecycle, per-alloc netns setup, cgroup metrics sampling, and
+        stdout/stderr capture.</li>
+      <li><b>Hardening is not opt-in.</b> Every alloc starts with all capabilities dropped,
+        <code>no-new-privileges</code>, the default seccomp profile, and its own PID and IPC
+        namespaces. A capability a workload genuinely needs is named in the spec and drawn
+        from a permitted set; the privilege-equivalent ones are rejected when the spec is
+        parsed. There is no <code>privileged</code> escape hatch in v1.</li>
+      <li><b>Disk hygiene is part of the driver.</b> Image GC, build-cache caps across
+        <i>both</i> content stores — containerd's and the rootless buildkitd user's — per-service
+        log caps, and watermark alerts at 80% and 90%. One disk holds images, logs, state and
+        volumes; pressure must never surprise the control plane.</li>
+    </ul>
+
+    <h3 id="arch-network">Network driver — standalone Cilium</h3>
+    <p>
+      cilium-agent runs with <code>--enable-k8s=false</code> against a single-node etcd
+      kvstore. Kanea speaks to it over a hand-written client on
+      <code>/var/run/cilium/cilium.sock</code> — importing
+      <code>github.com/cilium/cilium</code> would pull the Kubernetes client graph, which is
+      the one dependency the project does not have.
+    </p>
+
+    <h4>Attach order is load-bearing</h4>
+    <p>
+      Per alloc: <b>pre-create netns → CNI <code>ADD</code> → <code>PATCH
+      /v1/endpoint/…</code> with identity labels → start the task.</b> The CNI plugin cannot
+      carry labels, and an endpoint without them holds <code>reserved:init</code>, which is
+      policy-enforced deny in <i>both</i> directions. Labels have to land before the
+      workload's first instruction. The PATCH returns 5xx while the endpoint regenerates and
+      is retried with bounded backoff.
+    </p>
+    <div class="callout warn">
+      <b class="label">Project ≡ namespace</b>
+      <p>
+        Identity labels are <code>kanea=true</code>, <code>project=&lt;p&gt;</code>,
+        <code>service=&lt;s&gt;</code> — <b>and</b>
+        <code>k8s:io.kubernetes.pod.namespace=&lt;project&gt;</code>. Cilium rewrites every
+        peer selector to require that namespace label, so without it every policy rule
+        matches nothing and silently denies. There is no Kubernetes here; the label is
+        Cilium's own policy vocabulary.
+      </p>
+    </div>
+
+    <h4>Two file interfaces, not two APIs</h4>
+    <p>
+      Cilium 1.18 removed the writable service and policy REST APIs, so Kanea programs both
+      through watched files:
+    </p>
+    <ul>
+      <li><b>Service load balancing</b> via <code>--lb-state-file</code> — a JSON file of
+        Kubernetes-<i>shaped</i> Service and EndpointSlice objects (schema only: no API
+        server, no CRDs). One frontend per service, backends are healthy alloc IPs, and
+        eBPF does Maglev load balancing with no userspace proxy in the path. A full rewrite
+        of the file <i>is</i> the batching primitive.</li>
+      <li><b>Network policy</b> via <code>--static-cnp-path</code>. Each project gets a
+        default isolation policy: intra-project allowed, ingress from the edge allowed,
+        everything else denied.</li>
+    </ul>
+    <p>
+      Both are written temp-then-<code>rename(2)</code>, because the agent watches them with
+      fsnotify and a partially written file must never be observable. <b>A malformed policy
+      file is fatal to the agent</b> — a crash loop on restart — so every generated policy is
+      validated before it is written and Kanea owns that directory exclusively.
+    </p>
+    <p>
+      Cilium's state is <b>derived state</b>. The Store is the source of truth; on restore the
+      kvstore is wiped and rebuilt from desired state, and etcd files are never backed up.
+    </p>
+
+    <h3 id="arch-edge">The edge</h3>
+    <p>
+      A Go reverse proxy: host-based L7 routing to service frontends, TLS termination with
+      Let's Encrypt certificates, WebSocket and gRPC support, HTTP→HTTPS redirects and
+      security headers.
+    </p>
+    <p>The middleware chain runs in a fixed order, per service, from the spec's <code>expose</code> block:</p>
+    <pre class="plain">Host match → IP allow/deny → rate limit → header transforms → upstream proxy</pre>
+    <p>
+      All of it is validated at <code>kanea plan</code> time and fails closed. An ingress
+      control that silently does nothing at runtime is worse than one that is absent.
+    </p>
+    <p>
+      Hardening is mandatory rather than tunable: read/header/idle timeouts and header size
+      caps against slowloris, per-route upstream timeouts, bounded connection pools,
+      client-supplied <code>X-Forwarded-*</code> stripped, and an unknown <code>Host</code>
+      answered with 404 — which is also the DNS-rebinding defence for the co-hosted API.
+    </p>
+    <p>
+      Because it already sits in the request path, the edge is the <b>primary source of L7
+      metrics</b> for exposed services: requests per second and latency percentiles at no
+      extra data-plane cost. Hubble covers east-west.
+    </p>
+    <p>
+      ACME runs in <code>kanead</code>, never in the edge — obtaining a certificate means
+      writing one, and the edge does not write.
+    </p>
+
+    <h3 id="arch-isolation">Resource isolation</h3>
+    <p>
+      The control plane must survive anything a workload does. Enforcement is cgroups v2,
+      arranged as two sibling slices:
+    </p>
+
+<pre class="diagram">/sys/fs/cgroup
+├── kanea.slice                # kanead, kanea-edge (+ drop-ins for containerd, cilium, etcd)
+│     memory.min      = system_reserve_memory     # kernel-protected floor (default 1 GiB)
+│     memory.swap.max = 0                         # the floor is RAM, not swap
+│     cpu.weight      = 10000
+│     OOMScoreAdjust  = -900                      # the global OOM killer picks workloads first
+└── kanea-workloads.slice      # every alloc lives under this one parent
+      memory.max      = total RAM − system_reserve_memory
+      memory.swap.max = 0
+      cpu.weight      = 100
+      └── per-alloc: memory.max · cpu.max · pids.max from the spec's resources block</pre>
+
+    <div class="callout">
+      <b class="label">"Memory lock" means guarantee, not mlock</b>
+      <p>
+        Calling <code>mlockall</code> on a Go control plane is rejected outright: the GC grows
+        the heap unpredictably and <code>RLIMIT_MEMLOCK</code> turns pin overflow into hard
+        allocation failure — the lock itself could crash <code>kanead</code>. The guarantee
+        comes from <code>memory.min</code> (the kernel refuses to reclaim the floor under
+        pressure), the OOM score, and no swap in the slice.
+      </p>
+    </div>
+    <p>
+      Per-alloc limits are <b>mandatory; the declaration is optional</b>. Omit
+      <code>resources</code> and you get <code>cpu = 100</code>, <code>memory = 256</code>
+      plus a default <code>pids.max</code>. No container ever runs unlimited. Declared
+      resources are also the admission units: <code>kanea plan</code> renders the workload
+      budget and apply refuses a total above it unless the operator has explicitly enabled
+      oversubscription.
+    </p>
+
+    <h3 id="arch-metrics">Metrics and autoscaling</h3>
+    <p>
+      Three scrapers feed one bounded in-memory time series: containerd cgroup metrics (CPU,
+      memory), the edge (requests per second, latency percentiles for exposed services), and
+      Hubble when it is enabled (east-west L7). Roughly 27 MiB at the 2 000-alloc target,
+      and there is a test that says so.
+    </p>
+    <div class="callout warn">
+      <b class="label">"No data" is never zero</b>
+      <p>
+        A missing metric and an idle service lead to opposite decisions, so the distinction is
+        preserved end to end — in the time series, in the evaluator, in the Prometheus
+        exporter and in the dashboard. Each layer has a test asserting it.
+      </p>
+    </div>
+    <p>
+      The evaluator applies the <code>scaling</code> block with guardrails and a circuit
+      breaker, and the budget is <b>20 seconds from a sustained breach</b> to a decision: a
+      15-second averaging window — three samples at the 5-second scrape resolution — plus one
+      evaluation tick. A large spike decides sooner.
+    </p>
+    <p>
+      <b>The autoscaler is not a second scheduler.</b> It writes one number — the desired
+      count — and the reconciler converges. <code>kanea scale</code> uses the same route,
+      which is why manual and automatic scaling cannot disagree about mechanism.
+    </p>
+
+    <h3 id="arch-backup">State replication and restore</h3>
+    <ul>
+      <li><b>Change data capture.</b> Store mutations produce change segments; snapshots and
+        segments are replicated to any S3-compatible bucket. The client is hand-written
+        against the REST API — SigV4 and four verbs — and CI exercises it against MinIO.</li>
+      <li><b>Archives are chunked AEAD</b>, with keys HKDF-derived from the master key rather
+        than being it. <b>The last chunk is sealed under different additional data</b>, which
+        is the only thing standing between a truncated snapshot and a restore that decrypts
+        cleanly into half a platform.</li>
+      <li><b>Manifests are unencrypted and hashes are over the ciphertext</b>, so someone
+        holding the bucket and no key can still see what is there and whether it is intact —
+        which is the question you ask <i>before</i> going to find the escrowed key.</li>
+      <li><b>Restore is staged, never performed in place.</b> It can be requested over the
+        API, and the daemon performs it at the next start, before anything opens the Store.
+        The API has no method that restores — that is the interface, not a check.</li>
+      <li>The replication cursor is <b>derived from the sink</b>, never stored: writing it to
+        the Store would emit a change that needs shipping, which would write it again.</li>
+    </ul>
+    <p>
+      The master key is generated by <code>kanea init</code>, shown once, and must be typed
+      back — it is discarded if that fails. Without it, every archive is unreadable. The
+      <a href="https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md">DR runbook</a> is
+      worth reading before you need it.
+    </p>
+
+    <h3 id="arch-mcp">API, dashboard and MCP</h3>
+    <p>
+      The API is REST plus one multiplexed WebSocket, and <b>every route is deny-by-default</b>
+      — including the WebSocket and every MCP route. The exceptions are enumerable:
+      <code>/login</code>, the ACME challenge path, and <code>/healthz</code>.
+    </p>
+    <p>
+      There is exactly one authentication mechanism that is not the §13 one: the git webhook
+      route, which uses a per-project HMAC over the raw body, rejects replays, and is audited.
+      It never deploys from the request — it marks the project, and the sync loop re-reads the
+      source over Kanea's own credential.
+    </p>
+    <p>
+      The dashboard is a React SPA embedded in the binary with <code>go:embed</code> and served
+      by the daemon. The MCP server exposes 20 tools in three tiers (read, mutate, destructive)
+      over stdio and streamable HTTP.
+    </p>
+    <div class="callout">
+      <b class="label">Why MCP tools have no privileges of their own</b>
+      <p>
+        Every tool reaches the platform by making an HTTP request against the API's own
+        handler. A tool's only verb is "send this request", so it can never be more privileged
+        than the credential its caller presented — nothing in the MCP package may hold a Store,
+        a secrets store, or an auth store. That is what makes "no side channels" structural
+        rather than a rule somebody has to remember.
+      </p>
+      <p>
+        There are also <b>no secret tools at any tier</b>. The safety requirement is that no
+        tool returns a secret value; the implementation goes further and gives an agent no
+        secrets verb whatsoever, and a test fails if one appears.
+      </p>
+    </div>
+
+
+    <!-- ================= spec ================= -->
+    <h2 id="spec">Job spec reference</h2>
+
+<p>
+      Specs are HCL v2. If you have written Nomad job files the shape will be familiar,
+      though the vocabulary is Kanea's. Every rule below is enforced when the file is parsed
+      — errors carry file, line and column — and <code>kanea plan</code> is where you see
+      them.
+    </p>
+
+    <div class="callout">
+      <b class="label">The minimum</b>
+      <p>A service needs an image and nothing else. This is a complete, valid spec:</p>
+      <pre class="plain">spec_version = 1
+
+project "demo" {}
+
+service "web" {
+  project = "demo"
+  task "app" {
+    image = "nginx:1.27-alpine"
+  }
+}</pre>
+      <p>Everything on this page is additive to that.</p>
+    </div>
+
+    <h3 id="spec-top-level">Top level</h3>
+    <p>
+      A spec file contains <code>spec_version</code> and any number of
+      <code>project</code>, <code>service</code> and <code>storage</code> blocks. Multiple
+      files applied together are parsed as one set, and <b>file order is irrelevant</b> — a
+      service may reference a project declared in another file.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>spec_version</code></td><td>number</td><td>Currently <code>1</code>. Future spec revisions are gated on this field, which is how an upgrade can tell an old file from a new one.</td></tr>
+          <tr><td><code>project "&lt;name&gt;"</code></td><td>block</td><td>Zero or more. Name is a DNS-1123 label.</td></tr>
+          <tr><td><code>service "&lt;name&gt;"</code></td><td>block</td><td>Zero or more.</td></tr>
+          <tr><td><code>storage "&lt;name&gt;"</code></td><td>block</td><td>Zero or more. May also be declared in the server config.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="spec-project">project</h3>
+    <p>A named group of services, and the isolation boundary for network policy, secrets, containerd namespaces and DNS.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>description</code></td><td>string</td><td>Free text, ≤ 512 chars. Shown in the dashboard.</td></tr>
+          <tr><td><code>git</code></td><td>block</td><td>Optional GitOps source for this project.</td></tr>
+          <tr><td><code>notifications</code></td><td>block</td><td>Optional channels and filters.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4><code>git</code></h4>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>url</code></td><td>string</td><td>Required. Clone URL.</td></tr>
+          <tr><td><code>branch</code></td><td>string</td><td>Defaults to the repository's default branch.</td></tr>
+          <tr><td><code>path</code></td><td>string</td><td>Directory within the repository holding specs, e.g. <code>.kanea/</code>.</td></tr>
+          <tr><td><code>auth_ref</code></td><td>secret ref</td><td>Deploy key or token. Project-scoped like every other reference.</td></tr>
+          <tr><td><code>webhook_secret_ref</code></td><td>secret ref</td><td>HMAC key for the push webhook.</td></tr>
+          <tr><td><code>poll_interval</code></td><td>duration</td><td>How often to poll when no webhook arrives.</td></tr>
+          <tr><td><code>require_approval</code></td><td>bool</td><td>Sync marks the project; a human promotes.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn">
+      <b class="label">A repository speaks for its own project and no other</b>
+      <p>
+        A synced spec that declares a different project is refused. It is the same boundary
+        that scopes secrets, and it is the only thing between "can push to one repo" and
+        "owns every service on the node".
+      </p>
+      <p>
+        The webhook never deploys from the request either. It marks the project as dirty and
+        the sync loop re-reads the source over Kanea's own credential — so a forged body can
+        at most cause a legitimate sync to happen sooner.
+      </p>
+    </div>
+
+    <h4><code>notifications</code></h4>
+    <p>
+      Up to five channel blocks — <code>telegram</code>, <code>slack</code> (Discord accepts
+      the same shape on its <code>/slack</code> endpoint), <code>ntfy</code>,
+      <code>smtp</code>, <code>webhook</code> — plus filters:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>on</code></td><td>list(string)</td><td>Event globs, e.g. <code>["deploy.failed", "scale.*"]</code>. Validated against the known event vocabulary at parse time — a filter that could never match is a spec error, not a silence.</td></tr>
+          <tr><td><code>severity</code></td><td>string</td><td>Floor: <code>info</code>, <code>warning</code>, <code>error</code>. Composes with <code>on</code> as an AND.</td></tr>
+          <tr><td><code>telegram</code></td><td>block</td><td><code>chat_id</code>, <code>token_ref</code></td></tr>
+          <tr><td><code>slack</code></td><td>block</td><td><code>url_ref</code> — an incoming-webhook URL is a credential in path form, so it is referenced, never inlined</td></tr>
+          <tr><td><code>ntfy</code></td><td>block</td><td><code>url</code>, <code>token_ref</code></td></tr>
+          <tr><td><code>smtp</code></td><td>block</td><td><code>host</code>, <code>port</code>, <code>from</code>, <code>to</code>, <code>username</code>, <code>password_ref</code></td></tr>
+          <tr><td><code>webhook</code></td><td>block</td><td><code>url</code>, <code>secret_ref</code> (HMAC signature over the body)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Egress is checked at dial time against every resolved address, and redirects are
+      refused. A hostname is not a destination.
+    </p>
+
+    <h3 id="spec-storage">storage</h3>
+    <p>
+      A named volume backend. Declared here or in the server config; services mount it by
+      name with a <code>volume</code> block.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th><code>type</code></th><th>Fields</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>local</code></td><td>—</td><td>A directory on the node, managed by Kanea.</td></tr>
+          <tr><td><code>host</code></td><td><code>path</code></td><td>A directory the operator already owns. See R15 — it does nothing until an operator allowlists its parent.</td></tr>
+          <tr><td><code>nfs</code></td><td><code>server</code>, <code>export</code>, <code>options</code></td><td></td></tr>
+          <tr><td><code>smb</code></td><td><code>server</code>, <code>share</code>, <code>auth_ref</code>, <code>options</code></td><td></td></tr>
+          <tr><td><code>s3</code></td><td><code>bucket</code>, <code>endpoint</code>, <code>auth_ref</code>, <code>mode</code></td><td><code>mode = "ro"</code> selects mountpoint-s3, <code>"rw"</code> selects s3fs.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn">
+      <b class="label">S3 volumes are not a filesystem</b>
+      <p>
+        Every file operation costs an object-store round trip — around 30 ms. Listing or
+        creating a 200-file directory takes tens of seconds, no driver implements
+        <code>truncate</code> (s3fs silently no-ops it), and a FUSE call against a dead
+        backend blocks uninterruptibly for tens of seconds. Use them for bulk, read-mostly
+        data. Never for a hot path or many small files.
+      </p>
+    </div>
+
+    <h3 id="spec-service">service</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>project</code></td><td>string</td><td>—</td><td>The owning project.</td></tr>
+          <tr><td><code>description</code></td><td>string</td><td>—</td><td>Free text, ≤ 512 chars.</td></tr>
+          <tr><td><code>count</code></td><td>number</td><td><code>1</code></td><td>Replicas. Must sit inside <code>scaling</code>'s min/max if that block is present.</td></tr>
+          <tr><td><code>depends_on</code></td><td>list(string)</td><td>—</td><td>Start ordering. See R10.</td></tr>
+          <tr><td><code>task</code></td><td>block</td><td>—</td><td>Exactly one in v1.</td></tr>
+          <tr><td><code>build</code></td><td>block</td><td>—</td><td>Build from source instead of pulling.</td></tr>
+          <tr><td><code>network</code></td><td>block</td><td>—</td><td>Ports and ingress policy.</td></tr>
+          <tr><td><code>expose</code></td><td>block</td><td>—</td><td>Public exposure and middleware.</td></tr>
+          <tr><td><code>health_check</code></td><td>block</td><td>—</td><td>Zero or more, each labelled.</td></tr>
+          <tr><td><code>volume</code></td><td>block</td><td>—</td><td>Zero or more mounts.</td></tr>
+          <tr><td><code>scaling</code></td><td>block</td><td>—</td><td>Autoscaling policy.</td></tr>
+          <tr><td><code>update</code></td><td>block</td><td>rolling</td><td>Rollout strategy.</td></tr>
+          <tr><td><code>restart</code></td><td>block</td><td>always</td><td>Restart policy.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="spec-task">task</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>image</code></td><td>string</td><td>Optional only if a <code>build</code> block is present (R8). Digests are supported and preferred.</td></tr>
+          <tr><td><code>command</code></td><td>list(string)</td><td>Overrides the image entrypoint. <b>An argument array, never a shell string</b> (R12).</td></tr>
+          <tr><td><code>capabilities</code></td><td>list(string)</td><td>Explicit allowlist against the drop-everything default (R13).</td></tr>
+          <tr><td><code>env</code></td><td>map</td><td>Values may be <code>secret:</code> references or <code>${service.…}</code> interpolations.</td></tr>
+          <tr><td><code>resources</code></td><td>block</td><td><code>cpu</code> in MHz, <code>memory</code> in MiB. Omitted → <code>cpu = 100</code>, <code>memory = 256</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="spec-network">network</h3>
+    <pre class="plain">network {
+  port "http" { container = 3000 }
+  policy { allow_from = ["analytics/collector"] }
+}</pre>
+    <ul>
+      <li><code>port "&lt;name&gt;"</code> — <code>container</code> is the port inside the
+        container. The name is what <code>expose</code> and <code>health_check</code> refer
+        to, and what <code>${service.x.port.&lt;name&gt;}</code> resolves.</li>
+      <li><code>policy.allow_from</code> — fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>
+        peers permitted to reach this service. See R14.</li>
+    </ul>
+
+    <h3 id="spec-expose">expose</h3>
+    <p>North-south exposure: the edge proxy, TLS, and the middleware chain.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>domains</code></td><td>list(string)</td><td>Omitted → <code>&lt;service&gt;.&lt;project&gt;.&lt;base_domain&gt;</code>. No two services may claim the same domain, counting generated ones.</td></tr>
+          <tr><td><code>tls</code></td><td>block</td><td><code>letsencrypt = true</code></td></tr>
+          <tr><td><code>ip_restriction</code></td><td>block</td><td><code>allow</code>, <code>deny</code> — lists of CIDRs. Empty <code>allow</code> means the world; <b>deny wins</b>.</td></tr>
+          <tr><td><code>rate_limit</code></td><td>block</td><td><code>requests</code>, <code>window</code>, <code>per</code>, <code>burst</code>. <code>per</code> is <code>ip</code>, <code>service</code>, or <code>header:&lt;name&gt;</code>.</td></tr>
+          <tr><td><code>headers</code></td><td>block</td><td><code>request_set</code>, <code>request_remove</code>, <code>response_set</code>, <code>response_remove</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The chain evaluates in a fixed order regardless of declaration order:</p>
+    <pre class="plain">Host match → IP allow/deny → rate limit → header transforms → upstream</pre>
+    <div class="callout warn">
+      <b class="label">You cannot touch X-Forwarded-*</b>
+      <p>
+        The <code>headers</code> block rejects any attempt to set or remove the
+        <code>X-Forwarded-*</code> set, or the hop-by-hop headers. Those carry the client
+        identity that IP restriction, rate limiting and the audit log are all keyed on — a
+        spec able to rewrite <code>X-Forwarded-For</code> would be forging the thing every
+        other control trusts.
+      </p>
+    </div>
+
+    <h3 id="spec-health_check">health_check</h3>
+    <pre class="plain">health_check "http" {
+  type     = "http"     # http | tcp | exec
+  path     = "/healthz" # http only
+  port     = "http"     # port name, required for http and tcp
+  interval = "10s"
+  timeout  = "2s"
+  failures = 3
+}</pre>
+    <p>
+      An <code>exec</code> check runs inside the task's container and takes
+      <code>command</code> as an <b>argument array, never a shell string</b> — the same rule
+      as <code>task.command</code>, for the same reason.
+    </p>
+    <div class="callout">
+      <b class="label">No check means no alloc is ever "healthy"</b>
+      <p>
+        Alloc health is only ever written by a probe. A service without a
+        <code>health_check</code> block has every alloc unhealthy forever, and that is
+        correct — Kanea asks whether a check is configured before it asks whether one passed.
+        It matters because <code>min_healthy</code> in the <code>update</code> block is
+        meaningless without one.
+      </p>
+    </div>
+
+    <h3 id="spec-volume">volume</h3>
+    <pre class="plain">volume "data" {
+  storage    = "local-ssd"    # a declared storage block
+  mount_path = "/var/lib/data"
+  read_only  = false
+}</pre>
+    <p>Mount failures fail the alloc loudly. A volume that silently is not there is worse than one that stops the deploy.</p>
+
+    <h3 id="spec-scaling">scaling</h3>
+    <pre class="plain">scaling {
+  min = 2
+  max = 10
+  metric "cpu"            { target = 70 }   # percent of resources.cpu
+  metric "rps"            { target = 500 }  # requests per second, per alloc
+  metric "p95_latency_ms" { target = 800 }
+  cooldown = "2m"
+}</pre>
+    <ul>
+      <li><code>cpu</code> comes from containerd cgroup metrics and is a percentage of the
+        alloc's <i>declared</i> limit — the number the workload can actually use.</li>
+      <li><code>rps</code> and <code>p95_latency_ms</code> come from the edge for exposed
+        services, and from Hubble for east-west traffic when it is enabled.</li>
+      <li><code>count</code> must fall inside <code>[min, max]</code>, otherwise the
+        autoscaler would immediately contradict the spec.</li>
+    </ul>
+
+    <h3 id="spec-update">update and restart</h3>
+    <pre class="plain">update {
+  strategy     = "rolling"   # rolling | replace
+  max_parallel = 1
+  min_healthy  = "30s"
+}
+
+restart {
+  attempts = 5
+  backoff  = "10s,30s,1m,5m"
+}</pre>
+    <p>
+      <code>max_parallel</code> bounds allocs that are <b>down</b>, not replacements in
+      flight — anything already unavailable spends the budget first, so a failing deploy
+      halts rather than marching through every replica. <code>min_healthy</code> applies only
+      to allocs this deploy has already replaced.
+    </p>
+
+    <h3 id="spec-build">build</h3>
+    <pre class="plain">build {
+  context           = "./web"
+  dockerfile        = "Containerfile"   # optional; auto-detected when omitted
+  target            = "registry.example.com/shop/web"
+  tag               = "${GIT_SHA_SHORT}"
+  cache_repo        = "registry.example.com/shop/web-cache"
+  registry_auth_ref = "secret:shop/registry"
+}</pre>
+    <ul>
+      <li>Builds run on rootless BuildKit, unprivileged end to end.</li>
+      <li><b><code>Containerfile</code> and <code>Dockerfile</code> both work, and
+        <code>Containerfile</code> wins when both exist.</b></li>
+      <li>The push credential is materialised as a <code>config.json</code> for the build and
+        never enters the build context.</li>
+      <li>A service with a <code>build</code> block and no <code>task.image</code> is
+        legitimate: the reconciler skips it until the first build pins a digest.</li>
+      <li>Builds are <b>serialised, and refused when full rather than queued forever</b>.
+        Isolation is collective, so a second concurrent build would share the first's budget.
+        <code>queued</code> is a real state and shutdown cancels what is still waiting.</li>
+    </ul>
+
+    <h3 id="spec-interpolation">Interpolation</h3>
+    <p>Three kinds of <code>${…}</code> appear in a spec, and they resolve at different times.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Form</th><th>Resolved</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>${VAR}</code></td><td>Parse time</td><td>From <code>-var-file</code> and built-ins such as <code>KANEA_PROJECT</code>.</td></tr>
+          <tr><td><code>${GIT_SHA_SHORT}</code></td><td>Checkout time</td><td>Survives parsing as a literal reference — its value does not exist until a commit is checked out.</td></tr>
+          <tr><td><code>${service.&lt;n&gt;.host}</code></td><td>Alloc start</td><td>Becomes <code>&lt;n&gt;.&lt;project&gt;.kanea</code>. Validated at plan time; resolved as a <b>DNS name, never an IP</b>, so load-balancer reprogramming cannot break it.</td></tr>
+          <tr><td><code>${service.&lt;n&gt;.port.&lt;p&gt;}</code></td><td>Alloc start</td><td>The named port's frontend port.</td></tr>
+          <tr><td><code>secret:&lt;path&gt;</code></td><td>Alloc start</td><td>Not interpolation — a reference the reconciler resolves. Project-scoped (R5).</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="spec-rules">Validation rules</h3>
+    <p>
+      Sixteen rules, all enforced at parse or plan time with file/line/column diagnostics.
+      They are numbered because the error messages cite them.
+    </p>
+
+    <div class="rule"><b>R1</b><div><p><b>Names are DNS-1123 labels.</b> Project and service names: lowercase alphanumeric and <code>-</code>, alphanumeric at both ends, ≤ 63 characters. Parse errors abort the run.</p></div></div>
+    <div class="rule"><b>R2</b><div><p><b>Variables.</b> <code>${VAR}</code> interpolation from <code>-var-file</code> and built-ins.</p></div></div>
+    <div class="rule"><b>R3</b><div><p><b>Secrets are referenced, never inlined.</b> Resolved at alloc start. Primary injection is a tmpfs file at <code>/run/kanea/secrets/&lt;alloc&gt;/&lt;name&gt;</code>; env vars are supported and documented as weaker.</p></div></div>
+    <div class="rule"><b>R4</b><div><p><b><code>kanea plan</code> is a real dry run</b> and shows the create/change/destroy diff before anything is applied.</p></div></div>
+    <div class="rule"><b>R5</b><div><p><b>Secret references are project-scoped.</b> A service may name <code>secret:&lt;own-project&gt;/…</code> or <code>secret:shared/…</code> and nothing else. Cross-project references are rejected. Git, registry, storage and notification credentials follow the same scoping.</p></div></div>
+    <div class="rule"><b>R6</b><div><p><b><code>spec_version = 1</code></b> is declared by every file; future revisions are gated on it.</p></div></div>
+    <div class="rule"><b>R7</b><div><p><b>Health check types</b> are <code>http</code>, <code>tcp</code> and <code>exec</code>. <code>exec</code> runs inside the container and takes an argument array — never a shell string.</p></div></div>
+    <div class="rule"><b>R8</b><div><p><b>The minimal service is image-only.</b> At least one of <code>task.image</code> or <code>build</code> must be present. When both are, the pipeline-built digest wins and <code>task.image</code> is the pre-first-build value.</p></div></div>
+    <div class="rule"><b>R9</b><div><p><b>Service references are same-project in v1</b>, validated at plan against the whole applied set — the referenced service and port must exist, and file order is irrelevant. Resolved as DNS names, never IPs. <b>Cycles are rejected</b>, with the cycle shown in the diagnostic.</p></div></div>
+    <div class="rule"><b>R10</b><div><p><b>Dependencies gate starts, not stops.</b> <code>depends_on</code> and every implicit reference edge mean a dependent will not start until its dependencies are healthy. If a dependency degrades afterwards, dependents keep running and events are emitted — no cascading stops.</p></div></div>
+    <div class="rule"><b>R11</b><div><p><b>Resource limits are mandatory; declaring them is optional.</b> Omitted → <code>cpu = 100</code>, <code>memory = 256</code>, plus a default <code>pids.max</code>. No alloc ever runs unlimited. A <code>memory.max</code> breach OOM-kills the alloc, emits an event, and the restart policy applies. Declared values are the admission units counted against the node's workload budget.</p></div></div>
+    <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully — <code>redis-server --save ""</code> is how you disable snapshots.</p></div></div>
+    <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> is an allowlist over a drop-everything default.</b> Only the set stock images legitimately need may be requested: <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>SETGID</code>, <code>SETUID</code>, <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_BIND_SERVICE</code>, <code>NET_RAW</code>, <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. Privilege-equivalent ones — <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends — are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Granted capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
+    <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; Cilium ingress rules union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b> — <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
+    <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time — but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config, <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist.</p></div></div>
+    <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous — named <code>http</code>, or the only one declared. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
+
+    <h3 id="spec-example">Full example</h3>
+    <p>
+      Everything above, in one file. This parses and validates against Kanea's own parser.
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>shop.hcl</span></div>
+<pre><span class="c"># shop.hcl — everything for one project</span>
+spec_version = 1
+
+<span class="k">project</span> <span class="s">"shop"</span> {
+  description = <span class="s">"E-commerce storefront stack"</span>
+
+  <span class="k">git</span> {
+    url      = <span class="s">"https://github.com/example/shop-deploy.git"</span>
+    branch   = <span class="s">"main"</span>
+    path     = <span class="s">".kanea/"</span>
+    auth_ref = <span class="s">"secret:shop/github-deploy-key"</span>
+  }
+
+  <span class="k">notifications</span> {
+    <span class="k">slack</span> { url_ref = <span class="s">"secret:shop/slack-webhook"</span> }
+    on       = [<span class="s">"deploy.failed"</span>, <span class="s">"service.unhealthy"</span>, <span class="s">"scale.*"</span>]
+    severity = <span class="s">"warning"</span>
+  }
+}
+
+<span class="k">storage</span> <span class="s">"local-ssd"</span> {
+  type = <span class="s">"local"</span>
+}
+
+<span class="k">service</span> <span class="s">"postgres"</span> {
+  project = <span class="s">"shop"</span>
+
+  <span class="k">task</span> <span class="s">"db"</span> {
+    image = <span class="s">"postgres:16-alpine"</span>
+    env = {
+      POSTGRES_PASSWORD = <span class="s">"secret:shop/postgres-password"</span>
+    }
+    <span class="k">resources</span> {
+      cpu    = 1000
+      memory = 1024
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"pg"</span> { container = 5432 }
+  }
+
+  <span class="k">volume</span> <span class="s">"data"</span> {
+    storage    = <span class="s">"local-ssd"</span>
+    mount_path = <span class="s">"/var/lib/postgresql/data"</span>
+  }
+
+  <span class="k">health_check</span> <span class="s">"tcp"</span> {
+    type     = <span class="s">"tcp"</span>
+    port     = <span class="s">"pg"</span>
+    interval = <span class="s">"10s"</span>
+  }
+}
+
+<span class="k">service</span> <span class="s">"web"</span> {
+  project     = <span class="s">"shop"</span>
+  description = <span class="s">"Storefront frontend"</span>
+  count       = 3
+  depends_on  = [<span class="s">"postgres"</span>]
+
+  <span class="k">build</span> {
+    context = <span class="s">"./web"</span>
+    target  = <span class="s">"registry.example.com/shop/web"</span>
+    tag     = <span class="s">"${GIT_SHA_SHORT}"</span>
+  }
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    image = <span class="s">"registry.example.com/shop/web:latest"</span>
+
+    env = {
+      NODE_ENV      = <span class="s">"production"</span>
+      DATABASE_URL  = <span class="s">"secret:shop/database-url"</span>
+      DATABASE_HOST = <span class="s">"${service.postgres.host}"</span>
+      DATABASE_PORT = <span class="s">"${service.postgres.port.pg}"</span>
+    }
+
+    <span class="k">resources</span> {
+      cpu    = 500
+      memory = 512
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"http"</span> { container = 3000 }
+  }
+
+  <span class="k">expose</span> {
+    domains = [<span class="s">"shop.example.com"</span>, <span class="s">"www.shop.example.com"</span>]
+    <span class="k">tls</span> { letsencrypt = true }
+
+    <span class="k">ip_restriction</span> {
+      deny = [<span class="s">"198.51.100.7/32"</span>]
+    }
+
+    <span class="k">rate_limit</span> {
+      requests = 100
+      window   = <span class="s">"1m"</span>
+      per      = <span class="s">"ip"</span>
+      burst    = 20
+    }
+
+    <span class="k">headers</span> {
+      response_set    = { Strict-Transport-Security = <span class="s">"max-age=63072000; includeSubDomains"</span> }
+      response_remove = [<span class="s">"Server"</span>, <span class="s">"X-Powered-By"</span>]
+    }
+  }
+
+  <span class="k">health_check</span> <span class="s">"http"</span> {
+    type     = <span class="s">"http"</span>
+    path     = <span class="s">"/healthz"</span>
+    port     = <span class="s">"http"</span>
+    interval = <span class="s">"10s"</span>
+    timeout  = <span class="s">"2s"</span>
+    failures = 3
+  }
+
+  <span class="k">scaling</span> {
+    min = 2
+    max = 10
+    <span class="k">metric</span> <span class="s">"cpu"</span> { target = 70 }
+    <span class="k">metric</span> <span class="s">"rps"</span> { target = 500 }
+    cooldown = <span class="s">"2m"</span>
+  }
+
+  <span class="k">update</span> {
+    strategy     = <span class="s">"rolling"</span>
+    max_parallel = 1
+    min_healthy  = <span class="s">"30s"</span>
+  }
+
+  <span class="k">restart</span> {
+    attempts = 5
+    backoff  = <span class="s">"10s,30s,1m,5m"</span>
+  }
+}</pre>
+    </div>
+
+
+    <!-- ================= cli ================= -->
+    <h2 id="cli">CLI reference</h2>
+
+<p>
+      One binary, one command tree. The CLI talks to <code>kanead</code> over a unix socket
+      — <code>--socket</code> overrides it on every client command — and the daemon commands
+      are the ones systemd runs for you.
+    </p>
+    <p>
+      Services are addressed as <code>project/service</code> throughout, or as a bare service
+      name with <code>--project</code>.
+    </p>
+
+    <h3 id="cli-setup">Setup</h3>
+
+    <h4><code>kanea init</code></h4>
+    <p>
+      Interactive first install: preflight checks, configuration, the master-key ceremony,
+      and the systemd units. Run it once, as root.
+    </p>
+    <pre class="plain">sudo kanea init [--data-dir=/var/lib/kanea] [--log-dir=…] [--unit-dir=/etc/systemd/system]
+                [--network=cilium|none] [--containerd=…] [--cilium-socket=…]
+                [--skip-checks] [--skip-units]</pre>
+    <div class="callout warn">
+      <b class="label">The key is shown once</b>
+      <p>
+        The ceremony prints the master key and requires you to type it back; if that fails it
+        is discarded and nothing is written. Without that key every backup this node ever
+        makes is unreadable. Have somewhere to record it <i>before</i> you start.
+      </p>
+    </div>
+
+    <h4><code>kanea doctor</code></h4>
+    <p>
+      Verifies the node: dependencies and their versions, the containerd and cilium sockets,
+      kernel version, cgroups v2 and slice placement, the effective memory floor, the build
+      socket, disk headroom and clock synchronisation. Safe to run any time.
+    </p>
+
+    <h4><code>kanea upgrade</code></h4>
+    <pre class="plain">kanea upgrade [--skip-backup] [--dry-run] [--timeout=2m] [--socket=…]</pre>
+    <p>
+      Takes a pre-upgrade backup, restarts <code>kanea-edge</code> and then
+      <code>kanead</code> in that order, runs any state migrations, and waits for health.
+    </p>
+    <div class="callout">
+      <b class="label">It does not download anything</b>
+      <p>
+        Installing software is the package manager's job — or
+        <a href="../install.sh">install.sh</a>. A command that both fetched a binary and
+        restarted the platform would be a command nobody could safely run twice.
+      </p>
+    </div>
+
+    <h3 id="cli-deploy">Deploying</h3>
+
+    <h4><code>kanea plan</code></h4>
+    <pre class="plain">kanea plan app.hcl [more.hcl …]
+kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
+    <p>
+      A real dry run: the create/change/destroy diff, the resulting workload budget, and
+      every validation rule. Multiple files are parsed as one set, so file order does not
+      matter. This is where you find out about a cycle, a cross-project secret, a duplicate
+      domain or a rate limit that would fail open.
+    </p>
+
+    <h4><code>kanea run</code></h4>
+    <pre class="plain">kanea run app.hcl [more.hcl …] [--wait=60s]
+kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
+    <p>
+      Applies the spec. <code>--wait</code> is how long to wait for allocs to reach running
+      before returning; <code>0</code> returns immediately. Running it twice with an
+      unchanged spec does nothing — a deploy is a spec-hash mismatch, not an invocation.
+    </p>
+
+    <h4><code>kanea stop</code></h4>
+    <pre class="plain">kanea stop [--project=p] &lt;[project/]service&gt; [--rm]</pre>
+    <p>
+      Scales to zero. <code>--rm</code> also deletes the service declaration, so the
+      reconciler stops holding desired state for it.
+    </p>
+
+    <h3 id="cli-inspect">Inspecting</h3>
+
+    <h4><code>kanea ps</code></h4>
+    <pre class="plain">kanea ps [--project=p] [--service=s]</pre>
+    <p>The alloc table: id, service, state, health, restarts, age, address.</p>
+
+    <h4><code>kanea status</code></h4>
+    <pre class="plain">kanea status [--project=p] [[project/]service]</pre>
+    <p>Health, recent events, current and desired counts, and the scaling picture.</p>
+
+    <h4><code>kanea logs</code></h4>
+    <pre class="plain">kanea logs [--project=p] &lt;[project/]service&gt; [-f] [--tail=N] [--alloc=ID]</pre>
+    <p>
+      Merged across allocs by default; <code>--alloc</code> narrows to one.
+      <code>--tail</code> shows the last N lines before following. Log drains are
+      non-blocking with drop counters — a slow reader can never stall a workload's
+      <code>write()</code>.
+    </p>
+
+    <h4><code>kanea exec</code></h4>
+    <pre class="plain">kanea exec [--project=p] [--alloc=ID] [--user=UID] [-it] &lt;[project/]service&gt; -- &lt;command…&gt;</pre>
+    <p>
+      A debug shell inside an alloc. <b>Admin-only, and audited whether or not the session
+      establishes</b> — "someone tried to open a shell on production" is worth keeping either
+      way, so the attempt and the requested command are both recorded.
+    </p>
+    <ul>
+      <li>The <code>--</code> is required. The command crosses the wire as separate
+        arguments rather than one joined string, because every rule for splitting a string
+        back into arguments is wrong for something somebody will eventually pass.</li>
+      <li><code>-it</code> allocates a terminal and forwards stdin. A shell needs it.</li>
+      <li><code>--user</code> takes a <b>numeric uid only</b>. Resolving a name would mean
+        reading the container's own <code>/etc/passwd</code>, and a container-controlled file
+        deciding which uid the control plane runs a process as is not a thing to build.</li>
+    </ul>
+
+    <h4><code>kanea ui</code></h4>
+    <pre class="plain">kanea ui [--addr=…] [--open]</pre>
+    <p>Prints the dashboard URL; <code>--open</code> launches a browser.</p>
+
+    <h3 id="cli-scale">Scaling and builds</h3>
+
+    <h4><code>kanea scale</code></h4>
+    <pre class="plain">kanea scale [--project=p] &lt;[project/]service&gt; &lt;count&gt;</pre>
+    <p>
+      Writes the desired count and returns; the reconciler converges. This is the same route
+      the autoscaler uses, which is why manual and automatic scaling can never disagree about
+      mechanism.
+    </p>
+
+    <h4><code>kanea build</code></h4>
+    <pre class="plain">kanea build [--project=p] &lt;[project/]service&gt; [--deploy=true] [--follow=true]</pre>
+    <p>
+      Triggers the service's build pipeline. <code>--deploy</code> rolls the built digest out
+      on success; <code>--follow</code> streams the build log. Builds are serialised — a
+      second one is <code>queued</code>, and refused rather than blocked when the queue is
+      full.
+    </p>
+
+    <h4><code>kanea project</code></h4>
+    <pre class="plain">kanea project sync &lt;project&gt;             # re-read the git source now
+kanea project builds &lt;project&gt; [--service=s] [--limit=N]</pre>
+
+    <h3 id="cli-secrets">Secrets and accounts</h3>
+
+    <h4><code>kanea secret</code></h4>
+    <pre class="plain">kanea secret put [--from-file=path] &lt;project&gt;/&lt;name&gt;   # value on stdin
+kanea secret ls [&lt;project&gt;]
+kanea secret rm &lt;project&gt;/&lt;name&gt;</pre>
+    <div class="callout">
+      <b class="label">There is no get</b>
+      <p>
+        Not for an operator, not over the API, and not for an AI agent at any tool tier.
+        <code>ls</code> lists names. The value goes in and is only ever resolved into a
+        running alloc.
+      </p>
+    </div>
+
+    <h4><code>kanea user</code> and <code>kanea token</code></h4>
+    <pre class="plain">kanea user add [--role=admin|viewer] &lt;name&gt;
+kanea user ls
+kanea user rm &lt;name&gt;
+
+kanea token create [--role=viewer] [--expires-in=720h] &lt;name&gt;
+kanea token ls
+kanea token rm &lt;id&gt;</pre>
+    <p>
+      Accounts live in the Store, not in a config file. Tokens default to never expiring;
+      <code>--expires-in</code> takes a Go duration.
+    </p>
+
+    <h3 id="cli-backup">Backup and restore</h3>
+    <pre class="plain">kanea backup create [--reason="on-demand"]
+kanea backup list
+kanea backup verify &lt;archive-id&gt;
+
+kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
+              [--s3-endpoint=…] [--s3-region=…] [--s3-access-key=…] [--s3-path-style]
+              [--master-key=path] [--data-dir=…]</pre>
+    <p>
+      <code>verify</code> reads the archive and checks its hashes and authentication tags
+      without restoring anything — an archive that cannot be verified is one you find out
+      about now rather than during an outage.
+    </p>
+    <div class="callout warn">
+      <b class="label">A restore is staged, never performed in place</b>
+      <p>
+        The command stages the restore; it is performed at the next daemon start, before
+        anything opens the Store. That is the interface rather than a safety check — the API
+        has no method that restores at all, and there is no restore button in the dashboard,
+        because a restore replaces everything on the node and belongs at a terminal.
+      </p>
+    </div>
+
+    <h3 id="cli-daemons">Daemons</h3>
+    <p>Normally systemd runs these. The flags are here because <code>systemctl cat</code> will show them to you.</p>
+
+    <h4><code>kanea agent</code></h4>
+    <pre class="plain">kanea agent [--data-dir=…] [--log-dir=…] [--volume-dir=…] [--socket=…]
+            [--containerd=…] [--cilium=…] [--cni-conf=…] [--cni-bin=…]
+            [--policy-dir=…] [--lb-state-file=…] [--service-cidr=…]
+            [--listen=…] [--listen-cert=…] [--listen-key=…] [--dashboard=true]
+            [--autoscale=true] [--log-level=info]
+            [--backup-s3-endpoint=…] [--backup-s3-region=…] [--backup-s3-access-key=…]
+            [--oidc-client-id=…] [--acme-dns-tsig-key=…]</pre>
+    <p>
+      <code>--listen</code> beyond loopback requires <code>--listen-cert</code> and
+      <code>--listen-key</code>. Credential-shaped options such as
+      <code>--oidc-client-secret</code> and <code>--acme-dns-tsig-secret</code> take
+      <code>secret:</code> references, never literals.
+    </p>
+
+    <h4><code>kanea edge</code></h4>
+    <pre class="plain">kanea edge [--routes=/run/kanea-edge/routes.json] [--certs=…] [--http=:80]
+           [--poll=…] [--drain=…] [--memory-limit=128MiB] [--log-level=info]</pre>
+    <p>
+      Its own process and its own systemd unit, with no <code>After=kanead.service</code> —
+      north-south traffic surviving a control-plane restart is the entire reason it is
+      separate. <code>--drain</code> is how long in-flight requests get on shutdown.
+    </p>
+
+    <h3 id="cli-agents">MCP</h3>
+    <pre class="plain">kanea mcp [--verbose]</pre>
+    <p>
+      A stdio MCP server for a local AI agent — 20 tools in read, mutate and destructive
+      tiers. The same server is available over streamable HTTP on the API listener for remote
+      agents.
+    </p>
+    <p>
+      Tools reach the platform only by making requests against the API's own handler, so an
+      agent is never more privileged than the credential it was given. Tiers are advertised as
+      well as enforced, and the advertisement fails closed. A refusal comes back as a tool
+      result rather than a protocol error, because the model is what has to react to it.
+    </p>
+
+    <h4><code>kanea version</code></h4>
+    <p>Prints the version stamped in at build time. <code>kanea upgrade</code> compares it against what the running daemon reports.</p>
+
   </main>
 
 </div>
@@ -244,6 +1338,69 @@ kanea logs -f demo/web</pre>
     <span class="sp">Built by Michael K. Essandoh</span>
   </div>
 </footer>
+
+<script>
+  // Two small things: mark the section you are reading in the contents, and let
+  // the contents collapse on a narrow screen. Everything else here is static.
+  (function () {
+    var list = document.getElementById('toc-list');
+    var links = Array.prototype.slice.call(list.querySelectorAll('a[href^="#"]'));
+    var byId = {};
+    links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+
+    var targets = Object.keys(byId)
+      .map(function (id) { return document.getElementById(id); })
+      .filter(Boolean);
+
+    var current = null;
+    function mark(el) {
+      if (!el || el === current) return;
+      if (current) current.removeAttribute('aria-current');
+      current = el;
+      current.setAttribute('aria-current', 'true');
+      // Keep the marked entry inside the scrolled contents panel.
+      var top = current.offsetTop, h = list.clientHeight;
+      if (top < list.scrollTop || top > list.scrollTop + h - 40) {
+        list.scrollTop = Math.max(0, top - h / 2);
+      }
+    }
+
+    // The heading nearest the top of the viewport wins. An IntersectionObserver
+    // alone reports whatever crosses the boundary, which flickers between two
+    // headings when a short section scrolls past; this picks deterministically.
+    function update() {
+      var best = null, bestTop = -Infinity;
+      for (var i = 0; i < targets.length; i++) {
+        var t = targets[i].getBoundingClientRect().top - 90;
+        if (t <= 0 && t > bestTop) { bestTop = t; best = targets[i]; }
+      }
+      if (!best && targets.length) best = targets[0];
+      if (best) mark(byId[best.id]);
+    }
+
+    var ticking = false;
+    addEventListener('scroll', function () {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(function () { update(); ticking = false; });
+    }, { passive: true });
+    addEventListener('resize', update, { passive: true });
+    update();
+
+    var toggle = document.querySelector('.toc-toggle');
+    toggle.addEventListener('click', function () {
+      var open = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', String(!open));
+      document.getElementById('toc').classList.toggle('open', !open);
+    });
+    list.addEventListener('click', function (e) {
+      if (e.target.tagName === 'A' && matchMedia('(max-width: 900px)').matches) {
+        toggle.setAttribute('aria-expanded', 'false');
+        document.getElementById('toc').classList.remove('open');
+      }
+    });
+  })();
+</script>
 
 </body>
 </html>

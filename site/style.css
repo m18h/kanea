@@ -231,11 +231,40 @@ footer .sp { margin-left: auto; }
 }
 
 .sidebar { position: sticky; top: 82px; font-size: .9rem; }
+.sidebar nav {
+  max-height: calc(100vh - 116px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding-right: 6px;
+}
+.sidebar a.part {
+  font-weight: 600; color: var(--fg);
+  margin-top: 16px; padding-left: 10px;
+}
+.sidebar a.part:first-child { margin-top: 0; }
+.sidebar a.sub { padding-left: 22px; font-size: .855rem; }
+.sidebar a.sub[aria-current] { background: var(--accent-dim); }
+
+/* On a narrow screen the contents collapse behind a button — a 39-entry list
+   above the first paragraph is not navigation, it is a wall. */
+.toc-toggle { display: none; }
 @media (max-width: 900px) {
   .sidebar {
-    position: static; margin-bottom: 32px; padding-bottom: 24px;
-    border-bottom: 1px solid var(--border);
+    position: sticky; top: 58px; z-index: 5;
+    margin-bottom: 24px; padding: 10px 0;
+    background: var(--bg); border-bottom: 1px solid var(--border);
   }
+  .toc-toggle {
+    display: block; width: 100%; text-align: left;
+    padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-soft); color: var(--fg);
+    font: 550 .9rem var(--sans); cursor: pointer;
+  }
+  .toc-toggle::after { content: " ▾"; color: var(--muted); }
+  .sidebar[aria-expanded] .toc-toggle::after { content: " ▴"; }
+  .sidebar nav { display: none; max-height: 62vh; margin-top: 10px; }
+  .sidebar.open nav { display: block; }
 }
 .sidebar h4 {
   font: 600 .7rem/1 var(--mono);
@@ -254,12 +283,21 @@ footer .sp { margin-left: auto; }
 
 .prose { min-width: 0; max-width: 76ch; }
 .prose h1 { font-size: 2.1rem; margin: 0 0 12px; }
+
+/* Three levels, because the docs are one document: h2 is a part (Overview,
+   Architecture, …), h3 a section within it, h4 a block or subsection. */
 .prose h2 {
-  font-size: 1.4rem; margin: 52px 0 12px;
-  padding-top: 22px; border-top: 1px solid var(--border);
+  font-size: 1.9rem; margin: 84px 0 20px;
+  padding-top: 30px; border-top: 2px solid var(--accent-dim);
+  scroll-margin-top: 78px; letter-spacing: -.025em;
+}
+.prose h2:first-of-type { margin-top: 56px; }
+.prose h3 {
+  font-size: 1.32rem; margin: 46px 0 12px;
+  padding-top: 20px; border-top: 1px solid var(--border);
   scroll-margin-top: 78px;
 }
-.prose h3 { font-size: 1.02rem; margin: 30px 0 8px; scroll-margin-top: 78px; }
+.prose h4 { font-size: 1.02rem; margin: 30px 0 8px; scroll-margin-top: 78px; }
 .prose > p:first-of-type { font-size: 1.05rem; color: var(--muted); }
 .prose p { margin: 0 0 16px; }
 .prose ul, .prose ol { margin: 0 0 16px; padding-left: 22px; }
