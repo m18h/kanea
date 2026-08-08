@@ -10,7 +10,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 ## Current status
 
-**M0–M8 complete. M9 (MCP server) is next.**
+**M0–M9 complete. M10 (hardening & packaging) is next.**
 
 | Milestone | State | What landed |
 |---|---|---|
@@ -23,6 +23,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 | M6 metrics & autoscaling | ✅ | In-memory TS, three scrapers, evaluator + guardrails, circuit breaker, Prometheus exporter |
 | M7 GitOps & pipelines | ✅ | Run objects, git sync (in-process go-git), signed webhooks, BuildKit runner, serialised queue, coordinator, API/CLI/dashboard |
 | M8 notifications | ✅ | Event vocabulary, glob filters, SSRF egress guard, five channels, coalescing dispatcher, bounded event feed |
+| M9 MCP server | ✅ | Rolling updates on spec drift, project/stats/restart/notify-test routes, hand-written MCP over both transports, 20 tools in three tiers |
 
 Things a future change is most likely to trip over:
 
@@ -39,6 +40,13 @@ Things a future change is most likely to trip over:
 - **Notification egress is checked at dial time, on every resolved address**, and redirects are refused (§14 A10, `docs/THREAT_MODEL.md`). A hostname is not a destination.
 - **go-git ≥ 5.19.1 and go-billy ≥ 5.9.0 are security floors**, not preferences (GO-2026-5693, GO-2026-5597). The billy one is a path traversal in the chroot filesystem `Materialize` clones a working tree through — repository-controlled paths written to disk. A downgrade fails `make security`, which is how it should be found.
 - **A service with a `build` block and no `task.image` is legitimate** (§6.2 R8) and the reconciler skips it until the first build pins a digest. `${GIT_SHA_SHORT}` and its siblings survive parsing as literal references — their value only exists once a commit is checked out.
+- **A deploy is a spec-hash mismatch** (PRD v1.25). `reconciler.SpecHash` covers only what is baked into a container at creation; adding a field to `Desired` does *not* change it unless you add it to the hash's own struct, and whether a new field should roll allocs is a decision to make there. A record with an empty hash is adopted, never rolled — that is what stops an upgrade of `kanead` from replacing every alloc on the node.
+- **`max_parallel` bounds allocs that are down, not replacements in flight.** Anything already unavailable spends the budget first, so a deploy that starts going wrong stops instead of walking through every replica. `min_healthy` applies only to allocs the current deploy has already replaced.
+- **`AllocRecord.Healthy` is only ever written by a probe.** A service with no `check` block has it false for every alloc, forever. Read it through `Probed()` or behind `Check.configured()`; testing the field alone reports every check-free service as broken.
+- **A restart is a spec change, not a second path to the runtime** (PRD v1.26). `POST /v1/services/{p}/{s}/restart` bumps `Desired.Generation`, which is in the spec hash. The generation belongs to the running service, so `handleApply` carries it over — an apply that reset it would restart the service a second time.
+- **MCP tools reach the platform only by HTTP against the API's own handler** (§16.3). That is what makes "no side channels" structural: a tool's only verb is "send this request", so it cannot be more privileged than the credential its caller presented. Nothing in `internal/mcp` may take a `Store`, a secrets store, or an auth store.
+- **There are no secret tools, at any tier** (PRD v1.26). §16.3's safety rule is that no tool returns a secret value; the implementation goes further and gives an agent no secrets verb at all. `TestNoToolReadsASecret` fails if one appears.
+- **An MCP refusal is a tool result, not a JSON-RPC error.** A protocol error is handled by the client library and never reaches the model; a `isError` result does. An *unknown tool* is the reverse — that is a client bug.
 
 **M0 — technical spikes** (PRD §20), all four GO:
 
