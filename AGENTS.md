@@ -10,7 +10,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 ## Current status
 
-**M0–M9 complete. M10 (hardening & packaging) is next.**
+**M0–M10 complete.** Remaining v1.0 gaps are listed under *Not yet built* below.
 
 | Milestone | State | What landed |
 |---|---|---|
@@ -24,6 +24,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 | M7 GitOps & pipelines | ✅ | Run objects, git sync (in-process go-git), signed webhooks, BuildKit runner, serialised queue, coordinator, API/CLI/dashboard |
 | M8 notifications | ✅ | Event vocabulary, glob filters, SSRF egress guard, five channels, coalescing dispatcher, bounded event feed |
 | M9 MCP server | ✅ | Rolling updates on spec drift, project/stats/restart/notify-test routes, hand-written MCP over both transports, 20 tools in three tiers |
+| M10 hardening & packaging | ✅ | Encrypted archives, hand-written S3 sink, CDC replication, staged + offline restore, schema migrations, `kanea init` key ceremony, systemd units, DR runbook |
 
 Things a future change is most likely to trip over:
 
@@ -47,6 +48,23 @@ Things a future change is most likely to trip over:
 - **MCP tools reach the platform only by HTTP against the API's own handler** (§16.3). That is what makes "no side channels" structural: a tool's only verb is "send this request", so it cannot be more privileged than the credential its caller presented. Nothing in `internal/mcp` may take a `Store`, a secrets store, or an auth store.
 - **There are no secret tools, at any tier** (PRD v1.26). §16.3's safety rule is that no tool returns a secret value; the implementation goes further and gives an agent no secrets verb at all. `TestNoToolReadsASecret` fails if one appears.
 - **An MCP refusal is a tool result, not a JSON-RPC error.** A protocol error is handled by the client library and never reaches the model; a `isError` result does. An *unknown tool* is the reverse — that is a client bug.
+- **An archive's last chunk is sealed under different additional data** (PRD v1.27). That is the only thing standing between a truncated snapshot and a restore that decrypts cleanly to half a platform. A final chunk is always written, possibly empty, so "a short read is the last chunk" stays true when the plaintext is an exact multiple of the chunk size.
+- **The change log is pruned only after the upload returns**, segments only below the *oldest kept* archive, and a replay that meets an unreadable segment stops rather than skipping it. Skipping one resurrects whatever a delete in it removed, and the reconciler starts it.
+- **The replication cursor is derived from the sink**, never stored. In the Store, writing it emits a change that needs shipping, which writes it again.
+- **The Store does not migrate itself at Open** (§15.4). A migration rewrites state in place, and the copy that makes a bad one survivable needs the database open and the migration not started — exactly one window, between `Open` and `Migrate`. Each step's data change and version bump share a transaction.
+- **A restore is staged, never performed in place.** `internal/api`'s `Backups` interface has no method that restores; the daemon does it at the next start, before anything opens the Store. That is the interface, not a check.
+- **`buildReplication` returns `api.Backups`, not `*backupService`.** A nil concrete pointer in an interface field is a non-nil interface: every "is a destination configured" test would answer yes and then panic.
+- **The systemd units carry constraint #11**, not the Go code. `MemoryMin` and `OOMScoreAdjust` are systemd's to set, and `kanea-edge` must never gain an `After=kanead.service` — north-south traffic surviving a control-plane restart is why it is a separate process at all. The units use `Type=exec`: nothing sends `sd_notify`.
+
+**Not yet built** (v1.0 gaps, stated so they are not rediscovered):
+
+- **`kanea upgrade`** — §15.4's binary-upgrade orchestration (drain the edge, restart it, then kanead). The state-migration half is built; the sequencing half is `systemctl restart` by hand.
+- **`kanea exec`** and **`kanea ui`** — still `todo` in the command table.
+- **Signed releases** — the installer verifies a checksum and prefers a cosign signature; nothing publishes one yet.
+- **S3 interoperability** — the client is exercised against a fake service. The signature is the part a real endpoint would disagree with, and no real endpoint has been in the loop.
+- **Multipart upload** — an archive above 5 GiB is refused by name rather than split.
+- **Node CPU/memory stats** — §17 lists procfs node stats; no scraper collects them, and `get_node_stats` reports control-plane facts instead of inventing them.
+- **A dashboard page for the event feed and for backups** — the API routes exist; the React pages do not.
 
 **M0 — technical spikes** (PRD §20), all four GO:
 

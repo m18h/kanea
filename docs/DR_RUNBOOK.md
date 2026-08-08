@@ -33,12 +33,16 @@ from the master key. If the id in the manifest does not match the key you hold,
 a restore refuses with a message saying exactly that, rather than failing with
 an authentication error you would have to interpret.
 
-> **Gap, stated plainly.** The key-escrow *ceremony* (`kanea init`, print-once
-> plus written confirmation) is not yet implemented. Today the key is generated
-> on first use and the daemon logs a warning telling you to back it up. Until
-> the ceremony ships, **copying `master.key` somewhere safe is a manual step
-> that nothing enforces**, and it is the single largest operational risk in a
-> Kanea install. Do it now, on every node you run.
+`kanea init` runs the escrow ceremony: it prints the key once and requires you
+to type it back before it writes anything. That is deliberately not a y/n
+prompt — the point is to establish that you actually recorded it.
+
+> **If you did not use `kanea init`,** the daemon generated the key on first use
+> and logged a warning. Nothing enforced a copy. Take one now, on every node:
+>
+> ```bash
+> cp /var/lib/kanea/master.key /somewhere/safe/   # then store it properly
+> ```
 
 ---
 
@@ -280,8 +284,10 @@ something that tells you rather than something you check.
 
 Stated here rather than discovered during an incident:
 
-- **The key-escrow ceremony** (`kanea init`). See §0. The key is generated
-  automatically and backing it up is manual.
+- **`kanea upgrade`.** §15.4's binary-upgrade flow — drain the edge, restart it,
+  then restart kanead — is not implemented as a command. The state-migration
+  half is (see "A migration failed" above); the orchestration half is
+  `systemctl restart kanea-edge kanead` by hand.
 - **Signed archives.** Archives are authenticated (AEAD) and hashed, so
   tampering is detected on read. There is no separate signature, so an archive
   cannot be attributed to a node cryptographically.
