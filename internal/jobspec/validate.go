@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/kanea-dev/kanea/internal/notify"
+	"github.com/kanea-dev/kanea/internal/reconciler"
 )
 
 // SpecVersion is the schema revision this binary speaks (R6, PRD §15.4).
@@ -464,6 +465,7 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		diags = append(diags, validateHealthChecks(svc)...)
 		diags = append(diags, validateVolumes(spec, svc)...)
 		diags = append(diags, validateScaling(svc)...)
+		diags = append(diags, validateUpdate(svc)...)
 		diags = append(diags, validateExpose(svc)...)
 	}
 	return diags
@@ -778,6 +780,45 @@ func validateScaling(svc *Service) hcl.Diagnostics {
 		}
 	}
 	diags = append(diags, validateDuration("cooldown", sc.Cooldown, svc.DefRange)...)
+	return diags
+}
+
+// validateUpdate checks the rolling-deploy policy (PRD §4.3, §6.1).
+//
+// The strategy is checked against a closed set rather than passed through,
+// because an unrecognised value has to mean *something* at deploy time, and
+// silently falling back to rolling would let `strategy = "canary"` parse, plan,
+// apply, and then do something other than what it says — on the one operation
+// where being surprised is most expensive.
+func validateUpdate(svc *Service) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	up := svc.Update
+	if up == nil {
+		return diags
+	}
+
+	switch up.Strategy {
+	case "", reconciler.StrategyRolling, reconciler.StrategyReplace:
+	default:
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Unknown update strategy",
+			Detail: fmt.Sprintf("Service %q has update strategy = %q; it must be %q or %q. "+
+				"Canary deployments are a post-v1 feature (PRD §19.3).",
+				svc.Name, up.Strategy, reconciler.StrategyRolling, reconciler.StrategyReplace),
+			Subject: svc.DefRange.Ptr(),
+		})
+	}
+	if up.MaxParallel < 0 {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid max_parallel",
+			Detail: fmt.Sprintf("Service %q has update max_parallel = %d; it must be positive, "+
+				"or omitted for one at a time.", svc.Name, up.MaxParallel),
+			Subject: svc.DefRange.Ptr(),
+		})
+	}
+	diags = append(diags, validateDuration("min_healthy", up.MinHealthy, svc.DefRange)...)
 	return diags
 }
 

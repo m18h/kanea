@@ -1470,3 +1470,65 @@ func TestReconcileWaitsForAServiceWithNoImageYet(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcileDeploysANewImageToARunningService(t *testing.T) {
+	// The end-to-end shape of `kanea run` against a service that is already up,
+	// and of M7's push → build → deploy. Before the spec hash existed this test
+	// would have observed the old image still running, indefinitely.
+	h := newHarness(t)
+	d := desired(1)
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	id := reconciler.AllocID("shop", "web", 0)
+	if got := h.driver.specs[id].Image; got != d.Image {
+		t.Fatalf("first deploy ran %q, want %q", got, d.Image)
+	}
+
+	d.Image = "nginx:1.28-alpine"
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	if got := h.driver.specs[id].Image; got != d.Image {
+		t.Fatalf("after the deploy the alloc still runs %q, want %q", got, d.Image)
+	}
+	if rec := h.allocRecord(t, 0); rec.SpecHash != reconciler.SpecHash(d) {
+		t.Errorf("record was not stamped with the deployed spec")
+	}
+}
+
+func TestDeployGivesTheNewSpecItsOwnRestartBudget(t *testing.T) {
+	// A service that crash-looped until its budget was spent must be fixable by
+	// deploying the fix. If the new alloc inherited the old one's restart count
+	// it would be marked failed on its first hiccup.
+	h := newHarness(t)
+	d := desired(1)
+	d.Restart = reconciler.RestartPolicy{Attempts: 2, Backoff: []time.Duration{time.Second}}
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	id := reconciler.AllocID("shop", "web", 0)
+	for range 2 {
+		h.driver.crash(id, 1, h.now)
+		h.reconcile(t)
+		h.now = h.now.Add(2 * time.Second)
+		h.reconcile(t)
+	}
+	h.driver.crash(id, 1, h.now)
+	h.reconcile(t)
+	if rec := h.allocRecord(t, 0); rec.State != reconciler.AllocFailed {
+		t.Fatalf("alloc state = %q, want %q after the budget was spent", rec.State, reconciler.AllocFailed)
+	}
+
+	d.Image = "nginx:1.28-alpine"
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	rec := h.allocRecord(t, 0)
+	if rec.State != reconciler.AllocRunning {
+		t.Fatalf("after the fix was deployed the alloc is %q, want %q", rec.State, reconciler.AllocRunning)
+	}
+	if rec.Restarts != 0 {
+		t.Errorf("the new spec inherited %d restarts; it should start with a clean budget", rec.Restarts)
+	}
+}

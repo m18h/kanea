@@ -1,6 +1,9 @@
 package reconciler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -45,10 +48,34 @@ func Plan(w World) []Action {
 		key := d.Project + "/" + d.Service
 		desiredByService[key] = d
 
+		// Once per service, not once per alloc: every alloc of a service is
+		// created from the same desired state, so they all compare against the
+		// same fingerprint.
+		hash := SpecHash(d)
+		// How many of this service's allocs may be disturbed right now. Computed
+		// before any of them are planned, because the answer is a property of the
+		// service as a whole — an alloc cannot decide on its own whether taking
+		// itself down would leave the service short.
+		budget := replaceBudget(w, d, hash)
+
 		for i := range d.Count {
 			id := AllocID(d.Project, d.Service, i)
 			wanted[id] = struct{}{}
-			actions = append(actions, planAlloc(w, d, i, id, healthy)...)
+			planned := planAlloc(w, d, i, id, hash, healthy)
+			for _, act := range planned {
+				// The rolling gate. A replacement that does not fit in this
+				// pass's budget is simply not emitted: the next pass will
+				// reconsider it, by which time the ones that did go will have
+				// settled. Nothing is queued and nothing is remembered, which is
+				// what keeps the loop restartable at any instant (PRD §4.3).
+				if act.Kind == ActionReplace {
+					if budget <= 0 {
+						continue
+					}
+					budget--
+				}
+				actions = append(actions, act)
+			}
 		}
 	}
 
@@ -67,21 +94,31 @@ func Plan(w World) []Action {
 }
 
 // planAlloc decides about one alloc index of one service.
-func planAlloc(w World, d Desired, index int, id string, healthy map[string]bool) []Action {
+func planAlloc(w World, d Desired, index int, id, hash string, healthy map[string]bool) []Action {
 	record, hasRecord := w.Records[id]
 	status, isActual := w.Actual[id]
 
 	base := Action{AllocID: id, Project: d.Project, Service: d.Service, Index: index}
+	stale := hasRecord && drifted(record, hash)
 
 	// Failed allocs are left alone: the restart budget is spent, and retrying
 	// forever would hide the failure instead of surfacing it.
-	if hasRecord && record.State == AllocFailed {
+	//
+	// Unless the spec changed. That is the whole workflow for fixing a crash
+	// loop — see what failed, correct the image or the config, deploy — and a
+	// planner that refused to touch a failed alloc would make the fix land only
+	// after a manual delete.
+	if hasRecord && record.State == AllocFailed && !stale {
 		return nil
 	}
 
 	// Nothing exists yet: first deploy, or a scale-out.
 	if !isActual {
-		if hasRecord && record.State == AllocBackoff && w.Now.Before(record.NextRestartAt) {
+		// A backoff is a wait for the same alloc to be worth trying again. A new
+		// spec is not the same alloc: the operator changed something, quite
+		// possibly the thing that was crashing, and making them wait out the
+		// backoff of the image they just replaced helps nobody.
+		if hasRecord && record.State == AllocBackoff && w.Now.Before(record.NextRestartAt) && !stale {
 			return nil // still waiting out the backoff
 		}
 		// Dependencies gate creation, not restart: a dependent that is already
@@ -95,7 +132,10 @@ func planAlloc(w World, d Desired, index int, id string, healthy map[string]bool
 			return []Action{act}
 		}
 		reason := "alloc missing"
-		if hasRecord && record.Restarts > 0 {
+		switch {
+		case stale:
+			reason = "spec changed"
+		case hasRecord && record.Restarts > 0:
 			reason = fmt.Sprintf("restarting after exit %d (attempt %d)",
 				record.LastExitCode, record.Restarts+1)
 		}
@@ -107,7 +147,16 @@ func planAlloc(w World, d Desired, index int, id string, healthy map[string]bool
 
 	switch status.State {
 	case runtime.StateRunning:
-		return nil // the steady state, and by far the common case
+		if !stale {
+			return nil // the steady state, and by far the common case
+		}
+		// The deploy. This is the only place a healthy alloc is deliberately
+		// taken down, and it is gated by the update policy in Plan — reaching
+		// here means the service can spare this one right now.
+		act := base
+		act.Kind = ActionReplace
+		act.Reason = "spec changed"
+		return []Action{act}
 
 	case runtime.StateCreated:
 		act := base
@@ -116,6 +165,15 @@ func planAlloc(w World, d Desired, index int, id string, healthy map[string]bool
 		return []Action{act}
 
 	case runtime.StateStopped:
+		if stale {
+			// Already down, so it costs the service nothing and does not go
+			// through the rolling budget — and it comes back on the new spec
+			// rather than the one that stopped.
+			act := base
+			act.Kind = ActionRestart
+			act.Reason = "spec changed"
+			return []Action{act}
+		}
 		// A stopped alloc that should be running has crashed (or was killed
 		// out of band). Restart it, subject to the policy.
 		return planRestart(w, d, base, record, status)
@@ -128,6 +186,120 @@ func planAlloc(w World, d Desired, index int, id string, healthy map[string]bool
 		act.Reason = fmt.Sprintf("alloc in unexpected state %q", status.State)
 		return []Action{act}
 	}
+}
+
+// SpecHash fingerprints the parts of a desired service that are baked into a
+// container when it is created.
+//
+// Only those parts. The desired state carries plenty that a running alloc does
+// not embody — the replica count, the autoscaling policy, the health check the
+// reconciler probes it with, the edge route, the network policy peers — and
+// hashing those would turn "raise the maximum replica count" into a rolling
+// restart of a service nobody asked to disturb. The rule is: if changing it
+// requires a new container, it belongs here; if it can be applied to the
+// running one, it does not.
+func SpecHash(d Desired) string {
+	// A named struct rather than the Desired itself, so that adding a field to
+	// Desired does not silently start (or stop) triggering deploys. Whether a
+	// new field rolls allocs is a decision, and it should have to be made here.
+	material := struct {
+		Image          string            `json:"image"`
+		Command        []string          `json:"command,omitempty"`
+		Capabilities   []string          `json:"capabilities,omitempty"`
+		Env            map[string]string `json:"env,omitempty"`
+		Resources      runtime.Resources `json:"resources"`
+		Volumes        []Volume          `json:"volumes,omitempty"`
+		Ports          []Port            `json:"ports,omitempty"`
+		ReadOnlyRootfs bool              `json:"read_only_rootfs,omitempty"`
+	}{
+		Image: d.Image, Command: d.Command, Capabilities: d.Capabilities,
+		Env: d.Env, Resources: d.Resources, Volumes: d.Volumes,
+		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
+	}
+
+	// encoding/json sorts map keys, so the environment hashes the same however
+	// it was built. That is the one part of this that is not obviously stable,
+	// and it is the reason JSON is used rather than fmt.
+	body, err := json.Marshal(material)
+	if err != nil {
+		// Unreachable for these types, and handled anyway: falling back to a
+		// deterministic rendering keeps a marshal failure from producing a
+		// different hash every pass, which would roll the service forever.
+		body = []byte(fmt.Sprintf("%#v", material))
+	}
+	sum := sha256.Sum256(body)
+	// Half the digest. This is a change detector, not a security boundary —
+	// nobody chooses their own spec hash to collide with someone else's.
+	return hex.EncodeToString(sum[:16])
+}
+
+// drifted reports whether an alloc is running something other than what is
+// declared now.
+func drifted(record AllocRecord, hash string) bool {
+	// An unstamped record is adopted, not rolled. Records written before the
+	// field existed have no hash, and treating "I do not know" as "it changed"
+	// would make the first reconcile after an upgrade replace every alloc on the
+	// node at once.
+	return record.SpecHash != "" && record.SpecHash != hash
+}
+
+// replaceBudget is how many of a service's allocs may be replaced this pass.
+//
+// The unit is availability, not progress: the policy says how many allocs may
+// be *down at once*, so anything already down — starting, unhealthy, or too
+// recently replaced to be trusted — spends the budget before a deliberate
+// replacement gets any. That is what makes a rolling deploy stop when it starts
+// going wrong, instead of walking through every replica taking each one down.
+func replaceBudget(w World, d Desired, hash string) int {
+	if d.Count == 0 {
+		return 0
+	}
+	limit := d.Update.maxParallel(d.Count)
+	settled := d.Update.minHealthy()
+
+	unavailable := 0
+	for i := range d.Count {
+		id := AllocID(d.Project, d.Service, i)
+		status, running := w.Actual[id]
+		if !running || status.State != runtime.StateRunning {
+			unavailable++
+			continue
+		}
+		record, hasRecord := w.Records[id]
+		// A running alloc with no record was created this pass. It is up, but
+		// nothing has confirmed it works yet, so it counts against the budget
+		// for the same reason a fresh replacement does.
+		if !hasRecord {
+			unavailable++
+			continue
+		}
+		if d.Check.configured() && !record.Healthy {
+			unavailable++
+			continue
+		}
+		// The settling clock runs on allocs this deploy has *already* replaced,
+		// not on every young alloc. What min_healthy buys is confidence that the
+		// new spec works before more of the service is committed to it; an alloc
+		// still running the previous spec has nothing left to prove, and holding
+		// a deploy back because the service happened to start a minute ago would
+		// make "deploy right after a restart" mysteriously slow.
+		//
+		// CreatedAt is reset when an alloc is replaced, so this measures the life
+		// of *this* container rather than of the alloc index it occupies.
+		if settled > 0 && record.SpecHash == hash && w.Now.Sub(record.CreatedAt) < settled {
+			unavailable++
+			continue
+		}
+	}
+
+	// A single-replica service has no spare capacity by definition, and the
+	// subtraction would refuse to ever deploy it. Its one alloc is available, so
+	// unavailable is zero and the budget is one — the deploy happens, with the
+	// downtime that count = 1 has always implied.
+	if budget := limit - unavailable; budget > 0 {
+		return budget
+	}
+	return 0
 }
 
 // planRestart applies the restart policy to a stopped alloc.

@@ -1507,3 +1507,46 @@ project "shop" {
 		t.Fatalf("diagnostics = %s", got)
 	}
 }
+
+func TestUpdateStrategyMustBeKnown(t *testing.T) {
+	// A strategy nobody implements has to be rejected at parse time. Accepting
+	// it and quietly rolling instead would mean the spec says one thing and the
+	// deploy does another — on the operation where a surprise costs the most.
+	got := parseErr(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  count   = 2
+  task "web" { image = "nginx:1.27" }
+  update { strategy = "canary" }
+}
+`)
+	if !strings.Contains(got, "Unknown update strategy") {
+		t.Errorf("diagnostic did not name the problem:\n%s", got)
+	}
+}
+
+func TestUpdateBlockAcceptsTheDocumentedForm(t *testing.T) {
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  count   = 2
+  task "web" { image = "nginx:1.27" }
+  update {
+    strategy     = "rolling"
+    max_parallel = 1
+    min_healthy  = "30s"
+  }
+}
+`)
+	up := spec.Services[0].Update
+	if up == nil {
+		t.Fatal("the update block was parsed away")
+	}
+	if up.Strategy != "rolling" || up.MaxParallel != 1 || up.MinHealthy != "30s" {
+		t.Errorf("update = %+v, want the declared values", *up)
+	}
+}

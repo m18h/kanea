@@ -622,6 +622,17 @@ func Observe(w World) map[string]AllocRecord {
 
 		switch status.State {
 		case runtime.StateRunning:
+			// Adopt the spec of a record written before the field existed. Done
+			// here rather than by the planner because it is an observation, not
+			// a decision: this alloc is running, and what it is running is
+			// whatever was declared when it started — which, for a record that
+			// predates the field, is the best available answer and the only one
+			// that does not roll every alloc on the node after an upgrade.
+			if record.SpecHash == "" && isDesired {
+				record.SpecHash = SpecHash(desired)
+				record.UpdatedAt = w.Now
+				changed[id] = record
+			}
 			if record.State != AllocRunning {
 				record.State = AllocRunning
 				record.NextRestartAt = time.Time{}
@@ -666,7 +677,7 @@ func exitTime(status runtime.Status, fallback time.Time) time.Time {
 func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 	desired, ok := desiredFor(w, action)
 	switch action.Kind {
-	case ActionCreate, ActionStart, ActionRestart:
+	case ActionCreate, ActionStart, ActionRestart, ActionReplace:
 		if !ok {
 			return fmt.Errorf("no desired state for %s", action.AllocID)
 		}
@@ -685,9 +696,13 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 		}
 		return r.markRunning(ctx, w, action)
 
-	case ActionRestart:
+	case ActionRestart, ActionReplace:
 		// Tear the old container down first: containerd will not reuse the id,
 		// and a half-dead task would keep its cgroup and netns pinned.
+		//
+		// The two kinds do the same thing here and differ in what create makes
+		// of the record they leave behind — a crash spends the restart budget, a
+		// deploy starts a new one.
 		if err := r.teardown(ctx, desired, action); err != nil {
 			return err
 		}
@@ -746,17 +761,28 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	now := r.now()
 	record := AllocRecord{
 		ID: spec.ID, Project: desired.Project, Service: desired.Service, Index: action.Index,
-		Image: desired.Image, State: AllocRunning, CreatedAt: now, UpdatedAt: now,
+		Image: desired.Image, SpecHash: SpecHash(desired),
+		State: AllocRunning, CreatedAt: now, UpdatedAt: now,
 	}
 	if existing, err := r.loadRecord(ctx, desired.Project, desired.Service, action.Index); err == nil {
-		// Preserve the restart history across a restart: the budget is the
-		// whole point, and resetting it here would make attempts unbounded.
-		record.CreatedAt = existing.CreatedAt
-		record.Restarts = existing.Restarts
-		record.LastExitCode = existing.LastExitCode
-		record.LastExitAt = existing.LastExitAt
-		if action.Kind == ActionRestart {
-			record.Restarts++
+		// Whether the history carries over is decided by the spec, not by the
+		// action kind: an alloc created from a different spec than the one that
+		// was here is a new thing that happens to occupy the same index, and
+		// charging it for the previous occupant's crashes would mean a service
+		// that exhausted its restart budget could not be fixed by deploying the
+		// fix. An unstamped record is treated as the same spec, because it is
+		// the same spec far more often than not.
+		sameSpec := existing.SpecHash == "" || existing.SpecHash == record.SpecHash
+		if sameSpec {
+			// Preserve the restart history across a restart: the budget is the
+			// whole point, and resetting it here would make attempts unbounded.
+			record.CreatedAt = existing.CreatedAt
+			record.Restarts = existing.Restarts
+			record.LastExitCode = existing.LastExitCode
+			record.LastExitAt = existing.LastExitAt
+			if action.Kind == ActionRestart {
+				record.Restarts++
+			}
 		}
 	}
 	return r.persist(ctx, map[string]AllocRecord{record.ID: record})

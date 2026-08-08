@@ -104,6 +104,18 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			}
 			desired.Restart.Backoff = backoff
 		}
+		if svc.Update != nil {
+			desired.Update.Strategy = svc.Update.Strategy
+			desired.Update.MaxParallel = svc.Update.MaxParallel
+			if svc.Update.MinHealthy != "" {
+				minHealthy, err := jobspec.ParseDuration(svc.Update.MinHealthy)
+				if err != nil {
+					return nil, fmt.Errorf("service %s/%s: update min_healthy: %w",
+						svc.Project, svc.Name, err)
+				}
+				desired.Update.MinHealthy = minHealthy
+			}
+		}
 		out = append(out, desired)
 	}
 	return out, nil

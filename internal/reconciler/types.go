@@ -71,6 +71,77 @@ type Desired struct {
 	ReadOnlyRootfs bool
 	// Restart is the crash-restart policy.
 	Restart RestartPolicy
+	// Update governs how running allocs are replaced when this spec changes.
+	Update UpdatePolicy
+}
+
+// UpdatePolicy is the rolling-deploy policy (PRD §4.3, §6.1 `update` block).
+//
+// It answers a question the restart policy does not: a crashed alloc is
+// replaced with an identical one, but an alloc whose *spec* changed has to be
+// replaced with a different one, and doing that to every replica at once is an
+// outage. The policy is what keeps a deploy from being a restart storm.
+type UpdatePolicy struct {
+	// Strategy is StrategyRolling (the default) or StrategyReplace.
+	Strategy string
+	// MaxParallel is how many of a service's allocs may be disrupted at once.
+	// Zero means the default. Ignored by StrategyReplace, which means "all".
+	MaxParallel int
+	// MinHealthy is how long a replacement must have been up before the next
+	// one is disturbed. Zero means the default.
+	MinHealthy time.Duration
+}
+
+// Update strategies (PRD §4.3). Canary is v1.1+ and deliberately absent: there
+// is no half-implemented third value for a spec to select.
+const (
+	// StrategyRolling replaces allocs a few at a time, health-gated.
+	StrategyRolling = "rolling"
+	// StrategyReplace takes them all down and brings them all back. It exists
+	// for workloads that cannot run two versions at once — a singleton holding
+	// an exclusive lock, a schema migration — and it is an outage by design.
+	StrategyReplace = "replace"
+)
+
+// Update policy defaults (PRD §6.1 shows max_parallel = 1, min_healthy = 30s;
+// the shown values are an example, these are what an omitted block means).
+const (
+	// DefaultMaxParallel is one at a time: the safe answer, and the only one
+	// that is safe for every service without knowing anything about it.
+	DefaultMaxParallel = 1
+	// DefaultMinHealthy is how long a new alloc must have been running before
+	// the next replacement starts. A container that is going to fail on startup
+	// almost always does so in the first few seconds; rolling straight past it
+	// would take a service down one replica at a time while every pass reported
+	// progress.
+	DefaultMinHealthy = 10 * time.Second
+)
+
+// maxParallel is how many allocs may be disrupted at once for a service of this
+// size.
+func (u UpdatePolicy) maxParallel(count int) int {
+	if u.Strategy == StrategyReplace {
+		return count
+	}
+	if u.MaxParallel <= 0 {
+		return DefaultMaxParallel
+	}
+	if u.MaxParallel > count {
+		return count
+	}
+	return u.MaxParallel
+}
+
+// minHealthy is the settling time before the next replacement.
+func (u UpdatePolicy) minHealthy() time.Duration {
+	if u.Strategy == StrategyReplace {
+		// Nothing to settle between: they all went at once, on purpose.
+		return 0
+	}
+	if u.MinHealthy <= 0 {
+		return DefaultMinHealthy
+	}
+	return u.MinHealthy
 }
 
 // PeerRef names another service, as "<project>/<service>".
@@ -234,6 +305,16 @@ type AllocRecord struct {
 	Index   int        `json:"index"`
 	Image   string     `json:"image"`
 	State   AllocState `json:"state"`
+	// SpecHash fingerprints the desired state this alloc was created from
+	// (SpecHash). It is what makes a deploy visible to the planner: a container
+	// carries the spec it was built with for as long as it lives, and comparing
+	// that against what is declared now is the only way to tell a running alloc
+	// that is current from one that is stale.
+	//
+	// Empty means "written before this field existed". It is adopted rather
+	// than treated as a mismatch — an upgrade of kanead must not roll every
+	// alloc on the node (Observe).
+	SpecHash string `json:"spec_hash,omitempty"`
 	// Restarts counts crash-restarts so far.
 	Restarts int `json:"restarts"`
 	// LastExitCode and LastExitAt describe the most recent exit.
@@ -278,6 +359,17 @@ const (
 	ActionStart ActionKind = "start"
 	// ActionRestart replaces a crashed alloc: remove, then create and start.
 	ActionRestart ActionKind = "restart"
+	// ActionReplace rolls a healthy alloc onto a changed spec: the same remove,
+	// create and start, for a different reason.
+	//
+	// A separate kind rather than a restart with a different Reason, because the
+	// two differ in what they do to the alloc's history. A crash-restart spends
+	// the restart budget — that budget exists to stop a crash loop. A deploy
+	// does not: the operator changed something, and the new spec deserves its
+	// own five attempts rather than inheriting the exhausted budget of the image
+	// it replaced. Folding them together would mean a service that crash-looped
+	// yesterday cannot be fixed by deploying the fix.
+	ActionReplace ActionKind = "replace"
 	// ActionRemove tears an alloc down completely.
 	ActionRemove ActionKind = "remove"
 )
