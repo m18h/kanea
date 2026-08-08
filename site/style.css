@@ -70,10 +70,12 @@ header {
 header .wrap { display: flex; align-items: center; gap: 24px; height: 58px; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; letter-spacing: -.02em; text-decoration: none; }
 .brand svg { display: block; }
-nav { margin-left: auto; display: flex; gap: 22px; align-items: center; font-size: .9rem; }
-nav a { color: var(--muted); text-decoration: none; }
-nav a:hover { color: var(--fg); }
-@media (max-width: 720px) { nav .hide-sm { display: none; } }
+/* Scoped to the header: the docs sidebar is a <nav> too, and an unscoped
+   `display: flex` here laid its whole table of contents out in one row. */
+header nav { margin-left: auto; display: flex; gap: 22px; align-items: center; font-size: .9rem; }
+header nav a { color: var(--muted); text-decoration: none; }
+header nav a:hover { color: var(--fg); }
+@media (max-width: 720px) { header nav .hide-sm { display: none; } }
 
 /* ---------- hero ---------- */
 .hero { padding: 92px 0 76px; }
@@ -262,7 +264,7 @@ footer .sp { margin-left: auto; }
     font: 550 .9rem var(--sans); cursor: pointer;
   }
   .toc-toggle::after { content: " ▾"; color: var(--muted); }
-  .sidebar[aria-expanded] .toc-toggle::after { content: " ▴"; }
+  .sidebar.open .toc-toggle::after { content: " ▴"; }
   .sidebar nav { display: none; max-height: 62vh; margin-top: 10px; }
   .sidebar.open nav { display: block; }
 }
