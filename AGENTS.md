@@ -4,7 +4,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 ## What this is
 
-**Kanea** is a lightweight, single-binary container orchestration platform written in Go — "Nomad's simplicity, eBPF's power, one binary." It runs services on **containerd**, networks them with **standalone Cilium** (no Kubernetes anywhere), terminates TLS with **Let's Encrypt**, and ships a **React + shadcn/ui** dashboard, an **MCP server** for AI agents, GitOps pipelines (kaniko), eBPF-driven autoscaling, and S3-backed state replication.
+**Kanea** is a lightweight, single-binary container orchestration platform written in Go — "container orchestration in one binary." It runs services on **containerd**, networks them with **standalone Cilium** (no Kubernetes anywhere), terminates TLS with **Let's Encrypt**, and ships a **React + shadcn/ui** dashboard, an **MCP server** for AI agents, GitOps pipelines (kaniko), eBPF-driven autoscaling, and S3-backed state replication.
 
 **[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.4). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins — and the disagreement means one of them needs an amendment.
 

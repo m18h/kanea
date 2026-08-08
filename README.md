@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26-00ADD8)](./go.mod)
 
-**Nomad's simplicity, eBPF's power, one binary.**
+**Container orchestration in one binary.**
 
 Kanea is a lightweight container orchestration platform written in Go. Services run
 on **containerd**, networking and load balancing are **standalone Cilium** (eBPF, no

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs — Kanea</title>
+<meta name="description" content="Kanea documentation: the concepts, the shape of a deployment, and where everything lives.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2314b8a6'/><path d='M10 8v16M22 8L12.5 16 22 24' stroke='%2309090b' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="currentColor" opacity=".08"/>
+        <path d="M10 8v16M22 8L12.5 16 22 24" stroke="currentColor" stroke-width="3.2"
+              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar">
+    <h4>Documentation</h4>
+    <a href="./" aria-current="page">Overview</a>
+    <a href="architecture/">Architecture</a>
+    <a href="jobspec/">Job spec reference</a>
+    <a href="cli/">CLI reference</a>
+    <h4>On this page</h4>
+    <a href="#concepts">Concepts</a>
+    <a href="#naming">Naming</a>
+    <a href="#lifecycle">Lifecycle</a>
+    <a href="#deploy">What a deploy is</a>
+    <a href="#secrets">Secrets</a>
+    <a href="#first">Your first service</a>
+    <h4>Repository</h4>
+    <a href="https://github.com/m18h/kanea/blob/main/PRD.md">PRD.md&nbsp;↗</a>
+    <a href="https://github.com/m18h/kanea/blob/main/docs/THREAT_MODEL.md">Threat model&nbsp;↗</a>
+    <a href="https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md">DR runbook&nbsp;↗</a>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Documentation</p>
+    <h1>Overview</h1>
+    <p>
+      Kanea runs containers on one machine and gives that machine the things a platform
+      normally needs a cluster for: service discovery, load balancing, network policy,
+      TLS, autoscaling, GitOps, backups. It is one static binary, and the concepts it
+      asks you to learn number about six.
+    </p>
+
+    <p>
+      If you have not installed it yet, the <a href="../#install">install section</a> on
+      the front page is four steps. This page assumes you have a node running and want to
+      know what you are looking at.
+    </p>
+
+    <h2 id="concepts">Concepts</h2>
+    <p>
+      Kanea borrows from Nomad and Kubernetes and keeps the smallest set of concepts that
+      covers the work. If you know either system, the middle columns tell you what maps
+      to what.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Kanea</th><th>Nomad</th><th>Kubernetes</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td><b>Node</b></td><td>Client + server agent</td><td>Node + control plane</td><td>One machine running <code>kanea agent</code>. In v1 there is exactly one.</td></tr>
+          <tr><td><b>Project</b></td><td>Namespace</td><td>Namespace</td><td>A named group of services, and the isolation boundary: network policy, secrets, containerd namespace and DNS all key off it.</td></tr>
+          <tr><td><b>Service</b></td><td>Job + group</td><td>Deployment + Service</td><td>A declarative long-running workload with <code>count</code> replicas.</td></tr>
+          <tr><td><b>Task</b></td><td>Task</td><td>Container</td><td>The container inside a service. <b>Exactly one per service in v1</b> — sidecars are a v1.1 concept.</td></tr>
+          <tr><td><b>Alloc</b></td><td>Allocation</td><td>Pod</td><td>One running instance of a service. <code>count = 3</code> means three allocs.</td></tr>
+          <tr><td><b>Storage</b></td><td>CSI volume</td><td>PV / PVC</td><td>A named volume backend — <code>local</code>, <code>host</code>, <code>nfs</code>, <code>smb</code> or <code>s3</code> — that services mount by name.</td></tr>
+          <tr><td><b>Pipeline</b></td><td>—</td><td>Tekton / CI job</td><td>A build run producing an image, from a <code>build</code> block or a git push.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The one that surprises people is <b>project</b>. It is not a label — it is a boundary
+      that four subsystems enforce independently. A service in project <code>shop</code>
+      cannot reach a service in <code>analytics</code> unless somebody wrote that down, it
+      cannot read <code>analytics</code>' secrets even by naming them, its containers live in
+      a separate containerd namespace, and its DNS names sit under a separate suffix.
+    </p>
+
+    <h2 id="naming">Naming</h2>
+    <p>
+      Project and service names <b>must be DNS-1123 labels</b>: lowercase alphanumeric and
+      <code>-</code>, starting and ending alphanumeric, at most 63 characters. This is
+      checked when the spec is parsed, not when something fails later.
+    </p>
+    <p>
+      The reason is that names compose into DNS without an escaping step. A service
+      <code>web</code> in project <code>shop</code> is <code>web.shop.kanea</code> internally
+      and <code>web.shop.&lt;base_domain&gt;</code> publicly. A name that needed encoding to
+      become a hostname would be a name that means two different things in two places.
+    </p>
+    <div class="callout">
+      <b class="label">Where the prose goes</b>
+      <p>
+        Every project and service takes a <code>description</code> — free text, up to 512
+        characters, shown in the dashboard. That is where the human-readable detail belongs;
+        the name stays a label.
+      </p>
+    </div>
+
+    <h2 id="lifecycle">Lifecycle</h2>
+    <p>
+      Nothing in Kanea is applied directly to the runtime. A spec becomes desired state in
+      the Store, and a reconciler converges the world toward it — continuously, not once.
+    </p>
+
+<pre class="diagram">Job spec (HCL) ──parse/validate──▶ Desired state (Store)
+                                        │
+                                   Reconciler loop
+                                        │
+                        ┌───────────────┼────────────────┐
+                        ▼               ▼                ▼
+                    containerd      Cilium agent     Edge proxy
+                   (tasks/images) (endpoints/LB)    (routes/TLS)
+                        │               │                │
+                        └───────────────┴────────────────┘
+                                        ▼
+                            Actual state / events / metrics</pre>
+
+    <p>
+      Consequences worth knowing up front:
+    </p>
+    <ul>
+      <li><b>Drift is repaired.</b> Delete a container by hand and it comes back. The
+        reconciler is comparing, not remembering what it did.</li>
+      <li><b>Restart policies</b> are <code>always</code> (default), <code>on-failure</code>
+        with backoff, and <code>never</code>.</li>
+      <li><b>Updates are rolling</b> by default, health-gated, bounded by
+        <code>max_parallel</code>.</li>
+      <li><b>Dependencies start first.</b> A <code>depends_on</code> edge — or any
+        <code>${service.…}</code> reference, which creates one implicitly — means the
+        dependent does not start until its dependency is healthy. If the dependency degrades
+        later, dependents keep running: no cascading stops, just events.</li>
+      <li><b>Storms are capped.</b> Per-service restart rate limits plus a node-wide circuit
+        breaker that pauses rollouts and scale actions when failure rates spike. A trip emits
+        an event and a notification.</li>
+    </ul>
+
+    <h2 id="deploy">What counts as a deploy</h2>
+    <p>
+      A deploy is a <b>spec-hash mismatch</b>. The reconciler hashes the parts of a service
+      that are baked into a container at creation time; if an alloc's recorded hash differs
+      from the current one, that alloc is replaced under the update policy. If it matches,
+      nothing happens, however many times you run <code>kanea run</code>.
+    </p>
+    <p>
+      This is why <code>kanea restart</code> is not a separate path into the runtime: it
+      bumps a generation counter that participates in the hash, and the ordinary rolling
+      update does the rest.
+    </p>
+    <div class="callout warn">
+      <b class="label">Two things about rolling updates</b>
+      <p>
+        <code>max_parallel</code> bounds <b>allocs that are down</b>, not replacements in
+        flight. Anything already unavailable spends the budget first — so a deploy that
+        starts going wrong stops, instead of walking through every replica.
+      </p>
+      <p>
+        <code>min_healthy</code> applies only to allocs the current deploy has already
+        replaced, and health means a probe said so. A service with no
+        <code>health_check</code> block never reports healthy for any alloc — which is fine,
+        and is why the update logic asks whether a check is configured before it asks whether
+        it passed.
+      </p>
+    </div>
+
+    <h2 id="secrets">Secrets</h2>
+    <p>
+      Secrets are never written in a spec. They are referenced as
+      <code>secret:&lt;path&gt;</code> and resolved when an alloc starts:
+    </p>
+    <pre class="plain">env = {
+  DATABASE_URL = "secret:shop/database-url"
+}</pre>
+    <p>
+      Two rules make that reference safe rather than merely tidy:
+    </p>
+    <ul>
+      <li><b>References are project-scoped at validation time.</b> A service in
+        <code>shop</code> may name <code>secret:shop/…</code> or <code>secret:shared/…</code>
+        and nothing else. A spec reaching for another project's secret fails to parse — it
+        does not fail at runtime, where the failure would be a log line nobody reads.</li>
+      <li><b>The default injection is a tmpfs file</b>, at
+        <code>/run/kanea/secrets/&lt;alloc&gt;/&lt;name&gt;</code>. Environment variables work
+        and are documented as the weaker option, because they are visible in
+        <code>/proc/&lt;pid&gt;/environ</code>, in runtime inspect APIs, and to every child
+        process.</li>
+    </ul>
+    <p>
+      The API and the MCP server are write-only for secrets. There is no <code>get</code> —
+      not for an operator, not for an agent, at any permission tier.
+    </p>
+
+    <h2 id="first">Your first service</h2>
+    <p>
+      The smallest useful thing needs no file at all:
+    </p>
+    <pre class="plain">kanea run --image nginx:1.27-alpine --name web --project demo
+kanea ps -p demo
+kanea logs -f demo/web</pre>
+    <p>
+      When you want it written down, the same deployment as a spec is three lines plus a
+      wrapper — and from there every block in the
+      <a href="jobspec/">job spec reference</a> is additive. Run
+      <code>kanea plan</code> first; it prints the create/change/destroy diff, and it is
+      where every validation rule fires.
+    </p>
+
+    <div class="pagenav">
+      <a href="architecture/"><small>Next</small><b>Architecture →</b></a>
+      <a href="jobspec/"><small>Reference</small><b>Job spec →</b></a>
+      <a href="cli/"><small>Reference</small><b>CLI →</b></a>
+    </div>
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea — Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+</body>
+</html>
