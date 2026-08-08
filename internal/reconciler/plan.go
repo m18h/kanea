@@ -211,10 +211,15 @@ func SpecHash(d Desired) string {
 		Volumes        []Volume          `json:"volumes,omitempty"`
 		Ports          []Port            `json:"ports,omitempty"`
 		ReadOnlyRootfs bool              `json:"read_only_rootfs,omitempty"`
+		// Generation is not baked into anything. It is here so that an operator
+		// asking for a restart produces a spec that differs, and therefore rolls
+		// through exactly the machinery a real deploy does.
+		Generation int `json:"generation,omitempty"`
 	}{
 		Image: d.Image, Command: d.Command, Capabilities: d.Capabilities,
 		Env: d.Env, Resources: d.Resources, Volumes: d.Volumes,
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
+		Generation: d.Generation,
 	}
 
 	// encoding/json sorts map keys, so the environment hashes the same however
@@ -502,4 +507,61 @@ func unmetDependencies(d Desired, healthy map[string]bool) []string {
 	}
 	sort.Strings(blocked)
 	return blocked
+}
+
+// Diff renders a create/change summary between what is declared now and what a
+// spec would declare.
+//
+// It lives here rather than in the CLI because it is asked by more than the
+// CLI: `kanea plan`, the MCP plan_spec tool, and anything else that wants to
+// say what an apply would do. Two implementations of "what would change" drift,
+// and they drift into a plan that does not match the apply that follows it.
+//
+// It compares only what a user declares, so an untouched service is not
+// reported as a change because the daemon filled in a default.
+func Diff(current, desired []Desired) []string {
+	byKey := make(map[string]Desired, len(current))
+	for _, svc := range current {
+		byKey[svc.Project+"/"+svc.Service] = svc
+	}
+
+	var out []string
+	for _, want := range desired {
+		key := want.Project + "/" + want.Service
+		have, exists := byKey[key]
+		if !exists {
+			out = append(out, fmt.Sprintf("+ create %s (count %d, image %s)", key, want.Count, want.Image))
+			continue
+		}
+		var changes []string
+		if have.Image != want.Image {
+			changes = append(changes, fmt.Sprintf("image %s -> %s", have.Image, want.Image))
+		}
+		if have.Count != want.Count {
+			changes = append(changes, fmt.Sprintf("count %d -> %d", have.Count, want.Count))
+		}
+		if have.Resources != want.Resources {
+			changes = append(changes, fmt.Sprintf("resources %+v -> %+v", have.Resources, want.Resources))
+		}
+		if !sameEnv(have.Env, want.Env) {
+			changes = append(changes, "env changed")
+		}
+		if len(changes) > 0 {
+			out = append(out, fmt.Sprintf("~ update %s (%s)", key, strings.Join(changes, ", ")))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sameEnv(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }

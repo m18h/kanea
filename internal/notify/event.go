@@ -42,6 +42,13 @@ const (
 	EventBackupFailed    = "backup.failed"
 
 	EventAuthLoginFailed = "auth.login_failed"
+
+	// EventTest is the test action's payload (§11). It is in the vocabulary so
+	// that a test message renders like every other event rather than as a
+	// special case each channel has to know about — but the test action does not
+	// route it through the filters, so nobody has to add it to an `on` list to
+	// be able to test their channel.
+	EventTest = "notify.test"
 )
 
 // Severity orders events so a channel can carry a floor.
@@ -141,6 +148,8 @@ var severities = map[string]Severity{
 	// Warning, not error: one failed login is a typo. What makes it interesting
 	// is volume, which is what coalescing turns into a single useful message.
 	EventAuthLoginFailed: SeverityWarning,
+
+	EventTest: SeverityInfo,
 }
 
 // SeverityOf returns an event name's severity.

@@ -120,13 +120,17 @@ func TestEveryKnownEventHasASeverity(t *testing.T) {
 		notify.EventBuildStarted, notify.EventBuildSucceeded, notify.EventBuildFailed,
 		notify.EventBackupSucceeded, notify.EventBackupFailed,
 		notify.EventAuthLoginFailed,
+		notify.EventTest,
 	} {
 		if !contains(notify.KnownEvents(), name) {
 			t.Errorf("%s is not in KnownEvents", name)
 		}
 	}
-	if got, want := len(notify.KnownEvents()), 17; got != want {
-		t.Errorf("KnownEvents has %d entries, want %d — §11 lists 17", got, want)
+	// Seventeen from §11, plus notify.test — the test action's payload, which is
+	// in the vocabulary so it renders like any other event, and which the test
+	// action deliberately does not route through the filters.
+	if got, want := len(notify.KnownEvents()), 18; got != want {
+		t.Errorf("KnownEvents has %d entries, want %d — §11 lists 17 plus notify.test", got, want)
 	}
 }
 

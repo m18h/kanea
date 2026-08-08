@@ -69,6 +69,18 @@ type ServerConfig struct {
 	Events Events
 	// NotifyStats reports the dispatcher's counters.
 	NotifyStats func() notify.Stats
+	// Notifier backs the test action (§11). Nil answers 503 on that route: a
+	// daemon with no channels has nothing to test, which is a different answer
+	// from "the test failed".
+	Notifier Notifier
+	// MCP is the Model Context Protocol transport (§16.3), mounted at PathMCP
+	// behind the same authentication every other route gets.
+	//
+	// Taken as a bare http.Handler rather than as an *mcp.Server so that this
+	// package does not import that one — the MCP server's backend *is* this
+	// server's handler, and the dependency has to point one way. Nil leaves the
+	// route unregistered.
+	MCP http.Handler
 	// Publish emits notification events. Nil disables them.
 	Publish func(notify.Event)
 	// Auth resolves callers. Nil leaves the unix socket as the only credential
@@ -150,6 +162,7 @@ type Server struct {
 	// it is quiet because nothing happened rather than because the queue
 	// overflowed.
 	notifyStats func() notify.Stats
+	notifier    Notifier
 	publish     func(notify.Event)
 
 	auth            Authenticator
@@ -204,7 +217,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
-		auth: cfg.Auth, audit: cfg.Audit,
+		notifier: cfg.Notifier,
+		auth:     cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		metrics: cfg.Metrics, breaker: cfg.Breaker,
 		insecureCookies: cfg.InsecureCookies,
@@ -237,6 +251,18 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		s.route(policy{action: "service.delete", mutates: true}, s.handleDeleteService))
 	mux.Handle("POST "+PathServices+"/{project}/{service}/scale",
 		s.route(policy{action: "service.scale", mutates: true}, s.handleScale))
+	// A restart is a mutation like any other, and goes through the reconciler
+	// like any other: it bumps a number and returns.
+	mux.Handle("POST "+PathServices+"/{project}/{service}/restart",
+		s.route(policy{action: "service.restart", mutates: true}, s.handleRestart))
+	mux.Handle("GET "+PathProjects, s.route(policy{action: "project.list"}, s.handleListProjects))
+	mux.Handle("GET "+PathProjects+"/{project}",
+		s.route(policy{action: "project.get"}, s.handleGetProject))
+	mux.Handle("GET "+PathStats, s.route(policy{action: "stats.read"}, s.handleStats))
+	// Sending a test message reaches outside the node, so it is a mutation in the
+	// sense that matters here: admin-only, and audited.
+	mux.Handle("POST "+PathProjects+"/{project}/notifications/test",
+		s.route(policy{action: "notify.test", mutates: true}, s.handleTestNotification))
 	mux.Handle("GET "+PathAllocs, s.route(policy{action: "alloc.list"}, s.handleListAllocs))
 	mux.Handle("GET "+PathMetrics, s.route(policy{action: "metrics.read"}, s.handleMetrics))
 	mux.Handle("GET "+PathLogs, s.route(policy{action: "logs.read"}, s.handleLogs))
@@ -279,6 +305,16 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST "+PathWebhooks+"/{project}",
 		s.route(policy{action: "webhook.receive", public: true}, s.handleGitWebhook))
 	mux.Handle("GET "+PathEvents, s.route(policy{action: "event.list"}, s.handleEvents))
+	// The MCP transport (§16.3). Authenticated like everything else and no more:
+	// the route itself neither mutates nor requires admin, because what a tool
+	// call is allowed to do is decided by the route that call lands on, one
+	// level down. Marking this one `mutates` would demand admin for tools/list.
+	if cfg.MCP != nil {
+		for _, method := range []string{"POST", "GET", "DELETE"} {
+			mux.Handle(method+" "+PathMCP,
+				s.route(policy{action: "mcp.transport"}, cfg.MCP.ServeHTTP))
+		}
+	}
 	mux.Handle("GET "+PathSecrets, s.route(policy{action: "secret.list", adminOnly: true}, s.handleListSecrets))
 	mux.Handle("PUT "+PathSecrets+"/{path...}",
 		s.route(policy{action: "secret.put", mutates: true}, s.handlePutSecret))
@@ -520,6 +556,15 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		key := svc.Project + "/" + svc.Service
+		// The restart generation belongs to the running service, not to the
+		// file: it is bumped by `kanea restart`, and a spec that does not
+		// mention it must not reset it. Without this, the first apply after a
+		// restart would look like another spec change and roll the service a
+		// second time — the same class of bug the pipeline merge below avoids.
+		if current, _, err := store.GetValue[reconciler.Desired](
+			r.Context(), s.store, store.KindService, key); err == nil {
+			svc.Generation = current.Generation
+		}
 		mut, err := store.PutMutation(store.KindService, key, svc)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)

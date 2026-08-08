@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -446,3 +447,58 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 	case <-timer.C:
 	}
 }
+
+// TestResult reports what one channel did with a test message.
+type TestResult struct {
+	Channel string `json:"channel"`
+	Project string `json:"project,omitempty"`
+	OK      bool   `json:"ok"`
+	// Error is the failure, if there was one. It is the channel's own error
+	// text, which the channels are careful never to build from a URL that
+	// carries a token (see TelegramChannel.Send).
+	Error string `json:"error,omitempty"`
+}
+
+// Test sends a test message through the matching channels (PRD §11).
+//
+// Synchronous, and deliberately not routed through Publish: a test exists to
+// answer "is this channel wired up", and the queue, the coalescing window and
+// the rate limiter all stand between an event and an answer. It also bypasses
+// the filters, because a channel configured for `deploy.*` would silently
+// discard a test and leave the operator no better informed than before.
+//
+// It does honour the retry policy, since a channel that works on the second
+// attempt does work.
+func (d *Dispatcher) Test(project, channel string) []TestResult {
+	// Bounded independently of any caller's deadline: an HTTP handler is waiting
+	// on this, and a channel pointed at a black hole would otherwise hold the
+	// connection for as long as its own timeouts allow.
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	var results []TestResult
+	for _, r := range d.routes {
+		name := r.Channel.Name()
+		// A project-scoped test never reaches another project's channels, and
+		// never the node-wide ones either: an operator testing their own
+		// project's Telegram should not page the node administrator.
+		if project != "" && r.Project != project {
+			continue
+		}
+		if channel != "" && name != channel && !strings.HasSuffix(name, "/"+channel) {
+			continue
+		}
+
+		event := NewEvent(EventTest, r.Project, "",
+			"test message from Kanea — this channel is configured correctly", d.now())
+		result := TestResult{Channel: name, Project: r.Project, OK: true}
+		if err := d.deliver(ctx, r.Channel, []Event{event}); err != nil {
+			result.OK, result.Error = false, err.Error()
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+// testTimeout bounds a whole test action, retries included.
+const testTimeout = 30 * time.Second

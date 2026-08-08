@@ -206,7 +206,7 @@ func runPlan(args []string) error {
 	}
 
 	o := newOut()
-	diff := diffServices(current, desired)
+	diff := reconciler.Diff(current, desired)
 	if len(diff) == 0 {
 		o.println("No changes. Desired state matches the declared spec.")
 		return o.Err()
@@ -216,56 +216,6 @@ func runPlan(args []string) error {
 	}
 	o.printf("\nPlan: %d change(s). Run `kanea run` to apply.\n", len(diff))
 	return o.Err()
-}
-
-// diffServices renders a Nomad-style create/change/destroy summary. It compares
-// only what a user declared, so an untouched service is not reported as a
-// change just because the daemon added defaults.
-func diffServices(current, desired []reconciler.Desired) []string {
-	byKey := make(map[string]reconciler.Desired, len(current))
-	for _, svc := range current {
-		byKey[svc.Project+"/"+svc.Service] = svc
-	}
-
-	var out []string
-	for _, want := range desired {
-		key := want.Project + "/" + want.Service
-		have, exists := byKey[key]
-		if !exists {
-			out = append(out, fmt.Sprintf("+ create %s (count %d, image %s)", key, want.Count, want.Image))
-			continue
-		}
-		var changes []string
-		if have.Image != want.Image {
-			changes = append(changes, fmt.Sprintf("image %s -> %s", have.Image, want.Image))
-		}
-		if have.Count != want.Count {
-			changes = append(changes, fmt.Sprintf("count %d -> %d", have.Count, want.Count))
-		}
-		if have.Resources != want.Resources {
-			changes = append(changes, fmt.Sprintf("resources %+v -> %+v", have.Resources, want.Resources))
-		}
-		if !sameEnv(have.Env, want.Env) {
-			changes = append(changes, "env changed")
-		}
-		if len(changes) > 0 {
-			out = append(out, fmt.Sprintf("~ update %s (%s)", key, strings.Join(changes, ", ")))
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sameEnv(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
 }
 
 // runPs implements `kanea ps`.

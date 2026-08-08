@@ -31,6 +31,10 @@ const (
 	PathServices = "/v1/services"
 	PathAllocs   = "/v1/allocs"
 	PathLogs     = "/v1/logs"
+	// PathMCP is the Model Context Protocol transport (§16.3). Deliberately not
+	// under /v1: it is not this API's versioned surface, it is MCP's, and the
+	// protocol carries its own version in the initialize handshake.
+	PathMCP = "/mcp"
 )
 
 // Health is the readiness payload.

@@ -73,6 +73,20 @@ type Desired struct {
 	Restart RestartPolicy
 	// Update governs how running allocs are replaced when this spec changes.
 	Update UpdatePolicy
+	// Generation is bumped to force a rolling restart of a service whose spec
+	// has not otherwise changed (`kanea restart`, the MCP restart_service tool).
+	//
+	// It is part of the spec hash, which means a restart is not a second code
+	// path: it is a spec change, it rolls through the same update policy, and it
+	// converges the same way. The alternative — a route that reaches in and
+	// kills containers — would be a second scheduler, which is the thing §9.2
+	// says the autoscaler must not be either.
+	//
+	// It belongs to the running service rather than to the declared spec, so an
+	// apply that does not mention it keeps whatever it was; see the API's apply
+	// handler. Otherwise every `kanea run` after a restart would be a second
+	// restart.
+	Generation int `json:"generation,omitempty"`
 }
 
 // UpdatePolicy is the rolling-deploy policy (PRD §4.3, §6.1 `update` block).
@@ -322,8 +336,13 @@ type AllocRecord struct {
 	LastExitAt   time.Time `json:"last_exit_at,omitzero"`
 	// NextRestartAt is when the alloc may be restarted; zero means immediately.
 	NextRestartAt time.Time `json:"next_restart_at,omitzero"`
-	// Healthy reports the last health-check verdict. A service with no check
-	// declared is healthy as soon as it runs, so this stays true.
+	// Healthy reports the last health-check verdict.
+	//
+	// It is only ever written by a probe, so an alloc of a service that declares
+	// no check has it false for its whole life. That is not "unhealthy" — it is
+	// "nobody asked". Read it through Probed(), or with the same
+	// `Check.configured()` guard the planner uses; testing the field on its own
+	// reports every check-free service as broken.
 	Healthy bool `json:"healthy"`
 	// HealthFailures counts consecutive failed probes. It resets on a pass, so
 	// a service that flaps below the threshold is never marked unhealthy.
@@ -336,6 +355,10 @@ type AllocRecord struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+// Probed reports whether a health check has ever run against this alloc, which
+// is what makes Healthy meaningful.
+func (a AllocRecord) Probed() bool { return !a.LastProbeAt.IsZero() }
 
 // Key is the alloc's Store key: project/service/index, which sorts naturally
 // and lets a service's allocs be listed by prefix.
