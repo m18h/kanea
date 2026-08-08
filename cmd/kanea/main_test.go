@@ -55,6 +55,8 @@ var implemented = map[string]bool{
 	"scale": true,
 	// M7 GitOps & pipelines:
 	"build": true, "project": true,
+	// M9 MCP server:
+	"mcp": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {

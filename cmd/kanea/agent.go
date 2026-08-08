@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/edge"
 	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/logging"
+	"github.com/kanea-dev/kanea/internal/mcp"
 	"github.com/kanea-dev/kanea/internal/network"
 	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/reconciler"
@@ -356,12 +358,35 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// The MCP transport and the API server each need the other: the transport is
+	// a route on the API, and its backend is the API's own handler. One of them
+	// has to be told about the other after both exist, and a lazy reference is
+	// the honest way to write that down — the alternative is a second HTTP
+	// client dialling this process's own socket to reach a handler already in
+	// memory.
+	var apiServer *api.Server
+	mcpServer, err := mcp.New(mcp.Config{
+		Backend: mcp.HandlerBackend{Handler: func() http.Handler {
+			if apiServer == nil {
+				return nil
+			}
+			return apiServer.Handler()
+		}},
+		Logger:    logger,
+		Version:   version,
+		ParseSpec: parseSpecSource,
+	})
+	if err != nil {
+		return err
+	}
+
 	server, err := api.NewServer(api.ServerConfig{
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
 		Secrets: secretStore, Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
+		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
 		OIDC: provider, Sessions: users,
 		Metrics: metrics, Breaker: breaker,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
@@ -370,6 +395,9 @@ func runAgent(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Closes the loop opened above. Every MCP tool call from here on lands on
+	// this handler, which is the same one the CLI and the dashboard reach.
+	apiServer = server
 	// Bind before announcing readiness: a socket collision must fail loudly at
 	// startup, not silently later.
 	if err := server.Listen(); err != nil {

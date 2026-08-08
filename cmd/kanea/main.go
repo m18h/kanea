@@ -50,7 +50,7 @@ var commands = []command{
 	{"user", "manage accounts: add, ls, rm", runUser},
 	{"token", "manage API tokens: create, ls, rm", runToken},
 	{"upgrade", "drain edge, restart services, run state migrations", todo},
-	{"mcp", "stdio MCP server for local AI agents (PRD §16.3)", todo},
+	{"mcp", "stdio MCP server for local AI agents (PRD §16.3)", runMCP},
 	{"ui", "open the dashboard URL", todo},
 	{"version", "print version and exit", runVersion},
 }
