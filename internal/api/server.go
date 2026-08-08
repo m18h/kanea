@@ -73,6 +73,10 @@ type ServerConfig struct {
 	// daemon with no channels has nothing to test, which is a different answer
 	// from "the test failed".
 	Notifier Notifier
+	// Backups backs the archive routes (§15.3). Nil answers 503 on them: a
+	// daemon with no backup destination configured is a supported (if
+	// regrettable) state, and it is different from a failure.
+	Backups Backups
 	// MCP is the Model Context Protocol transport (§16.3), mounted at PathMCP
 	// behind the same authentication every other route gets.
 	//
@@ -163,6 +167,7 @@ type Server struct {
 	// overflowed.
 	notifyStats func() notify.Stats
 	notifier    Notifier
+	backups     Backups
 	publish     func(notify.Event)
 
 	auth            Authenticator
@@ -217,8 +222,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
-		notifier: cfg.Notifier,
-		auth:     cfg.Auth, audit: cfg.Audit,
+		notifier: cfg.Notifier, backups: cfg.Backups,
+		auth: cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		metrics: cfg.Metrics, breaker: cfg.Breaker,
 		insecureCookies: cfg.InsecureCookies,
@@ -305,6 +310,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST "+PathWebhooks+"/{project}",
 		s.route(policy{action: "webhook.receive", public: true}, s.handleGitWebhook))
 	mux.Handle("GET "+PathEvents, s.route(policy{action: "event.list"}, s.handleEvents))
+	// Backups (§15.3). Listing is an ordinary read; taking one is a mutation
+	// because it writes to a bucket and costs money. Staging a restore is the
+	// most destructive call this API has — it discards everything on the node
+	// at the next start — and is admin-only and audited like every other.
+	mux.Handle("GET "+PathBackups, s.route(policy{action: "backup.list"}, s.handleListBackups))
+	mux.Handle("POST "+PathBackups,
+		s.route(policy{action: "backup.create", mutates: true}, s.handleCreateBackup))
+	mux.Handle("GET "+PathBackups+"/{id}/verify",
+		s.route(policy{action: "backup.verify"}, s.handleVerifyBackup))
+	mux.Handle("POST "+PathBackups+"/restore",
+		s.route(policy{action: "backup.restore", mutates: true}, s.handleRestore))
 	// The MCP transport (§16.3). Authenticated like everything else and no more:
 	// the route itself neither mutates nor requires admin, because what a tool
 	// call is allowed to do is decided by the route that call lands on, one

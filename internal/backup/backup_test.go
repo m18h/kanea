@@ -471,3 +471,53 @@ func TestLatestOnAnEmptyBucketSaysSo(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNoArchives", err)
 	}
 }
+
+// ---- staged restore ----
+
+func TestRestoreRequestRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	if req, err := ReadRequest(dir); err != nil || req != nil {
+		t.Fatalf("a fresh directory reported a request: %+v, %v", req, err)
+	}
+
+	want := Request{ArchiveID: "20260808T120000Z", SkipReplay: true, RequestedBy: "ada"}
+	if err := WriteRequest(dir, want); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := ReadRequest(dir)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got == nil || got.ArchiveID != want.ArchiveID || !got.SkipReplay || got.RequestedBy != "ada" {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+
+	if err := ClearRequest(dir); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if req, _ := ReadRequest(dir); req != nil {
+		t.Error("the request survived being cleared; the next start would restore again")
+	}
+	// Clearing twice must work: it runs after a restore that may itself be a
+	// retry.
+	if err := ClearRequest(dir); err != nil {
+		t.Errorf("clearing an absent request failed: %v", err)
+	}
+}
+
+func TestAnUnparseableRestoreRequestIsRefusedNotIgnored(t *testing.T) {
+	// A request file that does not parse is a request somebody made. Starting
+	// normally would silently not restore a node whose operator believes it
+	// did.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, RequestFileName), []byte("{{{"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := ReadRequest(dir)
+	if err == nil {
+		t.Fatal("a corrupt restore request was ignored")
+	}
+	if !strings.Contains(err.Error(), "delete it") {
+		t.Errorf("the error does not say how to proceed: %v", err)
+	}
+}

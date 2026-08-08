@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/auth"
+	"github.com/kanea-dev/kanea/internal/backup"
 	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/reconciler"
 	"github.com/kanea-dev/kanea/internal/secrets"
@@ -398,4 +399,36 @@ func (c *Client) CreateToken(ctx context.Context, name string, role auth.Role, e
 // RevokeToken deletes a token by id.
 func (c *Client) RevokeToken(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, PathTokens+"/"+url.PathEscape(id), nil, nil)
+}
+
+// Backups lists archives and reports replication health.
+func (c *Client) Backups(ctx context.Context) (BackupsResponse, error) {
+	var out BackupsResponse
+	err := c.do(ctx, http.MethodGet, PathBackups, nil, &out)
+	return out, err
+}
+
+// CreateBackup takes an on-demand archive.
+func (c *Client) CreateBackup(ctx context.Context, reason string) (backup.Manifest, error) {
+	var out backup.Manifest
+	err := c.do(ctx, http.MethodPost, PathBackups, BackupRequest{Reason: reason}, &out)
+	return out, err
+}
+
+// VerifyBackup checks an archive against its manifest.
+func (c *Client) VerifyBackup(ctx context.Context, id string) error {
+	path := fmt.Sprintf("%s/%s/verify", PathBackups, url.PathEscape(id))
+	return c.do(ctx, http.MethodGet, path, nil, nil)
+}
+
+// StageRestore asks the daemon to restore at its next start.
+//
+// There is no client method that restores in place, because there is no route
+// that does: §15.3 puts a restore on a stopped node, and the shape of this API
+// is what enforces it.
+func (c *Client) StageRestore(ctx context.Context, archive string, skipReplay bool) (RestoreResponse, error) {
+	var out RestoreResponse
+	err := c.do(ctx, http.MethodPost, PathBackups+"/restore",
+		RestoreRequest{Archive: archive, SkipReplay: skipReplay}, &out)
+	return out, err
 }

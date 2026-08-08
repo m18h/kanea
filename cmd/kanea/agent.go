@@ -20,6 +20,7 @@ import (
 	"github.com/kanea-dev/kanea/internal/api"
 	"github.com/kanea-dev/kanea/internal/audit"
 	"github.com/kanea-dev/kanea/internal/auth"
+	"github.com/kanea-dev/kanea/internal/backup"
 	"github.com/kanea-dev/kanea/internal/edge"
 	"github.com/kanea-dev/kanea/internal/gitops"
 	"github.com/kanea-dev/kanea/internal/logging"
@@ -38,7 +39,10 @@ import (
 // defaults and the flags below.
 const (
 	defaultDataDir = "/var/lib/kanea"
-	defaultLogDir  = "/var/log/kanea/allocs"
+	// stateFile is the bbolt database's name under the data directory. Named
+	// because a restore has to find it without a running daemon to ask.
+	stateFile     = "state.db"
+	defaultLogDir = "/var/log/kanea/allocs"
 	// volumeSubdir is where local volumes live under the data dir (PRD §8).
 	volumeSubdir = "volumes"
 	// resolvSubdir holds the generated per-project resolv.conf files.
@@ -55,6 +59,25 @@ const (
 func runAgent(args []string) error {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	dataDir := fs.String("data-dir", defaultDataDir, "state directory")
+	backupDir := fs.String("backup-dir", "",
+		"replicate state to this directory (PRD §15.3)")
+	backupS3 := fs.String("backup-s3", "",
+		"replicate state to s3://bucket[/prefix]")
+	backupS3Endpoint := fs.String("backup-s3-endpoint", "", "S3 endpoint URL")
+	backupS3Region := fs.String("backup-s3-region", "", "S3 region")
+	backupS3AccessKey := fs.String("backup-s3-access-key", "", "S3 access key id")
+	backupS3Secret := fs.String("backup-s3-secret-key", "",
+		"`secret:` reference to the S3 secret key (never a literal — R3)")
+	backupS3PathStyle := fs.Bool("backup-s3-path-style", true,
+		"address the bucket as /bucket/key rather than as a subdomain")
+	backupInterval := fs.Duration("backup-interval", backup.DefaultSnapshotInterval,
+		"how often to take a full state snapshot")
+	backupSegmentInterval := fs.Duration("backup-segment-interval", backup.DefaultSegmentInterval,
+		"how often to ship change segments (bounds the RPO)")
+	backupRetention := fs.Int("backup-retention", backup.DefaultRetention,
+		"how many snapshots to keep")
+	autoRestore := fs.Bool("restore-if-empty", false,
+		"restore the newest archive when this node has no state at all (§15.3 first-boot)")
 	logDir := fs.String("log-dir", defaultLogDir, "per-alloc log directory")
 	volumeDir := fs.String("volume-dir", "", "local volume root (default <data-dir>/volumes)")
 	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
@@ -166,7 +189,25 @@ func runAgent(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	statePath := filepath.Join(*dataDir, "state.db")
+	statePath := filepath.Join(*dataDir, stateFile)
+	backupTarget := sinkOptions{
+		dir: *backupDir, s3URL: *backupS3, endpoint: *backupS3Endpoint,
+		region: *backupS3Region, accessKey: *backupS3AccessKey,
+		pathStyle: *backupS3PathStyle,
+	}
+	if err := os.MkdirAll(*dataDir, 0o750); err != nil {
+		return fmt.Errorf("data dir: %w", err)
+	}
+	// Before the Store is opened, which is the only moment inside the daemon's
+	// own lifetime when §15.3's "on a stopped node" is true of this process.
+	if err := restoreAtStart(ctx, bootRestoreOptions{
+		dataDir: *dataDir, statePath: statePath,
+		keyPath: filepath.Join(*dataDir, secrets.KeyFileName),
+		sink:    backupTarget, autoRestore: *autoRestore, log: logger,
+	}); err != nil {
+		return err
+	}
+
 	st, err := store.Open(store.Options{Path: statePath, Logger: logger})
 	if err != nil {
 		return fmt.Errorf("open state %s: %w", statePath, err)
@@ -343,6 +384,30 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// State replication (§15.3). Built after the secrets store, because the S3
+	// secret key is a `secret:` reference like every other credential (R3) and
+	// there is nothing to resolve it with until now.
+	backups, replicator, err := buildReplication(ctx, replicationSettings{
+		sink:             backupTarget,
+		secretKeyRef:     *backupS3Secret,
+		dataDir:          *dataDir,
+		snapshotInterval: *backupInterval,
+		segmentInterval:  *backupSegmentInterval,
+		retention:        *backupRetention,
+		store:            st,
+	}, secretStore, logger)
+	if err != nil {
+		return err
+	}
+	if replicator == nil {
+		// Said once, at warning. A node with no backup destination is a node
+		// whose entire state lives on one disk, and the operator should have
+		// decided that rather than defaulted into it.
+		logger.Warn("state replication is not configured",
+			"detail", "this node's state exists only on its own disk; "+
+				"set --backup-dir or --backup-s3 (PRD §15.3)")
+	}
+
 	pipelines, buildQueue, err := buildPipelines(pipelineSettings{
 		buildkit:   *buildkit,
 		logDir:     resolveBuildLogDir(*buildLogDir, *dataDir),
@@ -387,7 +452,8 @@ func runAgent(args []string) error {
 		Secrets: secretStore, Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
 		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
-		OIDC: provider, Sessions: users,
+		Backups: backups,
+		OIDC:    provider, Sessions: users,
 		Metrics: metrics, Breaker: breaker,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
 		AuthConfigured: configured, InsecureCookies: *insecureCookies,
@@ -450,6 +516,12 @@ func runAgent(args []string) error {
 	// anything that emits: Publish is non-blocking and everything slow happens
 	// behind it (AGENTS.md #8).
 	go notifier.Run(ctx)
+	if replicator != nil {
+		// Its own goroutine, and it never touches the control plane's critical
+		// path: a bucket that is down means backups stop and say so, never that
+		// the platform stops.
+		go replicator.Run(ctx)
+	}
 	if pipelines != nil {
 		// The queue worker and the sync loop are separate goroutines on
 		// purpose: a build that takes four minutes must not stop the loop

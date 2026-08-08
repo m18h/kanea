@@ -15,6 +15,10 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/kanea-dev/kanea/internal/gitops"
@@ -111,3 +115,18 @@ type LogOptions struct {
 // PollInterval is how often a following log stream checks for new output.
 // Files are the transport (PRD §17), so this is a tail, not a subscription.
 const PollInterval = 250 * time.Millisecond
+
+// decodeBody reads a bounded JSON request body.
+//
+// Bounded everywhere, without exception: an unbounded json.Decode on a request
+// body is a memory-exhaustion vector that looks like ordinary parsing.
+func decodeBody(r *http.Request, into any) error {
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxRequestBytes)).Decode(into); err != nil {
+		return fmt.Errorf("decode request: %w", err)
+	}
+	return nil
+}
+
+// maxRequestBytes bounds a JSON request body. Job specs go through their own
+// larger limit on the apply route; everything else is small.
+const maxRequestBytes = 1 << 20

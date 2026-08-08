@@ -35,6 +35,7 @@ const (
 	pathProjects  = "/v1/projects"
 	pathPipelines = "/v1/pipelines"
 	pathAudit     = "/v1/audit"
+	pathBackups   = "/v1/backups"
 )
 
 // tier is how much authority a tool needs (§16.3's three groups).
@@ -261,6 +262,14 @@ func registry() []*tool {
 			run:    runListStorage,
 		},
 		{
+			name: "list_backups", tier: tierRead,
+			description: "List state archives newest-first, with when each was taken, the " +
+				"index it covers and what it holds. Also reports whether replication is " +
+				"actually working, which is the number that matters before an incident.",
+			schema: object(nil),
+			run:    runListBackups,
+		},
+		{
 			name: "get_audit", tier: tierRead,
 			description: "Read the audit log: who did what, when, from where, and whether it was " +
 				"allowed. Requires the admin role — the daemon enforces that.",
@@ -342,6 +351,15 @@ func registry() []*tool {
 			run: runPipeline,
 		},
 		{
+			name: "create_backup", tier: tierMutate,
+			description: "Take an on-demand state snapshot and ship it to the configured " +
+				"backup destination. Returns when the archive is durable.",
+			schema: object(map[string]property{
+				"reason": {Type: "string", Description: "Recorded in the archive manifest."},
+			}),
+			run: runCreateBackup,
+		},
+		{
 			name: "test_notification", tier: tierMutate,
 			description: "Send a test message through a project's notification channels, " +
 				"bypassing their event filters. Use it to prove a channel is wired up.",
@@ -355,6 +373,25 @@ func registry() []*tool {
 		},
 
 		// ---- destructive (admin + confirm) ----
+		{
+			name: "restore_backup", tier: tierDestructive,
+			description: "Stage a restore of the platform's entire state from an archive. " +
+				"It does NOT restore immediately — a restore happens on a stopped node, so " +
+				"this verifies the archive and records the request, and an operator restarts " +
+				"the daemon to apply it. Everything currently on the node is replaced. " +
+				"Requires confirm=true.",
+			schema: object(map[string]property{
+				"archive": {Type: "string",
+					Description: "Archive id from list_backups. Omit for the newest."},
+				"skip_replay": {Type: "boolean",
+					Description: "Restore the snapshot without its change segments. This " +
+						"discards everything that happened after the snapshot; only use it " +
+						"when a segment is itself damaged."},
+				"confirm": {Type: "boolean",
+					Description: "Must be true. Confirms the operator asked for this."},
+			}, "confirm"),
+			run: runRestoreBackup,
+		},
 		{
 			name: "delete_project", tier: tierDestructive,
 			description: "Delete every service in a project and stop everything it is running. " +
@@ -948,4 +985,61 @@ func (s *Server) parseSpec(source string) ([]reconciler.Desired, []gitops.Config
 		return nil, nil, fmt.Errorf("the spec declares no services")
 	}
 	return desired, pipelines, nil
+}
+
+// ---- backup implementations ----
+
+func runListBackups(ctx context.Context, s *Server, sess *Session, _ arguments) (callToolResult, error) {
+	var out struct {
+		Backups     []json.RawMessage `json:"backups"`
+		Replication json.RawMessage   `json:"replication"`
+	}
+	if err := s.call(ctx, sess, http.MethodGet, pathBackups, nil, &out); err != nil {
+		return callToolResult{}, err
+	}
+
+	result, err := jsonResult(map[string]any{
+		"replication": out.Replication, "archives": out.Backups,
+	})
+	if err != nil {
+		return callToolResult{}, err
+	}
+	if len(out.Backups) == 0 {
+		// Stated rather than left as an empty list. "No archives" is the single
+		// most important fact this tool can report, and a model reading `[]`
+		// may not weigh it as one.
+		result.Content = append(result.Content, contentBlock{Type: "text", Text: "There are " +
+			"no archives: nothing on this node has been backed up, and a disk failure " +
+			"would lose all of it."})
+	}
+	return result, nil
+}
+
+func runCreateBackup(ctx context.Context, s *Server, sess *Session, args arguments) (callToolResult, error) {
+	reason := args.text("reason")
+	if reason == "" {
+		reason = "requested by an agent"
+	}
+	var manifest map[string]any
+	if err := s.call(ctx, sess, http.MethodPost, pathBackups,
+		map[string]string{"reason": reason}, &manifest); err != nil {
+		return callToolResult{}, err
+	}
+	return jsonResult(manifest)
+}
+
+func runRestoreBackup(ctx context.Context, s *Server, sess *Session, args arguments) (callToolResult, error) {
+	body := map[string]any{"skip_replay": args.boolean("skip_replay")}
+	if archive := args.text("archive"); archive != "" {
+		body["archive"] = archive
+	}
+
+	var out struct {
+		Message string `json:"message"`
+	}
+	if err := s.call(ctx, sess, http.MethodPost, pathBackups+"/restore", body, &out); err != nil {
+		return callToolResult{}, err
+	}
+	return textResult(out.Message + "\n\nThis is staged, not done. Tell the operator that " +
+		"kanead has to be restarted, and that it is their call."), nil
 }
