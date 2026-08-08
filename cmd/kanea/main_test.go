@@ -58,7 +58,7 @@ var implemented = map[string]bool{
 	// M9 MCP server:
 	"mcp": true,
 	// M10 hardening & packaging:
-	"backup": true, "restore": true,
+	"backup": true, "restore": true, "init": true, "doctor": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {

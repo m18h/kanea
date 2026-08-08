@@ -30,10 +30,10 @@ type command struct {
 
 // commands is the CLI surface defined in PRD §16.2, in usage order.
 var commands = []command{
-	{"init", "interactive first-install: config, auth, deps/kernel/NTP checks, key ceremony", todo},
+	{"init", "interactive first-install: config, auth, deps/kernel/NTP checks, key ceremony", runInit},
 	{"agent", "run the control-plane daemon (kanead)", runAgent},
 	{"edge", "run the edge ingress proxy (kanea-edge, separate process — PRD §5.2.6)", runEdge},
-	{"doctor", "verify node health: deps, versions, kvstore, disk, clock", todo},
+	{"doctor", "verify node health: deps, versions, kvstore, disk, clock", runDoctor},
 	{"plan", "dry-run diff of a job spec", runPlan},
 	{"run", "apply a job spec (or --image for a bare image)", runRun},
 	{"stop", "stop a service (scale to zero; --rm deletes it)", runStop},
