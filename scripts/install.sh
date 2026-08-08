@@ -6,9 +6,14 @@
 # generate keys, and does not start anything — those are decisions with
 # consequences, and a script that made them for you would be making them at the
 # moment you understand the node least.
+#
+# Run it with bash, not sh: `set -o pipefail` is not POSIX, and the checksum
+# check below is a pipeline whose *first* command is the one that can fail.
+#
+#     curl -fsSL https://m18h.github.io/kanea/install.sh | bash
 set -euo pipefail
 
-REPO="${KANEA_REPO:-kanea-dev/kanea}"
+REPO="${KANEA_REPO:-m18h/kanea}"
 VERSION="${KANEA_VERSION:-latest}"
 PREFIX="${KANEA_PREFIX:-/usr/local/bin}"
 
@@ -31,9 +36,22 @@ case "$(uname -m)" in
 esac
 
 if [ "$VERSION" = "latest" ]; then
-  need jq
-  VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | jq -r .tag_name)"
-  [ -n "$VERSION" ] && [ "$VERSION" != "null" ] || die "cannot determine the latest version"
+  # Resolved from the redirect GitHub already serves, rather than from the JSON
+  # API: parsing that needs jq, which is not on a minimal Debian or Amazon Linux
+  # image — so the one-liner this script exists to be would fail on its first
+  # step, on exactly the bare node it is meant for. The redirect also has no
+  # unauthenticated rate limit.
+  VERSION="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/${REPO}/releases/latest")" ||
+    die "cannot reach https://github.com/${REPO}/releases/latest"
+  VERSION="${VERSION##*/}"
+  # A repository with no release redirects to /releases, and the tag would come
+  # back as the literal "releases" — which composes into a plausible-looking
+  # archive name and a 404 nobody can read. Checked here instead.
+  case "$VERSION" in
+    v*) ;;
+    *) die "no published release found for ${REPO} (set KANEA_VERSION to pin one)" ;;
+  esac
 fi
 
 ARCHIVE="kanea_${VERSION#v}_linux_${ARCH}.tar.gz"
@@ -109,5 +127,7 @@ Next:
          sudo systemctl enable --now kanead
          kanea user add <name> --role admin
 
-Read docs/DR_RUNBOOK.md before you need it.
+Read the disaster-recovery runbook before you need it:
+
+    https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md
 NEXT
