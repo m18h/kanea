@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -453,4 +454,48 @@ func TestReplayStopsAtAMissingSegmentRatherThanSkippingIt(t *testing.T) {
 	} else if !errors.Is(err, ErrCorrupt) {
 		t.Errorf("err = %v, want ErrCorrupt", err)
 	}
+}
+
+func TestReplicationEventsFireOnTransitionsOnly(t *testing.T) {
+	// A destination that has been unreachable since yesterday is one fact, not
+	// one per minute. Two events is the right number: it broke, it came back.
+	var events []string
+	sink, err := NewFileSink(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	src := openStore(t)
+	archiver := newStoreArchiver(t, src, sink, testKeys(t, 30))
+	rep, err := NewReplicator(ReplicatorConfig{
+		Archiver: archiver, Store: src,
+		Emit: func(e notify.Event) { events = append(events, e.Name) },
+	})
+	if err != nil {
+		t.Fatalf("new replicator: %v", err)
+	}
+
+	broken := errors.New("the bucket is unreachable")
+	rep.report(broken, "shipping")
+	rep.report(broken, "shipping")
+	rep.report(broken, "shipping")
+	if len(events) != 1 || events[0] != notify.EventBackupFailed {
+		t.Fatalf("events = %v, want one %s", events, notify.EventBackupFailed)
+	}
+
+	rep.report(nil, "shipping")
+	rep.report(nil, "shipping")
+	if len(events) != 2 || events[1] != notify.EventBackupSucceeded {
+		t.Fatalf("events = %v, want a recovery event", events)
+	}
+
+	// A healthy replicator that has never failed says nothing at all: there is
+	// no news in "the backup worked", every minute, forever.
+	fresh, err := NewReplicator(ReplicatorConfig{
+		Archiver: archiver, Store: src,
+		Emit: func(notify.Event) { t.Error("a first success emitted an event") },
+	})
+	if err != nil {
+		t.Fatalf("new replicator: %v", err)
+	}
+	fresh.report(nil, "shipping")
 }

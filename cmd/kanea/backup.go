@@ -13,6 +13,7 @@ import (
 
 	"github.com/kanea-dev/kanea/internal/api"
 	"github.com/kanea-dev/kanea/internal/backup"
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/secrets"
 	"github.com/kanea-dev/kanea/internal/store"
 )
@@ -212,6 +213,7 @@ type replicationSettings struct {
 	segmentInterval  time.Duration
 	retention        int
 	store            store.Store
+	emit             func(notify.Event)
 }
 
 // buildReplication assembles the replicator, or returns nils when no
@@ -274,6 +276,7 @@ func buildReplication(
 		Archiver: archiver, Store: cfg.store, Logger: log,
 		SnapshotInterval: cfg.snapshotInterval, SegmentInterval: cfg.segmentInterval,
 		Retention: cfg.retention, Counts: storeCounts(cfg.store, log),
+		Emit: cfg.emit,
 	})
 	if err != nil {
 		return nil, nil, err

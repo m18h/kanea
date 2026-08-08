@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kanea-dev/kanea/internal/notify"
 	"github.com/kanea-dev/kanea/internal/store"
 )
 
@@ -49,7 +50,15 @@ type Replicator struct {
 	maxChanges    int
 	// counts summarises the Store for a manifest. Optional.
 	counts func(context.Context) map[string]int
-	now    func() time.Time
+	// emit publishes notification events (§11). Optional.
+	emit func(notify.Event)
+	now  func() time.Time
+	// failing tracks whether the last attempt failed, so events fire on
+	// transitions rather than every interval. A destination that has been down
+	// for a day would otherwise be 1440 identical messages — the dispatcher
+	// coalesces them, but the right number to send is two: it broke, it came
+	// back.
+	failing atomic.Bool
 
 	// shipped is the highest index known to be in the sink.
 	shipped atomic.Uint64
@@ -74,7 +83,9 @@ type ReplicatorConfig struct {
 	MaxChanges       int
 	// Counts summarises the Store into a manifest.
 	Counts func(context.Context) map[string]int
-	Now    func() time.Time
+	// Emit publishes notification events. Nil disables them.
+	Emit func(notify.Event)
+	Now  func() time.Time
 }
 
 // NewReplicator builds the loop.
@@ -107,7 +118,7 @@ func NewReplicator(cfg ReplicatorConfig) (*Replicator, error) {
 		archiver: cfg.Archiver, store: cfg.Store, log: cfg.Logger,
 		segmentEvery: cfg.SegmentInterval, snapshotEvery: cfg.SnapshotInterval,
 		retention: cfg.Retention, maxChanges: cfg.MaxChanges,
-		counts: cfg.Counts, now: cfg.Now,
+		counts: cfg.Counts, emit: cfg.Emit, now: cfg.Now,
 	}, nil
 }
 
@@ -150,15 +161,23 @@ func (r *Replicator) Run(ctx context.Context) {
 			return
 
 		case <-segments.C:
-			if err := r.ShipOnce(ctx); err != nil && ctx.Err() == nil {
+			err := r.ShipOnce(ctx)
+			if err != nil && ctx.Err() == nil {
 				r.failures.Add(1)
 				r.log.Error("cannot ship changes", "sink", r.archiver.Sink(), "error", err)
 			}
+			if ctx.Err() == nil {
+				r.report(err, "shipping change segments")
+			}
 
 		case <-snapshots.C:
-			if err := r.Snapshot(ctx, "scheduled"); err != nil && ctx.Err() == nil {
+			err := r.Snapshot(ctx, "scheduled")
+			if err != nil && ctx.Err() == nil {
 				r.failures.Add(1)
 				r.log.Error("cannot take a snapshot", "sink", r.archiver.Sink(), "error", err)
+			}
+			if ctx.Err() == nil {
+				r.report(err, "taking a state snapshot")
 			}
 		}
 	}
@@ -258,6 +277,30 @@ func (r *Replicator) oldestIndex(ctx context.Context) (uint64, error) {
 	}
 	// List is newest-first.
 	return all[len(all)-1].Index, nil
+}
+
+// report emits a notification when replication changes state (§11).
+//
+// On transitions only. A destination that has been unreachable since yesterday
+// is one fact, not one per minute — the dispatcher would coalesce a stream of
+// them, but the right number to send is two: it broke, and it came back.
+func (r *Replicator) report(err error, what string) {
+	failed := err != nil
+	if r.failing.Swap(failed) == failed {
+		return // no change
+	}
+	if r.emit == nil {
+		return
+	}
+
+	if failed {
+		r.emit(notify.NewEvent(notify.EventBackupFailed, "", "",
+			fmt.Sprintf("state replication to %s is failing while %s", r.archiver.Sink(), what),
+			r.now()).WithDetail(err.Error()))
+		return
+	}
+	r.emit(notify.NewEvent(notify.EventBackupSucceeded, "", "",
+		fmt.Sprintf("state replication to %s is working again", r.archiver.Sink()), r.now()))
 }
 
 // Status reports the replicator's own health.

@@ -401,6 +401,7 @@ func runAgent(args []string) error {
 		segmentInterval:  *backupSegmentInterval,
 		retention:        *backupRetention,
 		store:            st,
+		emit:             notifier.Publish,
 	}, secretStore, logger)
 	if err != nil {
 		return err
