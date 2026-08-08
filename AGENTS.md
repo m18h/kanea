@@ -67,6 +67,7 @@ Things a future change is most likely to trip over:
 **Known limits** (true today, not decisions):
 
 - **S3 interoperability is established against MinIO only.** CI runs the client against it and MinIO verifies SigV4, so the signature is one a real service accepts. AWS S3, R2, B2 and Wasabi have not been in the loop, and each has quirks around addressing style and region handling.
+- **Releases publish no SBOM**, which §14 A06 and §21 both require. It is why §20 M10's exit criterion is `v0.1.0 tagged` rather than v1.0 (PRD v1.29): the gap is small — a `syft` step in `release.yml` writing SPDX JSON per archive, listed in `checksums.txt` so the existing cosign signature extends over it — but until it is closed, a v1.0 would fail its own non-functional requirements.
 
 **M0 — technical spikes** (PRD §20), all four GO:
 
@@ -169,7 +170,7 @@ Each milestone's definition-of-done: OWASP §14 checks reviewed, `govulncheck` c
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.28) — the north star |
+| `PRD.md` | Full product requirements (v1.29) — the north star |
 | `AGENTS.md` | This file |
 | `README.md` | The public front door: install, quickstart, requirements |
 | `SECURITY.md` | How to report a vulnerability; what is in and out of scope |
