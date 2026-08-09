@@ -114,7 +114,13 @@ func (c *ImageClient) Unpack(ctx context.Context, ref string, files []File, dest
 // ordinary — a pull is not run, it is fetched.
 func (c *ImageClient) Export(ctx context.Context, ref, arch, destPath string) error {
 	ctx = c.scope(ctx)
-	platform := platforms.Only(ocispec.Platform{OS: "linux", Architecture: arch})
+	// OnlyStrict, not Only: Only's documented ARM handling makes an arm64
+	// matcher also accept 32-bit linux/arm entries. The pull takes the single
+	// best match and fetches arm64 alone, but the exporter applies the matcher
+	// to every index entry — and an entry that matches without having been
+	// fetched is "content digest not found". The bundle serves exactly one
+	// architecture, so exact is what was meant all along.
+	platform := platforms.OnlyStrict(ocispec.Platform{OS: "linux", Architecture: arch})
 
 	if _, err := c.client.Pull(ctx, ref, containerd.WithPlatformMatcher(platform)); err != nil {
 		return fmt.Errorf("pull %s for %s: %w", ref, arch, err)
