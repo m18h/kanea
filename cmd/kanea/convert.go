@@ -55,6 +55,9 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			Command:      svc.Task.Command,
 			Capabilities: jobspec.NormalizeCapabilities(svc.Task.Capabilities),
 			Env:          svc.Task.Env,
+			// The pull credential is a reference the node resolves, never a
+			// value: a resolved credential here would travel into the Store.
+			RegistryAuthRef: svc.Task.RegistryAuthRef,
 			Resources: runtime.Resources{
 				CPUMillis:   svc.Task.Resources.CPU * 1000 / NominalCoreMHz,
 				MemoryBytes: int64(svc.Task.Resources.Memory) << 20,
@@ -129,6 +132,25 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 						svc.Project, svc.Name, err)
 				}
 				desired.Update.MinHealthy = minHealthy
+			}
+			desired.Update.Auto = svc.Update.Auto
+			for _, d := range []struct {
+				field string
+				raw   string
+				into  *time.Duration
+			}{
+				{"interval", svc.Update.Interval, &desired.Update.Interval},
+				{"deadline", svc.Update.Deadline, &desired.Update.Deadline},
+			} {
+				if d.raw == "" {
+					continue
+				}
+				parsed, err := jobspec.ParseDuration(d.raw)
+				if err != nil {
+					return nil, fmt.Errorf("service %s/%s: update %s: %w",
+						svc.Project, svc.Name, d.field, err)
+				}
+				*d.into = parsed
 			}
 		}
 		out = append(out, desired)

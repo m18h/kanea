@@ -203,10 +203,20 @@ func SpecHash(d Desired) string {
 	// Desired does not silently start (or stop) triggering deploys. Whether a
 	// new field rolls allocs is a decision, and it should have to be made here.
 	material := struct {
-		Image          string            `json:"image"`
-		Command        []string          `json:"command,omitempty"`
-		Capabilities   []string          `json:"capabilities,omitempty"`
-		Env            map[string]string `json:"env,omitempty"`
+		Image string `json:"image"`
+		// PinnedImage is what actually runs, so it is what decides a deploy
+		// (R19). Image is hashed too: editing the declared tag is a spec
+		// change even when the digest behind it happens to be the same.
+		//
+		// The updater's other fields — RollbackImage, ImageCheckedAt,
+		// ImageUpdatedAt — are deliberately absent, and so is RegistryAuthRef.
+		// They are bookkeeping and pull-time inputs, not things baked into a
+		// container: hashing them would roll every auto-updating service on
+		// every poll, for no change to what is running.
+		PinnedImage  string            `json:"pinned_image,omitempty"`
+		Command      []string          `json:"command,omitempty"`
+		Capabilities []string          `json:"capabilities,omitempty"`
+		Env          map[string]string `json:"env,omitempty"`
 		Resources      runtime.Resources `json:"resources"`
 		Volumes        []Volume          `json:"volumes,omitempty"`
 		Ports          []Port            `json:"ports,omitempty"`
@@ -222,7 +232,8 @@ func SpecHash(d Desired) string {
 		// through exactly the machinery a real deploy does.
 		Generation int `json:"generation,omitempty"`
 	}{
-		Image: d.Image, Command: d.Command, Capabilities: d.Capabilities,
+		Image: d.Image, PinnedImage: d.PinnedImage,
+		Command: d.Command, Capabilities: d.Capabilities,
 		Env: d.Env, Resources: d.Resources, Volumes: d.Volumes,
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
 		Devices: d.Devices, Sockets: d.Sockets,
@@ -423,7 +434,7 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 		ID:             id,
 		Project:        d.Project,
 		Service:        d.Service,
-		Image:          d.Image,
+		Image:          d.RunImage(),
 		Command:        d.Command,
 		Capabilities:   d.Capabilities,
 		Env:            d.Env,

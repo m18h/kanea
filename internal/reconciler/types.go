@@ -28,6 +28,33 @@ type Desired struct {
 	Count int
 	// Image is the resolved (ideally digest-pinned) image reference.
 	Image string
+	// PinnedImage is what actually runs when auto-update is following Image's
+	// tag (R19) — a complete digest-pinned reference, not a bare digest, so
+	// nothing downstream has to reassemble one. It sits beside Image rather
+	// than replacing it because the tag is what the next poll re-resolves:
+	// pinning over it would destroy the thing the feature reads. Empty means
+	// "run Image as written", which is every service that has not turned
+	// auto-update on.
+	//
+	// It is server-owned, like Generation: an apply must carry it over, or
+	// every `kanea apply` would unpin the service and redeploy it.
+	PinnedImage string `json:"pinned_image,omitempty"`
+	// RollbackImage is what was running before the current auto-update, kept so
+	// a bad image can be reverted to something known good. It is cleared once
+	// the update converges.
+	RollbackImage string `json:"rollback_image,omitempty"`
+	// ImageCheckedAt is when the registry was last polled, so the declared
+	// interval survives a daemon restart rather than resetting to "now" and
+	// hammering someone else's registry after a crash loop.
+	ImageCheckedAt time.Time `json:"image_checked_at,omitzero"`
+	// ImageUpdatedAt is when the current digest was pinned. It is the clock the
+	// revert deadline runs against.
+	ImageUpdatedAt time.Time `json:"image_updated_at,omitzero"`
+	// RegistryAuthRef is a `secret:` reference to a docker config.json used to
+	// pull the image. It is a reference, never a value: a resolved credential
+	// in the Store would be a secret at rest in the one place §15.3 ships off
+	// the node.
+	RegistryAuthRef string `json:"registry_auth_ref,omitempty"`
 	// Command overrides the image entrypoint when non-empty.
 	Command []string
 	// Capabilities is the validated capability allowlist (jobspec R13).
@@ -104,6 +131,15 @@ type Desired struct {
 type UpdatePolicy struct {
 	// Strategy is StrategyRolling (the default) or StrategyReplace.
 	Strategy string
+	// Auto turns on image auto-update (R19). Off by default: following a
+	// moving tag is the one thing §14 A08 otherwise refuses, so it is a
+	// decision a service makes explicitly.
+	Auto bool `json:"auto,omitempty"`
+	// Interval is how often the registry is polled. Zero means the default.
+	Interval time.Duration `json:"interval,omitempty"`
+	// Deadline is how long a new digest has to converge before it is reverted.
+	// Zero means the default.
+	Deadline time.Duration `json:"deadline,omitempty"`
 	// MaxParallel is how many of a service's allocs may be disrupted at once.
 	// Zero means the default. Ignored by StrategyReplace, which means "all".
 	MaxParallel int
@@ -135,6 +171,16 @@ const (
 	// would take a service down one replica at a time while every pass reported
 	// progress.
 	DefaultMinHealthy = 10 * time.Second
+	// DefaultUpdateInterval is how often an auto-updating service re-resolves
+	// its tag (R19). Six hours because a poll is a request to somebody else's
+	// registry, and nobody deploying by tag needs the answer sooner.
+	DefaultUpdateInterval = 6 * time.Hour
+	// MinUpdateInterval is the floor. A tighter loop is a rate-limit problem
+	// for the registry and a rounding error for the operator.
+	MinUpdateInterval = 5 * time.Minute
+	// DefaultUpdateDeadline is how long a new digest has to converge before it
+	// is reverted.
+	DefaultUpdateDeadline = 10 * time.Minute
 )
 
 // maxParallel is how many allocs may be disrupted at once for a service of this
@@ -162,6 +208,35 @@ func (u UpdatePolicy) minHealthy() time.Duration {
 		return DefaultMinHealthy
 	}
 	return u.MinHealthy
+}
+
+// PollInterval is how often this service's tag is re-resolved (R19).
+func (u UpdatePolicy) PollInterval() time.Duration {
+	if u.Interval <= 0 {
+		return DefaultUpdateInterval
+	}
+	return u.Interval
+}
+
+// RevertDeadline is how long a newly pinned digest has to converge.
+func (u UpdatePolicy) RevertDeadline() time.Duration {
+	if u.Deadline <= 0 {
+		return DefaultUpdateDeadline
+	}
+	return u.Deadline
+}
+
+// RunImage is the reference an alloc is actually created from.
+//
+// The declared image for everything that has not turned auto-update on; the
+// pinned digest for everything that has. Reading Image directly would start a
+// service on whatever its tag points at *now* instead of the digest the
+// updater chose, which would make a deploy non-atomic across allocs.
+func (d Desired) RunImage() string {
+	if d.PinnedImage != "" {
+		return d.PinnedImage
+	}
+	return d.Image
 }
 
 // PeerRef names another service, as "<project>/<service>".

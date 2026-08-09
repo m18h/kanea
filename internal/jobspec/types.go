@@ -229,6 +229,9 @@ type Task struct {
 	// ResourcesDeclared records whether the spec declared the block, so
 	// `kanea plan` can show defaults as defaults.
 	ResourcesDeclared bool
+	// RegistryAuthRef names the secret holding a docker config.json used to
+	// pull the image (R19). Project-scoped like every other reference (R5).
+	RegistryAuthRef string
 	// Devices are host devices the task requests by grant name (R17).
 	Devices []*Device
 	// Sockets are host unix sockets the task requests by grant name (R18).
@@ -458,6 +461,16 @@ type Update struct {
 	Strategy    string
 	MaxParallel int
 	MinHealthy  string
+	// Auto turns on image auto-update (R19): the tag task.image declares is
+	// re-resolved on a schedule and the digest behind it is pinned when it
+	// moves. Off by default — following a moving tag is the one thing §14 A08
+	// otherwise refuses, so it is stated explicitly or not at all.
+	Auto bool
+	// Interval is how often the registry is polled. Empty means the default.
+	Interval string
+	// Deadline is how long a new digest has to converge before it is reverted
+	// to the one that was running. Empty means the default.
+	Deadline string
 }
 
 // Restart is the crash-restart policy.

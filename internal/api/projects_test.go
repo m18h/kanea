@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/reconciler"
@@ -107,6 +108,92 @@ func TestApplyPreservesTheRestartGeneration(t *testing.T) {
 
 	if got := desiredFromStore(t, h, "shop/web").Generation; got != generation {
 		t.Errorf("generation = %d after an apply, want %d preserved", got, generation)
+	}
+}
+
+// The pinned digest belongs to the watcher, not to the file (§6.2 R19). An
+// apply that reset it would unpin the service, redeploy it onto its bare tag,
+// and re-pin on the next poll — two deploys of a service nobody changed.
+func TestApplyPreservesTheAutoUpdatePin(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.putService(t, "shop", "web", 2)
+
+	// Seeded through the store rather than through Apply: Apply deliberately
+	// ignores a client-supplied pin, which is the property under test.
+	pinned := desiredFromStore(t, h, "shop/web")
+	pinned.Update.Auto = true
+	pinned.PinnedImage = "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64)
+	pinned.ImageCheckedAt = time.Now()
+	h.putDesired(t, pinned)
+
+	// An apply from a spec file, which knows nothing about pinned digests.
+	fresh := desiredFromStore(t, h, "shop/web")
+	fresh.PinnedImage = ""
+	fresh.ImageCheckedAt = time.Time{}
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{fresh}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	got := desiredFromStore(t, h, "shop/web")
+	if got.PinnedImage != pinned.PinnedImage {
+		t.Errorf("PinnedImage = %q after an apply, want %q preserved", got.PinnedImage, pinned.PinnedImage)
+	}
+	if got.ImageCheckedAt.IsZero() {
+		t.Error("ImageCheckedAt was reset, so the next tick would re-poll the registry")
+	}
+}
+
+// Editing the declared tag is the operator saying which tag to follow. Carrying
+// the old pin over would leave the service running the previous tag's digest —
+// the spec edited and ignored.
+func TestApplyDropsThePinWhenTheImageChanges(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.putService(t, "shop", "web", 2)
+
+	pinned := desiredFromStore(t, h, "shop/web")
+	pinned.Update.Auto = true
+	pinned.Image = "nginx:1.27"
+	pinned.PinnedImage = "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64)
+	h.putDesired(t, pinned)
+
+	bumped := pinned
+	bumped.Image = "nginx:1.28"
+	bumped.PinnedImage = ""
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{bumped}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	got := desiredFromStore(t, h, "shop/web")
+	if got.PinnedImage != "" {
+		t.Errorf("PinnedImage = %q, want the stale pin dropped so 1.28 actually runs", got.PinnedImage)
+	}
+	if got.RunImage() != "nginx:1.28" {
+		t.Errorf("RunImage() = %q, want the newly declared tag", got.RunImage())
+	}
+}
+
+// Turning auto off hands the spec back the authority over what runs.
+func TestApplyDropsThePinWhenAutoIsTurnedOff(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.putService(t, "shop", "web", 2)
+
+	pinned := desiredFromStore(t, h, "shop/web")
+	pinned.Update.Auto = true
+	pinned.PinnedImage = "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64)
+	h.putDesired(t, pinned)
+
+	off := pinned
+	off.Update.Auto = false
+	off.PinnedImage = ""
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{off}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	if got := desiredFromStore(t, h, "shop/web").PinnedImage; got != "" {
+		t.Errorf("PinnedImage = %q, want the pin dropped when auto-update was turned off", got)
 	}
 }
 

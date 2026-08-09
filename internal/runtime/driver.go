@@ -196,7 +196,12 @@ type Exit struct {
 type Driver interface {
 	// EnsureImage pulls the image unless it is already present, and returns
 	// the resolved digest so a deploy can pin it (PRD §10.2).
-	EnsureImage(ctx context.Context, project, ref string) (string, error)
+	EnsureImage(ctx context.Context, img ImageRef) (string, error)
+	// ResolveRemote reports what a reference points at in its registry right
+	// now, without pulling. EnsureImage cannot answer this: once an image is
+	// local it returns the local digest, which is the one already running
+	// (PRD §6.2 R19).
+	ResolveRemote(ctx context.Context, img ImageRef) (string, error)
 	// Create builds the container and its task without starting it. The netns
 	// referenced by the spec must already exist and be wired up.
 	Create(ctx context.Context, spec AllocSpec) error

@@ -158,6 +158,10 @@ type hclTask struct {
 	Capabilities []string       `hcl:"capabilities,optional"`
 	Env          hcl.Expression `hcl:"env,optional"`
 	Resources    *hclResources  `hcl:"resources,block"`
+	// RegistryAuthRef is the *pull* credential (R19). Distinct from the build
+	// block's field of the same name, which pushes: a project may well read a
+	// public base image and push to a private registry, or the reverse.
+	RegistryAuthRef string      `hcl:"registry_auth_ref,optional"`
 	Devices         []hclDevice `hcl:"device,block"`
 	Sockets         []hclSocket `hcl:"socket,block"`
 	DefRange        hcl.Range   `hcl:",def_range"`
@@ -273,6 +277,10 @@ type hclUpdate struct {
 	Strategy    string `hcl:"strategy,optional"`
 	MaxParallel int    `hcl:"max_parallel,optional"`
 	MinHealthy  string `hcl:"min_healthy,optional"`
+	// Auto follows the tag task.image declares (R19). Off unless written.
+	Auto     bool   `hcl:"auto,optional"`
+	Interval string `hcl:"interval,optional"`
+	Deadline string `hcl:"deadline,optional"`
 }
 
 type hclRestart struct {
@@ -531,6 +539,7 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 	if s.Update != nil {
 		out.Update = &Update{
 			Strategy: s.Update.Strategy, MaxParallel: s.Update.MaxParallel, MinHealthy: s.Update.MinHealthy,
+			Auto: s.Update.Auto, Interval: s.Update.Interval, Deadline: s.Update.Deadline,
 		}
 	}
 	if s.Restart != nil {
@@ -541,13 +550,14 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 
 func convertTask(t *hclTask) *Task {
 	out := &Task{
-		DefRange:     t.DefRange,
-		Name:         t.Name,
-		Image:        t.Image,
-		Command:      t.Command,
-		Capabilities: t.Capabilities,
-		Env:          map[string]string{},
-		Resources:    Resources{CPU: DefaultCPU, Memory: DefaultMemory},
+		DefRange:        t.DefRange,
+		Name:            t.Name,
+		Image:           t.Image,
+		Command:         t.Command,
+		Capabilities:    t.Capabilities,
+		RegistryAuthRef: t.RegistryAuthRef,
+		Env:             map[string]string{},
+		Resources:       Resources{CPU: DefaultCPU, Memory: DefaultMemory},
 	}
 	if t.Resources != nil {
 		out.ResourcesDeclared = true

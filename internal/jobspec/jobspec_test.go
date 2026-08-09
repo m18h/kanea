@@ -1015,6 +1015,113 @@ service "web" {
 	}
 }
 
+// R19: auto-update follows a tag, so the parse-time job is to refuse the
+// requests that cannot mean anything.
+func TestAutoUpdateValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		image   string
+		build   string
+		update  string
+		wantErr string
+	}{
+		{
+			name:   "a tag to follow",
+			image:  "jellyfin/jellyfin:10.9",
+			update: "update {\n    auto = true\n  }",
+		},
+		{
+			name:   "explicit interval and deadline",
+			image:  "nginx:1.27",
+			update: "update {\n    auto     = true\n    interval = \"30m\"\n    deadline = \"5m\"\n  }",
+		},
+		{
+			name:   "auto off needs nothing",
+			image:  "nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			update: "update {\n    max_parallel = 2\n  }",
+		},
+		// A digest never moves, so this is a contradiction rather than a no-op.
+		// Read as a no-op it would leave someone believing their service
+		// updates when nothing ever will.
+		{
+			name:    "following a digest",
+			image:   "nginx@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			update:  "update {\n    auto = true\n  }",
+			wantErr: "needs a tag, not a digest",
+		},
+		{
+			name:    "auto with a build block",
+			image:   "nginx:1.27",
+			build:   "build {\n    context = \".\"\n    target  = \"registry.example.com/web\"\n  }",
+			update:  "update {\n    auto = true\n  }",
+			wantErr: "conflicts with build",
+		},
+		{
+			name:    "interval below the floor",
+			image:   "nginx:1.27",
+			update:  "update {\n    auto     = true\n    interval = \"30s\"\n  }",
+			wantErr: "too short",
+		},
+		{
+			name:    "unparseable interval",
+			image:   "nginx:1.27",
+			update:  "update {\n    auto     = true\n    interval = \"soon\"\n  }",
+			wantErr: "interval",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  ` + tc.build + `
+  task "app" {
+    image = "` + tc.image + `"
+  }
+  ` + tc.update + `
+}
+`
+			if tc.wantErr == "" {
+				parse(t, src)
+				return
+			}
+			if out := parseErr(t, src); !strings.Contains(out, tc.wantErr) {
+				t.Errorf("diagnostics = %q, want %q", out, tc.wantErr)
+			}
+		})
+	}
+}
+
+// The pull credential is scoped exactly like the push one (R19, R5).
+func TestRegistryAuthRefIsProjectScoped(t *testing.T) {
+	spec := func(ref string) string {
+		return `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image             = "registry.example.com/web:1"
+    registry_auth_ref = "` + ref + `"
+  }
+}
+`
+	}
+
+	parse(t, spec("secret:shop/registry"))
+	parse(t, spec("secret:shared/registry"))
+
+	if out := parseErr(t, spec("secret:analytics/registry")); !strings.Contains(out, "Cross-project") {
+		t.Errorf("diagnostics = %q, want a cross-project refusal", out)
+	}
+	if out := parseErr(t, spec("dXNlcjpwYXNz")); !strings.Contains(out, "not a secret reference") {
+		t.Errorf("diagnostics = %q, want a refusal to inline a credential", out)
+	}
+}
+
 func TestScalingValidation(t *testing.T) {
 	tests := []struct {
 		name    string

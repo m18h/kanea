@@ -33,7 +33,7 @@ type Store interface {
 
 // Driver is the slice of the runtime driver this package needs.
 type Driver interface {
-	EnsureImage(ctx context.Context, project, ref string) (string, error)
+	EnsureImage(ctx context.Context, img runtime.ImageRef) (string, error)
 	Create(ctx context.Context, spec runtime.AllocSpec) error
 	Start(ctx context.Context, project, id string) error
 	List(ctx context.Context, project string) ([]runtime.Status, error)
@@ -105,6 +105,16 @@ type Passthrough interface {
 	ResolveSocket(project, grant string) (string, error)
 }
 
+// SecretResolver resolves a `secret:` reference to its value.
+//
+// The reconciler needs exactly one secret of its own: the registry credential
+// an image is pulled with (R19). It is resolved here, at alloc start, rather
+// than carried on the desired state — a resolved credential in the Store would
+// be a secret at rest in the one place §15.3 replicates off the node.
+type SecretResolver interface {
+	Resolve(ctx context.Context, ref string) ([]byte, error)
+}
+
 // LoadBalancer is an optional Network capability: programming stable service
 // frontends backed by the allocs currently able to serve.
 type LoadBalancer interface {
@@ -151,6 +161,10 @@ type Config struct {
 	// Passthrough resolves device and socket grants. Nil permits none, which is
 	// the default: the grants come from a config file the operator writes.
 	Passthrough Passthrough
+	// Secrets resolves the registry credential a service names. Nil means a
+	// service that names one cannot start — which is the honest failure, since
+	// the alternative is pulling anonymously and reporting a confusing 401.
+	Secrets SecretResolver
 	// EdgeSnapshot is where the route table is published for kanea-edge
 	// (PRD §5.2.6). Empty disables publishing, which is what a node with no
 	// ingress wants.
@@ -180,6 +194,7 @@ type Reconciler struct {
 	prober      Prober
 	mounts      Mounter
 	passthrough Passthrough
+	secrets     SecretResolver
 
 	interval      time.Duration
 	stopGrace     time.Duration
@@ -218,6 +233,7 @@ func New(cfg Config) (*Reconciler, error) {
 		prober:        cfg.Prober,
 		mounts:        cfg.Mounts,
 		passthrough:   cfg.Passthrough,
+		secrets:       cfg.Secrets,
 		driver:        cfg.Driver,
 		network:       cfg.Network,
 		log:           cfg.Logger,
@@ -747,7 +763,15 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 		desired.ResolvConfPath = path
 	}
 
-	if _, err := r.driver.EnsureImage(ctx, desired.Project, desired.Image); err != nil {
+	auth, err := r.registryAuth(ctx, desired)
+	if err != nil {
+		return err
+	}
+	// RunImage, not Image: a service with auto-update on declares a tag and
+	// runs the digest that tag resolved to (R19).
+	if _, err := r.driver.EnsureImage(ctx, runtime.ImageRef{
+		Project: desired.Project, Ref: desired.RunImage(), Auth: auth,
+	}); err != nil {
 		return fmt.Errorf("image: %w", err)
 	}
 	// Volumes before the spec, not just before the task. Directories have to
@@ -858,6 +882,26 @@ func (r *Reconciler) ensureVolumes(ctx context.Context, d Desired, index int) er
 		}
 	}
 	return nil
+}
+
+// registryAuth resolves the credential an image is pulled with, if one is named.
+//
+// The value is never logged and never stored: it is read at alloc start and
+// handed straight to the driver.
+func (r *Reconciler) registryAuth(ctx context.Context, d Desired) ([]byte, error) {
+	if d.RegistryAuthRef == "" {
+		return nil, nil
+	}
+	if r.secrets == nil {
+		return nil, fmt.Errorf("service names a registry credential but no secret store is configured")
+	}
+	auth, err := r.secrets.Resolve(ctx, d.RegistryAuthRef)
+	if err != nil {
+		// The reference is named, the value is not — quoting the ref is safe
+		// and is the only way to find the typo.
+		return nil, fmt.Errorf("registry credential %q: %w", d.RegistryAuthRef, err)
+	}
+	return auth, nil
 }
 
 // ensurePassthrough resolves the service's device and socket grants against the

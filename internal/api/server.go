@@ -595,6 +595,28 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		if current, _, err := store.GetValue[reconciler.Desired](
 			r.Context(), s.store, store.KindService, key); err == nil {
 			svc.Generation = current.Generation
+			// The auto-update state belongs to the watcher for the same reason
+			// (§6.2 R19): the digest currently pinned, what to fall back to and
+			// when the registry was last asked are all facts about the running
+			// service, not about the file. An apply that reset them would unpin
+			// the service — redeploying it onto its bare tag — and then re-pin
+			// it on the next poll, so every `kanea apply` would cost two
+			// deploys of a service nobody changed.
+			//
+			// Two things drop the pin rather than carry it. A changed `image`
+			// means the operator has said which tag to follow and the old
+			// digest is not it — carrying it would leave the service running
+			// 10.9 after the spec was edited to say 10.10, which is the spec
+			// being ignored. And auto turned *off* hands the spec back the
+			// authority: what runs should then be what the file says. Both cost
+			// one rolling deploy, and both are the deploy the operator asked
+			// for by editing the file.
+			if svc.Update.Auto && svc.Image == current.Image {
+				svc.PinnedImage = current.PinnedImage
+				svc.RollbackImage = current.RollbackImage
+				svc.ImageCheckedAt = current.ImageCheckedAt
+				svc.ImageUpdatedAt = current.ImageUpdatedAt
+			}
 		}
 		mut, err := store.PutMutation(store.KindService, key, svc)
 		if err != nil {

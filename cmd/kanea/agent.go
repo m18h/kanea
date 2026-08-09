@@ -20,6 +20,7 @@ import (
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/audit"
 	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/autoupdate"
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/edge"
 	"github.com/m18h/kanea/internal/gitops"
@@ -433,6 +434,21 @@ func runAgent(args []string) error {
 				"set --backup-dir or --backup-s3 (PRD §15.3)")
 	}
 
+	// The image watcher follows the tags services declare (§6.2 R19). It is
+	// inert for every service that has not asked: the sweep only looks at
+	// records with update.auto set.
+	updates, err := autoupdate.New(autoupdate.Config{
+		Store:    st,
+		Resolver: driver,
+		Secrets:  secretStore,
+		Logger:   logger,
+		Emit:     notifier.Publish,
+		Wake:     reconcileNotify,
+	})
+	if err != nil {
+		return err
+	}
+
 	pipelines, buildQueue, err := buildPipelines(pipelineSettings{
 		buildkit:   *buildkit,
 		logDir:     resolveBuildLogDir(*buildLogDir, *dataDir),
@@ -555,6 +571,16 @@ func runAgent(args []string) error {
 		go buildQueue.Run(ctx)
 		go runSync(ctx, pipelines, *syncInterval, logger)
 	}
+	// Its own goroutine for the same reason the sync loop is: a registry that
+	// takes thirty seconds to answer must not hold up convergence. It writes a
+	// digest and the reconciler does the rest (§6.2 R19).
+	go func() {
+		// Run only ever returns because the context ended, which is shutdown
+		// and not news. Logged at debug so a stuck loop is still findable.
+		if err := updates.Run(ctx); err != nil {
+			logger.Debug("image auto-update stopped", "error", err)
+		}
+	}()
 	startMetrics(ctx, metricsSettings{
 		metrics:       metrics,
 		containerdURL: *containerdMetrics,

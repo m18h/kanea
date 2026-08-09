@@ -542,6 +542,14 @@ func validateSecretRefs(svc *Service) hcl.Diagnostics {
 		return diags
 	}
 
+	// The pull credential is scoped the same way the push one is (R19, R5).
+	if svc.Task.RegistryAuthRef != "" {
+		diags = append(diags, checkSecretRef(
+			svc.Task.RegistryAuthRef, svc.Project,
+			fmt.Sprintf("task.registry_auth_ref in service %q", svc.Name),
+			svc.Task.DefRange)...)
+	}
+
 	for key, value := range svc.Task.Env {
 		if !strings.HasPrefix(value, SecretPrefix) {
 			continue
@@ -820,7 +828,63 @@ func validateUpdate(svc *Service) hcl.Diagnostics {
 		})
 	}
 	diags = append(diags, validateDuration("min_healthy", up.MinHealthy, svc.DefRange)...)
+	diags = append(diags, validateDuration("interval", up.Interval, svc.DefRange)...)
+	diags = append(diags, validateDuration("deadline", up.Deadline, svc.DefRange)...)
+	diags = append(diags, validateAutoUpdate(svc)...)
 	return diags
+}
+
+// validateAutoUpdate enforces R19's parse-time half.
+//
+// What is checked here is whether the request makes sense at all — not whether
+// the registry can be reached, which is a node question and a runtime one.
+func validateAutoUpdate(svc *Service) hcl.Diagnostics {
+	up := svc.Update
+	if up == nil || !up.Auto {
+		return nil
+	}
+
+	reject := func(summary, detail string) hcl.Diagnostics {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  summary,
+			Detail:   fmt.Sprintf("Service %q: %s", svc.Name, detail),
+			Subject:  svc.DefRange.Ptr(),
+		}}
+	}
+
+	// A build block already owns this service's image: the pipeline pins the
+	// digest it produced. Two writers on one field is a fight in which the
+	// loser is whichever ran second, which is not a thing to debug at 3am.
+	if svc.Build != nil {
+		return reject("Auto-update conflicts with build",
+			"update.auto follows a tag in a registry, but this service builds its own image "+
+				"and the pipeline pins the digest it produces (§10.2). Remove one of them.")
+	}
+	if svc.Task == nil || svc.Task.Image == "" {
+		return reject("Auto-update needs an image",
+			"update.auto re-resolves task.image, and this service does not declare one.")
+	}
+	// A digest does not move, so following one is a contradiction rather than a
+	// no-op — and reading it as a no-op would leave someone believing their
+	// service updates when nothing ever will.
+	if strings.Contains(svc.Task.Image, "@") {
+		return reject("Auto-update needs a tag, not a digest",
+			fmt.Sprintf("task.image is %q, which is pinned to a digest. A digest never moves, "+
+				"so there is nothing for update.auto to follow — declare a tag instead.",
+				svc.Task.Image))
+	}
+
+	if up.Interval != "" {
+		// Already known to parse: validateDuration ran first.
+		if d, err := ParseDuration(up.Interval); err == nil && d < reconciler.MinUpdateInterval {
+			return reject("Auto-update interval is too short",
+				fmt.Sprintf("update.interval is %s; the minimum is %s. A poll is a request to "+
+					"someone else's registry, and a tighter loop earns a rate limit rather than "+
+					"a faster deploy.", up.Interval, reconciler.MinUpdateInterval))
+		}
+	}
+	return nil
 }
 
 // validateDependencies enforces R10: every edge names a service in the same

@@ -77,26 +77,60 @@ func scope(ctx context.Context, project string) context.Context {
 	return namespaces.WithNamespace(ctx, Namespace(project))
 }
 
-func (d *containerdDriver) EnsureImage(ctx context.Context, project, ref string) (string, error) {
-	ctx = scope(ctx, project)
+func (d *containerdDriver) EnsureImage(ctx context.Context, img ImageRef) (string, error) {
+	ctx = scope(ctx, img.Project)
 
-	ref, err := NormalizeRef(ref)
+	ref, err := NormalizeRef(img.Ref)
 	if err != nil {
 		return "", err
 	}
 
-	if img, err := d.client.GetImage(ctx, ref); err == nil {
-		return img.Target().Digest.String(), nil
+	if existing, err := d.client.GetImage(ctx, ref); err == nil {
+		return existing.Target().Digest.String(), nil
 	} else if !errdefs.IsNotFound(err) {
 		return "", fmt.Errorf("look up image %s: %w", ref, err)
 	}
 
-	d.log.Info("pulling image", "project", project, "ref", ref)
-	img, err := d.client.Pull(ctx, ref, containerd.WithPullUnpack)
+	opts := []containerd.RemoteOpt{containerd.WithPullUnpack}
+	if len(img.Auth) > 0 {
+		resolver, err := resolverFor(img.Auth)
+		if err != nil {
+			return "", err
+		}
+		opts = append(opts, containerd.WithResolver(resolver))
+	}
+
+	d.log.Info("pulling image", "project", img.Project, "ref", ref,
+		"authenticated", len(img.Auth) > 0)
+	pulled, err := d.client.Pull(ctx, ref, opts...)
 	if err != nil {
 		return "", fmt.Errorf("pull %s: %w", ref, err)
 	}
-	return img.Target().Digest.String(), nil
+	return pulled.Target().Digest.String(), nil
+}
+
+// ResolveRemote asks the registry what a reference points at *now*, without
+// pulling it (PRD §6.2 R19).
+//
+// This is the whole reason auto-update needs a method of its own. EnsureImage
+// answers from the local content store whenever the image is already there —
+// which is correct for starting an alloc and useless for noticing that a tag
+// has moved, since the answer is by construction the digest that is already
+// running. Only a manifest is fetched here, not the layers.
+func (d *containerdDriver) ResolveRemote(ctx context.Context, img ImageRef) (string, error) {
+	ref, err := NormalizeRef(img.Ref)
+	if err != nil {
+		return "", err
+	}
+	resolver, err := resolverFor(img.Auth)
+	if err != nil {
+		return "", err
+	}
+	_, desc, err := resolver.Resolve(ctx, ref)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", ref, err)
+	}
+	return desc.Digest.String(), nil
 }
 
 func (d *containerdDriver) Create(ctx context.Context, spec AllocSpec) error {

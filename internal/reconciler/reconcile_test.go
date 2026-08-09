@@ -27,6 +27,7 @@ type fakeDriver struct {
 	allocs   map[string]runtime.Status
 	specs    map[string]runtime.AllocSpec
 	pulled   []string
+	pullAuth []string
 	calls    []string
 	failWith map[string]error // action ("create:id") -> error to return
 }
@@ -44,14 +45,15 @@ func (f *fakeDriver) record(call string) error {
 	return f.failWith[call]
 }
 
-func (f *fakeDriver) EnsureImage(_ context.Context, _, ref string) (string, error) {
+func (f *fakeDriver) EnsureImage(_ context.Context, img runtime.ImageRef) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.record("image:" + ref); err != nil {
+	if err := f.record("image:" + img.Ref); err != nil {
 		return "", err
 	}
-	f.pulled = append(f.pulled, ref)
-	return "sha256:" + ref, nil
+	f.pulled = append(f.pulled, img.Ref)
+	f.pullAuth = append(f.pullAuth, string(img.Auth))
+	return "sha256:" + img.Ref, nil
 }
 
 func (f *fakeDriver) Create(_ context.Context, spec runtime.AllocSpec) error {

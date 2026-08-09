@@ -38,6 +38,12 @@ const (
 	EventBuildSucceeded = "build.succeeded"
 	EventBuildFailed    = "build.failed"
 
+	// Image auto-update (§6.2 R19). A failed update is an error rather than a
+	// warning: it means the service was reverted, which somebody wants to know
+	// about even though the platform recovered on its own.
+	EventImageUpdated      = "image.updated"
+	EventImageUpdateFailed = "image.update_failed"
+
 	EventBackupSucceeded = "backup.succeeded"
 	EventBackupFailed    = "backup.failed"
 
@@ -141,6 +147,9 @@ var severities = map[string]Severity{
 	EventBuildStarted:   SeverityInfo,
 	EventBuildSucceeded: SeverityInfo,
 	EventBuildFailed:    SeverityError,
+
+	EventImageUpdated:      SeverityInfo,
+	EventImageUpdateFailed: SeverityError,
 
 	EventBackupSucceeded: SeverityInfo,
 	EventBackupFailed:    SeverityError,

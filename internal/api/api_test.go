@@ -485,6 +485,16 @@ func (h *harness) httpClient() *http.Client {
 
 // putService writes one desired service straight to the Store, bypassing the
 // API so a feed test is about the feed and not about apply.
+// putDesired writes a service record straight to the store, for the fields the
+// API deliberately owns and will not accept from a client.
+func (h *harness) putDesired(t *testing.T, d reconciler.Desired) {
+	t.Helper()
+	if _, err := store.PutValue(context.Background(), h.store,
+		store.KindService, d.Project+"/"+d.Service, d); err != nil {
+		t.Fatalf("put service: %v", err)
+	}
+}
+
 func (h *harness) putService(t *testing.T, project, service string, count int) {
 	t.Helper()
 	d := reconciler.Desired{
