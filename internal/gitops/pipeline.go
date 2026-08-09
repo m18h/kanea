@@ -296,6 +296,53 @@ func (r *Runs) Prune(ctx context.Context, keep int) (int, error) {
 // DefaultRunRetention is how many runs per service are kept.
 const DefaultRunRetention = 20
 
+// SweepOrphans closes runs a crash left non-terminal (v1.37).
+//
+// The graceful path never leaves one — shutdown drains the queue and cancels
+// what is waiting — but a crash does, and a run nothing will ever move again
+// reads as a build still happening, forever. Prune skips non-terminal runs,
+// so it would also be pinned against retention.
+//
+// A queued run is cancelled with the drain's vocabulary rather than
+// re-enqueued: the request it was queued with is derived from the project
+// config, and re-deriving it now could build something other than what was
+// queued. A running run is failed — a build was lost mid-flight, and its log
+// may stop mid-line. Everything lands in one Apply batch: the sweep is one
+// event, not one per stranded run.
+func (r *Runs) SweepOrphans(ctx context.Context) ([]Run, error) {
+	all, err := r.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	at := r.now()
+	var muts []store.Mutation
+	var swept []Run
+	for _, run := range all {
+		if run.State.Terminal() {
+			continue
+		}
+		if run.State == RunQueued {
+			run.Cancel(at, "kanead restarted before this build started")
+		} else {
+			run.Finish(at, errors.New("kanead restarted before this build finished; the build log may be incomplete"))
+		}
+		mut, err := store.PutMutation(pipelineKind, run.Key(), run)
+		if err != nil {
+			return nil, err
+		}
+		muts = append(muts, mut)
+		swept = append(swept, run)
+	}
+	if len(muts) == 0 {
+		return nil, nil
+	}
+	if _, err := r.store.Apply(ctx, muts...); err != nil {
+		return nil, fmt.Errorf("gitops: sweep orphaned runs: %w", err)
+	}
+	return swept, nil
+}
+
 func (r *Runs) put(ctx context.Context, run Run) error {
 	mut, err := store.PutMutation(pipelineKind, run.Key(), run)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/m18h/kanea/internal/store"
 )
@@ -40,6 +41,10 @@ type Segment struct {
 	To   uint64
 	Name string
 	Size int64
+	// Modified is when the sink received the segment — upload time, not
+	// mutation time, which is exactly what "when did replication last
+	// succeed" asks for.
+	Modified time.Time
 }
 
 // segmentName encodes the bounds into a sortable object name.
@@ -161,6 +166,7 @@ func (a *Archiver) Segments(ctx context.Context) ([]Segment, error) {
 			continue
 		}
 		segment.Size = obj.Size
+		segment.Modified = obj.Modified
 		out = append(out, segment)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].From < out[j].From })
@@ -191,25 +197,45 @@ func (a *Archiver) GetSegment(ctx context.Context, segment Segment) (_ []store.C
 // exactly the failure this subsystem exists for. The bucket already knows what
 // is in it.
 func (a *Archiver) ShippedTo(ctx context.Context) (uint64, error) {
+	shipped, _, _, err := a.Resume(ctx)
+	return shipped, err
+}
+
+// Resume derives where replication left off, entirely from the sink: the
+// highest shipped index, when the last segment landed, and when the last
+// snapshot was taken (v1.37).
+//
+// The timestamps follow the cursor's rule for the cursor's reason — a
+// last-shipped time stored anywhere Kanea writes would be state whose update
+// emits a change that needs shipping. A segment's Modified is the sink's
+// upload time, possibly from a previous process, which is the point: Status
+// answers "when did replication last succeed", not "since this process
+// started".
+func (a *Archiver) Resume(ctx context.Context) (shipped uint64, lastSegmentAt, lastSnapshotAt time.Time, err error) {
 	segments, err := a.Segments(ctx)
 	if err != nil {
-		return 0, err
+		return 0, time.Time{}, time.Time{}, err
 	}
-	var highest uint64
 	for _, segment := range segments {
-		highest = max(highest, segment.To)
+		shipped = max(shipped, segment.To)
+		if segment.Modified.After(lastSegmentAt) {
+			lastSegmentAt = segment.Modified
+		}
 	}
 
 	// A snapshot also establishes a floor: everything up to its index is in it,
 	// whether or not a segment covering that range survives.
 	manifests, err := a.List(ctx)
 	if err != nil {
-		return 0, err
+		return 0, time.Time{}, time.Time{}, err
 	}
 	for _, m := range manifests {
-		highest = max(highest, m.Index)
+		shipped = max(shipped, m.Index)
+		if m.CreatedAt.After(lastSnapshotAt) {
+			lastSnapshotAt = m.CreatedAt
+		}
 	}
-	return highest, nil
+	return shipped, lastSegmentAt, lastSnapshotAt, nil
 }
 
 // PruneSegments deletes segments fully covered by a snapshot.

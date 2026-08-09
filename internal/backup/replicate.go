@@ -125,13 +125,22 @@ func NewReplicator(cfg ReplicatorConfig) (*Replicator, error) {
 // Run ships changes until the context ends.
 func (r *Replicator) Run(ctx context.Context) {
 	// The cursor comes from the sink, so a restarted daemon resumes where the
-	// bucket actually is rather than where it last remembered being.
-	if shipped, err := r.archiver.ShippedTo(ctx); err != nil {
+	// bucket actually is rather than where it last remembered being. The
+	// last-success timestamps come from the same listing (v1.37): before this,
+	// Status read "never" after every restart — the wrong answer from the one
+	// number that decides whether a backup strategy is real.
+	if shipped, lastSegmentAt, lastSnapshotAt, err := r.archiver.Resume(ctx); err != nil {
 		r.log.Error("cannot read what has already been replicated",
 			"sink", r.archiver.Sink(), "error", err,
 			"detail", "starting from zero; the first segment will re-ship what is already there")
 	} else {
 		r.shipped.Store(shipped)
+		if !lastSegmentAt.IsZero() {
+			r.lastSegmentAt.Store(lastSegmentAt.UnixNano())
+		}
+		if !lastSnapshotAt.IsZero() {
+			r.lastSnapshotAt.Store(lastSnapshotAt.UnixNano())
+		}
 		r.log.Info("replication resuming", "sink", r.archiver.Sink(), "shipped_to", shipped)
 	}
 

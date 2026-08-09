@@ -499,3 +499,121 @@ func TestReplicationEventsFireOnTransitionsOnly(t *testing.T) {
 	}
 	fresh.report(nil, "shipping")
 }
+
+func TestResumeDerivesTimestampsFromTheSink(t *testing.T) {
+	// The last-success timestamps follow the cursor's rule: the sink already
+	// knows when it last received something, and anything Kanea stored would
+	// be state whose update needs shipping (v1.37).
+	ctx := context.Background()
+	sink, err := NewFileSink(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	src := openStore(t)
+	archiver := newStoreArchiver(t, src, sink, testKeys(t, 40))
+	rep := newReplicator(t, src, archiver)
+
+	put(t, src, store.KindService, "shop/web", "one")
+	if err := rep.Snapshot(ctx, "test"); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	put(t, src, store.KindService, "shop/web", "two")
+	if err := rep.ShipOnce(ctx); err != nil {
+		t.Fatalf("ship: %v", err)
+	}
+
+	shipped, lastSegmentAt, lastSnapshotAt, err := archiver.Resume(ctx)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	index, err := src.Index(ctx)
+	if err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	if shipped != index {
+		t.Errorf("resume shipped = %d, want the store's index %d", shipped, index)
+	}
+	if lastSegmentAt.IsZero() {
+		t.Error("a sink holding a segment reported no last-segment time")
+	}
+	if lastSnapshotAt.IsZero() {
+		t.Error("a sink holding a snapshot reported no last-snapshot time")
+	}
+	manifests, err := archiver.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !lastSnapshotAt.Equal(manifests[0].CreatedAt) {
+		t.Errorf("last snapshot = %v, want the newest manifest's %v", lastSnapshotAt, manifests[0].CreatedAt)
+	}
+}
+
+func TestResumeOnAnEmptySinkReportsNever(t *testing.T) {
+	ctx := context.Background()
+	sink, err := NewFileSink(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	src := openStore(t)
+	archiver := newStoreArchiver(t, src, sink, testKeys(t, 41))
+
+	shipped, lastSegmentAt, lastSnapshotAt, err := archiver.Resume(ctx)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if shipped != 0 || !lastSegmentAt.IsZero() || !lastSnapshotAt.IsZero() {
+		t.Errorf("an empty sink resumed to shipped=%d segment=%v snapshot=%v, want zeroes",
+			shipped, lastSegmentAt, lastSnapshotAt)
+	}
+}
+
+// readOnlySink serves reads from a real sink and refuses writes, standing in
+// for a restart during a sink outage: history is listable, uploads fail.
+type readOnlySink struct{ Sink }
+
+func (readOnlySink) Put(context.Context, string, int64, io.Reader) error {
+	return errors.New("the bucket refuses writes")
+}
+
+func TestStatusTimestampsSurviveARestart(t *testing.T) {
+	// Before v1.37 a restarted daemon reported "never" for the one number that
+	// decides whether a backup strategy is real. A second replicator over the
+	// same sink must report the first one's successes.
+	ctx := context.Background()
+	sink, err := NewFileSink(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	src := openStore(t)
+	archiver := newStoreArchiver(t, src, sink, testKeys(t, 42))
+	rep := newReplicator(t, src, archiver)
+
+	put(t, src, store.KindService, "shop/web", "one")
+	if err := rep.Snapshot(ctx, "test"); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	put(t, src, store.KindService, "shop/web", "two")
+	if err := rep.ShipOnce(ctx); err != nil {
+		t.Fatalf("ship: %v", err)
+	}
+
+	// "The restart": a fresh replicator over the same bucket. The sink refuses
+	// writes so nothing the new process does can set the timestamps itself,
+	// and Run exits immediately on the already-cancelled context.
+	restarted := newReplicator(t, openStore(t),
+		newStoreArchiver(t, src, readOnlySink{sink}, testKeys(t, 42)))
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	restarted.Run(done)
+
+	status := restarted.Status()
+	if status.LastSegmentAt.IsZero() {
+		t.Error("the restarted replicator forgot when the last segment shipped")
+	}
+	if status.LastSnapshotAt.IsZero() {
+		t.Error("the restarted replicator forgot when the last snapshot was taken")
+	}
+	if status.ShippedTo == 0 {
+		t.Error("the restarted replicator forgot the cursor")
+	}
+}

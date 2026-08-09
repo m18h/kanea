@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -64,10 +65,19 @@ func (f storeFleet) SetCount(ctx context.Context, service string, count int) err
 	if err != nil {
 		return err
 	}
+	// The cooldown clock rides in the same batch (v1.37): the Store is being
+	// written anyway, so making the evaluator's last-change time durable costs
+	// no extra replication — and a daemon restarted mid-cooldown no longer
+	// forgets it and re-scales a service the running daemon would have held.
+	cool, err := store.PutMutation(store.KindKV, cooldownKey(service),
+		scaleCooldownRecord{At: time.Now()})
+	if err != nil {
+		return err
+	}
 	// Compare-and-set on the index: an operator editing the same service at the
 	// same moment must not have their change silently overwritten by a scale
 	// decision made against the version before it.
-	if _, err := f.store.Apply(ctx, mut); err != nil {
+	if _, err := f.store.Apply(ctx, mut, cool); err != nil {
 		return fmt.Errorf("scale %s: %w", service, err)
 	}
 
@@ -91,6 +101,71 @@ func (f storeFleet) SetCount(ctx context.Context, service string, count int) err
 	default:
 	}
 	return nil
+}
+
+// scaleCooldownRecord is the evaluator's durable last-change time (v1.37).
+//
+// One small record per service that ever autoscaled, written only inside a
+// scale action's own Apply batch. The stabilization history is deliberately
+// not persisted — that would be a metric stream through the Store (AGENTS.md
+// #2); the evaluator's warm-up guard covers what its loss would have cost.
+type scaleCooldownRecord struct {
+	At time.Time `json:"at"`
+}
+
+// cooldownKeyPrefix is where the records live in the kv bucket.
+const cooldownKeyPrefix = "scaling/cooldown/"
+
+// cooldownKey is the record's kv key; service is already "project/service".
+func cooldownKey(service string) string { return cooldownKeyPrefix + service }
+
+// seedCooldowns replays persisted cooldowns into a fresh evaluator, and reaps
+// records for services that no longer exist — the one moment the whole prefix
+// is read anyway.
+func seedCooldowns(ctx context.Context, st store.Store, evaluator *scaling.Evaluator, log *slog.Logger) {
+	services, err := listAllServices(ctx, st)
+	if err != nil {
+		log.Warn("cannot seed scaling cooldowns; starting cold", "error", err)
+		return
+	}
+	live := make(map[string]bool, len(services))
+	for _, d := range services {
+		live[d.Project+"/"+d.Service] = true
+	}
+
+	var stale []store.Mutation
+	opts := store.ListOptions{Prefix: cooldownKeyPrefix}
+	for {
+		page, err := st.List(ctx, store.KindKV, opts)
+		if err != nil {
+			log.Warn("cannot seed scaling cooldowns; starting cold", "error", err)
+			return
+		}
+		for _, rec := range page.Records {
+			service := strings.TrimPrefix(rec.Key, cooldownKeyPrefix)
+			if !live[service] {
+				stale = append(stale, store.DeleteMutation(store.KindKV, rec.Key))
+				continue
+			}
+			var cool scaleCooldownRecord
+			if err := json.Unmarshal(rec.Value, &cool); err != nil {
+				log.Warn("dropping an unreadable scaling cooldown", "key", rec.Key, "error", err)
+				stale = append(stale, store.DeleteMutation(store.KindKV, rec.Key))
+				continue
+			}
+			evaluator.Applied(service, cool.At)
+		}
+		if !page.More {
+			break
+		}
+		opts.After = page.NextAfter
+	}
+
+	if len(stale) > 0 {
+		if _, err := st.Apply(ctx, stale...); err != nil {
+			log.Warn("cannot reap stale scaling cooldowns", "count", len(stale), "error", err)
+		}
+	}
 }
 
 // toPolicy converts the stored policy into the evaluator's.
@@ -381,6 +456,10 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 		logger.Error("cannot start the autoscaler", "error", err)
 		return
 	}
+	// Cooldowns survive the restart (v1.37); the metrics rings deliberately do
+	// not, and for the first stabilization window the evaluator refuses to
+	// scale down on the history it therefore does not have.
+	seedCooldowns(ctx, cfg.store, evaluator, logger)
 	loop, err := scaling.NewLoop(scaling.LoopConfig{
 		Evaluator: evaluator,
 		Fleet:     storeFleet{store: cfg.store, notify: cfg.notify, emit: cfg.emit, log: logger},

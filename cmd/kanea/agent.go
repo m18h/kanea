@@ -393,7 +393,13 @@ func runAgent(args []string) error {
 		return err
 	}
 
-	breaker := reconciler.NewBreaker(reconciler.BreakerConfig{Logger: logger})
+	breaker := reconciler.NewBreaker(reconciler.BreakerConfig{
+		Logger: logger,
+		// Trips survive a restart (v1.37): a daemon restart is most likely
+		// during exactly the node-wide fault the breaker is open for.
+		Persist: persistBreaker(context.WithoutCancel(ctx), st, logger),
+	})
+	restoreBreaker(ctx, st, breaker, logger)
 
 	rec, err := reconciler.New(reconciler.Config{
 		Store:         st,
@@ -423,6 +429,11 @@ func runAgent(args []string) error {
 	users, err := auth.NewStore(auth.StoreConfig{Store: st, Logger: logger})
 	if err != nil {
 		return err
+	}
+	// Account lockouts survive the restart (v1.37) — before this, restarting
+	// the daemon reset the §13.3 brute-force defence.
+	if err := users.LoadLockouts(ctx); err != nil {
+		logger.Warn("cannot restore login lockouts; starting without them", "error", err)
 	}
 	trail, err := audit.Open(ctx, audit.Config{Store: st, Logger: logger})
 	if err != nil {

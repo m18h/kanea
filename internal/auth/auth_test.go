@@ -449,3 +449,169 @@ func TestIdentityContext(t *testing.T) {
 		t.Errorf("FromContext = %+v, %v", got, ok)
 	}
 }
+
+// newAuthWithStore is newAuth exposing the backing Store, for tests that
+// need to inspect it or survive "a restart".
+func newAuthWithStore(t *testing.T) (*auth.Store, store.Store, *clock) {
+	t.Helper()
+	st, err := store.Open(store.Options{Path: filepath.Join(t.TempDir(), "state.db")})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	c := &clock{now: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)}
+	a, err := auth.NewStore(auth.StoreConfig{Store: st, Now: c.Now})
+	if err != nil {
+		t.Fatalf("new auth store: %v", err)
+	}
+	return a, st, c
+}
+
+// newAuthOver builds an auth store over an existing Store — "the restart":
+// same state on disk, fresh process memory.
+func newAuthOver(t *testing.T, st store.Store, c *clock) *auth.Store {
+	t.Helper()
+	a, err := auth.NewStore(auth.StoreConfig{Store: st, Now: c.Now})
+	if err != nil {
+		t.Fatalf("new auth store: %v", err)
+	}
+	return a
+}
+
+func TestAccountLockoutSurvivesARestart(t *testing.T) {
+	// Before v1.37 a restart cleared every active lockout, so an attacker who
+	// could wait out (or provoke) one reset the §13.3 brute-force defence.
+	a, st, c := newAuthWithStore(t)
+	ctx := context.Background()
+
+	if err := a.PutUser(ctx, "admin", goodPassword, auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	for range 5 {
+		_, _, _ = a.Login(ctx, "admin", "wrong", "10.0.0.1")
+	}
+
+	restarted := newAuthOver(t, st, c)
+	if err := restarted.LoadLockouts(ctx); err != nil {
+		t.Fatalf("LoadLockouts: %v", err)
+	}
+	// The correct password does not get through the restored lockout either —
+	// same rule as the live one.
+	if _, _, err := restarted.Login(ctx, "admin", goodPassword, "10.0.0.2"); !errors.Is(err, auth.ErrRateLimited) {
+		t.Fatalf("after a restart mid-lockout = %v, want ErrRateLimited", err)
+	}
+
+	// The lockout runs from the original trip, not from the restart.
+	c.advance(2 * time.Minute)
+	if _, _, err := restarted.Login(ctx, "admin", goodPassword, "10.0.0.2"); err != nil {
+		t.Errorf("after the lockout expired = %v", err)
+	}
+}
+
+func TestExpiredLockoutsArePrunedAtLoad(t *testing.T) {
+	a, st, c := newAuthWithStore(t)
+	ctx := context.Background()
+
+	if err := a.PutUser(ctx, "admin", goodPassword, auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	for range 5 {
+		_, _, _ = a.Login(ctx, "admin", "wrong", "10.0.0.1")
+	}
+	c.advance(5 * time.Minute)
+
+	restarted := newAuthOver(t, st, c)
+	if err := restarted.LoadLockouts(ctx); err != nil {
+		t.Fatalf("LoadLockouts: %v", err)
+	}
+	if _, _, err := restarted.Login(ctx, "admin", goodPassword, "10.0.0.2"); err != nil {
+		t.Errorf("an expired lockout was restored: %v", err)
+	}
+	if _, err := st.Get(ctx, store.KindKV, "auth/lockout/admin"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("the expired record was not reaped: %v", err)
+	}
+}
+
+func TestPerFailureAttemptsWriteNothing(t *testing.T) {
+	// Only the locking transition is persisted. A write per failed attempt
+	// would let anyone with a password guess generate replication traffic.
+	a, st, _ := newAuthWithStore(t)
+	ctx := context.Background()
+
+	if err := a.PutUser(ctx, "admin", goodPassword, auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	before, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	for range 4 {
+		_, _, _ = a.Login(ctx, "admin", "wrong", "10.0.0.1")
+	}
+	after, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	if after != before {
+		t.Fatalf("4 sub-threshold failures wrote %d store batches, want 0", after-before)
+	}
+
+	// The fifth failure is the transition, and it writes exactly once.
+	_, _, _ = a.Login(ctx, "admin", "wrong", "10.0.0.1")
+	final, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	if final != before+1 {
+		t.Errorf("the locking failure wrote %d store batches, want 1", final-before)
+	}
+}
+
+func TestUnknownAccountLockoutsAreNotPersisted(t *testing.T) {
+	// The name space of failed logins is attacker-chosen; only names that are
+	// real accounts may become Store keys.
+	a, st, _ := newAuthWithStore(t)
+	ctx := context.Background()
+
+	before, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	for range 6 {
+		_, _, _ = a.Login(ctx, "ghost", "wrong", "10.0.0.1")
+	}
+	after, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	if after != before {
+		t.Errorf("failures for an unknown name wrote %d store batches, want 0", after-before)
+	}
+	if _, err := st.Get(ctx, store.KindKV, "auth/lockout/ghost"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("an unknown name earned a persisted lockout record")
+	}
+}
+
+func TestSuccessfulLoginDeletesTheLockoutRecord(t *testing.T) {
+	a, st, c := newAuthWithStore(t)
+	ctx := context.Background()
+
+	if err := a.PutUser(ctx, "admin", goodPassword, auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	for range 5 {
+		_, _, _ = a.Login(ctx, "admin", "wrong", "10.0.0.1")
+	}
+	if _, err := st.Get(ctx, store.KindKV, "auth/lockout/admin"); err != nil {
+		t.Fatalf("no lockout record after the transition: %v", err)
+	}
+
+	c.advance(2 * time.Minute)
+	if _, _, err := a.Login(ctx, "admin", goodPassword, "10.0.0.1"); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if _, err := st.Get(ctx, store.KindKV, "auth/lockout/admin"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("the lockout record outlived the good login: %v", err)
+	}
+}

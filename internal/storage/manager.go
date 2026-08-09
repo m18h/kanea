@@ -61,6 +61,13 @@ type mountState struct {
 	// command against an unreachable server costs the full mount timeout, and
 	// the reconcile loop runs every few seconds — without a backoff a single
 	// dead NFS server would leave the loop blocked in `mount` most of the time.
+	//
+	// The backoff deliberately resets on a daemon restart (PRD v1.37): the
+	// kernel mount table, not this struct, is the ground truth Ensure consults
+	// first, mounts are keyed by paths whose allocs may not exist any more,
+	// and a restart is legitimately a moment the operator may have fixed the
+	// server. The post-restart cost is bounded — one honest mount attempt per
+	// distinct target, serialized per mount, before the schedule re-arms.
 	failures      int
 	nextAttemptAt time.Time
 }

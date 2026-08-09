@@ -374,3 +374,64 @@ func TestDecisionLatencyFitsTheBudget(t *testing.T) {
 		t.Fatalf("a breach takes up to %s to reach a decision, past the %s §21 allows", got, budget)
 	}
 }
+
+func TestScaleDownWaitsForAFullWindowAfterStart(t *testing.T) {
+	// A fresh evaluator — which is what a restarted daemon has — holds an
+	// empty stabilization window, and an empty window has no higher count in
+	// it to hold a shrink back (v1.37). Scale-down must wait until a full
+	// window has actually been observed.
+	h := newEval(t)
+	policy := cpuPolicy(1, 10)
+	policy.Cooldown = time.Nanosecond
+
+	// Idle from the evaluator's very first sight of the service.
+	h.feed("shop/web", scaling.MetricCPU, 10, 6)
+	d := h.eval.Evaluate("shop/web", 4, policy)
+	if d.Changed {
+		t.Fatalf("shrank through a window it never observed: %+v", d)
+	}
+	if d.Reason == "" {
+		t.Error("the held decision gave no reason")
+	}
+
+	// Once a full window has been watched — and stayed quiet — it may shrink.
+	h.clock.advance(scaling.DefaultScaleDownStabilization)
+	h.feed("shop/web", scaling.MetricCPU, 10, 6)
+	d = h.eval.Evaluate("shop/web", 4, policy)
+	if !d.Changed || d.Desired >= 4 {
+		t.Fatalf("decision = %+v; want a shrink after an observed window", d)
+	}
+}
+
+func TestScaleUpIsNotHeldByTheWarmUpGuard(t *testing.T) {
+	// The guard is asymmetric on purpose: scaling up late is the outage the
+	// autoscaler exists to prevent, so a fresh evaluator may grow immediately.
+	h := newEval(t)
+	h.feed("shop/web", scaling.MetricCPU, 140, 6)
+	if d := h.eval.Evaluate("shop/web", 2, cpuPolicy(1, 10)); !d.Changed || d.Desired <= 2 {
+		t.Fatalf("a fresh evaluator refused to scale up: %+v", d)
+	}
+}
+
+func TestAppliedSeedsTheCooldown(t *testing.T) {
+	// The startup path (v1.37): the daemon replays each service's persisted
+	// last-change time through Applied, so a scale applied shortly before a
+	// restart still spends the rest of its cooldown after it.
+	h := newEval(t)
+	policy := cpuPolicy(1, 10)
+
+	h.eval.Applied("shop/web", h.clock.at.Add(-10*time.Second))
+
+	h.feed("shop/web", scaling.MetricCPU, 140, 6)
+	d := h.eval.Evaluate("shop/web", 2, policy)
+	if d.Changed {
+		t.Fatalf("a seeded cooldown did not hold: %+v", d)
+	}
+
+	// The cooldown runs from the seeded time, not from the seeding.
+	h.clock.advance(time.Minute)
+	h.feed("shop/web", scaling.MetricCPU, 140, 6)
+	if d := h.eval.Evaluate("shop/web", 2, policy); !d.Changed {
+		t.Fatalf("still held after the seeded cooldown expired: %+v", d)
+	}
+}

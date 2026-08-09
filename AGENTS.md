@@ -6,7 +6,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 **Kanea** is a lightweight, single-binary container orchestration platform written in Go — "container orchestration in one binary." It runs services on **containerd**, networks them with **its own eBPF datapath** (no Kubernetes anywhere, and since PRD v1.36 no Cilium either), terminates TLS with **Let's Encrypt**, and ships a **React + shadcn/ui** dashboard, an **MCP server** for AI agents, GitOps pipelines (kaniko), eBPF-driven autoscaling, and S3-backed state replication.
 
-**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.36). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins — and the disagreement means one of them needs an amendment.
+**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.37). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins — and the disagreement means one of them needs an amendment.
 
 ## Current status
 
@@ -102,6 +102,13 @@ Things a future change is most likely to trip over:
 - **The generated BPF artifacts are committed**, produced under a digest-pinned toolchain (`make bpf`) and verified by the `bpf-verify` CI job — `go build` needs no clang, and the target node needs no BTF (no CO-RE, no `vmlinux.h`; the programs read only UAPI context types). Editing a generated file by hand is a CI failure, not a code path.
 - **East-west metrics come from the datapath's own per-CPU counters, on by default**, keeping the names `flows_per_second`/`drops_per_second` so no scaling spec changes meaning. Hubble is gone — it shipped unreachable (no generated unit ever enabled it) and nothing consumed it.
 - **`--network netns` remains the dev/CI mode** (bare namespaces, no policy, no LB, explicitly unsupported for deployment); `ebpf` is the default. Masquerade is one rule in the owned `kanea` nftables table — kernel conntrack does the NAT — and a foreign FORWARD-drop policy (docker, ufw) is a `kanea doctor` finding, not something the datapath silently fights.
+
+- **Protective state survives a restart at its transitions, never at its sampling rate** (PRD v1.37). Four things are durable in the `kv` bucket: the circuit breaker's trip (`kv:reconciler/breaker`, written on trip and reset only — the failure window is rebuilt live), the autoscaler's per-service cooldown (`kv:scaling/cooldown/<project>/<service>`, written **inside the scale action's own Apply batch**, so it costs zero extra replication), account login lockouts (`kv:auth/lockout/<account>`, written on the locking transition, deleted on the next good login), and — with no new state at all — a startup sweep that closes pipeline runs a crash stranded at `queued`/`running`. Persisting any of these per sample would be a metric stream through the Store, which constraint #2 forbids.
+- **The evaluator refuses to shrink a service until it has *observed* a full stabilization window.** An empty history satisfies "nothing was higher in the window" vacuously, so without the guard the first post-restart evaluation could scale down through a window nobody watched. The seeded cooldown carries the pre-restart timestamp; `serviceState.since` is always stamped from the evaluator's own clock.
+- **Only account lockouts are persisted — per-source lockouts are memory-only, and unknown names never reach the Store.** Both key spaces are attacker-chosen (source addresses; the `name` field of a failed login), and a persisted entry per attempt would convert brute force into CDC/S3 write amplification. Account names are bounded because `checkName` validated them at creation. The webhook replay cache resets on restart for the same reason, and a replayed delivery re-syncs a commit `LastCommit` already records — idempotent.
+- **Replication's last-segment/last-snapshot times are derived from the sink at startup, like the cursor** (`Archiver.Resume`). A stored timestamp would emit a change that needs shipping, which updates the timestamp. `Segment.Modified` is the sink's upload time — possibly from a previous process, which is the point: `Status` answers "when did replication last succeed", not "since this process started".
+- **A crash-orphaned `queued` run is cancelled, never re-enqueued.** Its request was derived from the project config at queue time, and re-deriving it at startup could build something other than what was queued. `running` runs are failed with an honest message; swept runs become terminal, so `Prune` retention finally applies to them.
+- **Mount backoff deliberately resets on restart** (recorded in v1.37, not an oversight): the kernel mount table is the ground truth `Ensure` consults first, and the post-restart cost is one honest mount attempt per target before the schedule re-arms.
 
 **Deliberately not built** — decisions, not gaps, so they are not "fixed" by someone who mistakes them for oversights:
 
@@ -233,7 +240,7 @@ Each milestone's definition-of-done: OWASP §14 checks reviewed, `govulncheck` c
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.34) — the north star |
+| `PRD.md` | Full product requirements (v1.37) — the north star |
 | `AGENTS.md` | This file |
 | `README.md` | The public front door: install, quickstart, requirements |
 | `SECURITY.md` | How to report a vulnerability; what is in and out of scope |

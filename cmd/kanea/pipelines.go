@@ -61,6 +61,24 @@ func buildPipelines(cfg pipelineSettings, logger *slog.Logger) (*gitops.Service,
 	if err != nil {
 		return nil, nil, err
 	}
+	// A crash strands runs at queued or running with nothing left to move them
+	// — the graceful path drains the queue, a kill does not (v1.37). Swept
+	// here, structurally before the queue's worker exists, so a stale
+	// "running" can never sit beside a real one.
+	swept, err := runs.SweepOrphans(context.Background())
+	if err != nil {
+		logger.Error("cannot sweep pipeline runs stranded by the last shutdown", "error", err)
+	}
+	for _, run := range swept {
+		logger.Warn("closed a pipeline run stranded by the last shutdown",
+			"service", run.ServiceKey(), "run", gitops.ShortID(run.ID), "state", run.State)
+		if run.State == gitops.RunFailed && cfg.emit != nil {
+			// Only the lost builds notify. A queued run that was cancelled is
+			// the same non-event the graceful drain treats it as.
+			cfg.emit(notify.NewEvent(notify.EventBuildFailed, run.Project, run.Service,
+				"build "+gitops.ShortID(run.ID)+" failed: "+run.Error, time.Now()))
+		}
+	}
 	builder, err := gitops.NewBuilder(gitops.BuilderConfig{
 		Socket: cfg.buildkit,
 		// Scratch lives beside the logs rather than in /tmp: it briefly holds a

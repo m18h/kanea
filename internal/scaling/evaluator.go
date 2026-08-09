@@ -137,6 +137,14 @@ type Evaluator struct {
 // serviceState is what the evaluator remembers between passes.
 type serviceState struct {
 	lastChange time.Time
+	// since is when the evaluator started tracking this service — this
+	// process, not this service's lifetime. A shrink is refused until a full
+	// stabilization window has been *observed* (v1.37): the window's promise
+	// is "stayed below current the whole time", and an empty history satisfies
+	// any predicate vacuously. Without this, the first evaluation after a
+	// daemon restart — or the first for a newly tracked service — could scale
+	// down through a window it never saw.
+	since time.Time
 	// history is the recent raw desired counts, for the scale-down window. A
 	// shrink is only allowed to the *highest* count the window contains, so one
 	// quiet minute inside a busy five does not shed capacity.
@@ -212,11 +220,7 @@ func (e *Evaluator) Evaluate(service string, current int, policy Policy) Decisio
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	state := e.state[service]
-	if state == nil {
-		state = &serviceState{}
-		e.state[service] = state
-	}
+	state := e.stateFor(service)
 	state.record(now, raw, e.stabilize)
 
 	desired := clamp(raw, policy.Min, policy.Max)
@@ -224,6 +228,15 @@ func (e *Evaluator) Evaluate(service string, current int, policy Policy) Decisio
 	case desired > current:
 		desired = e.capStepUp(current, desired)
 	case desired < current:
+		// Scaling up trusts the moment; scaling down has to trust the window,
+		// and a window the evaluator has not been watching for is not one it
+		// may trust (v1.37) — an empty history has no higher count in it for
+		// the check below to find.
+		if now.Sub(state.since) < e.stabilize {
+			decision.Reason = fmt.Sprintf("holding %d: no full %s window observed yet",
+				current, e.stabilize)
+			return decision
+		}
 		// Only shrink to the highest count the stabilization window saw. This
 		// is what makes scale-down cautious without a separate timer: a single
 		// quiet evaluation inside a busy window changes nothing.
@@ -263,15 +276,29 @@ func (e *Evaluator) Evaluate(service string, current int, policy Policy) Decisio
 }
 
 // Applied records that a decision was carried out, starting the cooldown.
+//
+// It is also the seed path (v1.37): at startup the daemon replays each
+// service's persisted last-change time through it, so a scale applied two
+// minutes before a restart still has three minutes of cooldown after it.
 func (e *Evaluator) Applied(service string, at time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.stateFor(service).lastChange = at
+}
+
+// stateFor returns a service's state, creating it. The caller holds the lock.
+//
+// since is stamped from the evaluator's own clock, never from a caller's
+// timestamp: a seeded cooldown carries a time from before the restart, and
+// letting it stand as "tracked since" would hand the warm-up guard a window
+// nobody watched.
+func (e *Evaluator) stateFor(service string) *serviceState {
 	state := e.state[service]
 	if state == nil {
-		state = &serviceState{}
+		state = &serviceState{since: e.now()}
 		e.state[service] = state
 	}
-	state.lastChange = at
+	return state
 }
 
 // Forget drops a service's history when it goes away.

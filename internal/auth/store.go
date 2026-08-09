@@ -22,6 +22,7 @@ const (
 	userPrefix    = "auth/user/"
 	tokenPrefix   = "auth/token/" // #nosec G101 — a key prefix, not a credential
 	sessionPrefix = "auth/session/"
+	lockoutPrefix = "auth/lockout/"
 )
 
 // authKind is the bucket auth records live in.
@@ -313,23 +314,99 @@ func (s *Store) Login(ctx context.Context, name, password, source string) (Sessi
 	user, err := s.User(ctx, name)
 	if err != nil {
 		EqualiseTiming(password)
+		// The failure counts, but is never persisted for a name that is not an
+		// account (v1.37): unknown names are attacker-chosen, and each would
+		// become a Store record shipped to the replication sink. The in-memory
+		// limiter still locks the name out; only the durability differs.
 		s.limiter.fail(source, name)
 		s.log.Warn("login failed", "user", name, "source", source, "reason", "no such user")
 		return Session{}, "", ErrUnauthenticated
 	}
 	if !VerifyPassword(password, user.PasswordHash) {
-		s.limiter.fail(source, name)
+		s.recordFailure(ctx, name, source)
 		s.log.Warn("login failed", "user", name, "source", source, "reason", "bad password")
 		return Session{}, "", ErrUnauthenticated
 	}
 
-	s.limiter.succeed(source, name)
+	if s.limiter.succeed(source, name) {
+		// The account had failure state, so a lockout record may be persisted
+		// — a good login is the transition that retires it.
+		if _, err := s.store.Apply(ctx, store.DeleteMutation(authKind, lockoutPrefix+name)); err != nil {
+			s.log.Warn("cannot clear a persisted lockout", "user", name, "error", err)
+		}
+	}
 	session, cookie, err := s.CreateSession(ctx, user.Name, user.Role)
 	if err != nil {
 		return Session{}, "", err
 	}
 	s.log.Info("login", "user", user.Name, "role", user.Role, "source", source)
 	return session, cookie, nil
+}
+
+// lockoutRecord is a persisted account lockout (v1.37, §13.3).
+//
+// Only the locking transition is written — at most one write per account per
+// lockout period, never one per failed attempt — and only for names that are
+// real accounts, whose key space the operator bounded. Per-source lockouts
+// stay memory-only deliberately: the source key space is attacker-chosen, and
+// persisting it would convert a brute-force attempt into replication traffic.
+type lockoutRecord struct {
+	LockedTil time.Time `json:"locked_til"`
+	Failures  int       `json:"failures"`
+}
+
+// recordFailure counts a failed login against an existing account and
+// persists the lockout when this failure is the one that locked it.
+func (s *Store) recordFailure(ctx context.Context, name, source string) {
+	lockedTil, locked := s.limiter.fail(source, name)
+	if !locked {
+		return
+	}
+	rec := lockoutRecord{LockedTil: lockedTil, Failures: s.limiter.limit.Attempts}
+	if _, err := store.PutValue(ctx, s.store, authKind, lockoutPrefix+name, rec); err != nil {
+		// Best-effort: the in-memory lockout is authoritative for this
+		// process; only its survival across a restart is at stake.
+		s.log.Warn("cannot persist an account lockout", "user", name, "error", err)
+	}
+}
+
+// LoadLockouts restores account lockouts persisted before a restart (v1.37).
+//
+// Before this, restarting the daemon cleared every active lockout — an
+// attacker who could wait out (or provoke) a restart reset the §13.3
+// brute-force defence. Records whose lockout has expired are reaped here,
+// which bounds the prefix to the accounts currently locked.
+func (s *Store) LoadLockouts(ctx context.Context) error {
+	now := s.now()
+	var stale []store.Mutation
+	opts := store.ListOptions{Prefix: lockoutPrefix}
+	for {
+		page, err := s.store.List(ctx, authKind, opts)
+		if err != nil {
+			return fmt.Errorf("auth: list lockouts: %w", err)
+		}
+		for _, rec := range page.Records {
+			account := strings.TrimPrefix(rec.Key, lockoutPrefix)
+			var lock lockoutRecord
+			if err := json.Unmarshal(rec.Value, &lock); err != nil || !now.Before(lock.LockedTil) {
+				stale = append(stale, store.DeleteMutation(authKind, rec.Key))
+				continue
+			}
+			s.limiter.seed(account, lock.LockedTil, lock.Failures)
+			s.log.Warn("account lockout restored from before the restart",
+				"user", account, "until", lock.LockedTil)
+		}
+		if !page.More {
+			break
+		}
+		opts.After = page.NextAfter
+	}
+	if len(stale) > 0 {
+		if _, err := s.store.Apply(ctx, stale...); err != nil {
+			s.log.Warn("cannot reap expired lockout records", "count", len(stale), "error", err)
+		}
+	}
+	return nil
 }
 
 // AuthenticateToken resolves a presented bearer token.
@@ -431,11 +508,15 @@ func (l *loginLimiter) check(source, account string) error {
 }
 
 // fail records a failure against both the source and the account.
-func (l *loginLimiter) fail(source, account string) {
+//
+// It reports whether this failure is the one that locked the *account* — the
+// transition, which is the only thing the caller persists (v1.37).
+func (l *loginLimiter) fail(source, account string) (lockedTil time.Time, lockedAccount bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := l.now()
+	accountKey := "acct:" + account
 	for _, key := range keysFor(source, account) {
 		state, ok := l.counts[key]
 		if !ok || now.Sub(state.first) > l.limit.Window {
@@ -444,19 +525,41 @@ func (l *loginLimiter) fail(source, account string) {
 		}
 		state.failures++
 		if state.failures >= l.limit.Attempts {
+			wasLocked := now.Before(state.lockedTil)
 			state.lockedTil = now.Add(l.limit.Lockout)
+			if key == accountKey && !wasLocked {
+				lockedTil, lockedAccount = state.lockedTil, true
+			}
 		}
 	}
 	l.prune(now)
+	return lockedTil, lockedAccount
 }
 
-// succeed clears the counters after a good login.
-func (l *loginLimiter) succeed(source, account string) {
+// succeed clears the counters after a good login, reporting whether the
+// account had any failure state to clear.
+func (l *loginLimiter) succeed(source, account string) (hadAccountState bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	accountKey := "acct:" + account
 	for _, key := range keysFor(source, account) {
+		if _, ok := l.counts[key]; ok && key == accountKey {
+			hadAccountState = true
+		}
 		delete(l.counts, key)
 	}
+	return hadAccountState
+}
+
+// seed restores a persisted account lockout into the limiter (v1.37).
+//
+// first is stamped now rather than reconstructed: the original window closed
+// with the process that watched it, and what matters — until when the account
+// is refused — travels in lockedTil.
+func (l *loginLimiter) seed(account string, til time.Time, failures int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.counts["acct:"+account] = &attemptState{failures: failures, first: l.now(), lockedTil: til}
 }
 
 // prune drops entries that can no longer matter. The caller holds the lock.

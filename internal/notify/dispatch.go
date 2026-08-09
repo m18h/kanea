@@ -52,8 +52,8 @@ const (
 // the channels themselves — the dashboard feed §11 requires all channels be
 // mirrored into.
 //
-// Called on the dispatcher's goroutine and expected not to block; it writes to
-// an in-memory ring and the Store, both of which are fast.
+// Called on the dispatcher's goroutine and expected not to block; the one
+// implementation is the Store-backed feed, which is fast and bounded.
 type Sink interface {
 	Record(ctx context.Context, e Event)
 }

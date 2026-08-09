@@ -389,3 +389,136 @@ func TestShortIDIsTheReadableHalf(t *testing.T) {
 		t.Errorf("the short id is not the id's suffix: %q", short)
 	}
 }
+
+func TestSweepOrphansClosesWhatACrashLeft(t *testing.T) {
+	// A crash strands runs the graceful drain would have closed (v1.37): a
+	// queued run is cancelled with the drain's vocabulary, a running one is
+	// failed with its open step closed, and finished runs are untouched.
+	runs, c, st := newRuns(t)
+	ctx := context.Background()
+
+	queued := create(t, runs, c, "shop", "web")
+
+	running := create(t, runs, c, "shop", "api")
+	running.Start(c.at)
+	running.BeginStep(gitops.StepBuild, c.at)
+	if err := runs.Update(ctx, running); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	finished := create(t, runs, c, "shop", "worker")
+	finished.Start(c.at)
+	finished.Finish(c.at, nil)
+	if err := runs.Update(ctx, finished); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	before, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	swept, err := runs.SweepOrphans(ctx)
+	if err != nil {
+		t.Fatalf("SweepOrphans: %v", err)
+	}
+	if len(swept) != 2 {
+		t.Fatalf("swept %d runs, want 2", len(swept))
+	}
+
+	got, err := runs.Get(ctx, "shop", "web", queued.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != gitops.RunCancelled {
+		t.Errorf("queued run swept to %q, want cancelled", got.State)
+	}
+	if got.Error == "" {
+		t.Error("the cancelled run does not say why")
+	}
+
+	got, err = runs.Get(ctx, "shop", "api", running.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != gitops.RunFailed {
+		t.Errorf("running run swept to %q, want failed", got.State)
+	}
+	if len(got.Steps) != 1 || got.Steps[0].State != gitops.RunFailed {
+		t.Errorf("the open step was not closed: %+v", got.Steps)
+	}
+
+	got, err = runs.Get(ctx, "shop", "worker", finished.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.State != gitops.RunSucceeded {
+		t.Errorf("a finished run was rewritten to %q", got.State)
+	}
+
+	// One Apply batch: the sweep is one event, not one per stranded run.
+	after, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	if after != before+1 {
+		t.Errorf("the sweep spent %d store batches, want 1", after-before)
+	}
+}
+
+func TestSweepOrphansWithNothingToDoWritesNothing(t *testing.T) {
+	runs, c, st := newRuns(t)
+	ctx := context.Background()
+
+	finished := create(t, runs, c, "shop", "web")
+	finished.Start(c.at)
+	finished.Finish(c.at, nil)
+	if err := runs.Update(ctx, finished); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	before, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	swept, err := runs.SweepOrphans(ctx)
+	if err != nil {
+		t.Fatalf("SweepOrphans: %v", err)
+	}
+	if len(swept) != 0 {
+		t.Fatalf("swept %d runs on a clean bucket", len(swept))
+	}
+	after, err := st.Index(ctx)
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	if after != before {
+		t.Error("a no-op sweep wrote to the store")
+	}
+}
+
+func TestSweptRunsAreEventuallyPruned(t *testing.T) {
+	// The secondary leak: Prune skips non-terminal runs, so before the sweep a
+	// crash-orphaned run was pinned against retention forever.
+	runs, c, _ := newRuns(t)
+	ctx := context.Background()
+
+	orphan := create(t, runs, c, "shop", "web")
+	for range 3 {
+		newer := create(t, runs, c, "shop", "web")
+		newer.Start(c.at)
+		newer.Finish(c.at, nil)
+		if err := runs.Update(ctx, newer); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	}
+
+	if _, err := runs.SweepOrphans(ctx); err != nil {
+		t.Fatalf("SweepOrphans: %v", err)
+	}
+	if _, err := runs.Prune(ctx, 2); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if _, err := runs.Get(ctx, "shop", "web", orphan.ID); !errors.Is(err, gitops.ErrNotFound) {
+		t.Errorf("the swept orphan survived pruning: %v", err)
+	}
+}

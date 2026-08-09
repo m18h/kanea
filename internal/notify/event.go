@@ -186,9 +186,9 @@ func KnownEvents() []string {
 
 // Event is one thing that happened.
 //
-// Deliberately flat and small. It is fanned out to every channel, kept in a
-// bounded in-memory feed and written to the Store, and a struct that grew a map
-// of arbitrary payload would make each of those a different size problem.
+// Deliberately flat and small. It is fanned out to every channel and kept in
+// the bounded Store-backed feed (feed.go), and a struct that grew a map of
+// arbitrary payload would make each of those a different size problem.
 type Event struct {
 	// ID is unique and time-ordered, so a feed can resume and a digest can
 	// name its span.

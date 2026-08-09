@@ -207,3 +207,99 @@ func TestBackoffCountsTowardTheBreaker(t *testing.T) {
 		t.Fatal("crashes that landed in backoff did not reach the breaker")
 	}
 }
+
+func trip(t *testing.T, b *reconciler.Breaker) {
+	t.Helper()
+	for range reconciler.DefaultBreakerThreshold {
+		b.RecordFailure("shop/web")
+	}
+	if allowed, _ := b.Allow(); allowed {
+		t.Fatal("the breaker did not trip")
+	}
+}
+
+func TestRestoreReopensWithinCooldown(t *testing.T) {
+	// The scenario the persistence exists for (v1.37): the breaker tripped,
+	// the daemon restarted two minutes into the cooldown, and the node is
+	// still broken. The restored breaker refuses with the time that is
+	// actually left, not a fresh cooldown.
+	b, c := newBreaker(t)
+	trippedAt := c.at.Add(-2 * time.Minute)
+
+	b.Restore(trippedAt, 3, reconciler.DefaultBreakerThreshold)
+
+	allowed, why := b.Allow()
+	if allowed {
+		t.Fatal("a restored trip inside its cooldown allowed actions")
+	}
+	if why == "" {
+		t.Error("no reason given for the restored refusal")
+	}
+	if b.Trips() != 3 {
+		t.Errorf("trips = %d, want the restored 3", b.Trips())
+	}
+
+	// The remaining cooldown is the original one, measured from the original
+	// trip — not restarted at the restore.
+	c.advance(3*time.Minute + time.Second)
+	if allowed, _ := b.Allow(); !allowed {
+		t.Error("still open after the original cooldown expired")
+	}
+}
+
+func TestRestoreIgnoresAnExpiredTrip(t *testing.T) {
+	b, c := newBreaker(t)
+	b.Restore(c.at.Add(-reconciler.DefaultBreakerCooldown), 5, reconciler.DefaultBreakerThreshold)
+
+	if allowed, why := b.Allow(); !allowed {
+		t.Fatalf("a trip that expired while the daemon was down reopened: %s", why)
+	}
+	// The count still carries: the exporter's counter must not restart at zero.
+	if b.Trips() != 5 {
+		t.Errorf("trips = %d, want 5", b.Trips())
+	}
+}
+
+func TestRestoredFailuresCannotCauseASecondTrip(t *testing.T) {
+	// The restored samples are stamped at the trip, so once the cooldown
+	// expires they are long out of the window — one fresh failure on a
+	// recovered node must not re-trip on inherited history.
+	b, c := newBreaker(t)
+	b.Restore(c.at.Add(-time.Minute), 1, reconciler.DefaultBreakerThreshold)
+
+	c.advance(reconciler.DefaultBreakerCooldown)
+	if tripped := b.RecordFailure("shop/web"); tripped {
+		t.Fatal("one failure after recovery re-tripped on restored samples")
+	}
+}
+
+func TestPersistFiresOnTransitionsOnly(t *testing.T) {
+	// The record is written on trip and on reset, never per failure sample —
+	// a per-failure write would be a metric stream into the Store.
+	var calls []time.Time
+	b, c := newBreaker(t, func(cfg *reconciler.BreakerConfig) {
+		cfg.Persist = func(trippedAt time.Time, trips, _ int) {
+			calls = append(calls, trippedAt)
+			if trips != 1 && !trippedAt.IsZero() {
+				t.Errorf("persisted trips = %d at the first trip", trips)
+			}
+		}
+	})
+
+	trip(t, b)
+	if len(calls) != 1 {
+		t.Fatalf("%d failures persisted %d records, want exactly 1 (the trip)",
+			reconciler.DefaultBreakerThreshold, len(calls))
+	}
+	if !calls[0].Equal(c.at) {
+		t.Errorf("persisted trip time %v, want %v", calls[0], c.at)
+	}
+
+	b.Reset()
+	if len(calls) != 2 {
+		t.Fatalf("reset persisted %d records, want 1", len(calls)-1)
+	}
+	if !calls[1].IsZero() {
+		t.Error("a reset persisted a non-zero trip time")
+	}
+}
