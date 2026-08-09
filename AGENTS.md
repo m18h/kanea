@@ -6,7 +6,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 **Kanea** is a lightweight, single-binary container orchestration platform written in Go — "container orchestration in one binary." It runs services on **containerd**, networks them with **its own eBPF datapath** (nothing from the Kubernetes stack underneath — and since PRD v1.36 no Cilium either), terminates TLS with **Let's Encrypt**, and ships a **React + shadcn/ui** dashboard, an **MCP server** for AI agents, GitOps pipelines (kaniko), eBPF-driven autoscaling, and S3-backed state replication.
 
-**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.37). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins — and the disagreement means one of them needs an amendment.
+**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.38). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins — and the disagreement means one of them needs an amendment.
 
 ## Current status
 
@@ -109,6 +109,9 @@ Things a future change is most likely to trip over:
 - **Replication's last-segment/last-snapshot times are derived from the sink at startup, like the cursor** (`Archiver.Resume`). A stored timestamp would emit a change that needs shipping, which updates the timestamp. `Segment.Modified` is the sink's upload time — possibly from a previous process, which is the point: `Status` answers "when did replication last succeed", not "since this process started".
 - **A crash-orphaned `queued` run is cancelled, never re-enqueued.** Its request was derived from the project config at queue time, and re-deriving it at startup could build something other than what was queued. `running` runs are failed with an honest message; swept runs become terminal, so `Prune` retention finally applies to them.
 - **Mount backoff deliberately resets on restart** (recorded in v1.37, not an oversight): the kernel mount table is the ground truth `Ensure` consults first, and the post-restart cost is one honest mount attempt per target before the schedule re-arms.
+
+- **The stats history endpoint serves gaps as absent points, never zeros** (PRD v1.38). `GET /v1/stats/history` is the in-memory TS's `Range` over the API — sparse `{at, value}` pairs; an unwritten ring slot is simply not serialised. The two node series it needs (`node_cpu_percent`, `node_memory_percent`) enter the TS under names the exporter's fixed list never publishes, so `/v1/metrics` is unchanged; node `rps` is summed at read time and node `p95` is an rps-weighted approximation, labelled as such.
+- **The spec editor renders and applies through one path** (PRD v1.38). `POST /v1/spec/render` and `POST /v1/spec/apply` share one `SpecRenderer` (implemented in `cmd/kanea` beside `toDesired`, the `gitops.Applier` seam shape), and apply calls the same core `PUT /v1/services` uses — generation carry-over, pin carry-over and the port-policy check are inherited, never replicated. A render scoped to a project refuses a spec declaring any other (the §10 boundary). `GET /v1/spec/source` generates HCL from desired state, is marked generated, and is gated by a round-trip test — a field that cannot round-trip refuses generation by name rather than emit a lie.
 
 **Deliberately not built** — decisions, not gaps, so they are not "fixed" by someone who mistakes them for oversights:
 
@@ -240,7 +243,7 @@ Each milestone's definition-of-done: OWASP §14 checks reviewed, `govulncheck` c
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.37) — the north star |
+| `PRD.md` | Full product requirements (v1.38) — the north star |
 | `AGENTS.md` | This file |
 | `README.md` | The public front door: install, quickstart, requirements |
 | `SECURITY.md` | How to report a vulnerability; what is in and out of scope |
