@@ -13,6 +13,7 @@ import (
 
 	"github.com/m18h/kanea/internal/network"
 	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/passthrough"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/storage"
 	"github.com/m18h/kanea/internal/store"
@@ -92,6 +93,18 @@ type Mounter interface {
 	Prune(ctx context.Context, keep map[string]struct{}) error
 }
 
+// Passthrough is the slice of the node's device and socket grants this package
+// needs (R17, R18).
+//
+// It is the same seam Mounter's ResolveHost is: a grant is server configuration,
+// so only the agent can answer what one means, and a spec that could answer for
+// itself would not be a grant. A nil Passthrough permits nothing — a service
+// that asked for one fails, rather than starting without what it asked for.
+type Passthrough interface {
+	ResolveDevice(project, grant string) ([]passthrough.Device, error)
+	ResolveSocket(project, grant string) (string, error)
+}
+
 // LoadBalancer is an optional Network capability: programming stable service
 // frontends backed by the allocs currently able to serve.
 type LoadBalancer interface {
@@ -135,6 +148,9 @@ type Config struct {
 	Prober Prober
 	// Mounts establishes non-local volumes. Nil means only local volumes work.
 	Mounts Mounter
+	// Passthrough resolves device and socket grants. Nil permits none, which is
+	// the default: the grants come from a config file the operator writes.
+	Passthrough Passthrough
 	// EdgeSnapshot is where the route table is published for kanea-edge
 	// (PRD §5.2.6). Empty disables publishing, which is what a node with no
 	// ingress wants.
@@ -160,9 +176,10 @@ type Reconciler struct {
 	emit    func(notify.Event)
 	now     func() time.Time
 
-	vips   *vipAllocator
-	prober Prober
-	mounts Mounter
+	vips        *vipAllocator
+	prober      Prober
+	mounts      Mounter
+	passthrough Passthrough
 
 	interval      time.Duration
 	stopGrace     time.Duration
@@ -200,6 +217,7 @@ func New(cfg Config) (*Reconciler, error) {
 		vips:          vips,
 		prober:        cfg.Prober,
 		mounts:        cfg.Mounts,
+		passthrough:   cfg.Passthrough,
 		driver:        cfg.Driver,
 		network:       cfg.Network,
 		log:           cfg.Logger,
@@ -740,6 +758,12 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	if err := r.ensureVolumes(ctx, desired, action.Index); err != nil {
 		return err
 	}
+	// Grants resolve here for the same reason: a device node's real path is a
+	// node-local fact the spec cannot carry, and it has to be known before the
+	// spec is built.
+	if err := r.ensurePassthrough(desired); err != nil {
+		return err
+	}
 
 	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
 	// Network before task: an alloc must never run without its network, and on
@@ -832,6 +856,47 @@ func (r *Reconciler) ensureVolumes(ctx context.Context, d Desired, index int) er
 		if err := r.mounts.Ensure(ctx, req); err != nil {
 			return fmt.Errorf("volume %s: %w", v.Name, err)
 		}
+	}
+	return nil
+}
+
+// ensurePassthrough resolves the service's device and socket grants against the
+// node's config (R17, R18).
+//
+// Every failure here fails the alloc. There is deliberately no path on which a
+// container starts without a passthrough it asked for: a transcoder silently
+// running without its GPU is a service that looks healthy and does the wrong
+// thing slowly, and a socket that quietly did not appear is worse — the
+// workload's own error would be the first anyone hears of it.
+func (r *Reconciler) ensurePassthrough(d Desired) error {
+	if len(d.Devices) == 0 && len(d.Sockets) == 0 {
+		return nil
+	}
+	if r.passthrough == nil {
+		return fmt.Errorf("service asks for device or socket passthrough but no grants " +
+			"are configured on this node (set --passthrough-config)")
+	}
+
+	for i := range d.Devices {
+		req := &d.Devices[i]
+		granted, err := r.passthrough.ResolveDevice(d.Project, req.Grant)
+		if err != nil {
+			return fmt.Errorf("device %s: %w", req.Name, err)
+		}
+		nodes := make([]runtime.Device, 0, len(granted))
+		for _, g := range granted {
+			nodes = append(nodes, runtime.Device{Path: g.Path, Perms: g.Perms})
+		}
+		req.resolved = nodes
+	}
+
+	for i := range d.Sockets {
+		req := &d.Sockets[i]
+		resolved, err := r.passthrough.ResolveSocket(d.Project, req.Grant)
+		if err != nil {
+			return fmt.Errorf("socket %s: %w", req.Name, err)
+		}
+		req.resolvedHostPath = resolved
 	}
 	return nil
 }

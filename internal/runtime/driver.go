@@ -75,6 +75,11 @@ type AllocSpec struct {
 	NetnsPath string
 	// Mounts are volume mounts, already resolved to host paths.
 	Mounts []Mount
+	// Devices are host devices the operator granted this service (PRD §6.2
+	// R17), already resolved. This package neither knows nor asks which grant
+	// they came from: by the time a device reaches here the decision has been
+	// made, and making it again with less context could only make it wrong.
+	Devices []Device
 	// ReadOnlyRootfs is the optional read-only root filesystem (PRD §14, A05).
 	ReadOnlyRootfs bool
 	// LogPath receives the task's stdout and stderr.
@@ -98,6 +103,26 @@ type Mount struct {
 	Source      string
 	Destination string
 	ReadOnly    bool
+	// Options are extra mount options on top of the rbind and rw/ro this
+	// package always sets. A volume needs none; a bind of something that is not
+	// a directory of the workload's own data generally wants nosuid, noexec and
+	// nodev, and the caller that knows which is which passes them.
+	Options []string
+}
+
+// Device is one host device node to expose to the alloc.
+//
+// Major, minor and file mode are read from the node itself when the spec is
+// built rather than carried here: a second copy of a device's identity is a
+// copy that can disagree with the device.
+type Device struct {
+	// Path is the host device node, and where it appears in the container.
+	Path string
+	// Perms is the cgroup device permission string ("rw", "rwm"). Without a
+	// matching cgroup rule the node is visible and cannot be opened, because
+	// containerd's default spec denies every device and this package only ever
+	// adds to that list.
+	Perms string
 }
 
 // State is an alloc's lifecycle state as containerd reports it.

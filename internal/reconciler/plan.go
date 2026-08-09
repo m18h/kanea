@@ -211,6 +211,12 @@ func SpecHash(d Desired) string {
 		Volumes        []Volume          `json:"volumes,omitempty"`
 		Ports          []Port            `json:"ports,omitempty"`
 		ReadOnlyRootfs bool              `json:"read_only_rootfs,omitempty"`
+		// A device or a socket is wired into a container when it is created, so
+		// changing one has to roll the allocs. The grant *names* are what is
+		// hashed, which is also what makes the hash node-independent: the
+		// resolved paths are unexported and never marshalled.
+		Devices []DeviceRequest `json:"devices,omitempty"`
+		Sockets []SocketRequest `json:"sockets,omitempty"`
 		// Generation is not baked into anything. It is here so that an operator
 		// asking for a restart produces a spec that differs, and therefore rolls
 		// through exactly the machinery a real deploy does.
@@ -219,6 +225,7 @@ func SpecHash(d Desired) string {
 		Image: d.Image, Command: d.Command, Capabilities: d.Capabilities,
 		Env: d.Env, Resources: d.Resources, Volumes: d.Volumes,
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
+		Devices: d.Devices, Sockets: d.Sockets,
 		Generation: d.Generation,
 	}
 
@@ -441,6 +448,23 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 			Destination: v.MountPath,
 			ReadOnly:    v.ReadOnly,
 		})
+	}
+	// A granted socket is a bind like any other, with the options a socket
+	// should never be without: nothing under it is executed, no setuid bit on
+	// it means anything, and no device node beneath it is honoured.
+	for _, s := range d.Sockets {
+		if s.HostPath() == "" {
+			continue // unresolved: ensurePassthrough has already failed the alloc
+		}
+		spec.Mounts = append(spec.Mounts, runtime.Mount{
+			Source:      s.HostPath(),
+			Destination: s.MountPath,
+			ReadOnly:    s.ReadOnly,
+			Options:     []string{"nosuid", "noexec", "nodev"},
+		})
+	}
+	for _, dev := range d.Devices {
+		spec.Devices = append(spec.Devices, dev.Devices()...)
 	}
 	return spec
 }

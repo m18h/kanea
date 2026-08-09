@@ -517,6 +517,7 @@ func validateTask(svc *Service) hcl.Diagnostics {
 	diags = append(diags, validateSecretRefs(svc)...)
 	diags = append(diags, validateCommand(svc)...)
 	diags = append(diags, validateCapabilities(svc)...)
+	diags = append(diags, validatePassthrough(svc)...)
 	diags = append(diags, validateNetworkPolicy(svc)...)
 	return diags
 }
@@ -1084,6 +1085,142 @@ func validateHostPath(st *Storage) hcl.Diagnostics {
 		return reject("mounting the whole root filesystem is never permitted.")
 	}
 	return nil
+}
+
+// systemMountPaths are the trees a passthrough may not be mounted over.
+//
+// Each is load-bearing for the sandbox itself: /dev is the tmpfs a granted
+// device is mknod'd into, /proc and /sys are what the masked-path list applies
+// to. Something bound over one of them is either a mistake or an attempt to
+// undo a hardening default from inside the spec that the default constrains.
+var systemMountPaths = []string{"/dev", "/proc", "/sys"}
+
+// validatePassthrough enforces the parse-time half of R17 and R18.
+//
+// Shape only, and less of it than R15 needs: a device or socket block carries a
+// *grant name*, not a path, so there is no host path here to validate. Whether
+// the node has that grant, and whether this project may claim it, is a
+// server-config question (§15.1) this package cannot answer and should not try
+// to — a spec that named its own permitted devices would be the escape hatch
+// the grant model exists to avoid.
+func validatePassthrough(svc *Service) hcl.Diagnostics {
+	task := svc.Task
+	var diags hcl.Diagnostics
+
+	// Sockets and volumes share one namespace of mount paths: two things on one
+	// path means one of them silently wins, whichever kind they are.
+	seenPath := map[string]hcl.Range{}
+	for _, v := range svc.Volumes {
+		if _, dup := seenPath[v.MountPath]; !dup {
+			seenPath[v.MountPath] = v.DefRange
+		}
+	}
+
+	// Devices and sockets share one namespace too, so that a diagnostic about a
+	// duplicate name never depends on which kind of block it came from.
+	seenName := map[string]hcl.Range{}
+	claimName := func(kind, name string, rng hcl.Range) {
+		if first, dup := seenName[name]; dup {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Duplicate " + strings.ToLower(kind) + " name",
+				Detail:   fmt.Sprintf("%s %q is already declared at %s.", kind, name, first),
+				Subject:  rng.Ptr(),
+			})
+			return
+		}
+		seenName[name] = rng
+	}
+
+	for _, d := range task.Devices {
+		diags = append(diags, validateName("Device", d.Name, d.DefRange)...)
+		diags = append(diags, validateGrant("Device", svc.Name, d.Name, d.Grant, d.DefRange)...)
+		claimName("Device", d.Name, d.DefRange)
+	}
+
+	for _, s := range task.Sockets {
+		diags = append(diags, validateName("Socket", s.Name, s.DefRange)...)
+		diags = append(diags, validateGrant("Socket", svc.Name, s.Name, s.Grant, s.DefRange)...)
+		claimName("Socket", s.Name, s.DefRange)
+
+		reject := func(detail string) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid socket mount path",
+				Detail:   fmt.Sprintf("Socket %q of service %q: %s", s.Name, svc.Name, detail),
+				Subject:  s.DefRange.Ptr(),
+			})
+		}
+		switch {
+		case s.MountPath == "":
+			reject("a socket needs an absolute `mount_path`.")
+			continue
+		case !path.IsAbs(s.MountPath):
+			reject(fmt.Sprintf("mount_path %q must be absolute.", s.MountPath))
+			continue
+		case strings.Contains(s.MountPath, ".."):
+			reject(fmt.Sprintf("mount_path %q must not contain \"..\".", s.MountPath))
+			continue
+		case path.Clean(s.MountPath) != s.MountPath:
+			reject(fmt.Sprintf("mount_path %q is not in its simplest form; write %q.",
+				s.MountPath, path.Clean(s.MountPath)))
+			continue
+		case s.MountPath == "/":
+			reject("a socket cannot be mounted over the root filesystem.")
+			continue
+		}
+		if under := systemPathFor(s.MountPath); under != "" {
+			reject(fmt.Sprintf("mount_path %q is under %s, which the sandbox owns.",
+				s.MountPath, under))
+			continue
+		}
+		if first, dup := seenPath[s.MountPath]; dup {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Conflicting mount path",
+				Detail: fmt.Sprintf("Mount path %q is already used at %s.",
+					s.MountPath, first),
+				Subject: s.DefRange.Ptr(),
+			})
+			continue
+		}
+		seenPath[s.MountPath] = s.DefRange
+	}
+	return diags
+}
+
+// validateGrant checks that a grant reference is shaped like one a node config
+// could define (R17, R18). It says nothing about whether the grant exists.
+func validateGrant(kind, service, name, grant string, rng hcl.Range) hcl.Diagnostics {
+	if grant == "" {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Missing grant",
+			Detail: fmt.Sprintf("%s %q of service %q must name a `grant` the operator has "+
+				"defined on the node (§15.1).", kind, name, service),
+			Subject: rng.Ptr(),
+		}}
+	}
+	if !dns1123Label.MatchString(grant) {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid grant name",
+			Detail: fmt.Sprintf("%s %q of service %q requests grant %q, which is not a DNS-1123 "+
+				"label; no node config could define it.", kind, name, service, grant),
+			Subject: rng.Ptr(),
+		}}
+	}
+	return nil
+}
+
+// systemPathFor returns the system tree p sits under, or "".
+func systemPathFor(p string) string {
+	for _, sys := range systemMountPaths {
+		if p == sys || strings.HasPrefix(p, sys+"/") {
+			return sys
+		}
+	}
+	return ""
 }
 
 // checkSecretRef enforces R3 (referenced, never inlined) and R5 (project-scoped)

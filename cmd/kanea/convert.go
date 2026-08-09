@@ -96,6 +96,21 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				Resource: storageResource(st),
 			})
 		}
+		// Grants cross as names. There is nothing to resolve here and nowhere to
+		// resolve it from: the mapping lives on the node, and this runs wherever
+		// the spec was written (R17, R18).
+		if svc.Task != nil {
+			for _, d := range svc.Task.Devices {
+				desired.Devices = append(desired.Devices, reconciler.DeviceRequest{
+					Name: d.Name, Grant: d.Grant,
+				})
+			}
+			for _, s := range svc.Task.Sockets {
+				desired.Sockets = append(desired.Sockets, reconciler.SocketRequest{
+					Name: s.Name, Grant: s.Grant, MountPath: s.MountPath, ReadOnly: s.ReadOnly,
+				})
+			}
+		}
 		if svc.Restart != nil {
 			desired.Restart.Attempts = svc.Restart.Attempts
 			backoff, err := parseBackoff(svc.Restart.Backoff)

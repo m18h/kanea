@@ -158,12 +158,32 @@ type hclTask struct {
 	Capabilities []string       `hcl:"capabilities,optional"`
 	Env          hcl.Expression `hcl:"env,optional"`
 	Resources    *hclResources  `hcl:"resources,block"`
-	DefRange     hcl.Range      `hcl:",def_range"`
+	Devices         []hclDevice `hcl:"device,block"`
+	Sockets         []hclSocket `hcl:"socket,block"`
+	DefRange        hcl.Range   `hcl:",def_range"`
 }
 
 type hclResources struct {
 	CPU    *int `hcl:"cpu,optional"`
 	Memory *int `hcl:"memory,optional"`
+}
+
+// hclDevice and hclSocket name a grant, never a path (R17, R18). There is
+// deliberately no field to write a device node or a socket path into: whether
+// a path may be given to a container is the node's decision, and a spec that
+// could name its own would be making it.
+type hclDevice struct {
+	Name     string    `hcl:"name,label"`
+	Grant    string    `hcl:"grant"`
+	DefRange hcl.Range `hcl:",def_range"`
+}
+
+type hclSocket struct {
+	Name      string    `hcl:"name,label"`
+	Grant     string    `hcl:"grant"`
+	MountPath string    `hcl:"mount_path"`
+	ReadOnly  bool      `hcl:"read_only,optional"`
+	DefRange  hcl.Range `hcl:",def_range"`
 }
 
 type hclNetwork struct {
@@ -538,13 +558,25 @@ func convertTask(t *hclTask) *Task {
 			out.Resources.Memory = *t.Resources.Memory
 		}
 	}
+	for i := range t.Devices {
+		d := &t.Devices[i]
+		out.Devices = append(out.Devices, &Device{
+			Name: d.Name, Grant: d.Grant, DefRange: d.DefRange,
+		})
+	}
+	for i := range t.Sockets {
+		s := &t.Sockets[i]
+		out.Sockets = append(out.Sockets, &Socket{
+			Name: s.Name, Grant: s.Grant, MountPath: s.MountPath,
+			ReadOnly: s.ReadOnly, DefRange: s.DefRange,
+		})
+	}
 	return out
 }
 
 func convertExpose(e *hclExpose) *Expose {
 	out := &Expose{Domains: e.Domains, DefRange: e.DefRange}
 	if e.TLS != nil {
-		out.TLS = &TLS{LetsEncrypt: e.TLS.LetsEncrypt}
 	}
 	if e.IPRestriction != nil {
 		out.IPRestriction = &IPRestriction{

@@ -52,6 +52,19 @@ func (s AllocSpec) Validate() error {
 				ErrInvalidSpec, s.ID, m.Source, m.Destination)
 		}
 	}
+	for _, d := range s.Devices {
+		if !filepath.IsAbs(d.Path) {
+			return fmt.Errorf("%w: alloc %s device %q: the path must be absolute",
+				ErrInvalidSpec, s.ID, d.Path)
+		}
+		// A device with no permissions is a node the container can see and
+		// cannot open — almost certainly a caller that forgot the field rather
+		// than an operator who meant it.
+		if d.Perms == "" {
+			return fmt.Errorf("%w: alloc %s device %q has no cgroup permissions",
+				ErrInvalidSpec, s.ID, d.Path)
+		}
+	}
 	return nil
 }
 
@@ -77,6 +90,12 @@ func specOpts(spec AllocSpec) []oci.SpecOpts {
 	}
 	if len(spec.Mounts) > 0 {
 		opts = append(opts, oci.WithMounts(ociMounts(spec.Mounts)))
+	}
+	// Devices last, and after withResources: containerd's default spec carries a
+	// deny-all device cgroup rule that withResources preserves, and an allow
+	// rule only means anything if it is appended after that deny (PRD §6.2 R17).
+	for _, device := range spec.Devices {
+		opts = append(opts, oci.WithLinuxDevice(device.Path, device.Perms))
 	}
 	return opts
 }
@@ -264,6 +283,10 @@ func ociMounts(mounts []Mount) []specs.Mount {
 		} else {
 			options = append(options, "rw")
 		}
+		// Caller-supplied options come last so they cannot be silently dropped,
+		// and are appended rather than replacing: rbind is not negotiable — a
+		// host path may carry submounts, and a plain bind would hide them.
+		options = append(options, m.Options...)
 		out = append(out, specs.Mount{
 			Type:        "bind",
 			Source:      m.Source,

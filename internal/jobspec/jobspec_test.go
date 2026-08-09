@@ -847,6 +847,174 @@ service "web" {
 	}
 }
 
+// Passthrough blocks name a grant and never a path (R17, R18). The spec is
+// checked for shape only — whether the node has the grant is a server-config
+// question this package deliberately cannot answer.
+func TestPassthroughValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		blocks  string
+		volumes string
+		wantErr string
+	}{
+		{
+			name:   "a device grant",
+			blocks: "device \"dri\" {\n  grant = \"gpu\"\n}",
+		},
+		{
+			name:   "a socket grant",
+			blocks: "socket \"runtime\" {\n  grant = \"containerd\"\n  mount_path = \"/var/run/docker.sock\"\n}",
+		},
+		{
+			name:    "missing device grant",
+			blocks:  "device \"dri\" {\n  grant = \"\"\n}",
+			wantErr: "Missing grant",
+		},
+		{
+			name:    "grant name no node config could define",
+			blocks:  "device \"dri\" {\n  grant = \"My_GPU\"\n}",
+			wantErr: "Invalid grant name",
+		},
+		{
+			name:    "device name that is not a label",
+			blocks:  "device \"My Device\" {\n  grant = \"gpu\"\n}",
+			wantErr: "Invalid name",
+		},
+		{
+			name: "duplicate passthrough names",
+			blocks: "device \"thing\" {\n  grant = \"gpu\"\n}\n" +
+				"socket \"thing\" {\n  grant = \"containerd\"\n  mount_path = \"/run/d.sock\"\n}",
+			wantErr: "already declared",
+		},
+		{
+			name:    "relative socket mount path",
+			blocks:  "socket \"rt\" {\n  grant = \"containerd\"\n  mount_path = \"var/run/docker.sock\"\n}",
+			wantErr: "must be absolute",
+		},
+		{
+			name:    "traversal in a socket mount path",
+			blocks:  "socket \"rt\" {\n  grant = \"containerd\"\n  mount_path = \"/var/../etc/docker.sock\"\n}",
+			wantErr: "must not contain",
+		},
+		{
+			name:    "socket mount path that is not simplest form",
+			blocks:  "socket \"rt\" {\n  grant = \"containerd\"\n  mount_path = \"/var/run//d.sock\"\n}",
+			wantErr: "simplest form",
+		},
+		{
+			name:    "socket over the root filesystem",
+			blocks:  "socket \"rt\" {\n  grant = \"containerd\"\n  mount_path = \"/\"\n}",
+			wantErr: "root filesystem",
+		},
+		// /dev is the tmpfs a granted device is created in, and /proc and /sys
+		// are what the masked-path list applies to. Binding over one of them
+		// from a spec would undo a default the spec is constrained by.
+		{
+			name:    "socket over /dev",
+			blocks:  "socket \"rt\" {\n  grant = \"containerd\"\n  mount_path = \"/dev/kanea.sock\"\n}",
+			wantErr: "the sandbox owns",
+		},
+		{
+			name:    "socket over /proc",
+			blocks:  "socket \"rt\" {\n  grant = \"containerd\"\n  mount_path = \"/proc/d.sock\"\n}",
+			wantErr: "the sandbox owns",
+		},
+		{
+			name: "two sockets on one path",
+			blocks: "socket \"a\" {\n  grant = \"containerd\"\n  mount_path = \"/run/d.sock\"\n}\n" +
+				"socket \"b\" {\n  grant = \"containerd\"\n  mount_path = \"/run/d.sock\"\n}",
+			wantErr: "Conflicting mount path",
+		},
+		// A socket and a volume claiming one path is the same mistake as two
+		// volumes doing it, and must be caught across the block kinds.
+		{
+			name:    "a socket over a declared volume",
+			blocks:  "socket \"rt\" {\n  grant = \"containerd\"\n  mount_path = \"/var/lib/data\"\n}",
+			volumes: "volume \"data\" {\n  storage = \"local-ssd\"\n  mount_path = \"/var/lib/data\"\n}",
+			wantErr: "Conflicting mount path",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+spec_version = 1
+project "shop" {}
+storage "local-ssd" {
+  type = "local"
+}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    ` + tc.blocks + `
+  }
+  ` + tc.volumes + `
+}
+`
+			if tc.wantErr == "" {
+				parse(t, src)
+				return
+			}
+			if out := parseErr(t, src); !strings.Contains(out, tc.wantErr) {
+				t.Errorf("diagnostics = %q, want %q", out, tc.wantErr)
+			}
+		})
+	}
+}
+
+// There is no field to write a device path into. This is the property the whole
+// grant model rests on, so it is asserted rather than assumed.
+func TestASpecCannotNameADevicePath(t *testing.T) {
+	src := `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    device "dri" {
+      grant = "gpu"
+      path  = "/dev/mem"
+    }
+  }
+}
+`
+	if out := parseErr(t, src); !strings.Contains(out, "path") {
+		t.Errorf("diagnostics = %q, want a complaint about the path argument", out)
+	}
+}
+
+func TestPassthroughBlocksReachTheParsedSpec(t *testing.T) {
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    device "dri" {
+      grant = "gpu"
+    }
+    socket "runtime" {
+      grant      = "containerd"
+      mount_path = "/var/run/docker.sock"
+    }
+  }
+}
+`)
+	task := spec.Services[0].Task
+	if len(task.Devices) != 1 || task.Devices[0].Grant != "gpu" {
+		t.Fatalf("devices = %+v, want one grant of gpu", task.Devices)
+	}
+	if len(task.Sockets) != 1 {
+		t.Fatalf("sockets = %+v, want one", task.Sockets)
+	}
+	if got := task.Sockets[0].MountPath; got != "/var/run/docker.sock" {
+		t.Errorf("mount_path = %q, want /var/run/docker.sock", got)
+	}
+}
+
 func TestScalingValidation(t *testing.T) {
 	tests := []struct {
 		name    string

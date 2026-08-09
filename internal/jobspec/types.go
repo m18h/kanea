@@ -229,6 +229,42 @@ type Task struct {
 	// ResourcesDeclared records whether the spec declared the block, so
 	// `kanea plan` can show defaults as defaults.
 	ResourcesDeclared bool
+	// Devices are host devices the task requests by grant name (R17).
+	Devices []*Device
+	// Sockets are host unix sockets the task requests by grant name (R18).
+	Sockets []*Socket
+	// DefRange is where this block was declared, for diagnostics.
+	DefRange hcl.Range
+}
+
+// Device requests a host device the operator has granted (R17).
+//
+// It carries a grant name and no path. The node holds the mapping from grant to
+// device nodes, so a spec cannot ask for `/dev/mem` — there is nowhere to write
+// it — and no host path travels through the Store or a git repository.
+type Device struct {
+	// Name is local to the task: it makes duplicates detectable and reads in a
+	// diagnostic. It has no meaning outside the spec.
+	Name string
+	// Grant names an entry in the node's passthrough config (§15.1).
+	Grant string
+	// DefRange is where this block was declared, for diagnostics.
+	DefRange hcl.Range
+}
+
+// Socket requests a host unix socket the operator has granted (R18).
+//
+// Unlike a device, it says where the socket appears inside the container:
+// the tools this exists for expect a specific path (`/var/run/docker.sock`),
+// and that path is the spec's business while the socket behind it is not.
+type Socket struct {
+	Name  string
+	Grant string
+	// MountPath is where the socket appears inside the container.
+	MountPath string
+	// ReadOnly is available and rarely meaningful: a socket is bidirectional
+	// once connected, so this restricts the filesystem entry, not the protocol.
+	ReadOnly bool
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }

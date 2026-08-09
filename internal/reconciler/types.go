@@ -40,6 +40,12 @@ type Desired struct {
 	// per-alloc at spec-build time, not here: the same declaration produces a
 	// different directory for each alloc index.
 	Volumes []Volume
+	// Devices and Sockets are the passthrough grants the service asked for
+	// (jobspec R17, R18). They carry the *grant name* and never a host path:
+	// the node resolves the name locally at spec-build time, so nothing here
+	// travels through the Store or the API as a path (§18 rule 5).
+	Devices []DeviceRequest
+	Sockets []SocketRequest
 	// Ports are the named container ports the service listens on (jobspec
 	// `network { port "http" { container = 8080 } }`). A service with no ports
 	// gets no frontend: there is nothing to load balance.
@@ -289,6 +295,41 @@ type Volume struct {
 // HostPath returns the resolved directory for a host volume, if one has been
 // checked against the allowlist.
 func (v Volume) HostPath() string { return v.resolvedHostPath }
+
+// DeviceRequest asks for a host device by grant name (jobspec R17).
+//
+// The resolved nodes follow the Volume.resolvedHostPath precedent: unexported
+// and untagged, because which device a grant means is a node-local fact. Two
+// nodes can define the same grant over different hardware, and the spec that
+// names it is the same spec on both.
+type DeviceRequest struct {
+	// Name is the block's label in the spec, for diagnostics.
+	Name string
+	// Grant names an entry in the node's passthrough config.
+	Grant string
+	// resolved is filled in by the reconciler just before the alloc is created.
+	resolved []runtime.Device
+}
+
+// Devices returns the resolved device nodes, if the grant has been checked.
+func (d DeviceRequest) Devices() []runtime.Device { return d.resolved }
+
+// SocketRequest asks for a host unix socket by grant name (jobspec R18).
+//
+// MountPath is part of the spec because the tools this serves expect a
+// particular path inside the container; the socket behind it is the node's.
+type SocketRequest struct {
+	Name      string
+	Grant     string
+	MountPath string
+	ReadOnly  bool
+	// resolvedHostPath is the node's socket, filled in by the reconciler. See
+	// Volume.resolvedHostPath for why it does not travel with the spec.
+	resolvedHostPath string
+}
+
+// HostPath returns the resolved socket, if the grant has been checked.
+func (s SocketRequest) HostPath() string { return s.resolvedHostPath }
 
 // AllocState is the reconciler's own view of an alloc, independent of what
 // containerd currently reports.

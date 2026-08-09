@@ -19,7 +19,16 @@ func buildSpec(t *testing.T, alloc AllocSpec) *oci.Spec {
 		Version: specs.Version,
 		Process: &specs.Process{Args: []string{"/bin/sh"}},
 		Root:    &specs.Root{Path: "rootfs"},
-		Linux:   &specs.Linux{},
+		Linux: &specs.Linux{
+			// containerd's default spec denies every device, and withResources
+			// preserves that list rather than replacing it. Seeding it here is
+			// not decoration: without it a device test would assert on an allow
+			// rule that has nothing to override, and would pass on a spec that
+			// containerd would not have run.
+			Resources: &specs.LinuxResources{
+				Devices: []specs.LinuxDeviceCgroup{{Allow: false, Access: "rwm"}},
+			},
+		},
 	}
 	for i, opt := range specOpts(alloc) {
 		if err := opt(context.Background(), nil, nil, s); err != nil {
@@ -265,6 +274,91 @@ func hasOption(options []string, want string) bool {
 	return false
 }
 
+// A granted socket carries the options a socket should never be without. The
+// mount is a bind like any other, so the caller's options have to survive the
+// rbind and rw/ro this package always sets.
+func TestCallerMountOptionsSurvive(t *testing.T) {
+	alloc := validAlloc()
+	alloc.Mounts = []Mount{{
+		Source:      "/run/kanea/containerd.sock",
+		Destination: "/var/run/docker.sock",
+		Options:     []string{"nosuid", "noexec", "nodev"},
+	}}
+	s := buildSpec(t, alloc)
+
+	var sock *specs.Mount
+	for i := range s.Mounts {
+		if s.Mounts[i].Destination == "/var/run/docker.sock" {
+			sock = &s.Mounts[i]
+		}
+	}
+	if sock == nil {
+		t.Fatalf("socket mount missing: %+v", s.Mounts)
+	}
+	for _, want := range []string{"rbind", "rw", "nosuid", "noexec", "nodev"} {
+		if !hasOption(sock.Options, want) {
+			t.Errorf("options %v are missing %q", sock.Options, want)
+		}
+	}
+}
+
+// A device needs two things, and the one that is easy to forget is the second:
+// containerd's default spec denies every device, so a node without a matching
+// allow rule is visible in /dev and cannot be opened.
+func TestGrantedDeviceGetsANodeAndACgroupAllowRule(t *testing.T) {
+	alloc := validAlloc()
+	alloc.Devices = []Device{{Path: "/dev/null", Perms: "rw"}}
+	s := buildSpec(t, alloc)
+
+	var node *specs.LinuxDevice
+	for i := range s.Linux.Devices {
+		if s.Linux.Devices[i].Path == "/dev/null" {
+			node = &s.Linux.Devices[i]
+		}
+	}
+	if node == nil {
+		t.Fatalf("no device node in the spec: %+v", s.Linux.Devices)
+	}
+
+	if s.Linux.Resources == nil {
+		t.Fatal("the spec carries no resources, so it carries no device rules")
+	}
+	rules := s.Linux.Resources.Devices
+	if len(rules) == 0 {
+		t.Fatal("no device cgroup rules at all")
+	}
+	// The inherited deny-all must still be there, and the allow must come after
+	// it: rules are evaluated in order, so an allow placed first means nothing.
+	if rules[0].Allow {
+		t.Errorf("the first rule is an allow; the deny-all default was replaced: %+v", rules)
+	}
+	var allowed bool
+	for _, r := range rules[1:] {
+		if r.Allow && r.Major != nil && *r.Major == node.Major &&
+			r.Minor != nil && *r.Minor == node.Minor {
+			allowed = true
+		}
+	}
+	if !allowed {
+		t.Errorf("no allow rule for the granted device; it would be visible and unopenable: %+v", rules)
+	}
+}
+
+// No devices means no change to the inherited deny-all. A service that never
+// asked for one must not acquire a device rule.
+func TestNoDevicesLeavesTheDenyAllAlone(t *testing.T) {
+	s := buildSpec(t, validAlloc())
+
+	for _, r := range s.Linux.Resources.Devices {
+		if r.Allow {
+			t.Errorf("an alloc with no device grants has an allow rule: %+v", r)
+		}
+	}
+	if len(s.Linux.Devices) != 0 {
+		t.Errorf("an alloc with no device grants has device nodes: %+v", s.Linux.Devices)
+	}
+}
+
 func TestReadOnlyRootfs(t *testing.T) {
 	alloc := validAlloc()
 	alloc.ReadOnlyRootfs = true
@@ -310,6 +404,19 @@ func TestValidate(t *testing.T) {
 			"relative mount destination",
 			func(a *AllocSpec) { a.Mounts = []Mount{{Source: "/srv/data", Destination: "data"}} },
 			"must be absolute",
+		},
+		{
+			"relative device path",
+			func(a *AllocSpec) { a.Devices = []Device{{Path: "dri/renderD128", Perms: "rw"}} },
+			"must be absolute",
+		},
+		// A device with no permissions is a node the container can see and
+		// cannot open, which is a caller that dropped the field rather than an
+		// operator who meant it.
+		{
+			"device with no permissions",
+			func(a *AllocSpec) { a.Devices = []Device{{Path: "/dev/dri/renderD128"}} },
+			"no cgroup permissions",
 		},
 	}
 	for _, tc := range tests {

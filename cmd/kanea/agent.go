@@ -27,6 +27,7 @@ import (
 	"github.com/m18h/kanea/internal/mcp"
 	"github.com/m18h/kanea/internal/network"
 	"github.com/m18h/kanea/internal/notify"
+	"github.com/m18h/kanea/internal/passthrough"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/scaling"
@@ -90,6 +91,8 @@ func runAgent(args []string) error {
 	policyDir := fs.String("policy-dir", network.DefaultPolicyDir, "cilium --static-cnp-path directory")
 	hostPaths := fs.String("allowed-host-paths", "",
 		"comma-separated directories that `host` volumes may mount from (default: none)")
+	passthroughConfig := fs.String("passthrough-config", "",
+		"HCL file granting host devices and sockets to named projects (default: no grants)")
 	lbStateFile := fs.String("lb-state-file", network.DefaultLBStateFile, "cilium --lb-state-file path")
 	serviceCIDR := fs.String("service-cidr", reconciler.DefaultServiceCIDR, "pool for service frontend addresses")
 	dnsListen := fs.String("dns-listen", "",
@@ -263,6 +266,20 @@ func runAgent(args []string) error {
 		logger.Info("host volumes enabled", "allowed_paths", hostPolicy.Allowed())
 	}
 
+	// Device and socket grants are the same kind of operator input and the same
+	// empty default (PRD §6.2 R17–R18). A configured socket grant is logged at
+	// warn: it is node-level control for whoever holds it, and the one place
+	// that is unambiguously recorded should be the node's own log.
+	grants, err := passthrough.Load(*passthroughConfig)
+	if err != nil {
+		return err
+	}
+	if grants.Enabled() {
+		logger.Warn("device and socket passthrough is configured",
+			"config", *passthroughConfig,
+			"note", "a granted runtime socket is equivalent to root on this node")
+	}
+
 	// The secrets store is what lets the credentialed storage drivers actually
 	// mount: until now an `auth_ref` refused with ErrCredentialsUnavailable.
 	secretStore, err := secrets.Open(secrets.Config{
@@ -348,6 +365,7 @@ func runAgent(args []string) error {
 		Breaker:       breaker,
 		Emit:          notifier.Publish,
 		Mounts:        mounts,
+		Passthrough:   grants,
 		EdgeSnapshot:  routesPath,
 		BaseDomain:    *baseDomain,
 	})
