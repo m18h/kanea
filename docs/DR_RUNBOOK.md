@@ -50,7 +50,7 @@ prompt — the point is to establish that you actually recorded it.
 
 | Backed up | Not backed up |
 |---|---|
-| The whole Store: projects, services, allocs, certs, secrets, pipelines, audit log, accounts and tokens | Container images — re-pulled from the registry |
+| The whole Store: projects, services, allocs, certs (including the self-signed CA at `ca/self-signed`), secrets, pipelines, audit log, accounts and tokens | Container images — re-pulled from the registry |
 | Change segments between snapshots (RPO bound) | The Cilium kvstore — **derived state, rebuilt from desired state, never restored** (§18) |
 | | Workload logs and metrics — file and in-memory pipelines, by design (constraint #2) |
 | | Container filesystems and local volume contents |
@@ -63,6 +63,16 @@ Two consequences worth internalising before you need them:
 - **Workload convergence is best-effort and registry-bound.** The control plane
   comes back in minutes; every image has to be pulled again, and registry
   bandwidth dominates from there.
+- **A restore with no archive means a new self-signed CA.** The CA lives in the
+  Store and travels in the encrypted archive, so a real restore brings it back
+  and every device that trusted it still trusts it. Rebuilding a node from
+  scratch instead mints a fresh one, and **every phone, laptop and TV that had
+  the old certificate installed has to be re-trusted** — `kanea ca show` on the
+  new node, installed again everywhere. That is a cost measured in devices, not
+  minutes, and it is the reason the CA is in the archive rather than being a
+  key-ceremony artefact like the master key. Certificates an operator *provided*
+  (`--tls-certs-config`) are files on the node and are not in the archive at all;
+  back them up with the rest of `/etc`.
 
 ---
 
@@ -93,7 +103,23 @@ The procedure for a node whose disk is gone.
 
 Install the same Kanea version the archives were written by (the manifest
 records it: `kanea backup list` shows it once the destination is reachable).
-Install containerd and Cilium per the version matrix.
+
+Then install the host components:
+
+```bash
+kanea install                              # pinned versions, from upstream
+kanea install --bundle ./kanea-bundle.tar.gz   # or from a bundle, no egress
+```
+
+The version matrix is compiled into that binary, so installing the *right*
+Kanea version installs the right containerd and Cilium with it — one fewer
+thing to reconstruct correctly under time pressure. `kanea doctor --offline`
+confirms it before you go further.
+
+If the disaster you are recovering from also took your network, the bundle is
+the path: build it on any machine that can reach the internet, carry it in.
+Keep one alongside the master key if the node is somewhere a network cannot be
+assumed.
 
 **Do not start `kanead` yet.** A daemon that starts on an empty data directory
 initialises a new, empty store and generates a *new* master key — which is the

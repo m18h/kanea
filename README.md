@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./logo/kanea-mark-dark.svg">
+  <img src="./logo/kanea-mark-light.svg" alt="Kanea" width="72" height="72">
+</picture>
+
 # Kanea
 
 [![CI](https://github.com/m18h/kanea/actions/workflows/ci.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/ci.yml)
@@ -9,7 +14,8 @@
 
 Kanea is a lightweight container orchestration platform written in Go. Services run
 on **containerd**, networking and load balancing are **standalone Cilium** (eBPF, no
-Kubernetes at any layer), TLS is automated with **Let's Encrypt**, and it ships a
+Kubernetes at any layer), TLS comes from **Let's Encrypt, a per-node CA, or
+certificates you already have**, and it ships a
 real-time **shadcn/ui dashboard**, an **MCP server** for AI agents, **GitOps
 pipelines** (rootless BuildKit), **eBPF-driven autoscaling**, and **encrypted
 S3-backed state replication** with backup and restore.
@@ -24,8 +30,12 @@ curl -fsSL https://m18h.github.io/kanea/install.sh | bash
 
 The installer fetches the binary, verifies it, and stops. Checksum verification is
 mandatory and there is no flag to skip it; the Sigstore signature is verified too
-when `cosign` is on `PATH`. It deliberately does not install containerd or Cilium,
-does not generate keys, and does not start anything.
+when `cosign` is on `PATH`. It generates no keys and starts nothing.
+
+`kanea init` then installs the runtime — containerd, `runc`, the CNI plugins, etcd,
+cilium-agent and rootless `buildkitd` — at versions pinned by SHA-256 in the binary
+(PRD §5.2.12). It installs under its own prefix on its own socket, so a node that
+ran Docker yesterday runs it tomorrow.
 
 Prefer to do it by hand? Every release publishes
 `kanea_<version>_linux_<arch>.tar.gz`, `checksums.txt`, and a **keyless cosign**
@@ -57,25 +67,84 @@ log.
 ## Quickstart
 
 ```bash
-# 1. Install containerd and cilium-agent (>= 1.18, pin 1.19.x) yourself.
-#    Kanea does not choose their versions for you.
-
-# 2. Check the node, run the master-key ceremony, write the systemd units.
-#    The key is shown once — have somewhere to record it before you start.
+# 1. Check the node, install the runtime, run the master-key ceremony,
+#    write the systemd units. The key is shown once — have somewhere to
+#    record it before you start.
 sudo kanea init
 
-# 3. Start the control plane and make yourself an admin.
+# 2. Start the control plane and make yourself an admin.
 sudo systemctl daemon-reload
 sudo systemctl enable --now kanead
 kanea user add <name> --role admin
 
-# 4. Deploy something.
+# 3. Deploy something.
 kanea run --image nginx:1.27-alpine --name web --project demo
 kanea ui
 ```
 
-`kanea doctor` verifies the node at any time — dependencies, versions, kvstore,
-disk and clock.
+### On a home network
+
+No public name, no port 80 reachable from the internet, and still real HTTPS. Point
+a wildcard DNS record at the node, run the control plane with a local CA, and
+install that CA once on each device:
+
+```bash
+sudo kanead --base-domain home.lan --tls-default self-signed
+kanea ca show > kanea-ca.crt      # install on your phone, laptop, TV
+```
+
+Every service then answers at `<service>.<project>.home.lan` over HTTPS, with no
+CA to reach and no rate limit to spend. `--tls-default` also takes `acme`,
+`provided` (certificates you put on the node, granted per project through
+`--tls-certs-config`) and `plaintext` — and a spec can override the node with
+`expose { tls { mode = "…" } }`. A mode names a source, never a path.
+
+Prefer a port to a name? Publish one, with or without a domain:
+
+```hcl
+network {
+  port "http" { container = 8096 }
+
+  publish "http" {
+    host = 8096                                    # http://<node>:8096
+    ip_restriction { allow = ["192.168.0.0/16"] }
+  }
+}
+```
+
+`mode = "tcp"` relays bytes instead, for Postgres, a game server, or anything
+else that is not HTTP. Which ports a spec may claim is the node's decision
+(`--publish-ports`, unprivileged by default), because a repository anyone can
+push to must not be able to take :22.
+
+If your LAN already uses `10.244.0.0/16`, move Kanea's:
+
+```bash
+sudo kanea init --node-cidr 10.90.0.0/24 --cluster-cidr 10.90.0.0/16
+```
+
+`kanea doctor` verifies the node at any time — components, versions against the
+pinned matrix, kvstore, disk and clock. `kanea install --list` prints what is
+pinned; `--dry-run` downloads and verifies every artefact without writing.
+
+### Air-gapped nodes
+
+A node with no egress is a supported installation, not a workaround. Build a
+bundle where there is a network, carry it across, install from it — the same
+hashes govern both paths:
+
+```bash
+kanea bundle create --arch amd64 -o kanea-bundle.tar.gz   # connected machine
+sudo kanea init --bundle kanea-bundle.tar.gz              # air-gapped node
+```
+
+The bundle carries no hashes of its own. Its contents are verified against the
+ones compiled into the installing node's binary — a bundle that supplied its own
+would be a bundle that authenticates itself. Releases publish one per
+architecture, covered by the same signed `checksums.txt`.
+
+This covers Kanea's own components; your workload images still come from a
+registry the node can reach.
 
 ## Requirements
 
@@ -83,10 +152,14 @@ disk and clock.
 |---|---|
 | Platform | `linux/amd64`, `linux/arm64` |
 | Kernel | ≥ 5.10, cgroups v2 unified hierarchy |
-| containerd | ≥ 1.7 |
-| cilium-agent | ≥ 1.18 (pin 1.19.x) |
+| Init system | systemd |
 | Clock | NTP-synchronised |
 | Kubernetes | none, at any layer |
+
+That is the whole list. containerd, `runc`, the CNI plugins, etcd, cilium-agent
+and rootless `buildkitd` are installed by `kanea init` at pinned versions — they
+are no longer prerequisites you supply. Already have a containerd you want to
+keep using? `kanea init --containerd external` adopts it instead.
 
 ## Status
 
@@ -98,7 +171,7 @@ one place to update.
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.29) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.33) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |

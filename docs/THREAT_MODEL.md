@@ -162,9 +162,16 @@ Two deliberate gaps, stated rather than hidden:
 
 Every alloc runs with all capabilities dropped, `no-new-privileges`, the default
 seccomp profile, private PID and IPC namespaces, and mandatory cpu/memory/pids
-limits — no container is ever unlimited, and the v1 spec has no `privileged`
-escape hatch. The control plane holds a cgroups v2 `memory.min` floor, so a
-workload cannot OOM-kill the reconciler that would otherwise restart it.
+limits — no container is ever unlimited, and **nothing a job spec can declare on
+its own** lifts any of it: there is no `privileged` field, and the capability
+allowlist is bounded by a set that excludes every privilege-equivalent
+capability (§6.2 R13). The control plane holds a cgroups v2 `memory.min` floor,
+so a workload cannot OOM-kill the reconciler that would otherwise restart it.
+
+The exceptions are host volumes, devices and sockets, and all three are
+*operator* grants rather than spec declarations — see §3.12. A **published node
+port** (§3.13) is a fourth thing a spec can ask for that reaches past the node's
+edge, and it is bounded the same way: by the node, not by the spec.
 
 Network policy is deny-by-default per project: an unlabelled endpoint is
 `reserved:init`, which denies both directions.
@@ -321,6 +328,231 @@ that apply are the ones that apply to any admin credential — scope it, expire
 it, revoke it, and read the audit log. Issue agents `viewer` tokens unless they
 need to deploy.
 
+### 3.11 The host-component supply chain (A08; PRD §5.2.12)
+
+Since v1.30, `kanea init` downloads containerd, `runc`, the CNI plugins, etcd,
+cilium-agent and `buildkitd` and installs them as root. That is a genuinely new
+surface, and the largest one added since the release workflow itself: an
+attacker who controls what those downloads return controls the container
+runtime on every node that installs.
+
+**What is defended:**
+
+- **Every artefact is pinned by SHA-256 in a manifest compiled into the binary**
+  (`internal/provision/components.json`), and OCI images by digest. Hashes are
+  *never* fetched — one retrieved from beside the artefact proves only that the
+  two agree, which is the same reasoning `scripts/install.sh` applies to its
+  own download. A compromised GitHub release, a hijacked CDN edge, a
+  man-in-the-middle with a valid certificate: all produce bytes that do not
+  match, and all fail.
+- **Verification happens before the bytes are reachable.** Artefacts land at a
+  temporary path, are hashed, and are only then renamed into place. There is no
+  window in which a mismatched `containerd` exists somewhere something would
+  execute it, and there is no flag to skip the check at any level.
+- **Extraction is traversal-safe.** Archive and image-layer member paths are
+  resolved and proven to stay under the destination; non-regular members
+  (symlinks, hard links, devices) are dropped rather than resolved. This is the
+  shape of GO-2026-5597, the go-billy traversal the module floors in
+  `AGENTS.md` exist for — repository-controlled paths written to disk — at
+  higher privilege.
+- **A bundle is not trusted more than the network.** Offline bundles are
+  verified against the hashes in the *installing node's* binary, never against
+  metadata inside the bundle. A bundle that supplied its own hashes would be a
+  bundle that authenticates itself.
+- **Changing a pin is a code change.** Bumping a component means editing a file
+  in the repository, which goes through review and the §14 gates. The CI job
+  `manifest-verify` re-fetches every artefact and re-checks its hash, so an
+  upstream project re-tagging a release is caught rather than silently accepted.
+
+**What is *not* defended:**
+
+- **A component whose pinned version is later found vulnerable.** The pin is
+  reproducibility, not immunity: if containerd 2.3.3 gets a CVE, every node
+  installs the vulnerable version until the manifest is bumped and a release
+  cut. The answer is manifest review on the same cadence as `govulncheck`, not
+  a runtime control — and it is a deliberate trade against the alternative,
+  which is resolving "latest" at install time and having no idea what is on a
+  node.
+- **A compromised upstream that ships a backdoor at a new version.** Pinning
+  means Kanea installs what a maintainer published; it does not attest that the
+  maintainer was honest. Reproducible builds and upstream provenance would
+  address that and neither is available for this component set today.
+- **The registry for image components.** Digests bind the content, so a
+  compromised registry cannot substitute an image. It can refuse to serve one,
+  which is a denial of service and is what the bundle path exists for.
+
+### 3.12 Operator grants: host volumes, devices and sockets (A01, A04, A05; PRD §6.2 R15, R17–R18)
+
+Three things can put a piece of the host inside a container: a `host` volume
+(v1.14), a device grant and a socket grant (v1.31). They are the only ways past
+§3.5's defaults, and they share one design.
+
+**A job spec cannot grant itself any of them.** A spec names a *grant*, an
+operator defines that grant in the node's own configuration, and the default in
+every case is that no grant exists. This matters more than it first reads,
+because a spec is not a trusted document: Kanea syncs specs from git and deploys
+them automatically (§3.8), so anything a spec can declare, anyone who can push to
+a synced repository can declare. The boundary is therefore drawn at the node:
+`storage.allowed_host_paths` and `--passthrough-config` are files on the machine,
+written by whoever owns it, and no API, MCP tool or spec can add to them.
+
+**What is defended:**
+
+- **No host path travels with a spec.** Device and socket blocks carry a grant
+  name and have no field for a path — not a validated one, not a restricted one,
+  none. The node resolves the name locally, so a path never enters the Store, the
+  API or a repository, and the same spec means different hardware on two nodes.
+  This is also why the API cannot be used as a side channel: `handleApply`
+  round-trips a desired record verbatim, so a path *field* would be an input
+  surface regardless of what the HCL parser accepts.
+- **Grants are project-scoped.** Each names the projects that may claim it, and
+  a grant naming none is a config error rather than a permissive default. A
+  prefix allowlist is proportionate for a shared data directory; it is not
+  proportionate for the container runtime's socket.
+- **Resolution happens per alloc, after symlink evaluation, with a type check.**
+  A device grant must still be a character or block device and a socket grant
+  must still be a socket at the moment it is handed over. A path that was one at
+  daemon start and is a regular file now is exactly the swap worth catching.
+- **A failed grant fails the alloc.** There is no path on which a container
+  starts without a passthrough it asked for. A transcoder silently running
+  without its GPU looks healthy and does the wrong thing.
+- **A device needs an explicit cgroup allow rule.** containerd's default spec
+  denies every device and Kanea only ever appends to that list, so nothing is
+  reachable that was not granted. Grants default to `rw`, never `m`: `mknod`
+  would let a container create *other* nodes of the same major, which is a
+  larger grant than an operator naming one device is making.
+- **Socket binds carry `nosuid`, `noexec` and `nodev`,** and the mount is
+  `rbind` so submounts are not hidden.
+
+**What is *not* defended — and this is the honest part:**
+
+- **A socket grant is node-level control for the container that holds it.** A
+  container with the container runtime's socket can create other containers
+  without the §3.5 defaults, mount host paths into them, and run as root. It is
+  not contained, and nothing above changes that. The `nosuid,noexec,nodev` flags
+  restrict the filesystem entry, not the protocol spoken over it. The control is
+  that an operator, on the node, in a file no spec author can write, decided
+  which project gets it — the same control §3.11 has over what gets installed.
+- **A filtering proxy would be a real mitigation and is deliberately not built.**
+  Exposing a narrowed verb set is a second protocol to implement and keep current
+  with containerd, and being subtly wrong about it would be worse than the
+  current position, which at least nobody can misread.
+- **A device is as trustworthy as its driver.** Passing `/dev/dri` puts a
+  container in contact with a kernel driver and its ioctl surface. Kanea applies
+  no seccomp filtering over that surface, and a kernel bug reachable through it
+  is reachable from a granted container.
+- **An operator can grant something ruinous.** `--passthrough-config` will accept
+  a grant for any character device on the node. It refuses `/`, requires the
+  target to be the right kind of file and requires a project list; it does not
+  and cannot decide that `/dev/mem` is a bad idea. Grant review is an operator
+  responsibility, which is why a configured passthrough is logged at `warn` with
+  the socket consequence stated at daemon start.
+
+---
+
+### 3.13 Published node ports (A01, A05; PRD §6.2 R21–R22, §7.2.2)
+
+A `network { publish }` block makes a service reachable on a node port, with or
+without a domain and — for `mode = "tcp"` — without the edge parsing a byte of
+what crosses it. That is the feature, and the honest way to describe it is
+**unauthenticated reachability to a container, by design**.
+
+What is defended:
+
+- **Which ports may be claimed belongs to the node.** `--publish-ports` is an
+  operator-set range, unprivileged (`1024-65535`) by default, and `off` disables
+  the feature outright. It is enforced in `handleApply`, not only at plan time,
+  because a GitOps sync reaches the Store without ever passing through the CLI
+  (§3.8). Kanea's own four listeners — 80, 443, the API's 8600 and the edge's
+  status 8601 — are refused whatever range an operator writes.
+- **`ip_restriction` is checked at accept time, before the upstream is dialled.**
+  On a tcp listener it is the *only* ingress control, and it has to be enforced
+  here because the upstream sees the edge's address rather than the client's.
+- **A control the listener cannot honour is refused, not dropped.** A
+  `rate_limit` or `headers` block on a tcp listener is a plan error and an
+  invalid snapshot. A spec that claims a control nothing is applying is worse
+  than one that never claimed it — R16's rule, inverted.
+- **Connections are bounded and refused when full, never queued**, per listener
+  (`max_conns`, default 256) and node-wide (`--max-published-conns`, default
+  1024).
+
+What is *not* defended, stated plainly:
+
+- **The client's source address does not survive.** `pg_hba.conf` host rules,
+  application-level IP bans and anything else keyed on the peer address see the
+  edge. PROXY protocol would restore it and is deliberately not implemented
+  (§19.3): it is a second wire protocol most homelab services do not speak, and
+  a misconfiguration prepends garbage to the stream and presents as protocol
+  corruption rather than as a configuration error.
+- **There is no authentication on a published port.** Whatever the service does
+  about that is the service's business. Publishing Postgres on :5432 exposes
+  Postgres' own authentication and nothing of Kanea's.
+- **A published port carries no TLS.** The certificate is selected by SNI and a
+  client connecting to `https://192.168.1.10:8443` sends none, so `tls = true`
+  on a published port is not offered. A client that has a name has :443.
+
+### 3.14 Certificate sources (A02, A05; PRD §6.2 R20, §7.3)
+
+Certificates come from three places — an ACME CA, a per-node self-signed CA, and
+files an operator put on the node — and every one of them is handled in `kanead`.
+The edge polls one bundle file and never writes: issuing or minting a certificate
+is *writing*, and a CA private key does not belong in the process terminating
+untrusted public traffic (§5.2.6).
+
+- **The CA private key lives in the Store's `certs` bucket**, at exactly the
+  protection every ACME leaf key already has, and travels in the encrypted
+  archive. **No route returns it.** `GET /v1/certs/ca` serves the CA
+  *certificate* — which is presented to every client that trusts it and is not a
+  secret — and there is deliberately no `kanea ca rotate` and no `--key` flag.
+  Deleting the Store key is the honest mechanism, and it costs re-trusting every
+  device.
+- **A spec names a source, never a path.** `tls { mode = "provided", name = "x" }`
+  names a grant in `--tls-certs-config`; the file mapping that name to a
+  certificate and key lives on the node, and each grant names the projects that
+  may claim it. Same boundary as §3.12, for the same reason.
+- **Nothing falls back to a weaker source.** A `provided` certificate that cannot
+  be resolved leaves the service on plaintext rather than quietly becoming
+  self-signed. A browser interstitial is something an operator learns to click
+  through, and then clicks through on the day it means something.
+- **A plaintext route is never redirected and never receives HSTS.** HSTS is the
+  one header a mistake in which the browser remembers for two years.
+
+### 3.15 Workload identity and volume ownership (A05; PRD §6.2 R23–R24)
+
+A spec can declare the uid/gid its container runs as and the ownership of its
+volumes. This *reduces* privilege rather than granting it, which makes it the
+one entry in this section with no operator gate — a uid is a number, not a node
+resource, so unlike §3.12 there is nothing for the node to permit.
+
+- **It exists to make capability grants unnecessary.** A stock image asks for
+  `CAP_CHOWN`, `CAP_SETUID` and `CAP_SETGID` — sometimes `CAP_DAC_OVERRIDE`,
+  which bypasses file permission checks outright — so that it can chown a
+  root-owned data directory and drop privileges at startup. A spec that states
+  the uid and the ownership up front leaves nothing to do and nothing to grant.
+  PRD §6.1's postgres example now runs with no capabilities at all.
+- **It is declarable, not default.** An absent `user` block means the image's
+  own `USER` stands. Forcing a uid globally would break every image that ships
+  a correct one, and the internal representation keeps "unset" distinct from
+  "0" precisely so an upgrade cannot silently promote a workload to root.
+- **IDs are numeric.** There is no field for a username, because resolving one
+  means reading `/etc/passwd` out of the container's own rootfs — a
+  container-controlled file deciding which uid the control plane runs a process
+  as. `kanea exec --user` already refused it and the job spec gets the same
+  rule. `oci.WithUser`/`WithUserID` are avoided for the same reason: both
+  consult the rootfs even when handed a number.
+- **It weakens none of the §14 A05 defaults.** Capabilities are still dropped to
+  nothing, `no-new-privileges` is still set, and the namespaces and masked paths
+  are unchanged. A non-root uid is added to those defaults, never traded for one.
+- **Ownership is refused where the driver cannot enforce it.** A `host` volume is
+  the operator's directory (§3.12, R15) and Kanea does not chown it any more than
+  it creates it; kernel NFS has no `uid=` at all. Both are `plan` errors and are
+  refused again at mount time, because a volume that silently ignored the
+  ownership it was given is the failure the rule exists to prevent. Only a
+  *declared* field is refused: inheritance stops at those drivers, so adding a
+  `user` block cannot break a volume nobody wrote ownership on. The chown covers
+  the volume's top-level directory only — a recursive one would overwrite
+  ownership a workload set deliberately — and a chown that fails fails the alloc.
+
 ---
 
 ## 4. Attack walkthroughs
@@ -353,7 +585,24 @@ check rejects.
 **A workload is compromised.** No capabilities, no escalation, no route to
 another project's services (policy), no cloud metadata (egress policy), no way
 to exhaust the node (cgroup ceiling). It can reach what its project's policy
-allows, which is the point of declaring it.
+allows, which is the point of declaring it. Unless it holds a socket grant —
+see below, where this stops being true.
+
+**A spec asks for the container runtime socket.** It parses: `socket` blocks are
+valid HCL and the grant name is well-formed. It then fails at the node, because
+no grant by that name exists — `--passthrough-config` is unset by default, and
+the alloc fails loudly rather than starting without what it asked for. Adding
+the grant is a file on the machine, so a repository push cannot do it, and the
+grant names the projects allowed to claim it, so granting `ops` does not grant
+`shop`. If the operator does grant it: **that container now controls the node**,
+and the walkthrough ends there honestly rather than listing controls that no
+longer apply (§3.12).
+
+**A malicious spec asks for `/dev/mem` directly.** There is no field to write it
+in. The device block has a `grant` and nothing else, so the request cannot be
+expressed — not rejected by a validator that might have a gap, but absent from
+the grammar. Reaching `/dev/mem` requires an operator to have named it in the
+node's config.
 
 **A bearer token is stolen.** It carries a role; a viewer token reads and
 nothing else. Every use is audited with the token id, and revocation takes
@@ -382,7 +631,7 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | A02 | Secrets encrypted at rest, bcrypt passwords, TLS on the listener | **Built** — listener TLS is operator-supplied |
 | A03 | HCL schema validation, DNS-1123 names, no shell interpolation | **Built** |
 | A04 | Secure-by-default config; this document | **Built** |
-| A05 | Security headers, CSP, hardened workload defaults | **Built** |
+| A05 | Security headers, CSP, hardened workload defaults, declarable non-root workload identity (§3.15) | **Built** |
 | A06 | `govulncheck`, `gosec`, `gitleaks`, `npm audit` in CI | **Built** |
 | A07 | Login and global rate limits, token expiry, OIDC + PKCE | **Built** |
 | A08 | Digest pinning honoured; release signing | **Partial** — signing is M10 |
@@ -420,3 +669,7 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | API listener TLS is operator-supplied | ACME for the control plane is not wired | M10 |
 | The MCP tool surface is not covered here | Not built | M9 |
 | GitHub OAuth carries no signed identity | Deliberately not shipped (PRD v1.19) | — |
+| Auto-update follows a moving tag, so a compromised upstream image is deployed automatically | Opt-in per service and off by default; a failed update reverts, but a *working* malicious image converges (§6.2 R19) | — |
+| A granted runtime socket is node-level control for the container holding it | No containment exists; a filtering proxy is deliberately not built (§3.12) | — |
+| A granted device exposes a kernel driver's ioctl surface | No seccomp filtering is applied over it | — |
+| An operator can grant a device that should never be granted | The config refuses `/` and the wrong file type; it cannot judge intent | — |
