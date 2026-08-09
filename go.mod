@@ -1,6 +1,6 @@
 module github.com/m18h/kanea
 
-go 1.26.3
+go 1.26.5
 
 require (
 	github.com/cilium/ebpf v0.22.0
