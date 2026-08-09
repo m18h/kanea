@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/m18h/kanea/security/advisories/new
+    about: Please do NOT open a public issue for vulnerabilities — report privately here (see SECURITY.md).

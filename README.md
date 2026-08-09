@@ -170,7 +170,7 @@ one place to update.
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.33) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.37) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |
@@ -192,7 +192,8 @@ anything — a failure there is a failed release later, not a failed lint.
 
 Contributions follow conventional commits, one logical change per PR, and the
 binding constraints in [`AGENTS.md`](./AGENTS.md#binding-constraints-never-violate-these).
-The PR template enforces them.
+The PR template enforces them; [`CONTRIBUTING.md`](./CONTRIBUTING.md) has the
+full walk-through.
 
 ## License
 

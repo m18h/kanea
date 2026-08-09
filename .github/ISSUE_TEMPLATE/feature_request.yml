@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose something Kanea should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you file: check the **Deliberately not built** section of
+        [AGENTS.md](https://github.com/m18h/kanea/blob/main/AGENTS.md) — several
+        obvious features are absent on purpose, with the reasoning written down.
+        If your request is one of them, the useful issue is the one that engages
+        with that reasoning rather than restating the feature.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that you currently cannot, or can only do painfully? A concrete scenario beats an abstract capability.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would it look like — a spec block, a flag, a CLI command, a dashboard surface? Sketches welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "what I do today instead".
+  - type: textarea
+    id: fit
+    attributes:
+      label: Anything the PRD says about this?
+      description: If the PRD or AGENTS.md already touches this area, link the section — it speeds the conversation up considerably.

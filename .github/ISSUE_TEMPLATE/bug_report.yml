@@ -1,0 +1,72 @@
+name: Bug report
+description: Something does not behave the way the docs or the PRD say it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two things before you file:
+        - **Security issue?** Do not open it here — see [SECURITY.md](https://github.com/m18h/kanea/blob/main/SECURITY.md) for private reporting.
+        - Some apparent gaps are decisions — check the *Deliberately not built* list in [AGENTS.md](https://github.com/m18h/kanea/blob/main/AGENTS.md) if the bug is "feature X is missing".
+  - type: input
+    id: version
+    attributes:
+      label: Kanea version
+      description: Output of `kanea version`.
+      placeholder: v0.1.0 (abc1234)
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - kanead (control plane / reconciler / API)
+        - kanea-edge (ingress, TLS, published ports)
+        - Datapath (eBPF networking, LB, policy, DNS)
+        - CLI (kanea run/apply/plan/…)
+        - Installer / provisioning (kanea init, install, bundles)
+        - Dashboard
+        - MCP server
+        - GitOps / pipelines / builds
+        - Storage / volumes
+        - Backup / replication / restore
+        - Metrics / autoscaling
+        - Notifications
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you saw. Include the exact command and output where you can.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Minimal steps — a job spec snippet if one is involved.
+      placeholder: |
+        1. …
+        2. …
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Distro, kernel (`uname -r`), architecture, and anything unusual about the node (existing Docker, ufw, custom CIDRs, air-gapped, …).
+      placeholder: |
+        Debian 13, 6.12.x, arm64
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from `journalctl -u kanead` / `-u kanea-edge`, or `kanea doctor` output. Redact anything sensitive — never paste secret values or the master key.
+      render: text
