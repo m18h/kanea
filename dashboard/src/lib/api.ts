@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { apiFetch } from './session'
 
 /**
  * Wire schemas for everything the daemon sends.
@@ -299,6 +300,37 @@ export async function triggerBuild(
   })
   if (!resp.ok) throw new Error(await refusalText(resp, 'build'))
   return runSchema.parse(await resp.json())
+}
+
+// ---- service lifecycle (PRD §5.2.1, v1.26) ----
+
+/**
+ * scaleService writes one number; the reconciler converges.
+ *
+ * Stop is a scale to zero and start is a scale back up — the same route the
+ * autoscaler and `kanea scale` use, so there is no second path to the runtime
+ * for the dashboard to disagree with.
+ */
+export async function scaleService(
+  project: string,
+  service: string,
+  count: number,
+  csrf?: string,
+): Promise<void> {
+  await apiFetch(`/v1/services/${enc(project)}/${enc(service)}/scale`, {
+    method: 'POST',
+    body: { count },
+    ...(csrf ? { csrf } : {}),
+  })
+}
+
+/** restartService bumps the restart generation — a rolling restart through the
+ * same update policy a deploy uses. */
+export async function restartService(project: string, service: string, csrf?: string): Promise<void> {
+  await apiFetch(`/v1/services/${enc(project)}/${enc(service)}/restart`, {
+    method: 'POST',
+    ...(csrf ? { csrf } : {}),
+  })
 }
 
 /** Sync a project's git source. */

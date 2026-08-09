@@ -26,6 +26,7 @@ export default {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        chart: 'hsl(var(--chart))',
       },
       borderRadius: {
         lg: 'var(--radius)',

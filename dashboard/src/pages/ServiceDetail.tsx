@@ -1,26 +1,35 @@
 import { useEffect, useRef, useState } from 'react'
+import { Play, RotateCw, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useLiveLog, MaxLogLines } from '@/hooks/useLiveLog'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
+import { useSession } from '@/hooks/useSession'
 import {
   Topic,
   allocsResponseSchema,
+  restartService,
+  scaleService,
   servicesResponseSchema,
   statsSampleSchema,
   type AllocStats,
   type EdgeBreakdown,
+  type Service,
   type StatsSample,
 } from '@/lib/api'
 import {
   allocStateVariant,
   formatBytes,
+  formatMetric,
   groupAllocs,
   groupCodes,
   serviceHealth,
 } from '@/lib/state'
 import { Sparkline } from '@/components/Sparkline'
 import { useSeries } from '@/hooks/useSeries'
+import { usePagination } from '@/hooks/usePagination'
+import { PaginationControls } from '@/components/Pagination'
 
 export function ServiceDetail({ project, service }: { project: string; service: string }) {
 
@@ -33,6 +42,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
     (s) => s.Project === project && s.Service === service,
   )
   const mine = groupAllocs(allocs.data?.allocs ?? []).get(key) ?? []
+  const allocPager = usePagination(mine)
 
   if (services.connected && !desired) {
     return (
@@ -52,9 +62,12 @@ export function ServiceDetail({ project, service }: { project: string; service: 
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle className="font-mono">{key}</CardTitle>
-          {health ? <Badge variant={health.settled ? 'ok' : 'warn'}>{health.label}</Badge> : null}
+        <CardHeader className="flex-row flex-wrap items-center justify-between gap-3 space-y-0">
+          <div className="flex items-center gap-3">
+            <CardTitle className="font-mono">{key}</CardTitle>
+            {health ? <Badge variant={health.settled ? 'ok' : 'warn'}>{health.label}</Badge> : null}
+          </div>
+          {desired ? <ServiceActions project={project} service={service} desired={desired} /> : null}
         </CardHeader>
         <CardContent className="space-y-1 text-sm">
           <Field label="Image" value={desired?.Image ?? '—'} mono />
@@ -90,7 +103,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                 </tr>
               </thead>
               <tbody>
-                {mine.map((alloc) => (
+                {allocPager.pageItems.map((alloc) => (
                   <AllocRow
                     key={alloc.ID}
                     id={alloc.ID}
@@ -103,12 +116,119 @@ export function ServiceDetail({ project, service }: { project: string; service: 
               </tbody>
             </table>
           )}
+          <PaginationControls state={allocPager} />
         </CardContent>
       </Card>
 
       <EdgePanel edge={stats.data?.edge} />
 
       <LogPanel project={project} service={service} />
+    </div>
+  )
+}
+
+/**
+ * ServiceActions is the lifecycle row: start, stop, restart.
+ *
+ * Stop and start are scales (to zero and back), restart bumps the generation —
+ * every button writes desired state and the reconciler converges, so nothing
+ * here is a second path to the runtime. The buttons stay visible for a viewer
+ * but disabled: a viewer who does not know they are a viewer reads a missing
+ * button as a broken dashboard.
+ */
+function ServiceActions({
+  project,
+  service,
+  desired,
+}: {
+  project: string
+  service: string
+  desired: Service
+}) {
+  const { session, csrf } = useSession()
+  const admin = session?.role === 'admin'
+
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [confirmStop, setConfirmStop] = useState(false)
+
+  // What "start" should scale back to: the last non-zero count this page saw.
+  // The daemon does not remember it — a stopped service's record says zero —
+  // so this is a courtesy with a safe fallback of one.
+  const lastCount = useRef(1)
+  useEffect(() => {
+    if (desired.Count > 0) lastCount.current = desired.Count
+  }, [desired.Count])
+
+  // An armed stop disarms itself: a button left reading "confirm stop?" for
+  // minutes is a trap for the next person at the keyboard.
+  useEffect(() => {
+    if (!confirmStop) return
+    const timer = setTimeout(() => setConfirmStop(false), 4000)
+    return () => clearTimeout(timer)
+  }, [confirmStop])
+
+  const run = (name: string, action: () => Promise<void>) => {
+    setBusy(name)
+    setError(null)
+    action()
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(null))
+  }
+
+  const stopped = desired.Count === 0
+  const disabled = !admin || busy !== null
+  const title = admin ? undefined : 'Requires the admin role'
+
+  return (
+    <div className="flex items-center gap-2">
+      {error ? (
+        <span className="max-w-64 truncate text-xs text-destructive" title={error}>
+          {error}
+        </span>
+      ) : null}
+      {stopped ? (
+        <Button
+          size="sm"
+          disabled={disabled}
+          title={title}
+          onClick={() => run('start', () => scaleService(project, service, lastCount.current, csrf))}
+        >
+          <Play size={14} />
+          {busy === 'start' ? 'Starting…' : 'Start'}
+        </Button>
+      ) : (
+        <>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            title={title}
+            onClick={() => run('restart', () => restartService(project, service, csrf))}
+          >
+            <RotateCw size={14} />
+            {busy === 'restart' ? 'Restarting…' : 'Restart'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            title={title}
+            className={confirmStop ? 'border-destructive text-destructive hover:bg-destructive/10' : ''}
+            onClick={() => {
+              if (!confirmStop) {
+                setConfirmStop(true)
+                return
+              }
+              setConfirmStop(false)
+              run('stop', () => scaleService(project, service, 0, csrf))
+            }}
+          >
+            <Square size={14} />
+            {busy === 'stop' ? 'Stopping…' : confirmStop ? 'Confirm stop?' : 'Stop'}
+          </Button>
+        </>
+      )}
     </div>
   )
 }
@@ -216,10 +336,16 @@ function Metric({
         <span className="font-mono text-sm tabular-nums">
           {/* An em dash, not a zero: the daemon omits a metric it has nothing
               recent for, and "0" would be a claim about the service. */}
-          {latest === undefined ? '—' : `${latest.toFixed(latest < 10 ? 1 : 0)}${unit}`}
+          {latest === undefined ? '—' : formatMetric(latest, unit)}
         </span>
       </div>
-      <Sparkline points={points} max={max} label={`${label} over the last few minutes`} />
+      <Sparkline
+        points={points}
+        max={max}
+        unit={unit}
+        className="h-14 w-full"
+        label={`${label} over the last few minutes`}
+      />
     </div>
   )
 }
@@ -249,10 +375,10 @@ function AllocRow({
       </td>
       <td className="py-2 pr-4 tabular-nums">{restarts}</td>
       <td className="py-2 pr-4">
-        <Sparkline points={cpu} max={100} className="h-6 w-20" label={`CPU for ${id}`} />
+        <Sparkline points={cpu} max={100} unit="%" className="h-6 w-24" label={`CPU for ${id}`} />
       </td>
       <td className="py-2">
-        <Sparkline points={memory} max={100} className="h-6 w-20" label={`Memory for ${id}`} />
+        <Sparkline points={memory} max={100} unit="%" className="h-6 w-24" label={`Memory for ${id}`} />
       </td>
     </tr>
   )

@@ -72,8 +72,11 @@ function Shell() {
       <header className="border-b">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-baseline gap-4">
-            <span className="flex items-center gap-2 self-center">
-              <Mark size={22} />
+            {/* The wordmark participates in baseline alignment while the mark
+                is centered, so the group's baseline is the text's — which is
+                what the outer items-baseline lines the nav links up against. */}
+            <span className="flex items-baseline gap-2">
+              <Mark size={22} className="self-center" />
               <span className="text-lg font-semibold tracking-tight">Kanea</span>
             </span>
             <nav className="flex gap-3">

@@ -10,11 +10,16 @@ import {
   type Service,
 } from '@/lib/api'
 import { allocStateVariant, groupAllocs } from '@/lib/state'
+import { usePagination } from '@/hooks/usePagination'
+import { PaginationControls } from '@/components/Pagination'
 
 /** Services lists what is declared and how much of it is actually running. */
 export function Services() {
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
+
+  const list = services.data?.services ?? []
+  const pager = usePagination(list)
 
   if (services.error) {
     return <Panel title="Services">{services.error}</Panel>
@@ -23,7 +28,6 @@ export function Services() {
     return <Panel title="Services">Connecting…</Panel>
   }
 
-  const list = services.data?.services ?? []
   if (list.length === 0) {
     return <Panel title="Services">Nothing deployed yet.</Panel>
   }
@@ -46,7 +50,7 @@ export function Services() {
             </tr>
           </thead>
           <tbody>
-            {list.map((svc) => (
+            {pager.pageItems.map((svc) => (
               <ServiceRow
                 key={`${svc.Project}/${svc.Service}`}
                 service={svc}
@@ -55,6 +59,7 @@ export function Services() {
             ))}
           </tbody>
         </table>
+        <PaginationControls state={pager} />
       </CardContent>
     </Card>
   )

@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { Topic, allocsResponseSchema, servicesResponseSchema } from '@/lib/api'
 import { groupAllocs, serviceHealth } from '@/lib/state'
+import { usePagination } from '@/hooks/usePagination'
+import { PaginationControls } from '@/components/Pagination'
 
 /**
  * Overview is the "should I worry" page.
@@ -28,6 +30,12 @@ export function Overview() {
   const unsettled = summary.filter((s) => !s.health.settled)
   const projects = new Set(list.map((s) => s.Project))
 
+  // Unsettled services sort first: this is the "should I worry" page, and the
+  // thing to worry about must never be on page two. Within each group the
+  // spec order is kept, so the list does not shuffle as things converge.
+  const ordered = [...unsettled, ...summary.filter((s) => s.health.settled)]
+  const pager = usePagination(ordered)
+
   return (
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-3">
@@ -50,19 +58,22 @@ export function Overview() {
           ) : summary.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nothing deployed yet.</p>
           ) : (
-            <ul className="space-y-1">
-              {summary.map(({ key, service, health }) => (
-                <li key={key} className="flex items-center justify-between gap-3 py-1">
-                  <Link
-                    to={`/services/${service.Project}/${service.Service}`}
-                    className="font-mono text-xs hover:underline"
-                  >
-                    {key}
-                  </Link>
-                  <Badge variant={health.settled ? 'ok' : 'warn'}>{health.label}</Badge>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="space-y-1">
+                {pager.pageItems.map(({ key, service, health }) => (
+                  <li key={key} className="flex items-center justify-between gap-3 py-1">
+                    <Link
+                      to={`/services/${service.Project}/${service.Service}`}
+                      className="font-mono text-xs hover:underline"
+                    >
+                      {key}
+                    </Link>
+                    <Badge variant={health.settled ? 'ok' : 'warn'}>{health.label}</Badge>
+                  </li>
+                ))}
+              </ul>
+              <PaginationControls state={pager} />
+            </>
           )}
         </CardContent>
       </Card>

@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Link } from '@/lib/router'
 import { fetchRuns, isRunFinished, type Run } from '@/lib/api'
 import { runStateVariant, runDuration, shortID, shortSHA } from '@/lib/pipelines'
+import { usePagination } from '@/hooks/usePagination'
+import { PaginationControls } from '@/components/Pagination'
 
 /**
  * The pipeline list (PRD §10.2).
@@ -16,12 +18,16 @@ import { runStateVariant, runDuration, shortID, shortSHA } from '@/lib/pipelines
 export function Pipelines() {
   const runs = useQuery({
     queryKey: ['runs'],
-    queryFn: ({ signal }) => fetchRuns({ limit: 50 }, signal),
+    // 200, not 50: the list paginates client-side now, and a bounded page of
+    // history is exactly what "why did Tuesday's deploy fail" needs.
+    queryFn: ({ signal }) => fetchRuns({ limit: 200 }, signal),
     // Faster while something is running: an operator watching a build wants to
     // see it move, and once everything is finished there is nothing to see.
     refetchInterval: (query) =>
       (query.state.data ?? []).some((run) => !isRunFinished(run)) ? 2_000 : 15_000,
   })
+
+  const pager = usePagination(runs.data ?? [])
 
   if (runs.isError) {
     return (
@@ -69,11 +75,12 @@ export function Pipelines() {
             </tr>
           </thead>
           <tbody>
-            {list.map((run) => (
+            {pager.pageItems.map((run) => (
               <RunRow key={`${run.project}/${run.service}/${run.id}`} run={run} />
             ))}
           </tbody>
         </table>
+        <PaginationControls state={pager} className="px-4" />
       </CardContent>
     </Card>
   )

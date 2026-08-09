@@ -101,6 +101,12 @@ export function groupCodes(codes: Record<string, number> | null | undefined): Co
     .map(({ klass, variant }) => ({ klass, count: totals.get(klass) ?? 0, variant }))
 }
 
+/** formatMetric renders a sample the same way everywhere: one decimal while
+ * the number is small enough for it to mean something. */
+export function formatMetric(value: number, unit: string): string {
+  return `${value.toFixed(value < 10 ? 1 : 0)}${unit}`
+}
+
 /** formatBytes renders a byte count in the largest unit that stays readable. */
 export function formatBytes(n: number): string {
   const unit = 1024

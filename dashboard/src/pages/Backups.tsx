@@ -10,6 +10,8 @@ import {
 } from '@/lib/api'
 import { describeArchive, formatTime, isStale, when } from '@/lib/backups'
 import { useSession } from '@/hooks/useSession'
+import { usePagination } from '@/hooks/usePagination'
+import { PaginationControls } from '@/components/Pagination'
 
 /**
  * Backups (PRD §15.3).
@@ -51,6 +53,7 @@ export function Backups() {
   })
 
   const canWrite = session?.role === 'admin'
+  const pager = usePagination(backups.data?.backups ?? [])
 
   if (backups.isSuccess && backups.data === null) {
     // Distinct from "no archives yet", and the difference matters enormously:
@@ -115,7 +118,7 @@ export function Backups() {
               </tr>
             </thead>
             <tbody>
-              {archives.map((archive) => (
+              {pager.pageItems.map((archive) => (
                 <ArchiveRow
                   key={archive.id}
                   archive={archive}
@@ -126,6 +129,7 @@ export function Backups() {
               ))}
             </tbody>
           </table>
+          <PaginationControls state={pager} className="px-3 pb-3" />
         </div>
       ) : null}
 
