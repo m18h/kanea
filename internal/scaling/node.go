@@ -19,10 +19,13 @@ import (
 // itself in trouble" — which is the question behind a service that is slow for
 // no reason its own metrics explain, and the question an operator asks first.
 //
-// It does not go through the time series. These are three numbers read on
-// demand from files that are already the kernel's own aggregation; storing a
-// history of them would spend the §21 memory budget on something procfs keeps
-// for free, and constraint #2 is emphatic about what the Store is for.
+// The point-in-time reading does not go through the time series — these are
+// numbers read on demand from files that are already the kernel's own
+// aggregation. Since v1.38 exactly two series *are* recorded (RecordNode),
+// because a dashboard sparkline needs the history procfs does not keep: CPU
+// and memory percent, ≈9 KiB, under metric names the exporter's fixed list
+// never publishes so the Prometheus surface is unchanged. Constraint #2 is
+// untouched either way: the in-memory TS is not the Store.
 
 // NodeStats is a point-in-time reading.
 //
@@ -77,6 +80,32 @@ func NewNodeReader(procRoot string) *NodeReader {
 		procRoot = "/proc"
 	}
 	return &NodeReader{procRoot: procRoot, now: time.Now}
+}
+
+// The node's own history series (v1.38). Deliberately not "cpu"/"memory":
+// the exporter publishes by metric name, and reusing the workload names under
+// subject "node" would silently add kanea_cpu_percent{subject="node"} to a
+// Prometheus surface nobody meant to change.
+const (
+	MetricNodeCPU    = "node_cpu_percent"
+	MetricNodeMemory = "node_memory_percent"
+)
+
+// RecordNode records a node reading into the time series.
+//
+// Only non-nil readings are recorded: the first CPU read has no delta and an
+// unreadable procfs has nothing, and in both cases the honest history is a
+// gap, never a zero (§9.2).
+func RecordNode(m *Metrics, stats NodeStats) {
+	if m == nil {
+		return
+	}
+	if stats.CPUPercent != nil {
+		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeCPU}, stats.At, *stats.CPUPercent)
+	}
+	if stats.MemoryPercent != nil {
+		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeMemory}, stats.At, *stats.MemoryPercent)
+	}
 }
 
 // Read takes a reading.

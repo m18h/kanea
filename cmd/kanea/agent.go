@@ -27,6 +27,7 @@ import (
 	"github.com/m18h/kanea/internal/datapath/dpmap"
 	"github.com/m18h/kanea/internal/edge"
 	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/logging"
 	"github.com/m18h/kanea/internal/mcp"
 	"github.com/m18h/kanea/internal/network"
@@ -576,6 +577,11 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// One reader for the API's point-in-time stats and the history recorder
+	// alike: CPU percent is a delta between readings, and two readers would
+	// each see only half the sample history (v1.38).
+	nodeReader := scaling.NewNodeReader("")
+
 	server, err := api.NewServer(api.ServerConfig{
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
@@ -587,7 +593,11 @@ func runAgent(args []string) error {
 		PublishPorts: portPolicy,
 		OIDC:         provider, Sessions: users,
 		Metrics: metrics, EdgeMetrics: edgeExposition,
-		Breaker: breaker, Node: scaling.NewNodeReader(""),
+		Breaker: breaker, Node: nodeReader,
+		// The editor's renderer parses with the node's own base domain — the
+		// same options the GitOps sync uses, so a spec means the same thing
+		// whichever door it arrives through (v1.38).
+		Spec:   specRenderer{opts: jobspec.Options{BaseDomain: *baseDomain}},
 		Exec:   driver,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
 		AuthConfigured: configured, InsecureCookies: *insecureCookies,
@@ -666,6 +676,7 @@ func runAgent(args []string) error {
 		containerdURL: *containerdMetrics,
 		edgeURL:       *edgeMetrics,
 		flows:         flows,
+		node:          nodeReader,
 		interval:      *metricsInterval,
 		autoscale:     *autoscale,
 		store:         st,

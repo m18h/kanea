@@ -107,6 +107,11 @@ type ServerConfig struct {
 	Audit AuditLog
 	// Accounts backs the user and token routes. Nil disables them.
 	Accounts Accounts
+	// Spec renders HCL for the dashboard's editor (v1.38). Implemented in
+	// cmd/kanea beside toDesired, the same seam shape as gitops.Applier. Nil
+	// means the spec routes answer 503.
+	Spec SpecRenderer
+
 	// Metrics backs the Prometheus exporter and the live stats topic. Nil
 	// disables both.
 	Metrics MetricsSource
@@ -194,6 +199,8 @@ type Server struct {
 	publishPorts PortPolicy
 	publish      func(notify.Event)
 
+	spec SpecRenderer
+
 	auth            Authenticator
 	audit           AuditLog
 	accounts        Accounts
@@ -214,6 +221,13 @@ type Server struct {
 	limiter     *ratelimit.Limiter
 	publicLimit ratelimit.Spec
 	authLimit   ratelimit.Spec
+
+	// now, started and pid feed the health payload's uptime report (v1.38).
+	// started comes from the same clock now reads, so an injected clock in a
+	// test sees a consistent pair.
+	now     func() time.Time
+	started time.Time
+	pid     int
 }
 
 // NewServer builds the server. It does not listen yet.
@@ -240,8 +254,14 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		authLimit = *cfg.AuthLimit
 	}
 
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
+
 	s := &Server{
-		limiter:     ratelimit.New(cfg.RateLimitBuckets, cfg.Now),
+		limiter: ratelimit.New(cfg.RateLimitBuckets, cfg.Now),
+		now:     now, started: now(), pid: os.Getpid(),
 		publicLimit: publicLimit, authLimit: authLimit,
 		listenAddr: cfg.Listen, authConfigured: cfg.AuthConfigured, tls: tlsConfig,
 		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
@@ -253,6 +273,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		publishPorts: cfg.PublishPorts,
 		auth:         cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
+		spec:    cfg.Spec,
 		metrics: cfg.Metrics, edgeMetrics: cfg.EdgeMetrics,
 		breaker: cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
 		insecureCookies: cfg.InsecureCookies,
@@ -281,6 +302,15 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		s.route(policy{action: "auth.oidc.callback", public: true}, s.handleOIDCCallback))
 	mux.Handle("GET "+PathServices, s.route(policy{action: "service.list"}, s.handleListServices))
 	mux.Handle("PUT "+PathServices, s.route(policy{action: "service.apply", mutates: true}, s.handleApply))
+	// The spec editor (v1.38). Render is a read with admin's blast radius —
+	// it evaluates operator-supplied HCL — so it is admin-only like the audit
+	// log; apply is a mutation like any other: admin, CSRF, audited.
+	mux.Handle("POST "+PathSpecRender,
+		s.route(policy{action: "spec.render", adminOnly: true}, s.handleSpecRender))
+	mux.Handle("POST "+PathSpecApply,
+		s.route(policy{action: "spec.apply", mutates: true}, s.handleSpecApply))
+	mux.Handle("GET "+PathSpecSource,
+		s.route(policy{action: "spec.source", adminOnly: true}, s.handleSpecSource))
 	mux.Handle("DELETE "+PathServices+"/{project}/{service}",
 		s.route(policy{action: "service.delete", mutates: true}, s.handleDeleteService))
 	mux.Handle("POST "+PathServices+"/{project}/{service}/scale",
@@ -293,6 +323,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET "+PathProjects+"/{project}",
 		s.route(policy{action: "project.get"}, s.handleGetProject))
 	mux.Handle("GET "+PathStats, s.route(policy{action: "stats.read"}, s.handleStats))
+	mux.Handle("GET "+PathStatsHistory,
+		s.route(policy{action: "stats.history"}, s.handleStatsHistory))
 	// Sending a test message reaches outside the node, so it is a mutation in the
 	// sense that matters here: admin-only, and audited.
 	mux.Handle("POST "+PathProjects+"/{project}/notifications/test",
@@ -570,6 +602,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Status: "ok", Version: s.version, StoreIndex: index,
 		WSConnections: s.ws.count(),
 		Listen:        s.listenAddr, TLS: s.tls != nil,
+		PID: s.pid, StartedAt: s.started,
+		UptimeSeconds: int64(s.now().Sub(s.started) / time.Second),
 	}
 	// What sign-in methods exist is part of what a client needs before it can
 	// authenticate, and health is the one route it can ask without a credential.
@@ -602,17 +636,29 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode request: %w", err))
 		return
 	}
-	if len(req.Services) == 0 {
-		writeError(w, http.StatusBadRequest, errors.New("no services in request"))
+	resp, status, err := s.applyServices(r, req)
+	if err != nil {
+		writeError(w, status, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// applyServices is the apply path itself, shared by PUT /v1/services and the
+// spec editor's POST /v1/spec/apply (v1.38). One implementation on purpose:
+// generation carry-over, pinned-image carry-over, the R22 port check, the
+// atomic batch, the wake, the events and the audit line must not exist twice.
+func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse, int, error) {
+	if len(req.Services) == 0 {
+		return ApplyResponse{}, http.StatusBadRequest, errors.New("no services in request")
 	}
 
 	muts := make([]store.Mutation, 0, len(req.Services))
 	applied := make([]string, 0, len(req.Services))
 	for _, svc := range req.Services {
 		if svc.Project == "" || svc.Service == "" {
-			writeError(w, http.StatusBadRequest, errors.New("every service needs a project and a name"))
-			return
+			return ApplyResponse{}, http.StatusBadRequest,
+				errors.New("every service needs a project and a name")
 		}
 		key := svc.Project + "/" + svc.Service
 		// The restart generation belongs to the running service, not to the
@@ -651,13 +697,11 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		// lands in front of whoever typed it, but a GitOps sync reaches the
 		// Store through here and never through the CLI.
 		if err := s.publishPorts.Check(svc); err != nil {
-			writeError(w, http.StatusForbidden, err)
-			return
+			return ApplyResponse{}, http.StatusForbidden, err
 		}
 		mut, err := store.PutMutation(store.KindService, key, svc)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
+			return ApplyResponse{}, http.StatusInternalServerError, err
 		}
 		muts = append(muts, mut)
 		applied = append(applied, key)
@@ -665,8 +709,8 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 
 	for _, pipeline := range req.Pipelines {
 		if pipeline.Project == "" {
-			writeError(w, http.StatusBadRequest, errors.New("every pipeline config needs a project"))
-			return
+			return ApplyResponse{}, http.StatusBadRequest,
+				errors.New("every pipeline config needs a project")
 		}
 		// Merged rather than replaced: LastCommit and LastSyncAt belong to the
 		// sync loop, and an apply that overwrote them with zero values would
@@ -678,8 +722,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		}
 		mut, err := store.PutMutation(store.KindProject, pipeline.Project, merged)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
+			return ApplyResponse{}, http.StatusInternalServerError, err
 		}
 		muts = append(muts, mut)
 	}
@@ -688,8 +731,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	// sees half a deploy.
 	index, err := s.store.Apply(r.Context(), muts...)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+		return ApplyResponse{}, http.StatusInternalServerError, err
 	}
 	s.wake()
 	auditTarget(r, strings.Join(applied, ","))
@@ -701,7 +743,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		s.emit(notify.EventDeploySucceeded, project, service, "applied desired state")
 	}
 	s.log.Info("applied services", "services", applied, "index", index)
-	writeJSON(w, http.StatusOK, ApplyResponse{Applied: applied, Index: index})
+	return ApplyResponse{Applied: applied, Index: index}, 0, nil
 }
 
 // emit publishes a notification event, if the daemon has a dispatcher.

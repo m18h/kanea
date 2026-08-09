@@ -67,6 +67,12 @@ type Health struct {
 	// a caller on the socket is the local root of §13.1.
 	Listen string `json:"listen,omitempty"`
 	TLS    bool   `json:"tls,omitempty"`
+	// PID, StartedAt and UptimeSeconds describe the process (v1.38). Both the
+	// start time and the elapsed seconds ride together so a client can render
+	// "up 41d 6h" without trusting its own clock to agree with the daemon's.
+	PID           int       `json:"pid"`
+	StartedAt     time.Time `json:"started_at"`
+	UptimeSeconds int64     `json:"uptime_seconds"`
 }
 
 // ApplyRequest replaces the desired state of the services it names. Services

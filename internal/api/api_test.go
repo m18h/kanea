@@ -127,6 +127,36 @@ func TestHealth(t *testing.T) {
 	if got.Status != "ok" || got.Version != "test" {
 		t.Errorf("health = %+v", got)
 	}
+	if got.PID != os.Getpid() {
+		t.Errorf("pid = %d, want %d", got.PID, os.Getpid())
+	}
+}
+
+func TestHealthReportsUptimeFromTheInjectedClock(t *testing.T) {
+	// The construction-time reading becomes started_at; the request-time
+	// reading is 90 s later. Both fields ride together so a client can render
+	// uptime without trusting its own clock to agree with the daemon's.
+	t0 := time.Date(2026, 8, 9, 4, 10, 0, 0, time.UTC)
+	calls := 0
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		cfg.Now = func() time.Time {
+			calls++
+			if calls == 1 {
+				return t0
+			}
+			return t0.Add(90 * time.Second)
+		}
+	})
+	got, err := h.client.Health(context.Background())
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if !got.StartedAt.Equal(t0) {
+		t.Errorf("started_at = %v, want %v", got.StartedAt, t0)
+	}
+	if got.UptimeSeconds != 90 {
+		t.Errorf("uptime_seconds = %d, want 90", got.UptimeSeconds)
+	}
 }
 
 func TestApplyAndListServices(t *testing.T) {

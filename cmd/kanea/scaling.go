@@ -357,7 +357,11 @@ type metricsSettings struct {
 	edgeURL       string
 	// flows is the datapath's east-west counter view; nil in netns mode,
 	// which has no counters.
-	flows     scaling.FlowSource
+	flows scaling.FlowSource
+	// node is the shared procfs reader — the same instance the API serves
+	// point-in-time stats from, because CPU percent is a delta and two readers
+	// would split the sample history between them (v1.38).
+	node      *scaling.NodeReader
 	interval  time.Duration
 	autoscale bool
 	store     store.Store
@@ -427,6 +431,24 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 		logger.Info("east-west metrics are disabled",
 			"detail", "the netns network mode has no datapath counters; "+
 				"flows_per_second and drops_per_second rules will never fire")
+	}
+
+	// Node CPU and memory history (v1.38): two series so the dashboard's
+	// utilisation sparklines can be seeded, recorded at the same cadence as
+	// every other scrape. A nil reading records nothing — a gap, never a zero.
+	if cfg.node != nil {
+		go func() {
+			ticker := time.NewTicker(cfg.interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+				scaling.RecordNode(cfg.metrics, cfg.node.Read())
+			}
+		}()
 	}
 
 	// Sweeping is housekeeping: Forget covers the services that leave cleanly,

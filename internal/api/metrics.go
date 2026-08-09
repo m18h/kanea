@@ -21,10 +21,14 @@ import (
 // Prometheus server scrapes it with a viewer token.
 const PathMetrics = "/v1/metrics"
 
-// MetricsSource is the slice of the metrics store the exporter needs.
+// MetricsSource is the slice of the metrics store the exporter and the
+// history route need.
 type MetricsSource interface {
 	Subjects(metric string) []string
 	Latest(key scaling.Key) (scaling.Point, bool)
+	// Range serves /v1/stats/history (v1.38): sparse points, oldest first —
+	// an unwritten slot is simply not in the slice, never a zero.
+	Range(key scaling.Key, from, to time.Time) []scaling.Point
 	Len() int
 	Dropped() int64
 }
