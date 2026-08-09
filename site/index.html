@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kanea — container orchestration in one binary</title>
-<meta name="description" content="Kanea is a single-binary container orchestration platform: containerd for the runtime, its own eBPF datapath for the network, Let's Encrypt for TLS, and no Kubernetes at any layer.">
+<meta name="description" content="Kanea is a single-binary container orchestration platform: containerd for the runtime, its own eBPF datapath for the network, Let's Encrypt for TLS — no Kubernetes required.">
 <meta property="og:title" content="Kanea">
 <meta property="og:description" content="Container orchestration in one binary. eBPF-native, Kubernetes-free.">
 <meta property="og:type" content="website">
@@ -51,8 +51,8 @@
       <p class="sub">
         Kanea runs your services on <b>containerd</b>, networks them with <b>its own eBPF datapath</b>,
         terminates TLS with <b>Let's Encrypt</b>, and ships a live dashboard, an MCP server,
-        GitOps pipelines and encrypted S3 backups. One static binary. No Kubernetes anywhere —
-        not underneath, not for the CNI, not for the load balancer.
+        GitOps pipelines and encrypted S3 backups. One static binary, with no Kubernetes
+        required — not underneath, not for the CNI, not for the load balancer.
       </p>
 
       <div class="cmd">
@@ -345,7 +345,6 @@ sudo install -m 0755 kanea /usr/local/bin/kanea</pre>
             <tr><td>Kernel</td><td><code>≥ 5.10</code>, cgroups v2 unified hierarchy</td></tr>
             <tr><td>Init system</td><td>systemd</td></tr>
             <tr><td>Clock</td><td>NTP-synchronised</td></tr>
-            <tr><td>Kubernetes</td><td>none, at any layer</td></tr>
           </tbody>
         </table>
       </div>
