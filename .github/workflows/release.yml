@@ -53,8 +53,9 @@ jobs:
         run: |
           make tools
           # Not in `make tools` (locally it comes from a package manager), but
-          # it is a Go module and the runner has the toolchain already.
-          go install github.com/gitleaks/gitleaks/v8@latest
+          # it is a Go module and the runner has the toolchain already. The
+          # module still declares the pre-org-move path, hence zricethezav.
+          go install github.com/zricethezav/gitleaks/v8@latest
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
       - name: Gates
         run: make check
