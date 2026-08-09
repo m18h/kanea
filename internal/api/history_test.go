@@ -133,7 +133,9 @@ func TestHistoryNodeViewServesTheRecordedNodeSeries(t *testing.T) {
 	}
 }
 
-func TestHistoryRefusesHalfAServiceName(t *testing.T) {
+func TestHistoryRefusesBadParameters(t *testing.T) {
+	// One harness for all three refusals: the harness is the expensive part
+	// (bcrypt under -race), and these cases share everything but the query.
 	h := newAuthHarness(t, withMetrics(func(*scaling.Metrics) {}))
 	if status, _ := getHistory(t, h, "?project=shop"); status != http.StatusBadRequest {
 		t.Errorf("project without service = %d, want 400", status)
@@ -141,10 +143,6 @@ func TestHistoryRefusesHalfAServiceName(t *testing.T) {
 	if status, _ := getHistory(t, h, "?service=web"); status != http.StatusBadRequest {
 		t.Errorf("service without project = %d, want 400", status)
 	}
-}
-
-func TestHistoryRefusesAGarbageWindow(t *testing.T) {
-	h := newAuthHarness(t, withMetrics(func(*scaling.Metrics) {}))
 	if status, _ := getHistory(t, h, "?window=yesterday"); status != http.StatusBadRequest {
 		t.Errorf("garbage window = %d, want 400", status)
 	}

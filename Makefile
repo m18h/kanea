@@ -17,7 +17,7 @@ build: ## Build the kanea binary into ./bin
 
 .PHONY: test
 test: ## Run all tests with the race detector
-	$(GO) test ./... -race -count=1
+	$(GO) test ./... -race -count=1 -timeout 20m
 
 .PHONY: vet
 vet: ## go vet

@@ -30,7 +30,10 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test (race)
-        run: go test ./... -race -count=1
+        # An explicit timeout: internal/api under -race sits near Go's implicit
+        # 10-minute per-package default on hosted runners, and a suite that
+        # grows must fail on a real regression, not on the clock.
+        run: go test ./... -race -count=1 -timeout 20m
 
   s3-interop:
     # The S3 client is hand-written (PRD v1.27), and a fake server that does not
