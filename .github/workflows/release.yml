@@ -49,6 +49,13 @@ jobs:
       # `make check` includes the dashboard build, which is what go:embed picks
       # up — so it has to run before the binaries are built, not merely before
       # they are published.
+      - name: Install gate tools
+        run: |
+          make tools
+          # Not in `make tools` (locally it comes from a package manager), but
+          # it is a Go module and the runner has the toolchain already.
+          go install github.com/gitleaks/gitleaks/v8@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
       - name: Gates
         run: make check
 
@@ -82,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           tar -C dist -xzf "dist/kanea_${VERSION#v}_linux_amd64.tar.gz"
-          sudo ./dist/kanea install --only containerd,runc,cni-plugins
+          sudo ./dist/kanea install --only containerd,runc
           sudo systemctl daemon-reload
           sudo systemctl enable --now kanea-containerd.service
           for arch in amd64 arm64; do
