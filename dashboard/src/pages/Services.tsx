@@ -1,17 +1,31 @@
 import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { PageHeader } from '@/components/PageHeader'
+import { StatusDot } from '@/components/StatusDot'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import {
   Topic,
   allocsResponseSchema,
   servicesResponseSchema,
+  statsSampleSchema,
   type Alloc,
   type Service,
 } from '@/lib/api'
-import { allocStateVariant, groupAllocs } from '@/lib/state'
+import {
+  formatBytes,
+  formatMetric,
+  groupAllocs,
+  serviceHealth,
+  serviceStatusTone,
+} from '@/lib/state'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
+
+/** When a service declares no p95 target, red starts here. */
+const defaultP95AlarmMs = 500
 
 /** Services lists what is declared and how much of it is actually running. */
 export function Services() {
@@ -19,90 +33,152 @@ export function Services() {
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
 
   const list = services.data?.services ?? []
+  const byService = groupAllocs(allocs.data?.allocs ?? [])
   const pager = usePagination(list)
 
-  if (services.error) {
-    return <Panel title="Services">{services.error}</Panel>
-  }
-  if (!services.connected) {
-    return <Panel title="Services">Connecting…</Panel>
-  }
-
-  if (list.length === 0) {
-    return <Panel title="Services">Nothing deployed yet.</Panel>
-  }
-
-  const byService = groupAllocs(allocs.data?.allocs ?? [])
+  const allocCount = allocs.data?.allocs?.length ?? 0
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Services</CardTitle>
-      </CardHeader>
-      <CardContent className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase text-muted-foreground">
-            <tr>
-              <th className="pb-2 pr-4 font-medium">Service</th>
-              <th className="pb-2 pr-4 font-medium">Image</th>
-              <th className="pb-2 pr-4 font-medium">Running</th>
-              <th className="pb-2 font-medium">Allocs</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pager.pageItems.map((svc) => (
-              <ServiceRow
-                key={`${svc.Project}/${svc.Service}`}
-                service={svc}
-                allocs={byService.get(`${svc.Project}/${svc.Service}`) ?? []}
-              />
-            ))}
-          </tbody>
-        </table>
-        <PaginationControls state={pager} />
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      <PageHeader
+        title="Services"
+        subtitle={`${list.length} service${list.length === 1 ? '' : 's'} · ${allocCount} alloc${allocCount === 1 ? '' : 's'}`}
+        actions={
+          <Link to="/services/new">
+            <Button className="font-semibold">Deploy service</Button>
+          </Link>
+        }
+      />
+
+      {services.error ? (
+        <Card className="p-4 text-sm text-destructive">{services.error}</Card>
+      ) : !services.connected ? (
+        <Card className="p-4 text-sm text-muted-foreground">Connecting…</Card>
+      ) : list.length === 0 ? (
+        <Card className="p-4 text-sm text-muted-foreground">Nothing deployed yet.</Card>
+      ) : (
+        <Card className="py-2">
+          <Table>
+            <THead>
+              <tr>
+                <TH className="pt-2">Service</TH>
+                <TH className="pt-2">Status</TH>
+                <TH className="pt-2">Allocs</TH>
+                <TH className="pt-2">CPU</TH>
+                <TH className="pt-2">Mem</TH>
+                <TH className="pt-2">RPS</TH>
+                <TH className="pt-2">P95</TH>
+                <TH className="pt-2">Autoscale</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {pager.pageItems.map((svc) => (
+                <ServiceRow
+                  key={`${svc.Project}/${svc.Service}`}
+                  service={svc}
+                  allocs={byService.get(`${svc.Project}/${svc.Service}`) ?? []}
+                />
+              ))}
+            </TBody>
+          </Table>
+          <div className="px-3">
+            <PaginationControls state={pager} />
+          </div>
+        </Card>
+      )}
+    </div>
   )
 }
 
 function ServiceRow({ service, allocs }: { service: Service; allocs: Alloc[] }) {
-  const running = allocs.filter((a) => a.State === 'running').length
+  const running = allocs.filter((a) => a.state === 'running').length
+  const status = serviceStatusTone(serviceHealth(service, allocs))
+  const metrics = service.Scaling?.metrics ?? []
 
   return (
-    <tr className="border-t border-border/60">
-      <td className="py-2 pr-4">
-        <Link
-          to={`/services/${service.Project}/${service.Service}`}
-          className="font-mono text-xs hover:underline"
-        >
-          {service.Project}/{service.Service}
+    <TR>
+      <TD>
+        <Link to={`/services/${service.Project}/${service.Service}`} className="group block">
+          <span className="font-medium group-hover:underline">
+            {service.Project}/{service.Service}
+          </span>
+          {/* Every value here comes from a job spec and is rendered as text. */}
+          <span className="block font-mono text-xs text-muted-foreground">{service.Image}</span>
         </Link>
-      </td>
-      {/* Every value here comes from a job spec and is rendered as text. */}
-      <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">{service.Image}</td>
-      <td className="py-2 pr-4">
-        <Badge variant={running >= service.Count ? 'ok' : 'warn'}>
-          {running}/{service.Count}
-        </Badge>
-      </td>
-      <td className="flex flex-wrap gap-1 py-2">
-        {allocs.map((alloc) => (
-          <Badge key={alloc.ID} variant={allocStateVariant(alloc.State)}>
-            {alloc.Index}: {alloc.State}
+      </TD>
+      <TD>
+        <StatusDot tone={status.tone} label={status.word} />
+      </TD>
+      <TD className="font-mono tabular-nums">
+        {running}/{service.Count}
+      </TD>
+      <StatsCells project={service.Project} service={service.Service} p95Target={p95Target(service)} />
+      <TD>
+        {metrics.length > 0 ? (
+          <Badge variant="accent" className="font-mono text-[11px]">
+            {metrics.map((m) => m.name).join(' · ')}
           </Badge>
-        ))}
-      </td>
-    </tr>
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">off</span>
+        )}
+      </TD>
+    </TR>
   )
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+/** p95Target is the point where the table paints latency red: a quarter over
+ * the service's own declared target, or a fixed alarm when it declares none. */
+function p95Target(service: Service): number {
+  const rule = service.Scaling?.metrics?.find((m) => m.name === 'p95')
+  return rule ? rule.target * 1.25 : defaultP95AlarmMs
+}
+
+/** memoryText prefers real bytes (summed across allocs) over percent-of-limit,
+ * and a dash over either when nothing was measured. */
+function memoryText(s: { memory?: number | undefined; allocs?: { memory_bytes?: number | undefined }[] | null | undefined } | null): string {
+  const bytes = (s?.allocs ?? []).reduce<number | undefined>(
+    (sum, a) => (a.memory_bytes === undefined ? sum : (sum ?? 0) + a.memory_bytes),
+    undefined,
+  )
+  if (bytes !== undefined) return formatBytes(bytes)
+  if (s?.memory !== undefined) return formatMetric(s.memory, '%')
+  return '—'
+}
+
+/**
+ * StatsCells is per-row so each row holds its own stats subscription. The page
+ * is bounded by pagination (10 by default, at most 100), and every
+ * subscription rides the one shared socket — a bounded cost for live numbers
+ * in the table.
+ */
+function StatsCells({
+  project,
+  service,
+  p95Target,
+}: {
+  project: string
+  service: string
+  p95Target: number
+}) {
+  const stats = useLiveTopic({ topic: Topic.Stats, project, service }, statsSampleSchema)
+  const s = stats.data
+
+  // A dash for a gap, never a zero: "no data" and "no load" are different
+  // facts, and each column renders the difference.
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="text-sm text-muted-foreground">{children}</CardContent>
-    </Card>
+    <>
+      <TD className="font-mono tabular-nums">
+        {s?.cpu === undefined ? '—' : formatMetric(s.cpu, '%')}
+      </TD>
+      <TD className="font-mono tabular-nums">{memoryText(s)}</TD>
+      <TD className="font-mono tabular-nums">{s?.rps === undefined ? '—' : Math.round(s.rps)}</TD>
+      <TD
+        className={`font-mono tabular-nums ${
+          s?.p95_latency_ms !== undefined && s.p95_latency_ms > p95Target ? 'text-status-error' : ''
+        }`}
+      >
+        {s?.p95_latency_ms === undefined ? '—' : formatMetric(s.p95_latency_ms, ' ms')}
+      </TD>
+    </>
   )
 }

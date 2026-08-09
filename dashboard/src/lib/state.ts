@@ -20,13 +20,13 @@ export function allocStateVariant(state: string): NonNullable<BadgeProps['varian
 export function groupAllocs(allocs: Alloc[]): Map<string, Alloc[]> {
   const out = new Map<string, Alloc[]>()
   for (const alloc of allocs) {
-    const key = `${alloc.Project}/${alloc.Service}`
+    const key = `${alloc.project}/${alloc.service}`
     const existing = out.get(key)
     if (existing) existing.push(alloc)
     else out.set(key, [alloc])
   }
   for (const group of out.values()) {
-    group.sort((a, b) => a.Index - b.Index)
+    group.sort((a, b) => a.index - b.index)
   }
   return out
 }
@@ -45,9 +45,9 @@ export interface Health {
  * the window an operator is watching it.
  */
 export function serviceHealth(service: { Count: number }, allocs: Alloc[]): Health {
-  const running = allocs.filter((a) => a.State === 'running').length
-  const backoff = allocs.filter((a) => a.State === 'backoff').length
-  const failed = allocs.filter((a) => a.State === 'failed').length
+  const running = allocs.filter((a) => a.state === 'running').length
+  const backoff = allocs.filter((a) => a.state === 'backoff').length
+  const failed = allocs.filter((a) => a.state === 'failed').length
 
   if (failed > 0) return { label: `${failed} failed`, settled: false }
   if (backoff > 0) return { label: `${backoff} restarting`, settled: false }
@@ -99,6 +99,52 @@ export function groupCodes(codes: Record<string, number> | null | undefined): Co
   return order
     .filter(({ klass }) => totals.has(klass))
     .map(({ klass, variant }) => ({ klass, count: totals.get(klass) ?? 0, variant }))
+}
+
+import type { StatusTone } from '@/components/StatusDot'
+
+/** serviceStatusTone maps a health summary onto the dot + word the mockup
+ * shows: running / scaling / degraded / stopped. */
+export function serviceStatusTone(health: Health): { tone: StatusTone; word: string } {
+  if (health.label.includes('failed') || health.label.includes('restarting')) {
+    return { tone: 'error', word: 'degraded' }
+  }
+  if (health.label === 'stopped') return { tone: 'muted', word: 'stopped' }
+  if (!health.settled) return { tone: 'warn', word: 'scaling' }
+  return { tone: 'ok', word: 'running' }
+}
+
+/** formatUptime renders elapsed seconds the way the mockup header reads:
+ * the two largest units that are non-zero ("41d 6h", "6h 12m", "12m"). */
+export function formatUptime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  const days = Math.floor(seconds / 86_400)
+  const hours = Math.floor((seconds % 86_400) / 3_600)
+  const minutes = Math.floor((seconds % 3_600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m`
+  return `${Math.floor(seconds)}s`
+}
+
+/** relativeAge renders how old a timestamp is in its single largest unit —
+ * the allocs table's AGE column ("41d", "6h", "3m", "0s"). */
+export function relativeAge(iso: string | undefined, now: number = Date.now()): string {
+  if (!iso) return '—'
+  const at = new Date(iso).getTime()
+  if (Number.isNaN(at)) return '—'
+  const seconds = Math.max(0, Math.floor((now - at) / 1000))
+  if (seconds >= 86_400) return `${Math.floor(seconds / 86_400)}d`
+  if (seconds >= 3_600) return `${Math.floor(seconds / 3_600)}h`
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m`
+  return `${seconds}s`
+}
+
+/** formatClock renders a timestamp as the wall-clock time the feed shows. */
+export function formatClock(iso: string): string {
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return iso
+  return at.toLocaleTimeString([], { hour12: false })
 }
 
 /** formatMetric renders a sample the same way everywhere: one decimal while

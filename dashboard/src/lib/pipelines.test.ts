@@ -17,7 +17,7 @@ function run(over: Partial<Run> = {}): Run {
 describe('runStateVariant', () => {
   it('separates finished from in-flight from broken', () => {
     expect(runStateVariant('succeeded')).toBe('ok')
-    expect(runStateVariant('running')).toBe('warn')
+    expect(runStateVariant('running')).toBe('accent')
     expect(runStateVariant('queued')).toBe('warn')
     expect(runStateVariant('failed')).toBe('error')
     expect(runStateVariant('cancelled')).toBe('muted')

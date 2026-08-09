@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Globe } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Mark } from '@/components/Mark'
@@ -47,18 +48,16 @@ export function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
+      <div className="mb-6 flex flex-col items-center gap-3">
+        <Mark size={40} />
+        <h1 className="text-lg font-semibold tracking-tight">Sign in to kanea</h1>
+      </div>
       <Card className="w-full max-w-sm">
-        <CardHeader>
-          <div className="flex items-center gap-2.5">
-            <Mark size={26} />
-            <CardTitle className="text-base">Sign in to Kanea</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="p-5">
           <form className="space-y-4" onSubmit={onSubmit}>
             <div className="space-y-1.5">
-              <Label htmlFor="user">User</Label>
+              <Label htmlFor="user">Username</Label>
               <Input
                 id="user"
                 name="username"
@@ -90,21 +89,27 @@ export function Login() {
               </p>
             ) : null}
 
-            <Button type="submit" className="w-full" disabled={busy}>
+            <Button type="submit" className="w-full font-semibold" disabled={busy}>
               {busy ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
 
           {provider?.start_path ? (
-            <div className="mt-4 space-y-3 border-t pt-4">
+            <div className="mt-4 space-y-4">
+              <div className="flex items-center gap-3">
+                <span aria-hidden className="h-px flex-1 bg-border" />
+                <span className="text-xs text-muted-foreground">or</span>
+                <span aria-hidden className="h-px flex-1 bg-border" />
+              </div>
               {/* A full navigation, not a fetch: the provider answers with a
                   redirect to its own login page, which only the browser can
                   follow. The daemon sets the handle cookie on the way out. */}
               <a
                 href={provider.start_path}
-                className="flex h-9 w-full items-center justify-center rounded-md border text-sm font-medium hover:bg-muted"
+                className="flex h-9 w-full items-center justify-center gap-2 rounded-md border text-sm font-medium transition-colors hover:bg-muted"
               >
-                Sign in with your identity provider
+                <Globe size={15} aria-hidden />
+                Continue with SSO
               </a>
               <p className="text-center text-xs text-muted-foreground">{issuerHost(provider.issuer)}</p>
             </div>

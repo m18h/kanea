@@ -1,114 +1,306 @@
+import { useQuery } from '@tanstack/react-query'
 import { Link } from '@/lib/router'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EventRow } from '@/components/EventRow'
+import { KeyValue } from '@/components/KeyValue'
+import { MetricPanel } from '@/components/MetricPanel'
+import { PageHeader } from '@/components/PageHeader'
+import { StatTile } from '@/components/StatTile'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
-import { Topic, allocsResponseSchema, servicesResponseSchema } from '@/lib/api'
-import { groupAllocs, serviceHealth } from '@/lib/state'
-import { usePagination } from '@/hooks/usePagination'
-import { PaginationControls } from '@/components/Pagination'
+import { seedFromHistory, useSeries } from '@/hooks/useSeries'
+import {
+  Topic,
+  allocsResponseSchema,
+  fetchBackups,
+  fetchEvents,
+  fetchHealth,
+  fetchNodeStats,
+  fetchRuns,
+  fetchStatsHistory,
+  servicesResponseSchema,
+  type NodeStats,
+  type StatsHistory,
+} from '@/lib/api'
+import { isStale, replicationLag } from '@/lib/backups'
+import { parseScaleDecision, type ScaleDecision } from '@/lib/events'
+import {
+  formatBytes,
+  formatClock,
+  formatUptime,
+  groupAllocs,
+  serviceHealth,
+} from '@/lib/state'
 
 /**
- * Overview is the "should I worry" page.
- *
- * PRD §12.2 also wants node CPU/memory/disk/network charts here. Those metrics
- * do not exist yet — the metrics pipeline is M6 — so the page shows what is
- * genuinely known rather than empty axes that imply the data is missing rather
- * than not yet collected.
+ * The Dashboard is the "should I worry" page: counts, node utilisation, the
+ * last few events, the autoscaler's recent decisions, and backup health.
  */
 export function Overview() {
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
 
-  const list = services.data?.services ?? []
-  const byService = groupAllocs(allocs.data?.allocs ?? [])
-
-  const summary = list.map((svc) => {
-    const key = `${svc.Project}/${svc.Service}`
-    return { key, service: svc, health: serviceHealth(svc, byService.get(key) ?? []) }
+  const health = useQuery({
+    queryKey: ['health'],
+    queryFn: ({ signal }) => fetchHealth(signal),
+    refetchInterval: 10_000,
   })
 
-  const unsettled = summary.filter((s) => !s.health.settled)
-  const projects = new Set(list.map((s) => s.Project))
+  const node = useQuery({
+    queryKey: ['node-stats'],
+    queryFn: ({ signal }) => fetchNodeStats(signal),
+    refetchInterval: 10_000,
+  })
 
-  // Unsettled services sort first: this is the "should I worry" page, and the
-  // thing to worry about must never be on page two. Within each group the
-  // spec order is kept, so the list does not shuffle as things converge.
-  const ordered = [...unsettled, ...summary.filter((s) => s.health.settled)]
-  const pager = usePagination(ordered)
+  const runs = useQuery({
+    queryKey: ['runs'],
+    queryFn: ({ signal }) => fetchRuns({ limit: 200 }, signal),
+    refetchInterval: 15_000,
+  })
+
+  const events = useQuery({
+    queryKey: ['events', ''],
+    queryFn: ({ signal }) => fetchEvents({ limit: 200 }, signal),
+    refetchInterval: 5_000,
+  })
+
+  const backups = useQuery({
+    queryKey: ['backups'],
+    queryFn: ({ signal }) => fetchBackups(signal),
+    refetchInterval: 30_000,
+  })
+
+  // Seed once; the poll takes over from where the history ends.
+  const seed = useQuery({
+    queryKey: ['stats-history', 'node'],
+    queryFn: ({ signal }) => fetchStatsHistory('node', signal),
+    staleTime: Infinity,
+    retry: false,
+  })
+
+  const list = services.data?.services ?? []
+  const byService = groupAllocs(allocs.data?.allocs ?? [])
+  const healthy = list.filter(
+    (svc) => serviceHealth(svc, byService.get(`${svc.Project}/${svc.Service}`) ?? []).settled,
+  ).length
+
+  const allAllocs = allocs.data?.allocs ?? []
+  const running = allAllocs.filter((a) => a.state === 'running').length
+
+  const building = (runs.data ?? []).filter((r) => r.state === 'running').length
+
+  const feed = events.data?.events ?? []
+  const dayAgo = (events.dataUpdatedAt || 0) - 24 * 60 * 60 * 1000
+  const recent = feed.filter((e) => Date.parse(e.at) >= dayAgo)
+  const warns = recent.filter((e) => e.severity === 'warning').length
+  const errors = recent.filter((e) => e.severity === 'error').length
+
+  const decisions = feed
+    .map(parseScaleDecision)
+    .filter((d): d is ScaleDecision => d !== null)
+    .slice(0, 4)
+
+  const subtitle = [
+    'single binary',
+    health.data?.pid !== undefined ? `pid ${health.data.pid}` : null,
+    health.data?.uptime_seconds !== undefined
+      ? `up ${formatUptime(health.data.uptime_seconds)}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Stat label="Projects" value={projects.size} />
-        <Stat label="Services" value={list.length} />
-        <Stat
-          label="Needing attention"
-          value={unsettled.length}
-          variant={unsettled.length === 0 ? 'ok' : 'warn'}
+      <PageHeader title="Dashboard" subtitle={subtitle} />
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile label="Services" value={list.length} sub={`${healthy} healthy`} />
+        <StatTile label="Allocations" value={allAllocs.length} sub={`${running} running`} />
+        <StatTile
+          label="Builds"
+          value={building}
+          tone={building > 0 ? 'primary' : 'default'}
+          sub={building > 0 ? 'slot 1/1 in use' : 'slot 0/1 · idle'}
+        />
+        <StatTile
+          label="Events / 24h"
+          value={recent.length}
+          sub={`${warns} warn · ${errors} error`}
         />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Service health</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!services.connected ? (
-            <p className="text-sm text-muted-foreground">Connecting…</p>
-          ) : summary.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing deployed yet.</p>
-          ) : (
-            <>
-              <ul className="space-y-1">
-                {pager.pageItems.map(({ key, service, health }) => (
-                  <li key={key} className="flex items-center justify-between gap-3 py-1">
-                    <Link
-                      to={`/services/${service.Project}/${service.Service}`}
-                      className="font-mono text-xs hover:underline"
-                    >
-                      {key}
-                    </Link>
-                    <Badge variant={health.settled ? 'ok' : 'warn'}>{health.label}</Badge>
-                  </li>
-                ))}
-              </ul>
-              <PaginationControls state={pager} />
-            </>
-          )}
-        </CardContent>
-      </Card>
+      <div className="grid gap-4 lg:grid-cols-5">
+        <UtilisationCard node={node.data} history={seed.data ?? null} />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Node metrics</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            CPU, memory, disk and network charts arrive with the metrics pipeline (M6).
-          </p>
-        </CardContent>
-      </Card>
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardTitle>Recent events</CardTitle>
+            <Link to="/events" className="font-mono text-xs text-primary hover:underline">
+              view all →
+            </Link>
+          </CardHeader>
+          <CardContent>
+            {feed.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nothing has happened yet.</p>
+            ) : (
+              feed.slice(0, 5).map((e) => <EventRow key={e.id} event={e} />)
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Autoscaler decisions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {node.data?.breaker_open ? (
+              <p className="pb-2 text-sm text-status-error">
+                The circuit breaker is open: scaling and rollouts are paused.
+              </p>
+            ) : null}
+            {decisions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No scaling decisions recently.</p>
+            ) : (
+              decisions.map((d) => (
+                <div
+                  key={`${d.service}-${d.at}`}
+                  className="flex items-baseline gap-3 border-b border-border/50 py-2 text-sm last:border-0"
+                >
+                  <span className="shrink-0 font-mono">{d.service}</span>
+                  {d.from !== undefined && d.to !== undefined ? (
+                    <span
+                      className={`shrink-0 font-mono tabular-nums ${
+                        d.direction === 'up' ? 'text-status-ok' : 'text-status-info'
+                      }`}
+                    >
+                      {d.from} → {d.to}
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 truncate text-muted-foreground">{d.reason}</span>
+                  <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                    {formatClock(d.at)}
+                  </span>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardTitle>Backups</CardTitle>
+            {backups.data?.replication ? (
+              <span
+                className={`font-mono text-xs ${
+                  isStale(backups.data.replication.last_segment_at)
+                    ? 'text-status-error'
+                    : 'text-status-ok'
+                }`}
+              >
+                CDC lag {replicationLag(backups.data.replication.last_segment_at)}
+              </span>
+            ) : null}
+          </CardHeader>
+          <CardContent>
+            {backups.data === null ? (
+              <p className="text-sm text-status-error">
+                No backup destination is configured. This node's state exists only on its
+                own disk.
+              </p>
+            ) : backups.data ? (
+              <>
+                <KeyValue label="Last archive" mono>
+                  {backups.data.backups[0]
+                    ? `${backups.data.backups[0].id} · ${formatBytes(backups.data.backups[0].snapshot.size)}`
+                    : 'none yet'}
+                </KeyValue>
+                <KeyValue label="S3 replication" mono>
+                  {backups.data.replication.failures > 0 ? (
+                    <span className="text-status-error">
+                      {backups.data.replication.failures} failure(s)
+                    </span>
+                  ) : isStale(backups.data.replication.last_segment_at) ? (
+                    <span className="text-status-error">stale</span>
+                  ) : (
+                    <span className="text-status-ok">in sync</span>
+                  )}
+                </KeyValue>
+                <KeyValue label="Encryption" mono>
+                  AEAD · xchacha20-poly1305
+                </KeyValue>
+                <KeyValue label="Archives retained" mono>
+                  {backups.data.backups.length}
+                </KeyValue>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
 
-function Stat({
-  label,
-  value,
-  variant,
+/**
+ * UtilisationCard is the node's own numbers (procfs, polled every 10 s), each
+ * accumulated into a sparkline client-side. CPU and memory are pinned to 100
+ * so a flat 2% line and a flat 90% one cannot look the same.
+ */
+function UtilisationCard({
+  node,
+  history,
 }: {
-  label: string
-  value: number
-  variant?: 'ok' | 'warn'
+  node: NodeStats | undefined
+  history: StatsHistory | null
 }) {
+  const machine = node?.node
+  const at = machine?.at ?? node?.at ?? ''
+  const cpu = useSeries(
+    machine?.cpu_percent,
+    at,
+    history ? seedFromHistory(history, 'cpu') : undefined,
+  )
+  const memory = useSeries(
+    machine?.memory_percent,
+    at,
+    history ? seedFromHistory(history, 'memory') : undefined,
+  )
+  const load = useSeries(machine?.load1, at)
+  const runningSeries = useSeries(node?.running, node?.at ?? '')
+
+  const memoryText =
+    machine?.memory_total_bytes !== undefined && machine.memory_available_bytes !== undefined
+      ? `${formatBytes(machine.memory_total_bytes - machine.memory_available_bytes)} / ${formatBytes(machine.memory_total_bytes)}`
+      : undefined
+
   return (
-    <Card>
-      <CardContent className="pt-4">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-        <div className="mt-1 flex items-baseline gap-2">
-          <span className="text-2xl font-semibold tabular-nums">{value}</span>
-          {variant ? <Badge variant={variant}>{variant === 'ok' ? 'all settled' : 'check'}</Badge> : null}
-        </div>
+    <Card className="lg:col-span-3">
+      <CardHeader className="flex-row items-baseline justify-between space-y-0">
+        <CardTitle>Server utilisation</CardTitle>
+        <span className="font-mono text-xs text-muted-foreground">procfs · 10s poll</span>
+      </CardHeader>
+      <CardContent className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+        <MetricPanel label="CPU" unit="%" points={cpu} max={100} latest={machine?.cpu_percent} tone={1} />
+        <MetricPanel
+          label="Memory"
+          unit="%"
+          points={memory}
+          max={100}
+          latest={machine?.memory_percent}
+          {...(memoryText !== undefined ? { valueText: memoryText } : {})}
+          tone={2}
+        />
+        <MetricPanel label="Load 1m" unit="" points={load} latest={machine?.load1} tone={3} />
+        <MetricPanel
+          label="Allocs running"
+          unit=""
+          points={runningSeries}
+          latest={node?.running}
+          tone={4}
+        />
       </CardContent>
     </Card>
   )

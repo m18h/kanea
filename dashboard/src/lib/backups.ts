@@ -46,3 +46,19 @@ export function when(iso: string | undefined): string {
   if (!iso) return 'never'
   return formatTime(iso)
 }
+
+/**
+ * replicationLag renders how far behind the sink is, derived from the last
+ * shipped segment — there is no lag field on the wire, and pretending to
+ * sub-second precision would be inventing a number. Segments ship about once
+ * a minute, so a healthy node reads in seconds-to-minutes.
+ */
+export function replicationLag(last: string | undefined, now: number = Date.now()): string {
+  if (!last) return 'never'
+  const at = new Date(last).getTime()
+  if (Number.isNaN(at)) return 'never'
+  const seconds = Math.max(0, Math.floor((now - at) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)}m`
+  return `${Math.floor(seconds / 3_600)}h`
+}

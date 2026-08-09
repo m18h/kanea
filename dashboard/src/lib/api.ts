@@ -36,6 +36,15 @@ export const publishSchema = z.object({
   MaxConns: z.number().optional(),
 })
 
+// The declared autoscaling policy (§9.2). The outer key is PascalCase because
+// Desired's field is untagged; the inner fields carry json tags.
+export const scalingPolicySchema = z.object({
+  min: z.number(),
+  max: z.number(),
+  metrics: z.array(z.object({ name: z.string(), target: z.number() })).nullish(),
+  cooldown: z.string().optional(),
+})
+
 export const serviceSchema = z.object({
   Project: z.string(),
   Service: z.string(),
@@ -45,21 +54,31 @@ export const serviceSchema = z.object({
   Expose: exposeSchema.nullish(),
   Publish: z.array(publishSchema).nullish(),
   DependsOn: z.array(z.string()).nullish(),
+  Scaling: scalingPolicySchema.nullish(),
 })
 
 export const servicesResponseSchema = z.object({
   services: z.array(serviceSchema).nullish(),
 })
 
+// AllocRecord marshals with lowercase json tags (internal/reconciler/types.go),
+// unlike Desired whose untagged fields ride as PascalCase. The distinction is
+// the Go structs', not ours — match it field for field.
 export const allocSchema = z.object({
-  ID: z.string(),
-  Project: z.string(),
-  Service: z.string(),
-  Index: z.number(),
-  State: z.string(),
-  Image: z.string().optional(),
-  Restarts: z.number().optional(),
-  ExitCode: z.number().optional(),
+  id: z.string(),
+  project: z.string(),
+  service: z.string(),
+  index: z.number(),
+  state: z.string(),
+  image: z.string().optional(),
+  restarts: z.number().optional(),
+  last_exit_code: z.number().optional(),
+  last_exit_at: z.string().optional(),
+  healthy: z.boolean().optional(),
+  health_message: z.string().optional(),
+  last_probe_at: z.string().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
 })
 
 export const allocsResponseSchema = z.object({
@@ -90,6 +109,11 @@ export const healthSchema = z.object({
   store_index: z.number(),
   ws_connections: z.number(),
   oidc: oidcStatusSchema.nullish(),
+  // Optional so the dashboard also renders against a pre-v1.38 daemon, which
+  // simply has no uptime to report.
+  pid: z.number().optional(),
+  started_at: z.string().optional(),
+  uptime_seconds: z.number().optional(),
 })
 
 export type Service = z.infer<typeof serviceSchema>
@@ -405,6 +429,154 @@ export async function fetchEvents(
   return eventsResponseSchema.parse(await resp.json())
 }
 
+// ---- node stats (PRD §17) ----
+
+/**
+ * The machine's own numbers. Every metric is optional because the reader
+ * reports nothing rather than a made-up figure — the first CPU read has no
+ * delta to compute from, and procfs may be unreadable entirely.
+ */
+export const nodeMachineSchema = z.object({
+  cpu_percent: z.number().optional(),
+  load1: z.number().optional(),
+  load5: z.number().optional(),
+  load15: z.number().optional(),
+  memory_total_bytes: z.number().optional(),
+  memory_available_bytes: z.number().optional(),
+  memory_percent: z.number().optional(),
+  cores: z.number(),
+  at: z.string(),
+})
+
+export const nodeStatsSchema = z.object({
+  version: z.string(),
+  projects: z.number(),
+  services: z.number(),
+  allocs: z.number(),
+  running: z.number(),
+  unhealthy: z.number(),
+  failed: z.number(),
+  metrics: z.object({ series: z.number(), dropped: z.number() }).nullish(),
+  breaker_open: z.boolean(),
+  events_dropped: z.number().optional(),
+  node: nodeMachineSchema.nullish(),
+  at: z.string(),
+})
+
+export type NodeStats = z.infer<typeof nodeStatsSchema>
+
+/** Fetch the node summary: declared counts, alloc states, machine stats. */
+export async function fetchNodeStats(signal?: AbortSignal): Promise<NodeStats> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch('/v1/stats', init)
+  if (!resp.ok) throw new Error(`stats: ${resp.status}`)
+  return nodeStatsSchema.parse(await resp.json())
+}
+
+// ---- stats history (PRD §9.1, v1.38) ----
+
+export const historyPointSchema = z.object({
+  at: z.string(),
+  value: z.number(),
+})
+
+export const statsHistorySchema = z.object({
+  subject: z.string(),
+  from: z.string(),
+  to: z.string(),
+  interval_seconds: z.number(),
+  // Sparse: a gap is an absent point, never a zero. The interval is what lets
+  // the client rebuild fixed slots and put the gaps back.
+  series: z.record(z.string(), z.array(historyPointSchema).nullable()),
+})
+
+export type StatsHistory = z.infer<typeof statsHistorySchema>
+
+/**
+ * Fetch a metric history for seeding sparklines. Returns null when the daemon
+ * predates the route or has no metrics store — the charts then simply start
+ * empty and accumulate live, exactly as they did before v1.38.
+ */
+export async function fetchStatsHistory(
+  target: { project: string; service: string } | 'node',
+  signal?: AbortSignal,
+): Promise<StatsHistory | null> {
+  const suffix =
+    target === 'node' ? '' : `?project=${enc(target.project)}&service=${enc(target.service)}`
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch(`/v1/stats/history${suffix}`, init)
+  if (resp.status === 404 || resp.status === 503) return null
+  if (!resp.ok) throw new Error(`history: ${resp.status}`)
+  return statsHistorySchema.parse(await resp.json())
+}
+
+// ---- projects (PRD §12.2) ----
+
+export const projectGitSchema = z.object({
+  url: z.string(),
+  branch: z.string().optional(),
+  path: z.string().optional(),
+  last_commit: z.string().optional(),
+  last_sync_at: z.string().optional(),
+})
+
+export const projectSummarySchema = z.object({
+  name: z.string(),
+  services: z.number(),
+  allocs: z.number(),
+  running: z.number(),
+  git: projectGitSchema.nullish(),
+  // Channel names only, never tokens — which is also all the routing hint on
+  // the Events page needs.
+  notifications: z.array(z.string()).nullish(),
+})
+
+export const projectsResponseSchema = z.object({
+  projects: z.array(projectSummarySchema).nullish(),
+})
+
+export type ProjectSummary = z.infer<typeof projectSummarySchema>
+
+/** List projects with their git and notification facts. */
+export async function fetchProjects(signal?: AbortSignal): Promise<ProjectSummary[]> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch('/v1/projects', init)
+  if (!resp.ok) throw new Error(`projects: ${resp.status}`)
+  return projectsResponseSchema.parse(await resp.json()).projects ?? []
+}
+
+// ---- audit log (PRD §13.3, §14 A09) ----
+
+export const auditEntrySchema = z.object({
+  id: z.string(),
+  time: z.string(),
+  actor: z.string().optional(),
+  role: z.string().optional(),
+  via: z.string().optional(),
+  action: z.string(),
+  target: z.string().optional(),
+  result: z.string(),
+  status: z.number().optional(),
+  source: z.string().optional(),
+  detail: z.string().optional(),
+})
+
+export const auditResponseSchema = z.object({
+  entries: z.array(auditEntrySchema).nullish(),
+  next_after: z.string().optional(),
+  more: z.boolean().optional(),
+})
+
+export type AuditEntry = z.infer<typeof auditEntrySchema>
+
+/** Read the audit log, newest first. Admin-only at the daemon. */
+export async function fetchAudit(limit: number, signal?: AbortSignal): Promise<AuditEntry[]> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch(`/v1/audit?limit=${limit}`, init)
+  if (!resp.ok) throw new Error(`audit: ${resp.status}`)
+  return auditResponseSchema.parse(await resp.json()).entries ?? []
+}
+
 // ---- backups (PRD §15.3) ----
 
 export const backupPartSchema = z.object({
@@ -476,4 +648,28 @@ export async function createBackup(reason: string): Promise<void> {
 export async function verifyBackup(id: string): Promise<void> {
   const resp = await fetch(`/v1/backups/${enc(id)}/verify`)
   if (!resp.ok) throw new Error(await refusalText(resp, 'verify'))
+}
+
+export const stageRestoreResponseSchema = z.object({
+  staged: z.boolean(),
+  message: z.string().optional(),
+  at: z.string().optional(),
+})
+
+export type StageRestoreResponse = z.infer<typeof stageRestoreResponseSchema>
+
+/**
+ * Stage a restore for the next daemon start (PRD §15.3).
+ *
+ * Staged, never performed in place: the API has no route that restores a
+ * running node, by design. This writes the request; the daemon acts on it at
+ * its next start, before anything opens the Store.
+ */
+export async function stageRestore(id: string, csrf?: string): Promise<StageRestoreResponse> {
+  const resp = await apiFetch(`/v1/backups/restore`, {
+    method: 'POST',
+    body: { archive: id },
+    ...(csrf ? { csrf } : {}),
+  })
+  return stageRestoreResponseSchema.parse(await resp.json())
 }

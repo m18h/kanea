@@ -1,41 +1,73 @@
 import { useEffect, useRef, useState } from 'react'
-import { Play, RotateCw, Square } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Pencil, Play, RotateCw, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { BackChip } from '@/components/BackChip'
+import { EventRow } from '@/components/EventRow'
+import { KeyValue } from '@/components/KeyValue'
+import { LogViewer } from '@/components/LogViewer'
+import { MetricPanel } from '@/components/MetricPanel'
+import { PageHeader } from '@/components/PageHeader'
+import { Sparkline } from '@/components/Sparkline'
+import { StatusDot } from '@/components/StatusDot'
 import { useLiveLog, MaxLogLines } from '@/hooks/useLiveLog'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { useSession } from '@/hooks/useSession'
+import { seedFromHistory, useSeries } from '@/hooks/useSeries'
+import { usePagination } from '@/hooks/usePagination'
+import { PaginationControls } from '@/components/Pagination'
+import { Link } from '@/lib/router'
 import {
   Topic,
   allocsResponseSchema,
+  fetchEvents,
+  fetchStatsHistory,
   restartService,
   scaleService,
   servicesResponseSchema,
   statsSampleSchema,
+  type Alloc,
   type AllocStats,
   type EdgeBreakdown,
+  type KaneaEvent,
   type Service,
+  type StatsHistory,
   type StatsSample,
 } from '@/lib/api'
+import { parseScaleDecision } from '@/lib/events'
 import {
   allocStateVariant,
   formatBytes,
-  formatMetric,
+  formatClock,
   groupAllocs,
   groupCodes,
+  relativeAge,
   serviceHealth,
+  serviceStatusTone,
 } from '@/lib/state'
-import { Sparkline } from '@/components/Sparkline'
-import { useSeries } from '@/hooks/useSeries'
-import { usePagination } from '@/hooks/usePagination'
-import { PaginationControls } from '@/components/Pagination'
 
 export function ServiceDetail({ project, service }: { project: string; service: string }) {
-
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
   const stats = useLiveTopic({ topic: Topic.Stats, project, service }, statsSampleSchema)
+
+  const events = useQuery({
+    queryKey: ['events', project],
+    queryFn: ({ signal }) => fetchEvents({ project, limit: 100 }, signal),
+    refetchInterval: 15_000,
+  })
+
+  // Seed once and never refetch: live samples take over from where the
+  // history ends, and re-fetching would splice the same window twice.
+  const seed = useQuery({
+    queryKey: ['stats-history', project, service],
+    queryFn: ({ signal }) => fetchStatsHistory({ project, service }, signal),
+    staleTime: Infinity,
+    retry: false,
+  })
 
   const key = `${project}/${service}`
   const desired = (services.data?.services ?? []).find(
@@ -58,77 +90,96 @@ export function ServiceDetail({ project, service }: { project: string; service: 
   }
 
   const health = desired ? serviceHealth(desired, mine) : null
+  const status = health ? serviceStatusTone(health) : null
+  const myEvents = (events.data?.events ?? []).filter(
+    (e) => !e.service || e.service === service,
+  )
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-          <div className="flex items-center gap-3">
-            <CardTitle className="font-mono">{key}</CardTitle>
-            {health ? <Badge variant={health.settled ? 'ok' : 'warn'}>{health.label}</Badge> : null}
-          </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <BackChip to="/services">Services</BackChip>
+        <PageHeader
+          title={<span className="font-mono">{service}</span>}
+          subtitle={
+            <span className="inline-flex items-center gap-3">
+              {status ? <StatusDot tone={status.tone} label={status.word} /> : null}
+              <span>{desired?.Image ?? ''}</span>
+            </span>
+          }
+        />
+        <div className="ml-auto">
           {desired ? <ServiceActions project={project} service={service} desired={desired} /> : null}
-        </CardHeader>
-        <CardContent className="space-y-1 text-sm">
-          <Field label="Image" value={desired?.Image ?? '—'} mono />
-          <Field label="Desired" value={String(desired?.Count ?? 0)} />
-          {desired?.Expose ? (
-            <Field
-              label="Domains"
-              value={(desired.Expose.Domains ?? []).join(', ') || 'auto-generated'}
-              mono
-            />
-          ) : null}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <StatsPanel sample={stats.data} />
+      <StatsPanel sample={stats.data} history={seed.data ?? null} />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Allocations</CardTitle>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
-          {mine.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No allocations.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="pb-2 pr-4 font-medium">Alloc</th>
-                  <th className="pb-2 pr-4 font-medium">State</th>
-                  <th className="pb-2 pr-4 font-medium">Restarts</th>
-                  <th className="pb-2 pr-4 font-medium">CPU</th>
-                  <th className="pb-2 font-medium">Memory</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allocPager.pageItems.map((alloc) => (
-                  <AllocRow
-                    key={alloc.ID}
-                    id={alloc.ID}
-                    state={alloc.State}
-                    restarts={alloc.Restarts ?? 0}
-                    stats={(stats.data?.allocs ?? []).find((a) => a.alloc_id === alloc.ID)}
-                    at={stats.data?.at ?? ''}
-                  />
-                ))}
-              </tbody>
-            </table>
-          )}
-          <PaginationControls state={allocPager} />
-        </CardContent>
-      </Card>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Allocations</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {mine.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No allocations.</p>
+              ) : (
+                <Table>
+                  <THead>
+                    <tr>
+                      <TH className="pl-0">Allocation</TH>
+                      <TH>State</TH>
+                      <TH>CPU</TH>
+                      <TH>Mem</TH>
+                      <TH>Restarts</TH>
+                      <TH>Age</TH>
+                    </tr>
+                  </THead>
+                  <TBody>
+                    {allocPager.pageItems.map((alloc) => (
+                      <AllocRow
+                        key={alloc.id}
+                        alloc={alloc}
+                        stats={(stats.data?.allocs ?? []).find((a) => a.alloc_id === alloc.id)}
+                        at={stats.data?.at ?? ''}
+                      />
+                    ))}
+                  </TBody>
+                </Table>
+              )}
+              <PaginationControls state={allocPager} />
+            </CardContent>
+          </Card>
 
-      <EdgePanel edge={stats.data?.edge} />
+          <LogPanel project={project} service={service} />
 
-      <LogPanel project={project} service={service} />
+          <EdgePanel edge={stats.data?.edge} />
+        </div>
+
+        <div className="space-y-4">
+          <AutoscalePanel desired={desired} events={myEvents} />
+          <SpecPanel desired={desired} />
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent events</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {myEvents.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nothing recorded yet.</p>
+              ) : (
+                myEvents.slice(0, 5).map((e) => <EventRow key={e.id} event={e} />)
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   )
 }
 
 /**
- * ServiceActions is the lifecycle row: start, stop, restart.
+ * ServiceActions is the lifecycle row: edit spec, start, stop, restart.
  *
  * Stop and start are scales (to zero and back), restart bumps the generation —
  * every button writes desired state and the reconciler converges, so nothing
@@ -187,6 +238,12 @@ function ServiceActions({
           {error}
         </span>
       ) : null}
+      <Link to={`/services/${project}/${service}/edit`}>
+        <Button size="sm" variant="outline">
+          <Pencil size={14} />
+          Edit spec
+        </Button>
+      </Link>
       {stopped ? (
         <Button
           size="sm"
@@ -230,6 +287,119 @@ function ServiceActions({
         </>
       )}
     </div>
+  )
+}
+
+/** AutoscalePanel renders the declared policy and the last decision. */
+function AutoscalePanel({
+  desired,
+  events,
+}: {
+  desired: Service | undefined
+  events: KaneaEvent[]
+}) {
+  const policy = desired?.Scaling
+  const metrics = policy?.metrics ?? []
+  const lastDecision = events.map(parseScaleDecision).find((d) => d !== null)
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle>Autoscale</CardTitle>
+        {metrics.length > 0 ? (
+          <Badge variant="accent" className="font-mono text-[11px]">
+            {metrics.map((m) => m.name).join(' · ')}
+          </Badge>
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">off</span>
+        )}
+      </CardHeader>
+      <CardContent>
+        {metrics.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No scaling rules declared. The count is whatever the spec (or an
+            operator) says.
+          </p>
+        ) : (
+          <>
+            <KeyValue label="Signals" mono>
+              {metrics.map((m) => m.name).join(' · ')}
+            </KeyValue>
+            <KeyValue label="Targets" mono>
+              {metrics.map((m) => `${m.name} ≤ ${m.target}${metricUnit(m.name)}`).join(' · ')}
+            </KeyValue>
+            <KeyValue label="Bounds" mono>
+              min {policy?.min ?? 0} · max {policy?.max ?? 0}
+            </KeyValue>
+            <KeyValue label="Last decision" mono>
+              {lastDecision ? (
+                <span className="text-status-ok">
+                  {lastDecision.from !== undefined && lastDecision.to !== undefined
+                    ? `${lastDecision.from} → ${lastDecision.to} · `
+                    : ''}
+                  {formatClock(lastDecision.at)}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">none recorded</span>
+              )}
+            </KeyValue>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function metricUnit(name: string): string {
+  if (name === 'p95' || name === 'p50' || name === 'p99') return 'ms'
+  if (name === 'cpu' || name === 'memory') return '%'
+  return ''
+}
+
+/** SpecPanel is the declared record, key facts only. */
+function SpecPanel({ desired }: { desired: Service | undefined }) {
+  if (!desired) return null
+  const publish = desired.Publish ?? []
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Spec</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <KeyValue label="Image" mono>
+          <span className="break-all">{desired.Image}</span>
+        </KeyValue>
+        <KeyValue label="Replicas" mono>
+          {desired.Count}
+        </KeyValue>
+        <KeyValue label="Resources" mono>
+          {desired.Resources.CPUMillis}m · {formatBytes(desired.Resources.MemoryBytes)}
+        </KeyValue>
+        {desired.Expose ? (
+          <KeyValue label="Expose" mono>
+            :{desired.Expose.Port} → edge
+          </KeyValue>
+        ) : null}
+        {desired.Expose ? (
+          <KeyValue label="Domains" mono>
+            <span className="break-all">
+              {(desired.Expose.Domains ?? []).join(', ') || 'auto-generated'}
+            </span>
+          </KeyValue>
+        ) : null}
+        {publish.length > 0 ? (
+          <KeyValue label="Published" mono>
+            {publish.map((p) => `:${p.Host}`).join(' · ')}
+          </KeyValue>
+        ) : null}
+        {(desired.DependsOn ?? []).length > 0 ? (
+          <KeyValue label="Depends on" mono>
+            {(desired.DependsOn ?? []).join(', ')}
+          </KeyValue>
+        ) : null}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -290,109 +460,86 @@ function Total({ label, value }: { label: string; value: string }) {
  * StatsPanel shows the service-level numbers a scaling rule is written against
  * (PRD §6.1), so the graph and the policy talk about the same quantities.
  */
-function StatsPanel({ sample }: { sample: StatsSample | null }) {
-  const at = sample?.at ?? ''
-  const cpu = useSeries(sample?.cpu, at)
-  const memory = useSeries(sample?.memory, at)
-  const rps = useSeries(sample?.rps, at)
-  const p95 = useSeries(sample?.p95_latency_ms, at)
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Live</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* CPU and memory are percentages of the declared limit, so the scale
-            is fixed at 100: a flat 2% line and a flat 90% one must not look
-            the same. Rate and latency have no natural ceiling and scale to
-            their own range. */}
-        <Metric label="CPU" unit="%" points={cpu} max={100} latest={sample?.cpu} />
-        <Metric label="Memory" unit="%" points={memory} max={100} latest={sample?.memory} />
-        <Metric label="Requests" unit="/s" points={rps} latest={sample?.rps} />
-        <Metric label="p95" unit=" ms" points={p95} latest={sample?.p95_latency_ms} />
-      </CardContent>
-    </Card>
-  )
-}
-
-function Metric({
-  label,
-  unit,
-  points,
-  max,
-  latest,
+function StatsPanel({
+  sample,
+  history,
 }: {
-  label: string
-  unit: string
-  points: (number | undefined)[]
-  max?: number | undefined
-  latest?: number | undefined
+  sample: StatsSample | null
+  history: StatsHistory | null
 }) {
+  const at = sample?.at ?? ''
+  const cpu = useSeries(sample?.cpu, at, history ? seedFromHistory(history, 'cpu') : undefined)
+  const memory = useSeries(
+    sample?.memory,
+    at,
+    history ? seedFromHistory(history, 'memory') : undefined,
+  )
+  const rps = useSeries(sample?.rps, at, history ? seedFromHistory(history, 'rps') : undefined)
+  const p95 = useSeries(
+    sample?.p95_latency_ms,
+    at,
+    history ? seedFromHistory(history, 'p95_latency_ms') : undefined,
+  )
+
   return (
-    <div className="space-y-1">
-      <div className="flex items-baseline justify-between">
-        <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
-        <span className="font-mono text-sm tabular-nums">
-          {/* An em dash, not a zero: the daemon omits a metric it has nothing
-              recent for, and "0" would be a claim about the service. */}
-          {latest === undefined ? '—' : formatMetric(latest, unit)}
-        </span>
-      </div>
-      <Sparkline
-        points={points}
-        max={max}
-        unit={unit}
-        className="h-14 w-full"
-        label={`${label} over the last few minutes`}
-      />
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* CPU and memory are percentages of the declared limit, so the scale
+          is fixed at 100: a flat 2% line and a flat 90% one must not look
+          the same. Rate and latency have no natural ceiling and scale to
+          their own range. */}
+      <Card className="p-4">
+        <MetricPanel label="CPU" unit="%" points={cpu} max={100} latest={sample?.cpu} tone={1} big />
+      </Card>
+      <Card className="p-4">
+        <MetricPanel label="Memory" unit="%" points={memory} max={100} latest={sample?.memory} tone={2} big />
+      </Card>
+      <Card className="p-4">
+        <MetricPanel label="Requests / s" unit="/s" points={rps} latest={sample?.rps} tone={3} big />
+      </Card>
+      <Card className="p-4">
+        <MetricPanel label="p95 latency" unit=" ms" points={p95} latest={sample?.p95_latency_ms} tone={4} big />
+      </Card>
     </div>
   )
 }
 
 /** AllocRow is one alloc, with its own resource history. */
 function AllocRow({
-  id,
-  state,
-  restarts,
+  alloc,
   stats,
   at,
 }: {
-  id: string
-  state: string
-  restarts: number
+  alloc: Alloc
   stats: AllocStats | undefined
   at: string
 }) {
   const cpu = useSeries(stats?.cpu, at)
   const memory = useSeries(stats?.memory, at)
+  const tone = allocStateVariant(alloc.state)
 
   return (
-    <tr className="border-t border-border/60">
-      <td className="py-2 pr-4 font-mono text-xs">{id}</td>
-      <td className="py-2 pr-4">
-        <Badge variant={allocStateVariant(state)}>{state}</Badge>
-      </td>
-      <td className="py-2 pr-4 tabular-nums">{restarts}</td>
-      <td className="py-2 pr-4">
-        <Sparkline points={cpu} max={100} unit="%" className="h-6 w-24" label={`CPU for ${id}`} />
-      </td>
-      <td className="py-2">
-        <Sparkline points={memory} max={100} unit="%" className="h-6 w-24" label={`Memory for ${id}`} />
-      </td>
-    </tr>
-  )
-}
-
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex gap-3">
-      <span className="w-24 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      {/* Values come from a job spec and are rendered as text, never markup. */}
-      <span className={mono ? 'font-mono text-xs' : ''}>{value}</span>
-    </div>
+    <TR>
+      <TD className="pl-0 font-mono text-xs">{alloc.id}</TD>
+      <TD>
+        <StatusDot
+          tone={tone === 'ok' ? 'ok' : tone === 'warn' ? 'warn' : tone === 'error' ? 'error' : 'muted'}
+          label={alloc.state}
+        />
+      </TD>
+      <TD>
+        <Sparkline points={cpu} max={100} unit="%" tone={1} className="h-6 w-24" label={`CPU for ${alloc.id}`} />
+      </TD>
+      <TD>
+        <Sparkline points={memory} max={100} unit="%" tone={2} className="h-6 w-24" label={`Memory for ${alloc.id}`} />
+      </TD>
+      <TD className="font-mono tabular-nums">
+        {alloc.restarts ?? 0}
+        {alloc.last_exit_at ? (
+          <span className="text-muted-foreground"> ({relativeAge(alloc.last_exit_at)})</span>
+        ) : null}
+      </TD>
+      <TD className="font-mono tabular-nums">{relativeAge(alloc.created_at)}</TD>
+    </TR>
   )
 }
 
@@ -401,20 +548,18 @@ function LogPanel({ project, service }: { project: string; service: string }) {
   const { lines, error, dropped } = useLiveLog(project, service)
   const [filter, setFilter] = useState('')
   const [follow, setFollow] = useState(true)
-  const bottom = useRef<HTMLDivElement>(null)
 
   const shown = filter
     ? lines.filter((l) => l.line.toLowerCase().includes(filter.toLowerCase()))
     : lines
 
-  useEffect(() => {
-    if (follow) bottom.current?.scrollIntoView({ block: 'end' })
-  }, [shown.length, follow])
-
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0 gap-3">
-        <CardTitle>Logs</CardTitle>
+      <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
+        <div className="flex items-baseline gap-2">
+          <CardTitle>Logs</CardTitle>
+          <span className="font-mono text-xs text-muted-foreground">tail · all allocs · live</span>
+        </div>
         <div className="flex items-center gap-2">
           <input
             type="search"
@@ -425,40 +570,31 @@ function LogPanel({ project, service }: { project: string; service: string }) {
             className="rounded-md border bg-background px-2 py-1 text-xs"
           />
           <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={follow}
-              onChange={(e) => setFollow(e.target.checked)}
-            />
+            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
             Follow
           </label>
         </div>
       </CardHeader>
       <CardContent>
         {error ? <p className="pb-2 text-sm text-destructive">{error}</p> : null}
-        {dropped > 0 ? (
-          <p className="pb-2 text-xs text-muted-foreground">
-            {dropped} earlier line{dropped === 1 ? '' : 's'} dropped (showing the most recent{' '}
-            {MaxLogLines}).
-          </p>
-        ) : null}
-        <div className="max-h-96 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-xs">
-          {shown.length === 0 ? (
-            <p className="text-muted-foreground">
-              {lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
-            </p>
-          ) : (
-            shown.map((entry, i) => (
-              // Workload output is attacker-controlled whenever the workload is.
-              // It is rendered as a text child — never markup (PRD §14, A03).
-              <div key={`${entry.alloc_id}-${i}`} className="whitespace-pre-wrap break-all">
-                <span className="mr-2 text-muted-foreground">{allocSuffix(entry.alloc_id)}</span>
-                {entry.line}
-              </div>
-            ))
-          )}
-          <div ref={bottom} />
-        </div>
+        <LogViewer
+          lines={shown.map((entry, i) => ({
+            key: `${entry.alloc_id}-${i}`,
+            prefix: allocSuffix(entry.alloc_id),
+            text: entry.line,
+          }))}
+          live
+          follow={follow}
+          emptyText={lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
+          notice={
+            dropped > 0 ? (
+              <p className="pb-2 text-xs text-muted-foreground">
+                {dropped} earlier line{dropped === 1 ? '' : 's'} dropped (showing the most recent{' '}
+                {MaxLogLines}).
+              </p>
+            ) : undefined
+          }
+        />
       </CardContent>
     </Card>
   )

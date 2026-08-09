@@ -11,7 +11,19 @@ export interface SparklineProps {
   label?: string | undefined
   /** unit rides the hover readout ("%", "/s", " ms"). */
   unit?: string | undefined
+  /** tone picks the series colour: 1 amber, 2 blue, 3 green, 4 red. Identity
+   * never rides on the hue alone — every sparkline sits under its own label. */
+  tone?: 1 | 2 | 3 | 4 | undefined
 }
+
+// A static map, never a template string: Tailwind's scanner only keeps class
+// names it can read verbatim from the source.
+const toneClass = {
+  1: 'text-chart-1',
+  2: 'text-chart-2',
+  3: 'text-chart-3',
+  4: 'text-chart-4',
+} as const
 
 /** The plot keeps this much air above the line and beside the end dot, so the
  * marker is never clipped by its own viewport. */
@@ -28,7 +40,7 @@ const padRight = 6
  * and a crosshair readout on hover, because a chart whose values can only be
  * guessed at is a decoration.
  */
-export function Sparkline({ points, max, className, label, unit = '' }: SparklineProps) {
+export function Sparkline({ points, max, className, label, unit = '', tone }: SparklineProps) {
   const wrap = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 120, h: 24 })
   const [hover, setHover] = useState<number | null>(null)
@@ -121,7 +133,7 @@ export function Sparkline({ points, max, className, label, unit = '' }: Sparklin
   return (
     <div
       ref={wrap}
-      className={cn('relative text-chart', className ?? 'h-6 w-[120px]')}
+      className={cn('relative', toneClass[tone ?? 2], className ?? 'h-6 w-[120px]')}
       onPointerMove={(e) => setHover(locate(e.clientX))}
       onPointerLeave={() => setHover(null)}
       // The readout is reachable without a pointer: focus shows the newest

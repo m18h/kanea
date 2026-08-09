@@ -93,6 +93,10 @@ describe('App', () => {
       '/v1/healthz': healthy,
       '/v1/services': { status: 200, body: { services: [] } },
       '/v1/allocs': { status: 200, body: { allocs: [] } },
+      '/v1/pipelines': { status: 200, body: { runs: [] } },
+      '/v1/events': { status: 200, body: { events: [] } },
+      '/v1/stats': { status: 200, body: { version: 'test' } },
+      '/v1/backups': { status: 503 },
     })
     renderApp()
 
@@ -104,12 +108,35 @@ describe('App', () => {
     expect(screen.queryByLabelText('Password')).toBeNull()
   })
 
+  it('shows the sidebar navigation when signed in', async () => {
+    routeFetch({
+      '/v1/auth/session': signedIn,
+      '/v1/healthz': healthy,
+      '/v1/services': { status: 200, body: { services: [] } },
+      '/v1/allocs': { status: 200, body: { allocs: [] } },
+      '/v1/pipelines': { status: 200, body: { runs: [] } },
+      '/v1/events': { status: 200, body: { events: [] } },
+      '/v1/stats': { status: 200, body: { version: 'test' } },
+      '/v1/backups': { status: 503 },
+    })
+    renderApp()
+
+    await screen.findByLabelText('Sign out')
+    for (const label of ['Dashboard', 'Services', 'Pipelines', 'Events', 'Backups']) {
+      expect(screen.getByRole('link', { name: label })).toBeDefined()
+    }
+  })
+
   it('returns to the login form when a request is refused mid-visit', async () => {
     routeFetch({
       '/v1/auth/session': signedIn,
       '/v1/healthz': healthy,
       '/v1/services': { status: 200, body: { services: [] } },
       '/v1/allocs': { status: 200, body: { allocs: [] } },
+      '/v1/pipelines': { status: 200, body: { runs: [] } },
+      '/v1/events': { status: 200, body: { events: [] } },
+      '/v1/stats': { status: 200, body: { version: 'test' } },
+      '/v1/backups': { status: 503 },
     })
     renderApp()
     await screen.findByLabelText('Sign out')

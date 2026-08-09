@@ -4,42 +4,77 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    /* Light: warm off-white ground, ink foreground, amber accent darkened to
+       #bc7d0f territory — the brand's #f2b544 fails as text on white, so the
+       light theme carries the hue at a text-safe lightness instead. */
+    --background: 40 20% 98%;
+    --foreground: 240 10% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --destructive: 0 84.2% 60.2%;
+    --card-foreground: 240 10% 8%;
+    --primary: 38 86% 40%;
+    --primary-foreground: 0 0% 100%;
+    --muted: 40 15% 94%;
+    --muted-foreground: 240 5% 42%;
+    --destructive: 0 61% 46%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 10% 3.9%;
+    --border: 40 10% 88%;
+    --input: 40 10% 88%;
+    --ring: 38 86% 40%;
     --radius: 0.5rem;
-    /* The chart series hue. Not --primary: primary is near-black ink in light
-       mode and near-white in dark, and a data mark needs a hue that stays a
-       hue on both surfaces. Both steps pass the contrast/lightness checks
-       against their surface (#2a78d6 on white, #3987e5 on near-black). */
-    --chart: 213 67% 50%;
+
+    /* Chart series. Every sparkline is a single labelled panel, so identity
+       never rides on hue alone; the set passes contrast checks on white
+       (#c98500, #2a78d6, #17803d, #d03b3b). */
+    --chart-1: 40 100% 39%;
+    --chart-2: 213 67% 50%;
+    --chart-3: 142 70% 30%;
+    --chart-4: 0 61% 52%;
+
+    /* Status hues: dot + word, never color alone. */
+    --status-ok: 142 70% 30%;
+    --status-warn: 38 86% 40%;
+    --status-error: 0 61% 46%;
+    --status-info: 213 67% 45%;
+
+    --sidebar: 40 20% 97%;
+    --sidebar-foreground: 240 10% 8%;
+    --sidebar-accent: 40 15% 92%;
+    --sidebar-border: 40 10% 88%;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --destructive: 0 62.8% 30.6%;
+    /* Dark: the mockup — near-black layered surfaces (#0e0e10 page, #131316
+       card), brand amber #f2b544 (the same amber Mark.tsx carries). */
+    --background: 240 7% 6%;
+    --foreground: 240 5% 93%;
+    --card: 240 6% 8%;
+    --card-foreground: 240 5% 93%;
+    --primary: 39 87% 61%;
+    --primary-foreground: 240 7% 6%;
+    --muted: 240 6% 12%;
+    --muted-foreground: 240 5% 62%;
+    --destructive: 358 75% 59%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
-    --chart: 213 77% 56%;
+    --border: 240 6% 14%;
+    --input: 240 6% 14%;
+    --ring: 39 87% 61%;
+
+    /* Bright marks for 2px lines on near-black: amber, #4d9df3, #3fb950,
+       #e5484d. */
+    --chart-1: 39 87% 61%;
+    --chart-2: 211 87% 63%;
+    --chart-3: 128 49% 49%;
+    --chart-4: 358 75% 59%;
+
+    --status-ok: 128 49% 49%;
+    --status-warn: 39 87% 61%;
+    --status-error: 358 75% 59%;
+    --status-info: 211 60% 66%;
+
+    --sidebar: 240 7% 5%;
+    --sidebar-foreground: 240 5% 93%;
+    --sidebar-accent: 240 6% 11%;
+    --sidebar-border: 240 6% 13%;
   }
 
   * {
@@ -47,7 +82,7 @@
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
     font-feature-settings: 'rlig' 1, 'calt' 1;
   }
 }

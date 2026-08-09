@@ -1,7 +1,11 @@
 import { useState } from 'react'
 
-/** One page of a list. 25 rows reads without scrolling on a laptop screen. */
-export const DefaultPageSize = 25
+/** One page of a list. Ten rows keeps a card-height table scannable; the
+ * selector offers more for whoever wants a wall of data. */
+export const DefaultPageSize = 10
+
+/** The sizes the pager offers. */
+export const PageSizes = [10, 20, 50, 100] as const
 
 export interface Pagination<T> {
   /** The window of items the current page shows. */
@@ -13,6 +17,10 @@ export interface Pagination<T> {
   /** start is the index of the first shown item, for "26–50 of 132". */
   start: number
   setPage: (page: number) => void
+  pageSize: number
+  /** setPageSize re-windows around the first visible item, so growing the
+   * page does not teleport the reader back to the top of the list. */
+  setPageSize: (size: number) => void
 }
 
 /**
@@ -32,8 +40,8 @@ export function usePagination<T>(
   items: T[],
   opts: { pageSize?: number; resetKey?: unknown } = {},
 ): Pagination<T> {
-  const pageSize = opts.pageSize ?? DefaultPageSize
   const [page, setPage] = useState(0)
+  const [pageSize, setSize] = useState(opts.pageSize ?? DefaultPageSize)
 
   // A changed filter is a different list, and page 3 of the old one points
   // nowhere meaningful in the new one. Reset during render rather than in an
@@ -56,5 +64,10 @@ export function usePagination<T>(
     total: items.length,
     start,
     setPage,
+    pageSize,
+    setPageSize: (size: number) => {
+      setSize(size)
+      setPage(Math.floor(start / size))
+    },
   }
 }

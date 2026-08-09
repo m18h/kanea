@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { usePagination } from '@/hooks/usePagination'
+import { DefaultPageSize, PageSizes, usePagination } from '@/hooks/usePagination'
 
 const list = (n: number) => Array.from({ length: n }, (_, i) => i)
 
@@ -10,6 +10,34 @@ describe('usePagination', () => {
     expect(result.current.pageItems).toHaveLength(25)
     expect(result.current.pages).toBe(3)
     expect(result.current.total).toBe(60)
+  })
+
+  it('defaults to ten rows with the larger sizes on offer', () => {
+    expect(DefaultPageSize).toBe(10)
+    expect(PageSizes).toEqual([10, 20, 50, 100])
+    const { result } = renderHook(() => usePagination(list(35)))
+    expect(result.current.pageItems).toHaveLength(10)
+    expect(result.current.pages).toBe(4)
+  })
+
+  it('re-windows around the first visible item when the size changes', () => {
+    // Reading rows 21–30 and choosing 50 must keep those rows in view, not
+    // teleport the reader back to the top of the list.
+    const { result } = renderHook(() => usePagination(list(100)))
+    act(() => result.current.setPage(2))
+    expect(result.current.start).toBe(20)
+
+    act(() => result.current.setPageSize(50))
+    expect(result.current.pageSize).toBe(50)
+    expect(result.current.page).toBe(0)
+    expect(result.current.pageItems).toContain(20)
+
+    // And shrinking again from a deep page keeps the window anchored too.
+    act(() => result.current.setPage(1))
+    expect(result.current.start).toBe(50)
+    act(() => result.current.setPageSize(10))
+    expect(result.current.page).toBe(5)
+    expect(result.current.pageItems[0]).toBe(50)
   })
 
   it('reports a single page for a list that fits', () => {

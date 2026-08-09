@@ -20,11 +20,25 @@ export class LiveSocket {
   private readonly listeners = new Map<string, Set<Listener>>()
   /** Subscriptions to replay after a reconnect. */
   private readonly active = new Map<string, SubscribeRequest>()
+  private readonly statusListeners = new Set<(up: boolean) => void>()
   private reconnectDelay = initialReconnectDelay
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false
 
   constructor(private readonly url: string) {}
+
+  /** connected reports whether the socket is open right now. */
+  get connected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN
+  }
+
+  /** onStatus is notified on open and close; returns an unsubscribe. */
+  onStatus(fn: (up: boolean) => void): () => void {
+    this.statusListeners.add(fn)
+    return () => {
+      this.statusListeners.delete(fn)
+    }
+  }
 
   /** Subscribe to a topic; returns an unsubscribe function. */
   subscribe(req: SubscribeRequest, listener: Listener): () => void {
@@ -71,6 +85,7 @@ export class LiveSocket {
 
     ws.onopen = () => {
       this.reconnectDelay = initialReconnectDelay
+      for (const fn of this.statusListeners) fn(true)
       // Replay everything: after a daemon restart the server knows nothing
       // about this client, so anything not re-sent is a view that silently
       // stops updating.
@@ -98,6 +113,7 @@ export class LiveSocket {
 
     ws.onclose = () => {
       this.ws = null
+      for (const fn of this.statusListeners) fn(false)
       this.scheduleReconnect()
     }
     // An error is always followed by a close, so reconnection is handled there.

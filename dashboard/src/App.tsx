@@ -1,11 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Link, Router } from '@/lib/router'
+import { Router } from '@/lib/router'
 import { useRouter } from '@/hooks/useRouter'
-import { isActive, matchPath } from '@/lib/paths'
-import { useQuery } from '@tanstack/react-query'
-import { LogOut, Moon, Sun } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Mark } from '@/components/Mark'
+import { matchPath } from '@/lib/paths'
+import { AppShell } from '@/components/layout/AppShell'
 import { Overview } from '@/pages/Overview'
 import { Services } from '@/pages/Services'
 import { ServiceDetail } from '@/pages/ServiceDetail'
@@ -14,18 +10,9 @@ import { PipelineDetail } from '@/pages/PipelineDetail'
 import { Events } from '@/pages/Events'
 import { Backups } from '@/pages/Backups'
 import { Login } from '@/pages/Login'
-import { fetchHealth } from '@/lib/api'
+import { SpecEditorPage } from '@/pages/SpecEditorPage'
 import { SessionProvider } from '@/lib/session-provider'
 import { useSession } from '@/hooks/useSession'
-import { cn } from '@/lib/utils'
-
-const nav = [
-  { to: '/', label: 'Overview', exact: true },
-  { to: '/services', label: 'Services', exact: false },
-  { to: '/pipelines', label: 'Pipelines', exact: false },
-  { to: '/events', label: 'Events', exact: false },
-  { to: '/backups', label: 'Backups', exact: false },
-]
 
 export function App() {
   return (
@@ -58,87 +45,10 @@ function Gate() {
 
 function Shell() {
   const { path } = useRouter()
-  const [theme, setTheme] = useTheme()
-  const { session, signOut } = useSession()
-
-  const health = useQuery({
-    queryKey: ['health'],
-    queryFn: ({ signal }) => fetchHealth(signal),
-    refetchInterval: 10_000,
-  })
-
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-baseline gap-4">
-            {/* The wordmark participates in baseline alignment while the mark
-                is centered, so the group's baseline is the text's — which is
-                what the outer items-baseline lines the nav links up against. */}
-            <span className="flex items-baseline gap-2">
-              <Mark size={22} className="self-center" />
-              <span className="text-lg font-semibold tracking-tight">Kanea</span>
-            </span>
-            <nav className="flex gap-3">
-              {nav.map((item) => (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={cn(
-                    'text-sm hover:text-foreground',
-                    isActive(path, item.to, item.exact)
-                      ? 'text-foreground'
-                      : 'text-muted-foreground',
-                  )}
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
-          </div>
-          <div className="flex items-center gap-3">
-            {health.data ? (
-              <span className="font-mono text-xs text-muted-foreground">{health.data.version}</span>
-            ) : null}
-            <Badge variant={health.isSuccess ? 'ok' : 'error'}>
-              {health.isSuccess ? 'connected' : 'unreachable'}
-            </Badge>
-            <button
-              type="button"
-              aria-label="Toggle theme"
-              className="rounded-md border p-1.5 hover:bg-muted"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            >
-              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-            {session ? (
-              <div className="flex items-center gap-2 border-l pl-3">
-                {/* Who you are and what you may do, always visible: a viewer
-                    who does not know they are a viewer reads every missing
-                    button as a broken dashboard. */}
-                <span className="text-xs text-muted-foreground">
-                  {session.subject}
-                  <span className="ml-1 opacity-70">({session.role})</span>
-                </span>
-                <button
-                  type="button"
-                  aria-label="Sign out"
-                  title="Sign out"
-                  className="rounded-md border p-1.5 hover:bg-muted"
-                  onClick={() => void signOut()}
-                >
-                  <LogOut size={16} />
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-6xl space-y-4 px-4 py-6">
-        <Page path={path} />
-      </main>
-    </div>
+    <AppShell>
+      <Page path={path} />
+    </AppShell>
   )
 }
 
@@ -146,6 +56,12 @@ function Shell() {
 function Page({ path }: { path: string }) {
   if (matchPath('/', path)) return <Overview />
   if (matchPath('/services', path)) return <Services />
+  if (matchPath('/services/new', path)) return <SpecEditorPage />
+
+  const edit = matchPath('/services/:project/:service/edit', path)
+  if (edit?.project && edit.service) {
+    return <SpecEditorPage project={edit.project} service={edit.service} />
+  }
 
   const detail = matchPath('/services/:project/:service', path)
   if (detail?.project && detail.service) {
@@ -165,22 +81,4 @@ function Page({ path }: { path: string }) {
   // A deep link the server handed to the app but the app does not know: say so
   // rather than render a blank page.
   return <p className="text-sm text-muted-foreground">No such page.</p>
-}
-
-type Theme = 'dark' | 'light'
-
-/** useTheme keeps the shadcn dark class in step with the stored preference. */
-function useTheme(): [Theme, (next: Theme) => void] {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const stored = window.localStorage.getItem('kanea-theme')
-    if (stored === 'light' || stored === 'dark') return stored
-    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
-  })
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-    window.localStorage.setItem('kanea-theme', theme)
-  }, [theme])
-
-  return [theme, setTheme]
 }

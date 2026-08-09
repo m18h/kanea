@@ -7,12 +7,27 @@ export function runStateVariant(state: string): NonNullable<BadgeProps['variant'
     case 'succeeded':
       return 'ok'
     case 'running':
+      return 'accent'
     case 'queued':
       return 'warn'
     case 'failed':
       return 'error'
     default:
       return 'muted'
+  }
+}
+
+/** runStateLabel renders a state the way the pipeline table reads: a running
+ * run is "building", a succeeded one is "ok". The state names stay on the
+ * wire; only the pill's word changes. */
+export function runStateLabel(state: string): string {
+  switch (state) {
+    case 'running':
+      return 'building'
+    case 'succeeded':
+      return 'ok'
+    default:
+      return state
   }
 }
 
