@@ -9,7 +9,7 @@ require (
 	github.com/containerd/containerd/v2 v2.3.3
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.4
-	github.com/containerd/typeurl/v2 v2.2.3
+	github.com/containerd/typeurl/v2 v2.3.0
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/distribution/reference v0.6.0
 	github.com/go-acme/lego/v4 v4.35.2
@@ -56,7 +56,6 @@ require (
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
