@@ -16,12 +16,12 @@ import (
 	"syscall"
 	"time"
 
-	acmelib "github.com/m18h/kanea/internal/acme"
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/audit"
 	"github.com/m18h/kanea/internal/auth"
 	"github.com/m18h/kanea/internal/autoupdate"
 	"github.com/m18h/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/certsource"
 	"github.com/m18h/kanea/internal/edge"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/logging"
@@ -108,13 +108,20 @@ func runAgent(args []string) error {
 		"where to publish certificates for kanea-edge")
 	edgeGroup := fs.String("edge-group", "",
 		"group allowed to read the certificate bundle — the kanea-edge user's (default: owner only)")
+	tlsDefault := fs.String("tls-default", string(certsource.ModeACME),
+		"certificate source for an exposed service whose spec declares no tls block: "+
+			"acme, self-signed, provided, or plaintext (PRD §6.2 R20)")
+	tlsCAName := fs.String("tls-ca-name", "",
+		"how this node's self-signed CA is named in a device's trust list (default: --base-domain, else the hostname)")
+	tlsCertsConfig := fs.String("tls-certs-config", "",
+		"HCL file granting operator-provided certificates to named projects (default: no grants)")
 	acmeEmail := fs.String("acme-email", "",
-		"ACME account contact; without it no certificates are obtained")
-	acmeDirectory := fs.String("acme-directory", acmelib.LetsEncryptStaging,
-		"ACME directory URL (the staging CA by default: its certificates are not publicly trusted)")
+		"ACME account contact; without it no certificates are obtained from a CA")
+	acmeDirectory := fs.String("acme-directory", DirectoryProduction,
+		"ACME directory: \"production\", \"staging\", or a URL")
 	acmeCA := fs.String("acme-ca-bundle", "",
 		"extra CA to trust when talking to the ACME directory (for a private or test CA)")
-	acmeVerifyURL := fs.String("acme-verify-url", acmelib.DefaultVerifyURL,
+	acmeVerifyURL := fs.String("acme-verify-url", certsource.DefaultVerifyURL,
 		"where kanead reaches its own edge to confirm a challenge is being served")
 	acmeDNSServer := fs.String("acme-dns-server", "",
 		"authoritative nameserver for RFC 2136 dynamic updates, host:port (enables DNS-01 and wildcards)")
@@ -486,6 +493,32 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	dnsSolver, err := buildDNSSolver(ctx, dnsUpdateSettings{
+		server: *acmeDNSServer, zone: *acmeDNSZone, key: *acmeDNSKey,
+		secretRef: *acmeDNSSecret, algorithm: *acmeDNSAlgorithm,
+	}, secretStore, logger)
+	if err != nil {
+		return err
+	}
+	certs, err := buildCertificates(certConfig{
+		Email:       *acmeEmail,
+		Directory:   *acmeDirectory,
+		CAPath:      *acmeCA,
+		BundlePath:  *edgeCerts,
+		Group:       *edgeGroup,
+		VerifyURL:   *acmeVerifyURL,
+		BaseDomain:  *baseDomain,
+		Default:     *tlsDefault,
+		CAName:      *tlsCAName,
+		CertsConfig: *tlsCertsConfig,
+		DNSSolver:   dnsSolver,
+		Store:       st,
+		Logger:      logger,
+	})
+	if err != nil {
+		return err
+	}
+
 	server, err := api.NewServer(api.ServerConfig{
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
@@ -493,8 +526,8 @@ func runAgent(args []string) error {
 		Secrets: secretStore, Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
 		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
-		Backups: backups,
 		OIDC:    provider, Sessions: users,
+		Backups: backups, CA: certificateAuthority(certs),
 		Metrics: metrics, Breaker: breaker, Node: scaling.NewNodeReader(""),
 		Exec:   driver,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
@@ -509,19 +542,6 @@ func runAgent(args []string) error {
 	// Bind before announcing readiness: a socket collision must fail loudly at
 	// startup, not silently later.
 	if err := server.Listen(); err != nil {
-		return err
-	}
-
-	dnsSolver, err := buildDNSSolver(ctx, dnsUpdateSettings{
-		server: *acmeDNSServer, zone: *acmeDNSZone, key: *acmeDNSKey,
-		secretRef: *acmeDNSSecret, algorithm: *acmeDNSAlgorithm,
-	}, secretStore, logger)
-	if err != nil {
-		return err
-	}
-	certs, err := buildCertificates(*acmeEmail, *acmeDirectory, *acmeCA, *edgeCerts,
-		*edgeGroup, *acmeVerifyURL, dnsSolver, st, logger)
-	if err != nil {
 		return err
 	}
 
@@ -545,7 +565,7 @@ func runAgent(args []string) error {
 	}
 	if certs != nil {
 		go func() {
-			errs <- runCertificates(ctx, certs.manager, certs.publisher, st, *baseDomain,
+			errs <- runCertificates(ctx, certs, st, *baseDomain, *tlsDefault,
 				certNotify, logger, notifier.Publish)
 		}()
 	}

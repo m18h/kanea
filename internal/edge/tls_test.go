@@ -83,10 +83,18 @@ func TestKeyringSelectsBySNI(t *testing.T) {
 		{"unrelated", "other.example.com", false},
 		{"empty", "", false},
 	}
+	// One table, both implementations. kanead answers this same question when
+	// it decides whether an operator's certificate satisfies a service (§7.3),
+	// and two versions of "what does a wildcard cover" drift into a certificate
+	// that is published and never served.
+	domains := append(append([]string{}, exact.Domains...), wildcard.Domains...)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ring.covers(tc.sni); got != tc.want {
 				t.Errorf("covers(%q) = %v, want %v", tc.sni, got, tc.want)
+			}
+			if got := CoversHost(domains, tc.sni); got != tc.want {
+				t.Errorf("CoversHost(%q) = %v, want %v", tc.sni, got, tc.want)
 			}
 		})
 	}

@@ -432,3 +432,27 @@ func (c *Client) StageRestore(ctx context.Context, archive string, skipReplay bo
 		RestoreRequest{Archive: archive, SkipReplay: skipReplay}, &out)
 	return out, err
 }
+
+// CACertificate fetches this node's self-signed CA certificate (PRD §7.3).
+//
+// Raw bytes rather than a JSON envelope: what comes back is a PEM file that an
+// operator redirects into `kanea-ca.crt` and hands to a device's trust store.
+// Wrapping it would mean every caller has to unwrap it again.
+func (c *Client) CACertificate(ctx context.Context) (body []byte, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://kanead"+PathCerts+"/ca", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, c.dialError(err)
+	}
+	defer func() { err = errors.Join(err, resp.Body.Close()) }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, decodeError(resp)
+	}
+	// A CA certificate is a couple of kilobytes; the bound is there so a
+	// misrouted response cannot be read into memory without limit.
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}

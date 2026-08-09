@@ -248,3 +248,57 @@ func TestReconcileRepublishesAfterTheSnapshotIsLost(t *testing.T) {
 		}
 	}
 }
+
+// The precedence R20 defines, in the one place it lives. Getting this wrong
+// means either ignoring what an operator wrote in a spec or ignoring what they
+// set on the node, and both look like "TLS is broken".
+func TestResolveTLSMode(t *testing.T) {
+	tests := []struct {
+		name        string
+		expose      *reconciler.Expose
+		nodeDefault string
+		want        string
+	}{
+		{"no expose block", nil, "acme", ""},
+		{"explicit beats the default", &reconciler.Expose{TLSMode: "self-signed"}, "acme", "self-signed"},
+		{"explicit plaintext is honoured", &reconciler.Expose{TLSMode: "plaintext"}, "acme", "plaintext"},
+		{"unset takes the node default", &reconciler.Expose{}, "self-signed", "self-signed"},
+		{"unset with no default is unset", &reconciler.Expose{}, "", ""},
+		// A record written before v1.33 meant ACME then and means ACME now,
+		// which is what lets this change ship without a schema migration.
+		{"pre-v1.33 record", &reconciler.Expose{LetsEncrypt: true}, "self-signed", "acme"},
+		// The new field wins over the old one on a record that somehow carries
+		// both — R20 refuses that combination at plan time.
+		{"both, explicit wins", &reconciler.Expose{TLSMode: "provided", LetsEncrypt: true}, "acme", "provided"},
+		// letsencrypt = false used to be indistinguishable from an absent
+		// field, and still is: it defers to the node.
+		{"pre-v1.33 false defers", &reconciler.Expose{LetsEncrypt: false}, "plaintext", "plaintext"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.expose.ResolveTLSMode(tc.nodeDefault); got != tc.want {
+				t.Errorf("ResolveTLSMode(%q) = %q, want %q", tc.nodeDefault, got, tc.want)
+			}
+		})
+	}
+}
+
+// A TLS mode change is a certificate decision, not a container one. Rolling
+// every alloc of a service because its certificate now comes from somewhere
+// else would be a restart nobody asked for.
+func TestSpecHashIgnoresTLSMode(t *testing.T) {
+	base := reconciler.Desired{
+		Project: "shop", Service: "web", Count: 1,
+		Image:  "nginx:1.27",
+		Expose: &reconciler.Expose{Domains: []string{"shop.example.com"}, Port: 80, TLSMode: "acme"},
+	}
+	changed := base
+	expose := *base.Expose
+	expose.TLSMode = "self-signed"
+	expose.TLSName = "shop"
+	changed.Expose = &expose
+
+	if reconciler.SpecHash(base) != reconciler.SpecHash(changed) {
+		t.Error("changing the certificate source rolled the allocs")
+	}
+}

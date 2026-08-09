@@ -2,14 +2,10 @@ package acme
 
 import (
 	"context"
-	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/m18h/kanea/internal/edge"
 )
 
 // Renewal starts two thirds into the certificate's life, not a fixed number of
@@ -228,124 +224,6 @@ func TestSyncKeepsTheOldCertificateWhenIssuanceFails(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].CertPEM != "old" {
 		t.Fatalf("Sync = %+v, want the old certificate kept", out)
-	}
-}
-
-// ---- publisher ----
-
-// Publishing is a file write the edge polls for, so returning before it is
-// being served would race the CA — and losing that race spends a
-// failed-validation slot rather than merely retrying.
-func TestPresentWaitsForTheEdgeToServeTheChallenge(t *testing.T) {
-	dir := t.TempDir()
-	bundlePath := filepath.Join(dir, "certs.json")
-
-	// A stand-in for the edge: it serves whatever the published bundle holds,
-	// but only after a delay, so the wait is doing real work.
-	served := &servedBundle{path: bundlePath}
-	srv := served.start(t, 150*time.Millisecond)
-
-	pub, err := NewPublisher(PublisherConfig{
-		Path:          bundlePath,
-		VerifyURL:     srv,
-		VerifyTimeout: 5 * time.Second,
-		Logger:        slog.New(slog.DiscardHandler),
-	})
-	if err != nil {
-		t.Fatalf("NewPublisher: %v", err)
-	}
-
-	start := time.Now()
-	if err := pub.Present(context.Background(), "web.example.com", "tok", "tok.auth"); err != nil {
-		t.Fatalf("Present: %v", err)
-	}
-	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
-		t.Errorf("Present returned after %v; it did not wait for the edge", elapsed)
-	}
-
-	// The answer really is in the published bundle.
-	bundle, err := edge.LoadBundle(bundlePath)
-	if err != nil {
-		t.Fatalf("LoadBundle: %v", err)
-	}
-	if len(bundle.HTTPChallenges) != 1 || bundle.HTTPChallenges[0].KeyAuth != "tok.auth" {
-		t.Errorf("bundle challenges = %+v", bundle.HTTPChallenges)
-	}
-
-	if err := pub.CleanUp(context.Background(), "web.example.com", "tok", "tok.auth"); err != nil {
-		t.Fatalf("CleanUp: %v", err)
-	}
-	bundle, err = edge.LoadBundle(bundlePath)
-	if err != nil {
-		t.Fatalf("LoadBundle after cleanup: %v", err)
-	}
-	if len(bundle.HTTPChallenges) != 0 {
-		t.Errorf("challenge survived cleanup: %+v", bundle.HTTPChallenges)
-	}
-}
-
-// Asking the CA to validate a challenge we cannot serve ourselves is guaranteed
-// to fail, and failures are the rate limit that hurts. So the wait gives up
-// rather than proceeding.
-func TestPresentFailsWhenTheEdgeNeverServesIt(t *testing.T) {
-	dir := t.TempDir()
-	bundlePath := filepath.Join(dir, "certs.json")
-
-	// An "edge" that never picks anything up.
-	silent := &servedBundle{path: bundlePath, ignore: true}
-	srv := silent.start(t, 0)
-
-	pub, err := NewPublisher(PublisherConfig{
-		Path:          bundlePath,
-		VerifyURL:     srv,
-		VerifyTimeout: 300 * time.Millisecond,
-		Logger:        slog.New(slog.DiscardHandler),
-	})
-	if err != nil {
-		t.Fatalf("NewPublisher: %v", err)
-	}
-
-	err = pub.Present(context.Background(), "web.example.com", "tok", "tok.auth")
-	if err == nil {
-		t.Fatal("Present succeeded without the edge serving the challenge")
-	}
-	if !strings.Contains(err.Error(), "not serving the challenge") {
-		t.Errorf("error = %v", err)
-	}
-}
-
-// Certificates already held must survive a challenge being published: they
-// share one file, and an in-flight issuance must not take TLS down.
-func TestChallengesDoNotDisturbPublishedCertificates(t *testing.T) {
-	bundlePath := filepath.Join(t.TempDir(), "certs.json")
-	pub, err := NewPublisher(PublisherConfig{Path: bundlePath, Logger: slog.New(slog.DiscardHandler)})
-	if err != nil {
-		t.Fatalf("NewPublisher: %v", err)
-	}
-
-	cert := testCertificate(t, "web.example.com")
-	if err := pub.SetCertificates([]Certificate{cert}); err != nil {
-		t.Fatalf("SetCertificates: %v", err)
-	}
-	if err := pub.Present(context.Background(), "other.example.com", "tok", "tok.auth"); err != nil {
-		t.Fatalf("Present: %v", err)
-	}
-
-	bundle, err := edge.LoadBundle(bundlePath)
-	if err != nil {
-		t.Fatalf("LoadBundle: %v", err)
-	}
-	if len(bundle.Certificates) != 1 {
-		t.Errorf("certificates = %d, want the one already published", len(bundle.Certificates))
-	}
-	if len(bundle.HTTPChallenges) != 1 {
-		t.Errorf("challenges = %d, want 1", len(bundle.HTTPChallenges))
-	}
-}
-
-func TestNewPublisherRequiresAPath(t *testing.T) {
-	if _, err := NewPublisher(PublisherConfig{}); err == nil {
-		t.Error("accepted a publisher with no path")
 	}
 }
 

@@ -380,9 +380,24 @@ type Expose struct {
 	DefRange hcl.Range
 }
 
-// TLS controls certificate provisioning for the exposed domains.
+// TLS names where this service's certificate comes from (R20).
+//
+// Mode names a source, never a path: "acme", "self-signed", "provided" or
+// "plaintext". Name narrows "provided" to one of the grants in the node's
+// --tls-certs-config — the same rule R17 draws for devices, for the same
+// reason. A spec is deployed by GitOps, so anything it can name, anyone who
+// can push to a synced repository can name.
+//
+// An empty Mode means the node decides (--tls-default). That is what lets a
+// homelabber annotate nothing and still get a certificate.
 type TLS struct {
-	LetsEncrypt bool
+	Mode string
+	Name string
+	// LetsEncrypt is the pre-v1.33 spelling. nil means the field was absent.
+	//
+	// Deprecated: write Mode instead.
+	LetsEncrypt *bool
+	DefRange    hcl.Range
 }
 
 // IPRestriction is the first middleware in the chain; deny wins over allow.

@@ -255,7 +255,23 @@ type Expose struct {
 	// Port is the container port the edge sends requests to, picked by the R16
 	// rule (named "http", or the only one declared).
 	Port int
-	// LetsEncrypt requests a certificate for the domains (PRD §7.3).
+	// TLSMode is the certificate source this service asked for (PRD §6.2 R20),
+	// or "" for "whatever this node defaults to".
+	//
+	// Resolved on the node by TLSMode, not here and not in the CLI: toDesired
+	// runs wherever the spec was written, so baking a node's --tls-default into
+	// a stored record would make one spec mean different things on two machines.
+	TLSMode string
+	// TLSName selects one of the certificates the operator configured on this
+	// node. Meaningful only when TLSMode is "provided" (R20).
+	TLSName string
+	// LetsEncrypt is the pre-v1.33 spelling, read but never written.
+	//
+	// It is kept so records written by an older CLI keep meaning what they
+	// meant — an empty TLSMode with this set resolves to "acme" — which is why
+	// this change needs no schema migration (§15.4).
+	//
+	// Deprecated: use TLSMode.
 	LetsEncrypt bool
 	// IPRestriction, RateLimit and Headers are the edge middleware chain
 	// (PRD §7.2.1), carried verbatim from the spec. They are validated at plan

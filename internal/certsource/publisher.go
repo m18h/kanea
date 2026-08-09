@@ -1,7 +1,10 @@
-package acme
+package certsource
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,22 +17,43 @@ import (
 	"github.com/m18h/kanea/internal/edge"
 )
 
+// ErrNotConfigured marks a publisher that cannot be built.
+var ErrNotConfigured = errors.New("certsource: not configured")
+
 // Publisher owns the edge's certificate projection: it is the only writer.
 //
-// It holds both halves of what the edge presents — the issued certificates and
-// any in-flight HTTP-01 responses — because they share one file, and a
-// challenge appearing must not drop the certificates already being served.
+// It holds every source's certificates and any in-flight HTTP-01 responses,
+// because they share one file: a challenge appearing must not drop the
+// certificates already being served, and neither must one source publishing.
 type Publisher struct {
 	path     string
 	gid      int
 	log      *slog.Logger
 	verifier *challengeVerifier
 
-	mu         sync.Mutex
-	certs      []edge.Certificate
+	mu sync.Mutex
+	// bySource is each source's current contribution, keyed by mode.
+	//
+	// Per source, not one flat list. Three sources publish into this file on
+	// their own schedules — ACME twice a day, a file-backed source every
+	// minute — and any one of them writing the whole set would drop the other
+	// two. That bug is the reason this map exists.
+	bySource   map[Mode][]Certificate
 	challenges map[string]string
 	index      uint64
+	// last is the bytes of the most recent bundle with its index zeroed, so an
+	// unchanged set can be recognised. See write.
+	last []byte
 }
+
+// mergeOrder is the precedence when two sources hold a certificate for one name.
+//
+// An operator who put a certificate on this node meant it; a publicly trusted
+// certificate beats one only this node's devices trust; self-signed is the
+// floor. Collisions are rare by construction — a domain belongs to one service
+// (R16) and a service names one mode — so they arrive only through wildcards,
+// and the rule exists to be deterministic rather than to be busy.
+var mergeOrder = []Mode{ModeSelfSigned, ModeACME, ModeProvided}
 
 // PublisherConfig configures the bundle writer.
 type PublisherConfig struct {
@@ -71,6 +95,7 @@ func NewPublisher(cfg PublisherConfig) (*Publisher, error) {
 		path:       cfg.Path,
 		gid:        cfg.GID,
 		log:        cfg.Logger,
+		bySource:   map[Mode][]Certificate{},
 		challenges: map[string]string{},
 	}
 	if cfg.VerifyURL != "" {
@@ -86,19 +111,19 @@ func NewPublisher(cfg PublisherConfig) (*Publisher, error) {
 	return p, nil
 }
 
-// SetCertificates replaces the published certificate set.
-func (p *Publisher) SetCertificates(certs []Certificate) error {
+// SetCertificates replaces one source's contribution and republishes.
+//
+// Per source, never wholesale. A source is called on every pass with everything
+// it should be holding, including nothing, so replacing its slice is correct —
+// but replacing the *file's* contents from one source would drop the others.
+func (p *Publisher) SetCertificates(mode Mode, certs []Certificate) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	p.certs = make([]edge.Certificate, 0, len(certs))
-	for _, c := range certs {
-		p.certs = append(p.certs, edge.Certificate{
-			Domains:  c.Domains,
-			CertPEM:  c.CertPEM,
-			KeyPEM:   c.KeyPEM,
-			NotAfter: c.NotAfter,
-		})
+	if len(certs) == 0 {
+		delete(p.bySource, mode)
+	} else {
+		p.bySource[mode] = append([]Certificate(nil), certs...)
 	}
 	return p.write()
 }
@@ -141,8 +166,7 @@ func (p *Publisher) CleanUp(_ context.Context, domain, token, _ string) error {
 
 // write publishes the current state. The caller holds the lock.
 func (p *Publisher) write() error {
-	p.index++
-	bundle := edge.Bundle{Index: p.index, Certificates: p.certs}
+	bundle := edge.Bundle{Certificates: p.merged()}
 
 	tokens := make([]string, 0, len(p.challenges))
 	for token := range p.challenges {
@@ -155,7 +179,69 @@ func (p *Publisher) write() error {
 		bundle.HTTPChallenges = append(bundle.HTTPChallenges,
 			edge.HTTPChallenge{Token: token, KeyAuth: p.challenges[token]})
 	}
+
+	// The index is bumped only when the material actually changed.
+	//
+	// The edge reloads on a byte difference, so publishing a fresh index over
+	// an identical set is a reload of nothing. That is harmless twice a day
+	// with ACME alone and becomes a keyring rebuild every minute once a
+	// file-backed source is stat-ed at rotation speed.
+	body, err := json.Marshal(bundle)
+	if err != nil {
+		return fmt.Errorf("marshal certificate bundle: %w", err)
+	}
+	if p.last != nil && bytes.Equal(body, p.last) {
+		return nil
+	}
+	p.last = body
+	p.index++
+	bundle.Index = p.index
 	return edge.PublishBundle(p.path, bundle, p.gid)
+}
+
+// merged flattens every source's certificates into what the edge will serve,
+// resolving a name claimed twice by mergeOrder. The caller holds the lock.
+//
+// Resolved here rather than left to the keyring's last-writer-wins means the
+// edge never has to know a precedence rule — which is the property that lets a
+// fourth source be added without touching it.
+func (p *Publisher) merged() []edge.Certificate {
+	winner := map[string]Mode{}
+	for _, mode := range mergeOrder {
+		for _, c := range p.bySource[mode] {
+			for _, domain := range c.Domains {
+				winner[domain] = mode
+			}
+		}
+	}
+
+	out := []edge.Certificate{}
+	for _, mode := range mergeOrder {
+		for _, c := range p.bySource[mode] {
+			// A certificate keeps only the names it won. One that won none is
+			// dropped: publishing a key for names nothing will select is a
+			// private key on disk doing no work.
+			domains := make([]string, 0, len(c.Domains))
+			for _, domain := range c.Domains {
+				if winner[domain] == mode {
+					domains = append(domains, domain)
+				}
+			}
+			if len(domains) == 0 {
+				continue
+			}
+			out = append(out, edge.Certificate{
+				Domains:  domains,
+				CertPEM:  c.CertPEM,
+				KeyPEM:   c.KeyPEM,
+				NotAfter: c.NotAfter,
+			})
+		}
+	}
+	// Sorted by primary domain so the file is a function of its contents and
+	// not of the order sources happened to publish in.
+	sort.Slice(out, func(i, j int) bool { return out[i].Domains[0] < out[j].Domains[0] })
+	return out
 }
 
 // challengeVerifier confirms the edge is serving a challenge response.

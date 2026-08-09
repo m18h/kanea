@@ -216,7 +216,14 @@ type hclExpose struct {
 }
 
 type hclTLS struct {
-	LetsEncrypt bool `hcl:"letsencrypt,optional"`
+	Mode string `hcl:"mode,optional"`
+	Name string `hcl:"name,optional"`
+	// LetsEncrypt is a pointer because absent and false stopped meaning the
+	// same thing in v1.33. Absent now means "whatever this node's --tls-default
+	// is"; false meant "no certificate" when ACME was the only source there was.
+	// A bool could not tell those apart, and the deprecation warning has to.
+	LetsEncrypt *bool     `hcl:"letsencrypt,optional"`
+	DefRange    hcl.Range `hcl:",def_range"`
 }
 
 type hclIPRestriction struct {
@@ -587,6 +594,10 @@ func convertTask(t *hclTask) *Task {
 func convertExpose(e *hclExpose) *Expose {
 	out := &Expose{Domains: e.Domains, DefRange: e.DefRange}
 	if e.TLS != nil {
+		out.TLS = &TLS{
+			Mode: e.TLS.Mode, Name: e.TLS.Name,
+			LetsEncrypt: e.TLS.LetsEncrypt, DefRange: e.TLS.DefRange,
+		}
 	}
 	if e.IPRestriction != nil {
 		out.IPRestriction = &IPRestriction{

@@ -130,11 +130,37 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 	return routes
 }
 
+
 // domainsFor resolves a service's hostnames against this agent's base domain.
 func (r *Reconciler) domainsFor(d Desired) []string {
 	return EdgeDomains(d, r.baseDomain)
 }
 
+// ResolveTLSMode resolves where this service's certificate comes from
+// (PRD §6.2 R20). Named for the precedence it applies, not for the field it
+// reads, which it shares a name with.
+//
+// Explicit beats the pre-v1.33 bool beats the node's default. The node default
+// is applied here rather than at apply time so that changing --tls-default
+// takes effect on the next pass instead of on the next `kanea run` of every
+// service — and so that a stored record says what the *spec* asked for and
+// nothing more.
+//
+// A service with no expose block gets "": there is nothing to serve.
+func (e *Expose) ResolveTLSMode(nodeDefault string) string {
+	switch {
+	case e == nil:
+		return ""
+	case e.TLSMode != "":
+		return e.TLSMode
+	case e.LetsEncrypt:
+		// A record written before v1.33. It meant ACME then and it means ACME
+		// now, which is what makes the new field need no migration.
+		return "acme"
+	default:
+		return nodeDefault
+	}
+}
 // EdgeDomains resolves the hostnames a service answers on, generating the
 // auto-FQDN when the spec declared none (PRD §7.2).
 //

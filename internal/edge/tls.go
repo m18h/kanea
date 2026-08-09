@@ -62,6 +62,33 @@ func newKeyring(b Bundle) (*keyring, error) {
 	return k, nil
 }
 
+// CoversHost reports whether a certificate naming these domains covers a host.
+//
+// Exported because kanead has to answer the same question when it decides
+// whether an operator's certificate satisfies a service (PRD §7.3, R20), and
+// two implementations of "what does a wildcard cover" drift into a certificate
+// that is published and never served.
+//
+// The rule is keyring.certificateFor's, stated once: exact match, or a wildcard
+// over the immediate parent.
+func CoversHost(domains []string, host string) bool {
+	host = NormalizeHost(host)
+	if host == "" {
+		return false
+	}
+	_, parent, hasParent := strings.Cut(host, ".")
+	for _, domain := range domains {
+		domain = NormalizeHost(domain)
+		if domain == host {
+			return true
+		}
+		if wildcard, ok := strings.CutPrefix(domain, "*."); ok && hasParent && wildcard == parent {
+			return true
+		}
+	}
+	return false
+}
+
 // certificateFor resolves an SNI name.
 //
 // Exact match first, then a wildcard over the immediate parent. A wildcard
@@ -69,6 +96,10 @@ func newKeyring(b Bundle) (*keyring, error) {
 // not "a.b.shop.example.com" — because that is what the certificate actually
 // asserts, and being looser here would present a certificate the client is
 // right to reject.
+//
+// The maps are kept rather than deferring to CoversHost because this is the
+// handshake path; tls_test.go drives both from one table so they cannot
+// disagree.
 func (k *keyring) certificateFor(name string) (*tls.Certificate, bool) {
 	name = NormalizeHost(name)
 	if name == "" {

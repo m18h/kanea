@@ -83,7 +83,9 @@ service "web" {
   expose {
     # domains optional — defaults to web.shop.<base_domain>
     domains = ["shop.example.com", "www.shop.example.com"]
-    tls { letsencrypt = true }
+    # Where the certificate comes from (R20, §7.3). Omit the block entirely and
+    # the node's --tls-default decides; there is no field here for a path.
+    tls { mode = "acme" }                        # acme | self-signed | provided | plaintext
 
     # Edge middleware (§7.2) — evaluated in order: IP restriction → rate limit → headers
     ip_restriction {
@@ -232,6 +234,6 @@ service "assets" {
   }
   # auto domain: assets.shop.<base_domain>
   expose {
-    tls { letsencrypt = true }
+    tls { mode = "acme" }
   }
 }

@@ -28,6 +28,8 @@ import (
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/registration"
+
+	"github.com/m18h/kanea/internal/certsource"
 )
 
 // LetsEncryptProduction and LetsEncryptStaging are the well-known directories.
@@ -44,65 +46,19 @@ const (
 // fraction of its total validity (PRD §7.3: two thirds). For a 90-day Let's
 // Encrypt certificate that is day 60, leaving a month of retries before
 // anything actually expires.
-const RenewalFraction = 2.0 / 3.0
+//
+// Deprecated: use certsource.RenewalFraction. Renewal is a property of a
+// certificate, not of the CA that signed one.
+const RenewalFraction = certsource.RenewalFraction
 
 // Certificate is one issued certificate as Kanea stores it.
-type Certificate struct {
-	// Domains are the names it covers, lowercased, primary first.
-	Domains []string `json:"domains"`
-	// CertPEM is the leaf followed by its intermediates.
-	CertPEM string `json:"cert_pem"`
-	// KeyPEM is the private key.
-	KeyPEM string `json:"key_pem"`
-	// NotBefore and NotAfter come from the leaf, decoded once at issuance so
-	// the renewal check does not re-parse on every pass.
-	NotBefore time.Time `json:"not_before"`
-	NotAfter  time.Time `json:"not_after"`
-	// IssuedAt records when Kanea obtained it, which is not the same as
-	// NotBefore and is what an operator asks about after a failed renewal.
-	IssuedAt time.Time `json:"issued_at"`
-}
-
-// Key identifies a certificate in the Store: its primary domain.
-func (c Certificate) Key() string {
-	if len(c.Domains) == 0 {
-		return ""
-	}
-	return c.Domains[0]
-}
-
-// RenewAfter is the moment renewal should begin.
-func (c Certificate) RenewAfter() time.Time {
-	life := c.NotAfter.Sub(c.NotBefore)
-	if life <= 0 {
-		// A certificate with no usable validity window is due immediately
-		// rather than never — the alternative is a silent non-renewal.
-		return c.NotBefore
-	}
-	return c.NotBefore.Add(time.Duration(float64(life) * RenewalFraction))
-}
-
-// NeedsRenewal reports whether it is time to replace this certificate.
-func (c Certificate) NeedsRenewal(now time.Time) bool {
-	return !now.Before(c.RenewAfter())
-}
-
-// Covers reports whether this certificate is for exactly this set of names.
 //
-// Exactly, not "at least": a service that gained a domain needs a certificate
-// naming it, and one that lost a domain should stop asserting it. Both are
-// reissues, and treating a superset as a match would skip them.
-func (c Certificate) Covers(domains []string) bool {
-	if len(c.Domains) != len(domains) {
-		return false
-	}
-	for i := range domains {
-		if c.Domains[i] != domains[i] {
-			return false
-		}
-	}
-	return true
-}
+// The type lives in internal/certsource because expiry, coverage and renewal
+// are properties of a certificate rather than of ACME — a self-signed leaf has
+// all three and never speaks to a CA. It is aliased here because this package
+// stores and returns them, and because an ACME certificate is still a
+// certificate.
+type Certificate = certsource.Certificate
 
 // Request asks for a certificate covering a set of names.
 type Request struct {

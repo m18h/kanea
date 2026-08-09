@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m18h/kanea/internal/certsource"
 	"github.com/m18h/kanea/internal/edge"
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/reconciler"
@@ -199,24 +200,58 @@ func convertExpose(svc *jobspec.Service) *reconciler.Expose {
 		return nil
 	}
 	out := &reconciler.Expose{Domains: svc.Expose.Domains, Port: port.Container}
-	if svc.Expose.TLS != nil {
-		out.LetsEncrypt = svc.Expose.TLS.LetsEncrypt
-	}
-	if r := svc.Expose.IPRestriction; r != nil {
-		out.IPRestriction = &edge.IPRestriction{Allow: r.Allow, Deny: r.Deny}
-	}
-	if rl := svc.Expose.RateLimit; rl != nil {
-		out.RateLimit = &edge.RateLimit{
-			Requests: rl.Requests, Window: rl.Window, Per: rl.Per, Burst: rl.Burst,
+	if t := svc.Expose.TLS; t != nil {
+		out.TLSMode, out.TLSName = t.Mode, t.Name
+		// The pre-v1.33 spelling, translated at the boundary rather than
+		// carried inward: a stored record names a certificate source (R20), and
+		// `letsencrypt = true` names exactly one of them. Only true translates
+		// — false was indistinguishable from an absent block before v1.33 and
+		// still defers to the node's --tls-default.
+		//
+		// The mode itself is *not* resolved here. toDesired runs client-side —
+		// `kanea run`, the MCP server, the pipeline — so baking a node's
+		// --tls-default in at conversion would make one spec mean different
+		// things on two machines. An empty mode on a stored record means "the
+		// node decides", and the node decides it in ResolveTLSMode.
+		//nolint:staticcheck // reading the deprecated field is the point: this is
+		// the one place the old spelling is translated, so nothing inward has to.
+		if out.TLSMode == "" && t.LetsEncrypt != nil && *t.LetsEncrypt {
+			out.TLSMode = string(certsource.ModeACME)
 		}
 	}
-	if h := svc.Expose.Headers; h != nil {
-		out.Headers = &edge.Headers{
-			RequestSet: h.RequestSet, RequestRemove: h.RequestRemove,
-			ResponseSet: h.ResponseSet, ResponseRemove: h.ResponseRemove,
-		}
-	}
+	out.IPRestriction = convertIPRestriction(svc.Expose.IPRestriction)
+	out.RateLimit = convertRateLimit(svc.Expose.RateLimit)
+	out.Headers = convertHeaders(svc.Expose.Headers)
 	return out
+}
+
+// The three middleware converters. Shared by expose and publish rather than
+// duplicated: two translations of one rule are two things that can disagree.
+
+func convertIPRestriction(r *jobspec.IPRestriction) *edge.IPRestriction {
+	if r == nil {
+		return nil
+	}
+	return &edge.IPRestriction{Allow: r.Allow, Deny: r.Deny}
+}
+
+func convertRateLimit(rl *jobspec.RateLimit) *edge.RateLimit {
+	if rl == nil {
+		return nil
+	}
+	return &edge.RateLimit{
+		Requests: rl.Requests, Window: rl.Window, Per: rl.Per, Burst: rl.Burst,
+	}
+}
+
+func convertHeaders(h *jobspec.Headers) *edge.Headers {
+	if h == nil {
+		return nil
+	}
+	return &edge.Headers{
+		RequestSet: h.RequestSet, RequestRemove: h.RequestRemove,
+		ResponseSet: h.ResponseSet, ResponseRemove: h.ResponseRemove,
+	}
 }
 
 // convertHealthCheck turns the first declared health check into the

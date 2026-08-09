@@ -306,3 +306,73 @@ func TestParseCIDR(t *testing.T) {
 		}
 	}
 }
+
+// R20: a tls block names a source, and the errors have to name it back.
+func TestExposeRejectsAnInvalidTLSBlock(t *testing.T) {
+	tests := []struct {
+		name, body, want string
+	}{
+		{"unknown mode", `tls { mode = "letsencrypt" }`, "Unknown TLS mode"},
+		{"a path is not a mode", `tls { mode = "/etc/kanea/tls/shop.crt" }`, "Unknown TLS mode"},
+		{"both spellings", "tls {\n      mode = \"acme\"\n      letsencrypt = true\n    }", "Two TLS spellings"},
+		{"name without provided", "tls {\n      mode = \"acme\"\n      name = \"shop\"\n    }", "Certificate name without a provided mode"},
+		{"name with no mode at all", `tls { name = "shop" }`, "whatever this node defaults to"},
+		{"name is not a label", "tls {\n      mode = \"provided\"\n      name = \"Shop Cert\"\n    }", "DNS-1123"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseErr(t, exposeSpec(httpPort, tc.body)); !strings.Contains(got, tc.want) {
+				t.Errorf("diagnostics = %q, want it to name %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExposeAcceptsEveryTLSMode(t *testing.T) {
+	for _, mode := range []string{"acme", "self-signed", "provided", "plaintext"} {
+		t.Run(mode, func(t *testing.T) {
+			spec := parse(t, exposeSpec(httpPort, `tls { mode = "`+mode+`" }`))
+			if got := spec.Services[0].Expose.TLS.Mode; got != mode {
+				t.Errorf("mode = %q, want %q", got, mode)
+			}
+		})
+	}
+	spec := parse(t, exposeSpec(httpPort, "tls {\n      mode = \"provided\"\n      name = \"shop\"\n    }"))
+	if got := spec.Services[0].Expose.TLS.Name; got != "shop" {
+		t.Errorf("name = %q, want shop", got)
+	}
+}
+
+// The whole point of --tls-default is that a homelabber annotates nothing. A
+// service with no tls block must be silent, not merely valid: a warning on
+// every service is a warning nobody reads.
+func TestExposeWithoutATLSBlockSaysNothing(t *testing.T) {
+	_, diags := jobspec.ParseSource(jobspec.Options{}, "test.hcl",
+		[]byte(exposeSpec(httpPort, `domains = ["shop.example.com"]`)))
+	if len(diags) != 0 {
+		t.Errorf("diagnostics = %s, want none", jobspec.FormatDiagnostics(diags))
+	}
+}
+
+// The old spelling still parses — a spec written against v1.32 must not become
+// an error — and warns, with `letsencrypt = false` warning about the meaning
+// that changed underneath it rather than about the field's age.
+func TestExposeWarnsOnTheDeprecatedTLSSpelling(t *testing.T) {
+	tests := []struct{ name, body, want string }{
+		{"true", `tls { letsencrypt = true }`, `mode = "acme"`},
+		{"false", `tls { letsencrypt = false }`, "no longer means no certificate"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, diags := jobspec.ParseSource(jobspec.Options{}, "test.hcl",
+				[]byte(exposeSpec(httpPort, tc.body)))
+			if diags.HasErrors() {
+				t.Fatalf("the old spelling became an error:\n%s", jobspec.FormatDiagnostics(diags))
+			}
+			got := jobspec.FormatDiagnostics(diags)
+			if !strings.Contains(got, "Warning") || !strings.Contains(got, tc.want) {
+				t.Errorf("diagnostics = %q, want a warning naming %q", got, tc.want)
+			}
+		})
+	}
+}

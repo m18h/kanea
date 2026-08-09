@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
+
+	"github.com/m18h/kanea/internal/certsource"
 )
 
 // EdgePortName is the port a route uses when a service declares several
@@ -100,9 +102,11 @@ func validateExpose(svc *Service) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	diags = append(diags, validateExposePort(svc)...)
 	diags = append(diags, validateExposeDomains(svc)...)
-	diags = append(diags, validateIPRestriction(svc, e.IPRestriction)...)
-	diags = append(diags, validateRateLimit(svc, e.RateLimit)...)
-	diags = append(diags, validateExposeHeaders(svc, e.Headers)...)
+	diags = append(diags, validateExposeTLS(svc)...)
+	where := fmt.Sprintf("Service %q", svc.Name)
+	diags = append(diags, validateIPRestriction(where, e.IPRestriction)...)
+	diags = append(diags, validateRateLimit(where, e.RateLimit)...)
+	diags = append(diags, validateExposeHeaders(where, e.Headers)...)
 	return diags
 }
 
@@ -168,6 +172,101 @@ func validateExposeDomains(svc *Service) hcl.Diagnostics {
 	return diags
 }
 
+// validateExposeTLS enforces R20: a tls block names a certificate source, and
+// "provided" is the only one a grant name means anything for.
+//
+// There is deliberately no warning for an absent tls block. The whole point of
+// --tls-default is that a homelabber annotates nothing and still gets a
+// certificate, and a warning on every service teaches people to ignore
+// warnings — after which the two below stop being read either.
+func validateExposeTLS(svc *Service) hcl.Diagnostics {
+	t := svc.Expose.TLS
+	if t == nil {
+		return nil
+	}
+	rng := t.DefRange
+	if rng.Filename == "" {
+		rng = svc.Expose.DefRange
+	}
+	var diags hcl.Diagnostics
+
+	if t.Mode != "" && !certsource.Mode(t.Mode).Valid() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Unknown TLS mode",
+			Detail: fmt.Sprintf("Service %q declares tls mode %q. A mode names where the "+
+				"certificate comes from, and this node knows %s.",
+				svc.Name, t.Mode, strings.Join(quoteAll(certsourceModeNames()), ", ")),
+			Subject: rng.Ptr(),
+		})
+	}
+	if t.Mode != "" && t.LetsEncrypt != nil {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Two TLS spellings",
+			Detail: fmt.Sprintf("Service %q sets both `mode` and `letsencrypt`. They are the "+
+				"same setting written twice, and picking one for you would mean guessing "+
+				"which is stale. Keep `mode`.", svc.Name),
+			Subject: rng.Ptr(),
+		})
+	}
+	if t.Name != "" {
+		if t.Mode != string(certsource.ModeProvided) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Certificate name without a provided mode",
+				Detail: fmt.Sprintf("Service %q names certificate %q, but its tls mode is %s. "+
+					"A name selects among the certificates an operator put on this node, "+
+					"so it means nothing to a source that issues its own.",
+					svc.Name, t.Name, describeMode(t.Mode)),
+				Subject: rng.Ptr(),
+			})
+		}
+		diags = append(diags, validateGrant("certificate", svc.Name, t.Name, t.Name, rng)...)
+	}
+
+	// The deprecation warnings. `letsencrypt = true` still means what it always
+	// meant; `letsencrypt = false` is the one that changed underfoot, so it is
+	// the one whose warning has to say what the new silence means.
+	if t.LetsEncrypt != nil {
+		detail := fmt.Sprintf("Service %q writes `letsencrypt = true`. Write "+
+			"`mode = %q` instead; the old spelling still works and will be removed.",
+			svc.Name, certsource.ModeACME)
+		if !*t.LetsEncrypt {
+			detail = fmt.Sprintf("Service %q writes `letsencrypt = false`. Write "+
+				"`mode = %q` if you meant plain HTTP: since v1.33 an absent mode no longer "+
+				"means no certificate, it means whatever this node's --tls-default is.",
+				svc.Name, certsource.ModePlaintext)
+		}
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Summary:  "Deprecated TLS spelling",
+			Detail:   detail,
+			Subject:  rng.Ptr(),
+		})
+	}
+	return diags
+}
+
+// certsourceModeNames lists the modes a spec may name, in a stable order.
+func certsourceModeNames() []string {
+	modes := certsource.Modes()
+	out := make([]string, 0, len(modes))
+	for _, m := range modes {
+		out = append(out, string(m))
+	}
+	return out
+}
+
+// describeMode names the mode in an error, including the case where the spec
+// left it to the node.
+func describeMode(mode string) string {
+	if mode == "" {
+		return "whatever this node defaults to"
+	}
+	return fmt.Sprintf("%q", mode)
+}
+
 // checkDomain reports why a string is not usable as a route hostname.
 //
 // The rejections are all things that "work" somewhere else and would silently
@@ -221,7 +320,7 @@ func checkDomainLabel(label string) error {
 // A bare address is accepted and read as a single host, because writing
 // "203.0.113.7" and meaning that one host is the obvious intent and turning it
 // into a plan error would be pedantry.
-func validateIPRestriction(svc *Service, r *IPRestriction) hcl.Diagnostics {
+func validateIPRestriction(where string, r *IPRestriction) hcl.Diagnostics {
 	if r == nil {
 		return nil
 	}
@@ -235,8 +334,8 @@ func validateIPRestriction(svc *Service, r *IPRestriction) hcl.Diagnostics {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Invalid CIDR",
-					Detail: fmt.Sprintf("Service %q: ip_restriction.%s entry %q is not a CIDR or address: %s.",
-						svc.Name, list.field, entry, err),
+					Detail: fmt.Sprintf("%s: ip_restriction.%s entry %q is not a CIDR or address: %s.",
+						where, list.field, entry, err),
 					Subject: r.DefRange.Ptr(),
 				})
 			}
@@ -265,7 +364,7 @@ func ParseCIDR(entry string) (netip.Prefix, error) {
 	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
-func validateRateLimit(svc *Service, rl *RateLimit) hcl.Diagnostics {
+func validateRateLimit(where string, rl *RateLimit) hcl.Diagnostics {
 	if rl == nil {
 		return nil
 	}
@@ -276,9 +375,9 @@ func validateRateLimit(svc *Service, rl *RateLimit) hcl.Diagnostics {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid rate limit",
-			Detail: fmt.Sprintf("Service %q: rate_limit.requests = %d; it must be positive. "+
+			Detail: fmt.Sprintf("%s: rate_limit.requests = %d; it must be positive. "+
 				"To refuse all traffic use ip_restriction, which says so plainly.",
-				svc.Name, rl.Requests),
+				where, rl.Requests),
 			Subject: rng.Ptr(),
 		})
 	}
@@ -286,7 +385,7 @@ func validateRateLimit(svc *Service, rl *RateLimit) hcl.Diagnostics {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid rate limit",
-			Detail:   fmt.Sprintf("Service %q: rate_limit.burst = %d; it must not be negative.", svc.Name, rl.Burst),
+			Detail:   fmt.Sprintf("%s: rate_limit.burst = %d; it must not be negative.", where, rl.Burst),
 			Subject:  rng.Ptr(),
 		})
 	}
@@ -296,34 +395,34 @@ func validateRateLimit(svc *Service, rl *RateLimit) hcl.Diagnostics {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Rate limit has no window",
-			Detail: fmt.Sprintf("Service %q: rate_limit needs a window (\"1m\", \"10s\"). "+
-				"A request count without a period does not describe a rate.", svc.Name),
+			Detail: fmt.Sprintf("%s: rate_limit needs a window (\"1m\", \"10s\"). "+
+				"A request count without a period does not describe a rate.", where),
 			Subject: rng.Ptr(),
 		})
 	case err != nil:
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid duration",
-			Detail:   fmt.Sprintf("Service %q: rate_limit.window = %q: %s.", svc.Name, rl.Window, err),
+			Detail:   fmt.Sprintf("%s: rate_limit.window = %q: %s.", where, rl.Window, err),
 			Subject:  rng.Ptr(),
 		})
 	case window == 0:
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid rate limit",
-			Detail:   fmt.Sprintf("Service %q: rate_limit.window is zero.", svc.Name),
+			Detail:   fmt.Sprintf("%s: rate_limit.window is zero.", where),
 			Subject:  rng.Ptr(),
 		})
 	}
 
-	diags = append(diags, validateRateLimitKey(svc, rl)...)
+	diags = append(diags, validateRateLimitKey(where, rl)...)
 	return diags
 }
 
 // validateRateLimitKey checks `per`. An unrecognised key would otherwise fall
 // back to some default and rate-limit the wrong thing — which looks like it is
 // working until the day it matters.
-func validateRateLimitKey(svc *Service, rl *RateLimit) hcl.Diagnostics {
+func validateRateLimitKey(where string, rl *RateLimit) hcl.Diagnostics {
 	per := strings.TrimSpace(rl.Per)
 	switch {
 	case per == "", per == RateLimitPerIP, per == RateLimitPerService:
@@ -334,8 +433,8 @@ func validateRateLimitKey(svc *Service, rl *RateLimit) hcl.Diagnostics {
 			return hcl.Diagnostics{{
 				Severity: hcl.DiagError,
 				Summary:  "Invalid rate limit key",
-				Detail: fmt.Sprintf("Service %q: rate_limit.per = %q names an invalid header %q.",
-					svc.Name, rl.Per, name),
+				Detail: fmt.Sprintf("%s: rate_limit.per = %q names an invalid header %q.",
+					where, rl.Per, name),
 				Subject: rl.DefRange.Ptr(),
 			}}
 		}
@@ -344,8 +443,8 @@ func validateRateLimitKey(svc *Service, rl *RateLimit) hcl.Diagnostics {
 		return hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid rate limit key",
-			Detail: fmt.Sprintf("Service %q: rate_limit.per = %q. Use %q, %q, or %q.",
-				svc.Name, rl.Per, RateLimitPerIP, RateLimitPerService, RateLimitPerHeaderPrefix+"<name>"),
+			Detail: fmt.Sprintf("%s: rate_limit.per = %q. Use %q, %q, or %q.",
+				where, rl.Per, RateLimitPerIP, RateLimitPerService, RateLimitPerHeaderPrefix+"<name>"),
 			Subject: rl.DefRange.Ptr(),
 		}}
 	}
@@ -377,7 +476,7 @@ var edgeOwnedHeaders = map[string]bool{
 	"x-real-ip":         true,
 }
 
-func validateExposeHeaders(svc *Service, h *Headers) hcl.Diagnostics {
+func validateExposeHeaders(where string, h *Headers) hcl.Diagnostics {
 	if h == nil {
 		return nil
 	}
@@ -389,8 +488,8 @@ func validateExposeHeaders(svc *Service, h *Headers) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Invalid header name",
-				Detail: fmt.Sprintf("Service %q: headers.%s names %q, which is not a valid HTTP header.",
-					svc.Name, field, name),
+				Detail: fmt.Sprintf("%s: headers.%s names %q, which is not a valid HTTP header.",
+					where, field, name),
 				Subject: rng.Ptr(),
 			})
 			return
@@ -400,9 +499,9 @@ func validateExposeHeaders(svc *Service, h *Headers) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Header belongs to the proxy",
-				Detail: fmt.Sprintf("Service %q: headers.%s names %q, a connection-scoped header the "+
+				Detail: fmt.Sprintf("%s: headers.%s names %q, a connection-scoped header the "+
 					"edge manages. Rewriting it breaks request framing or the WebSocket upgrade.",
-					svc.Name, field, name),
+					where, field, name),
 				Subject: rng.Ptr(),
 			})
 			return
@@ -411,10 +510,10 @@ func validateExposeHeaders(svc *Service, h *Headers) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Header belongs to the edge",
-				Detail: fmt.Sprintf("Service %q: headers.%s names %q. The edge sets it from the real "+
+				Detail: fmt.Sprintf("%s: headers.%s names %q. The edge sets it from the real "+
 					"connection; a spec that could set it would be forging the client identity that "+
 					"ip_restriction, rate limits and your access logs all read.",
-					svc.Name, field, name),
+					where, field, name),
 				Subject: rng.Ptr(),
 			})
 		}

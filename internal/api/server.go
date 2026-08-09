@@ -77,6 +77,14 @@ type ServerConfig struct {
 	// daemon with no backup destination configured is a supported (if
 	// regrettable) state, and it is different from a failure.
 	Backups Backups
+	// CA serves this node's self-signed CA certificate (§7.3). Nil answers 404
+	// on that route, which is the honest answer for a node that has never
+	// issued a self-signed certificate.
+	//
+	// Pass an explicit nil, never a typed nil pointer: a nil concrete pointer
+	// in an interface field is a non-nil interface, and the check above would
+	// pass and then panic.
+	CA CertificateAuthority
 	// MCP is the Model Context Protocol transport (§16.3), mounted at PathMCP
 	// behind the same authentication every other route gets.
 	//
@@ -171,10 +179,11 @@ type Server struct {
 	// notifyStats reports the dispatcher's counters, so the feed can say when
 	// it is quiet because nothing happened rather than because the queue
 	// overflowed.
-	notifyStats func() notify.Stats
-	notifier    Notifier
-	backups     Backups
-	publish     func(notify.Event)
+	notifyStats  func() notify.Stats
+	notifier     Notifier
+	backups      Backups
+	ca           CertificateAuthority
+	publish      func(notify.Event)
 
 	auth            Authenticator
 	audit           AuditLog
@@ -230,8 +239,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
-		notifier: cfg.Notifier, backups: cfg.Backups,
 		auth: cfg.Auth, audit: cfg.Audit,
+		notifier: cfg.Notifier, backups: cfg.Backups, ca: cfg.CA,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		metrics: cfg.Metrics, breaker: cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
 		insecureCookies: cfg.InsecureCookies,
@@ -328,6 +337,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// because it writes to a bucket and costs money. Staging a restore is the
 	// most destructive call this API has — it discards everything on the node
 	// at the next start — and is admin-only and audited like every other.
+	// The CA certificate (§7.3). A read, and not an admin one: it is presented
+	// in every handshake to every client that trusts it.
+	mux.Handle("GET "+PathCerts+"/ca",
+		s.route(policy{action: "cert.ca"}, s.handleCACertificate))
+
 	mux.Handle("GET "+PathBackups, s.route(policy{action: "backup.list"}, s.handleListBackups))
 	mux.Handle("POST "+PathBackups,
 		s.route(policy{action: "backup.create", mutates: true}, s.handleCreateBackup))

@@ -50,6 +50,7 @@ var commands = []command{
 	{"backup", "backup create|list|verify", runBackup},
 	{"restore", "restore state from a snapshot", runRestore},
 	{"secret", "manage secrets: put, ls, rm (write-only — there is no get)", runSecret},
+	{"ca", "this node's self-signed CA, to install on your devices: show, info", runCA},
 	{"user", "manage accounts: add, ls, rm", runUser},
 	{"token", "manage API tokens: create, ls, rm", runToken},
 	{"upgrade", "drain edge, restart services, run state migrations", runUpgrade},

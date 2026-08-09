@@ -1,4 +1,4 @@
-package acme
+package certsource
 
 import (
 	"crypto/ecdsa"
@@ -65,7 +65,8 @@ func (s *servedBundle) start(t *testing.T, settle time.Duration) string {
 
 // testCertificate mints a usable certificate so the publisher's validation —
 // which parses the key pair — has something real to accept.
-func testCertificate(t *testing.T, name string) Certificate {
+func testCertificate(t *testing.T, names ...string) Certificate {
+	name := names[0]
 	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -81,7 +82,7 @@ func testCertificate(t *testing.T, name string) Certificate {
 		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:              []string{name},
+		DNSNames:              names,
 		IsCA:                  true,
 		BasicConstraintsValid: true,
 	}
@@ -94,7 +95,7 @@ func testCertificate(t *testing.T, name string) Certificate {
 		t.Fatalf("marshal key: %v", err)
 	}
 	return Certificate{
-		Domains:   []string{name},
+		Domains:   names,
 		CertPEM:   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
 		KeyPEM:    string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})),
 		NotBefore: notBefore,
