@@ -32,5 +32,9 @@ export function useSeries(value: number | undefined, at: string): (number | unde
     series.current = [...series.current, value].slice(-SparklineLength)
   }, [value, at])
 
+  // Read during render on purpose: the consumer re-renders because the sample
+  // that grew the series also changed its props, so the value is never stale —
+  // and state here would re-render every consumer a second time per sample.
+  // eslint-disable-next-line react-hooks/refs
   return series.current
 }

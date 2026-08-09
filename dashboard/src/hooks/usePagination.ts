@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 /** One page of a list. 25 rows reads without scrolling on a laptop screen. */
 export const DefaultPageSize = 25
@@ -36,11 +36,14 @@ export function usePagination<T>(
   const [page, setPage] = useState(0)
 
   // A changed filter is a different list, and page 3 of the old one points
-  // nowhere meaningful in the new one.
+  // nowhere meaningful in the new one. Reset during render rather than in an
+  // effect, so the new list never flashes at the old page for one frame.
   const resetKey = opts.resetKey
-  useEffect(() => {
+  const [prevKey, setPrevKey] = useState(resetKey)
+  if (prevKey !== resetKey) {
+    setPrevKey(resetKey)
     setPage(0)
-  }, [resetKey])
+  }
 
   const pages = Math.max(1, Math.ceil(items.length / pageSize))
   const current = Math.min(page, pages - 1)

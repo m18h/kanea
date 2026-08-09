@@ -28,6 +28,9 @@ export function useLiveLog(project: string, service: string, tail = 200): LogSta
   const pending = useRef<LogLine[]>([])
 
   useEffect(() => {
+    // A new subscription target is a new log: the reset belongs with the
+    // subscribe it precedes, not in a second effect racing this one.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState({ lines: [], error: null, dropped: 0 })
     pending.current = []
 

@@ -41,6 +41,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const controller = new AbortController()
+    // The initial fetch of the session is the external system this effect
+    // exists to talk to; the synchronous setLoading inside is its beginning.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void resolve(controller.signal)
     return () => controller.abort()
   }, [resolve])
