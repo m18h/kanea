@@ -1,6 +1,5 @@
 // Package provision installs and pins the host components Kanea runs on:
-// containerd, runc, the CNI plugins, etcd, cilium-agent and rootless buildkitd
-// (PRD §5.2.12).
+// containerd, runc and rootless buildkitd (PRD §5.2.12).
 //
 // The shape that matters is the one seam in this package: nothing below
 // [Installer] fetches anything. An installer is handed a [Source] and asks it
@@ -43,8 +42,8 @@ type File struct {
 	// payload itself, which is what KindBinary always uses.
 	From string `json:"from"`
 	// Alt is a second place to look. Upstream images move binaries between
-	// releases — Cilium ships cilium-cni at /opt/cni/bin in some and /usr/bin
-	// in others — and failing an install over that is worse than trying both.
+	// releases, and failing an install over a path that shifted is worse than
+	// trying both.
 	Alt string `json:"alt"`
 	// To is the destination, relative to the install prefix.
 	To string `json:"to"`
@@ -235,8 +234,8 @@ func (m *Manifest) Names() []string {
 
 // Select returns the named components in *manifest* order regardless of the
 // order asked for, because install order is load-bearing: containerd has to be
-// running before the cilium and buildkit images can be pulled through it, and
-// `--only cilium,containerd` must not mean what it says.
+// running before the buildkit image can be pulled through it, and
+// `--only buildkit,containerd` must not mean what it says.
 func (m *Manifest) Select(names []string) ([]*Component, error) {
 	want := make(map[string]bool, len(names))
 	for _, n := range names {

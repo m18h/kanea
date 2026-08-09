@@ -45,7 +45,7 @@ Out of scope:
 
 - Anything requiring an operator to already hold the master key or a root shell on
   the node — that is the trust the design starts from.
-- Findings in containerd, Cilium, BuildKit or the kernel. Report those upstream;
+- Findings in containerd, BuildKit or the kernel. Report those upstream;
   tell us if Kanea's defaults make them materially worse.
 - Automated scanner output with no demonstrated impact.
 

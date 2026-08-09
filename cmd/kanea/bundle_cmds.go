@@ -48,7 +48,7 @@ func runBundleCreate(args []string) error {
 	socket := fs.String("containerd", provision.DefaultRunDir+"/containerd.sock",
 		"containerd socket, for exporting the image components")
 	noImages := fs.Bool("no-images", false,
-		"omit cilium and buildkit (only useful for a --network none node)")
+		"omit buildkit (only useful for a --network netns node with no in-cluster builds)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -79,14 +79,14 @@ func runBundleCreate(args []string) error {
 	if !*noImages {
 		client, err := provision.NewImageClient(*socket, nil)
 		if err != nil {
-			return fmt.Errorf("%w\n\nExporting cilium and buildkit needs a containerd to pull "+
+			return fmt.Errorf("%w\n\nExporting buildkit needs a containerd to pull "+
 				"through. Run this on a node where `kanea install` has run, or pass --no-images "+
-				"for a bundle destined for a `--network none` node", err)
+				"for a bundle destined for a `--network netns` node", err)
 		}
 		defer func() { _ = client.Close() }() //nolint:errcheck // cleanup path
 		images = client
 	} else {
-		o.println("--no-images: cilium and buildkit are omitted.")
+		o.println("--no-images: buildkit is omitted.")
 	}
 
 	// A staging directory, tarred at the end. Building into the final path

@@ -118,38 +118,37 @@ func TestExtractFromLayersStopsOnceEverythingIsFound(t *testing.T) {
 // from an earlier one would put something on the host the image does not have.
 func TestExtractFromLayersHonoursWhiteouts(t *testing.T) {
 	f := &fakeLayers{}
-	base := layer(t, f, map[string]string{"usr/bin/cilium-cni": "removed later"})
-	top := layer(t, f, map[string]string{"usr/bin/.wh.cilium-cni": ""})
+	base := layer(t, f, map[string]string{"usr/bin/buildctl": "removed later"})
+	top := layer(t, f, map[string]string{"usr/bin/.wh.buildctl": ""})
 
 	dest := t.TempDir()
 	err := extractFromLayers(context.Background(), f,
 		[]ocispec.Descriptor{base, top},
-		[]File{{From: "usr/bin/cilium-cni", To: "cni/bin/cilium-cni", Mode: "0755"}},
+		[]File{{From: "usr/bin/buildctl", To: "bin/buildctl", Mode: "0755"}},
 		dest)
 	if err == nil {
 		t.Fatal("a whited-out file was extracted from a lower layer")
 	}
-	if _, err := os.Stat(filepath.Join(dest, "cni/bin/cilium-cni")); err == nil {
+	if _, err := os.Stat(filepath.Join(dest, "bin/buildctl")); err == nil {
 		t.Error("the deleted file was written to the host")
 	}
 }
 
-// Cilium ships cilium-cni at /opt/cni/bin in some releases and /usr/bin in
-// others; failing an install over that would be a worse trade than looking in
-// both.
+// Upstream images move binaries between releases; failing an install over a
+// path that shifted would be a worse trade than looking in both.
 func TestExtractFromLayersUsesTheAltPath(t *testing.T) {
 	f := &fakeLayers{}
-	only := layer(t, f, map[string]string{"opt/cni/bin/cilium-cni": "plugin"})
+	only := layer(t, f, map[string]string{"usr/local/bin/buildctl": "binary"})
 
 	dest := t.TempDir()
 	err := extractFromLayers(context.Background(), f,
 		[]ocispec.Descriptor{only},
-		[]File{{From: "usr/bin/cilium-cni", Alt: "opt/cni/bin/cilium-cni", To: "cni/bin/cilium-cni", Mode: "0755"}},
+		[]File{{From: "usr/bin/buildctl", Alt: "usr/local/bin/buildctl", To: "bin/buildctl", Mode: "0755"}},
 		dest)
 	if err != nil {
 		t.Fatalf("extractFromLayers: %v", err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dest, "cni/bin/cilium-cni")); string(got) != "plugin" {
+	if got, _ := os.ReadFile(filepath.Join(dest, "bin/buildctl")); string(got) != "binary" {
 		t.Errorf("alt path was not used, got %q", got)
 	}
 }
@@ -186,51 +185,4 @@ func TestExtractFromLayersReportsAMissingBinary(t *testing.T) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
 	}
-}
-
-// Every one of these flags is load-bearing (PRD §5.2.5) and the set is not a
-// starting point to tune. M0 spike ① is the record of what each one costs when
-// it is missing.
-func TestCiliumArgsCarryTheMandatoryFlags(t *testing.T) {
-	args := CiliumArgs(testLayout(t), DefaultNodeCIDR, DefaultClusterCIDR)
-	joined := " " + bytesJoin(args) + " "
-
-	for _, required := range []string{
-		"--enable-k8s=false",
-		"--kvstore=etcd",
-		"--identity-allocation-mode=kvstore",
-		"--kube-proxy-replacement=true",
-		"--policy-default-local-cluster=false",
-		"--lb-state-file=" + CiliumRunDir + "/lb-state.json",
-		"--static-cnp-path=" + CiliumRunDir + "/policies",
-	} {
-		if !bytes.Contains([]byte(joined), []byte(" "+required+" ")) {
-			t.Errorf("cilium args are missing %s", required)
-		}
-	}
-}
-
-// The writable service and policy REST APIs were removed in Cilium 1.18, so
-// the file interfaces the agent is told to use must match the paths
-// internal/network reads and writes.
-func TestCiliumFileInterfacesMatchTheNetworkDriver(t *testing.T) {
-	args := CiliumArgs(testLayout(t), DefaultNodeCIDR, DefaultClusterCIDR)
-	joined := bytesJoin(args)
-	if !bytes.Contains([]byte(joined), []byte("/var/run/cilium/lb-state.json")) {
-		t.Error("the agent's --lb-state-file is not where internal/network writes it")
-	}
-	if !bytes.Contains([]byte(joined), []byte("/var/run/cilium/policies")) {
-		t.Error("the agent's --static-cnp-path is not where internal/network writes policies")
-	}
-}
-
-func bytesJoin(args []string) string {
-	var b bytes.Buffer
-	for i, a := range args {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteString(a)
-	}
-	return b.String()
 }

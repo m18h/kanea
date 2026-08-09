@@ -18,13 +18,34 @@ func render(t *testing.T, m *Metrics) string {
 	return b.String()
 }
 
+// obs is the ordinary GET/plaintext observation these tests are about.
+//
+// The label dimensions §9.1.1 added are exercised in their own tests below;
+// spelling them out at every call site here would bury what each of these is
+// actually checking.
+func obs(service string, d time.Duration, status int) Observation {
+	return Observation{
+		Service:  service,
+		Status:   status,
+		Method:   http.MethodGet,
+		Protocol: ProtocolHTTP,
+		Duration: d,
+	}
+}
+
 // sample finds one metric line's value.
+//
+// Split on the *last* space, not the first: a label value may contain one —
+// `tls_version="TLS 1.3"` does — and cutting at the first would return the
+// tail of the label set instead of the number.
 func sample(t *testing.T, body, want string) string {
 	t.Helper()
 	for line := range strings.SplitSeq(body, "\n") {
 		if strings.HasPrefix(line, want) {
-			_, value, _ := strings.Cut(line, " ")
-			return value
+			if i := strings.LastIndex(line, " "); i >= 0 {
+				return line[i+1:]
+			}
+			return ""
 		}
 	}
 	t.Fatalf("no sample matching %q in:\n%s", want, body)
@@ -34,9 +55,9 @@ func sample(t *testing.T, body, want string) string {
 func TestObserveCountsRequestsAndErrors(t *testing.T) {
 	m := NewMetrics()
 
-	m.Observe("shop/web", 10*time.Millisecond, 200)
-	m.Observe("shop/web", 20*time.Millisecond, 200)
-	m.Observe("shop/web", 30*time.Millisecond, 503)
+	m.Observe(obs("shop/web", 10*time.Millisecond, 200))
+	m.Observe(obs("shop/web", 20*time.Millisecond, 200))
+	m.Observe(obs("shop/web", 30*time.Millisecond, 503))
 
 	body := render(t, m)
 	if got := sample(t, body, `kanea_edge_requests_total{service="shop/web"}`); got != "3" {
@@ -51,8 +72,9 @@ func TestObserveCountsRequestsAndErrors(t *testing.T) {
 
 func TestRefusedIsNotARequest(t *testing.T) {
 	m := NewMetrics()
-	m.Refused("shop/web")
-	m.Refused("shop/web")
+	m.Refused("shop/web", ReasonIPRestriction)
+	m.Refused("shop/web", ReasonIPRestriction)
+	m.Refused("shop/web", ReasonRateLimit)
 
 	body := render(t, m)
 	// A service being hammered by blocked addresses is not a service under
@@ -61,16 +83,23 @@ func TestRefusedIsNotARequest(t *testing.T) {
 	if got := sample(t, body, `kanea_edge_requests_total{service="shop/web"}`); got != "0" {
 		t.Errorf("requests = %s, want 0", got)
 	}
-	if got := sample(t, body, `kanea_edge_refused_total{service="shop/web"}`); got != "2" {
-		t.Errorf("refused = %s, want 2", got)
+	// Split by reason, because they are different operator problems: policy
+	// working as written versus a service that has run out of allowance.
+	if got := sample(t, body,
+		`kanea_edge_refused_total{service="shop/web",reason="ip_restriction"}`); got != "2" {
+		t.Errorf("ip_restriction refusals = %s, want 2", got)
+	}
+	if got := sample(t, body,
+		`kanea_edge_refused_total{service="shop/web",reason="rate_limit"}`); got != "1" {
+		t.Errorf("rate_limit refusals = %s, want 1", got)
 	}
 }
 
 func TestHistogramBucketsAreCumulative(t *testing.T) {
 	m := NewMetrics()
-	m.Observe("shop/web", 3*time.Millisecond, 200)   // ≤ 5
-	m.Observe("shop/web", 150*time.Millisecond, 200) // ≤ 200
-	m.Observe("shop/web", 5*time.Second, 200)        // ≤ 10000
+	m.Observe(obs("shop/web", 3*time.Millisecond, 200))   // ≤ 5
+	m.Observe(obs("shop/web", 150*time.Millisecond, 200)) // ≤ 200
+	m.Observe(obs("shop/web", 5*time.Second, 200))        // ≤ 10000
 
 	body := render(t, m)
 	// `le` means at-or-below, so each bound includes everything faster. A
@@ -98,7 +127,7 @@ func TestSlowRequestLandsInTheOverflowBucket(t *testing.T) {
 	m := NewMetrics()
 	// Past the last bound. It still has to be counted somewhere, or a service
 	// whose requests all take a minute would look like it served none.
-	m.Observe("shop/web", time.Minute, 200)
+	m.Observe(obs("shop/web", time.Minute, 200))
 
 	body := render(t, m)
 	if got := sample(t, body, `kanea_edge_request_duration_ms_bucket{service="shop/web",le="10000"}`); got != "0" {
@@ -111,10 +140,10 @@ func TestSlowRequestLandsInTheOverflowBucket(t *testing.T) {
 
 func TestCountersAreCumulativeAcrossScrapes(t *testing.T) {
 	m := NewMetrics()
-	m.Observe("shop/web", time.Millisecond, 200)
+	m.Observe(obs("shop/web", time.Millisecond, 200))
 	first := render(t, m)
 
-	m.Observe("shop/web", time.Millisecond, 200)
+	m.Observe(obs("shop/web", time.Millisecond, 200))
 	second := render(t, m)
 
 	// Reading must not reset anything: kanead differences two readings, and a
@@ -130,8 +159,8 @@ func TestCountersAreCumulativeAcrossScrapes(t *testing.T) {
 
 func TestRetainDropsDepartedServices(t *testing.T) {
 	m := NewMetrics()
-	m.Observe("shop/web", time.Millisecond, 200)
-	m.Observe("shop/gone", time.Millisecond, 200)
+	m.Observe(obs("shop/web", time.Millisecond, 200))
+	m.Observe(obs("shop/gone", time.Millisecond, 200))
 
 	if dropped := m.Retain(map[string]bool{"shop/web": true}); dropped != 1 {
 		t.Fatalf("dropped = %d, want 1", dropped)
@@ -148,7 +177,7 @@ func TestRetainDropsDepartedServices(t *testing.T) {
 func TestExportIsSortedAndStable(t *testing.T) {
 	m := NewMetrics()
 	for _, name := range []string{"shop/zulu", "shop/alpha", "shop/mike"} {
-		m.Observe(name, time.Millisecond, 200)
+		m.Observe(obs(name, time.Millisecond, 200))
 	}
 
 	// Map iteration order must not reach the output: a diff between two scrapes
@@ -167,8 +196,8 @@ func TestExportIsSortedAndStable(t *testing.T) {
 
 func TestObserveIgnoresAnEmptyService(t *testing.T) {
 	m := NewMetrics()
-	m.Observe("", time.Millisecond, 200)
-	m.Refused("")
+	m.Observe(obs("", time.Millisecond, 200))
+	m.Refused("", ReasonRateLimit)
 	if body := render(t, m); strings.Contains(body, `service=""`) {
 		t.Fatalf("an unnamed service was exported:\n%s", body)
 	}
@@ -185,7 +214,7 @@ func TestMetricsAreConcurrencySafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 200 {
-				m.Observe("shop/svc", time.Duration(i)*time.Millisecond, 200)
+				m.Observe(obs("shop/svc", time.Duration(i)*time.Millisecond, 200))
 			}
 		}()
 	}
@@ -259,7 +288,8 @@ func TestProxyCountsARefusedAddressAsRefusedNotServed(t *testing.T) {
 	if got := sample(t, body, `kanea_edge_requests_total{service="shop/web"}`); got != "0" {
 		t.Errorf("requests = %s; a blocked request never reached the service", got)
 	}
-	if got := sample(t, body, `kanea_edge_refused_total{service="shop/web"}`); got != "1" {
+	if got := sample(t, body,
+		`kanea_edge_refused_total{service="shop/web",reason="ip_restriction"}`); got != "1" {
 		t.Errorf("refused = %s, want 1", got)
 	}
 }

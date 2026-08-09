@@ -12,9 +12,9 @@ import (
 //
 // Since v1.30 these are Kanea's own units, so each simply declares
 // Slice=kanea.slice — you do not need a drop-in for a unit you wrote. That is
-// how constraint #11's memory floor reaches containerd, etcd, cilium and
-// buildkitd; the drop-in machinery §5.2.11 describes survives only for an
-// adopted external containerd, whose unit belongs to the distribution.
+// how constraint #11's memory floor reaches containerd and buildkitd; the
+// drop-in machinery §5.2.11 describes survives only for an adopted external
+// containerd, whose unit belongs to the distribution.
 //
 // Written as files rather than applied through some API, for the reason
 // cmd/kanea/units.go gives: an operator has to be able to read and change
@@ -40,14 +40,12 @@ func (l Layout) SocketPath() string {
 	return filepath.Join(l.RunDir, "containerd.sock")
 }
 
-// EtcdEndpoint is the loopback address cilium uses as its kvstore.
-const EtcdEndpoint = "127.0.0.1:2379"
-
 // Files returns every unit and config file for the selected components.
 //
 // Components are asked for by name rather than rendered wholesale, so
-// `kanea install --only containerd` does not write a cilium unit for a cilium
-// that is not there — a unit systemd would then fail to start on every boot.
+// `kanea install --only containerd` does not write a buildkit unit for a
+// buildkit that is not there — a unit systemd would then fail to start on every
+// boot.
 func (l Layout) Files(components []*Component, binary, reserve string) []ConfigFile {
 	want := make(map[string]bool, len(components))
 	for _, c := range components {
@@ -61,20 +59,10 @@ func (l Layout) Files(components []*Component, binary, reserve string) []ConfigF
 			ConfigFile{filepath.Join(l.UnitDir, "kanea-containerd.service"), l.containerdUnit(), 0o644},
 		)
 	}
-	if want["cni-plugins"] || want["cilium"] {
-		out = append(out,
-			ConfigFile{filepath.Join(l.ConfDir, "cni", "net.d", "05-cilium.conflist"), ciliumConflist(), 0o644},
-		)
-	}
-	if want["etcd"] {
-		out = append(out, ConfigFile{filepath.Join(l.UnitDir, "kanea-etcd.service"), l.etcdUnit(), 0o644})
-	}
-	if want["cilium"] {
-		out = append(out, ConfigFile{filepath.Join(l.UnitDir, "kanea-cilium.service"), l.ciliumUnit(binary), 0o644})
-	}
 	if want["buildkit"] {
 		out = append(out, ConfigFile{filepath.Join(l.UnitDir, "kanea-buildkit.service"), l.buildkitUnit(), 0o644})
 	}
+	_ = binary  // no image-backed component is supervised through `kanea supervise` any more
 	_ = reserve // the floor lives on kanea.slice, which cmd/kanea owns
 	return out
 }
@@ -144,13 +132,9 @@ func (l Layout) containerdConfig() string {
 		  address = "127.0.0.1:1338"
 
 		[plugins]
-		  [plugins.'io.containerd.cri.v1.runtime']
-		    # Kanea calls CNI itself, in the order §5.2.5 fixes: netns, CNI ADD,
-		    # label PATCH, then task start. CRI is not in the path at all.
-		    [plugins.'io.containerd.cri.v1.runtime'.cni]
-		      bin_dir  = "` + l.CNIBinDir() + `"
-		      conf_dir = "` + filepath.Join(l.ConfDir, "cni", "net.d") + `"
-
+		  # No CNI stanza: Kanea's eBPF datapath is compiled into the binary and
+		  # attaches each alloc's netns itself (PRD v1.36, §5.2.5), so CRI's CNI
+		  # is not in the path at all.
 		  [plugins.'io.containerd.runtime.v2.task']
 		    platforms = ["linux/amd64", "linux/arm64"]
 	`)
@@ -186,88 +170,6 @@ func (l Layout) containerdUnit() string {
 		# runc needs to move processes between cgroups and mount filesystems, so
 		# the usual sandboxing does not apply here the way it does to kanead.
 		# The isolation that matters for workloads is the one they run under.
-		[Install]
-		WantedBy=multi-user.target
-	`)
-}
-
-// etcdUnit is Cilium's kvstore.
-//
-// Loopback only, and a single node. This is derived state (§18 rule 9): it is
-// rebuilt from the Store, it is never backed up and it is never restored, so
-// there is nothing here to protect with authentication that a bind address
-// does not already protect.
-func (l Layout) etcdUnit() string {
-	return heredoc(`
-		[Unit]
-		Description=etcd for standalone Cilium (Kanea)
-		Documentation=https://github.com/m18h/kanea
-		After=network-online.target
-		Wants=network-online.target
-
-		[Service]
-		Type=notify
-		ExecStart=` + l.BinDir() + `/etcd \
-		  --name=kanea \
-		  --data-dir=` + filepath.Join(l.DataDir, "etcd") + ` \
-		  --listen-client-urls=http://` + EtcdEndpoint + ` \
-		  --advertise-client-urls=http://` + EtcdEndpoint + ` \
-		  --listen-peer-urls=http://127.0.0.1:2380 \
-		  --initial-advertise-peer-urls=http://127.0.0.1:2380 \
-		  --initial-cluster=kanea=http://127.0.0.1:2380 \
-		  --initial-cluster-state=new \
-		  --auto-compaction-retention=1
-		Restart=always
-		RestartSec=3s
-		Slice=kanea.slice
-		OOMScoreAdjust=-900
-		LimitNOFILE=65536
-
-		[Install]
-		WantedBy=multi-user.target
-	`)
-}
-
-// ciliumUnit runs cilium-agent as a containerd task.
-//
-// ExecStart is kanea itself rather than a shell wrapper: `kanea supervise
-// cilium` creates the task through internal/runtime, which is what lets the
-// task's cgroup be placed under kanea.slice. A wrapper would also mean the
-// "container orchestration in one binary" claim quietly acquired a second file.
-//
-// Deliberately not After=kanead.service. The dataplane is what carries traffic
-// and it must not depend on the control plane's lifecycle — the same rule
-// cmd/kanea/units.go applies to kanea-edge, for the same reason.
-func (l Layout) ciliumUnit(binary string) string {
-	node, cluster := l.Networking()
-	return heredoc(`
-		[Unit]
-		Description=cilium-agent (Kanea)
-		Documentation=https://github.com/m18h/kanea
-		After=kanea-containerd.service kanea-etcd.service
-		Requires=kanea-containerd.service
-		# The kvstore is a hard requirement in practice but a soft one here:
-		# cilium retries it, and a start that fails because etcd was two seconds
-		# late is worse than one that waits.
-		Wants=kanea-etcd.service
-
-		[Service]
-		Type=exec
-		ExecStart=` + binary + ` supervise cilium --node-cidr ` + node +
-		` --cluster-cidr ` + cluster + `
-		Restart=always
-		RestartSec=5s
-		Slice=kanea.slice
-		OOMScoreAdjust=-900
-
-		# The agent is a privileged host-network task: it loads eBPF programs,
-		# writes /sys/fs/bpf and programs netfilter. That privilege is the
-		# dataplane's, not a workload's — every alloc still runs with ALL
-		# capabilities dropped (§14).
-		Delegate=yes
-		KillMode=mixed
-		TimeoutStopSec=30s
-
 		[Install]
 		WantedBy=multi-user.target
 	`)
@@ -320,29 +222,6 @@ func (l Layout) buildkitUnit() string {
 // BuildkitUser is the unprivileged account buildkitd runs as.
 const BuildkitUser = "kanea-buildkit"
 
-// ciliumConflist is the CNI configuration Kanea's containerd hands to the
-// Cilium plugin.
-//
-// It carries no subnet and needs none: there is deliberately no `ipam` block,
-// because IPAM is delegated to the agent (`--ipam=cluster-pool`). The node and
-// cluster CIDRs reach cilium through its own flags in the unit, so there is
-// nothing here to plumb a subnet into.
-func ciliumConflist() string {
-	return heredoc(`
-		{
-		  "name": "kanea",
-		  "cniVersion": "1.0.0",
-		  "plugins": [
-		    {
-		      "type": "cilium-cni",
-		      "enable-debug": false,
-		      "log-file": "/var/run/cilium/cilium-cni.log"
-		    }
-		  ]
-		}
-	`)
-}
-
 // heredoc strips the indentation a raw string literal picks up from being
 // written inside a Go function.
 //
@@ -368,12 +247,8 @@ func (l Layout) Directories() []struct {
 		Mode os.FileMode
 	}{
 		{l.BinDir(), 0o755},
-		{l.CNIBinDir(), 0o755},
 		{filepath.Join(l.ConfDir, "containerd"), 0o755},
-		{filepath.Join(l.ConfDir, "cni", "net.d"), 0o755},
 		{filepath.Join(l.DataDir, "containerd"), 0o710},
-		// 0700: etcd holds Cilium's identities and the kvstore is loopback-only.
-		{filepath.Join(l.DataDir, "etcd"), 0o700},
 		{l.RunDir, 0o710},
 	}
 }

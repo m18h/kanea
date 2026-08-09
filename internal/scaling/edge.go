@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -43,6 +44,10 @@ type EdgeConfig struct {
 	Client  *http.Client
 	Logger  *slog.Logger
 	Now     func() time.Time
+	// Exposition retains the labelled families for the exporter (§9.1.1).
+	// Optional: a node whose API server has no exporter configured still
+	// autoscales.
+	Exposition *EdgeExposition
 }
 
 // EdgeScraper turns the edge's cumulative counters into rates and percentiles.
@@ -58,6 +63,9 @@ type EdgeScraper struct {
 	metrics *Metrics
 	log     *slog.Logger
 	now     func() time.Time
+	// exposition receives the labelled families verbatim. They are never
+	// differenced and never enter the time series (§9.1.1).
+	exposition *EdgeExposition
 
 	mu       sync.Mutex
 	previous map[string]edgeSample
@@ -92,7 +100,8 @@ func NewEdgeScraper(cfg EdgeConfig) (*EdgeScraper, error) {
 	}
 	return &EdgeScraper{
 		url: cfg.URL, client: cfg.Client, metrics: cfg.Metrics,
-		log: cfg.Logger, now: cfg.Now, previous: map[string]edgeSample{},
+		log: cfg.Logger, now: cfg.Now, exposition: cfg.Exposition,
+		previous: map[string]edgeSample{},
 	}, nil
 }
 
@@ -156,10 +165,21 @@ func (s *EdgeScraper) Scrape(ctx context.Context) (services int, err error) {
 func (s *EdgeScraper) parse(body io.Reader, at time.Time) (int, error) {
 	current := map[string]*edgeSample{}
 
+	// The labelled families are collected in the same pass that differences the
+	// aggregate one. Two passes would mean buffering the whole body twice, and
+	// a second HTTP request would mean the exporter and the autoscaler reading
+	// two different moments of the same counters.
+	var retained strings.Builder
+	byService := breakdowns{}
+
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 32<<10), 1<<20)
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		if s.exposition != nil && keepInPassthrough(string(line)) {
+			retained.Write(line)
+			retained.WriteByte('\n')
+		}
 		if len(line) == 0 || line[0] == '#' {
 			continue
 		}
@@ -167,16 +187,24 @@ func (s *EdgeScraper) parse(body io.Reader, at time.Time) (int, error) {
 		if !ok {
 			continue
 		}
-		switch string(name) {
-		case edgeRequestsMetric, edgeBucketMetric, edgeErrorsMetric:
-		default:
-			continue
-		}
 		value, err := strconv.ParseFloat(string(rawValue), 64)
 		if err != nil {
 			continue
 		}
 		service := labelValue(labels, "service")
+
+		// The structured view is folded in the same pass, from the labelled
+		// families. It feeds /v1/stats, which the dashboard and the CLI read —
+		// neither should have to parse an exposition to show a code breakdown.
+		if s.exposition != nil {
+			byService.observe(string(name), service, labelValue(labels, "code"), value)
+		}
+
+		switch string(name) {
+		case edgeRequestsMetric, edgeBucketMetric, edgeErrorsMetric:
+		default:
+			continue
+		}
 		if service == "" {
 			continue
 		}
@@ -200,7 +228,13 @@ func (s *EdgeScraper) parse(body io.Reader, at time.Time) (int, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		// Nothing is retained from a truncated read. A partial exposition would
+		// publish a subset of the families as though the rest had gone to zero,
+		// which is worse than publishing the previous scrape unchanged.
 		return 0, fmt.Errorf("scaling: read edge metrics: %w", err)
+	}
+	if s.exposition != nil {
+		s.exposition.Set(retained.String(), at, byService)
 	}
 
 	recorded := 0

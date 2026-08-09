@@ -76,7 +76,7 @@ func TestImagesArePinnedByDigest(t *testing.T) {
 // ignore the order it is asked for.
 func TestSelectPreservesInstallOrder(t *testing.T) {
 	m := MustLoad()
-	got, err := m.Select([]string{"cilium", "containerd"})
+	got, err := m.Select([]string{"buildkit", "containerd"})
 	if err != nil {
 		t.Fatalf("Select: %v", err)
 	}

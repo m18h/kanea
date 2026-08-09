@@ -49,7 +49,7 @@
     <a class="sub" href="#arch-processes">Two processes, one binary</a>
     <a class="sub" href="#arch-store">The Store</a>
     <a class="sub" href="#arch-runtime">Runtime driver — containerd</a>
-    <a class="sub" href="#arch-network">Network driver — standalone Cilium</a>
+    <a class="sub" href="#arch-network">Network driver — eBPF datapath</a>
     <a class="sub" href="#arch-edge">The edge</a>
     <a class="sub" href="#arch-isolation">Resource isolation</a>
     <a class="sub" href="#arch-metrics">Metrics and autoscaling</a>
@@ -177,8 +177,8 @@
                                         │
                         ┌───────────────┼────────────────┐
                         ▼               ▼                ▼
-                    containerd      Cilium agent     Edge proxy
-                   (tasks/images) (endpoints/LB)    (routes/TLS)
+                    containerd      eBPF datapath    Edge proxy
+                   (tasks/images) (policy/LB)       (routes/TLS)
                         │               │                │
                         └───────────────┴────────────────┘
                                         ▼
@@ -278,8 +278,10 @@ kanea logs -f demo/web</pre>
     <h2 id="arch">Architecture</h2>
 
 <p>
-      One binary produces two long-running processes and a CLI. Everything else on the node
-      — containerd, cilium-agent, etcd, buildkitd — is software Kanea drives rather than
+      One binary produces two long-running processes and a CLI. The datapath that networks
+      your services is not one of them — it is a set of eBPF programs compiled into the binary
+      and loaded into the kernel, not a daemon Kanea drives. Everything else on the node
+      — containerd, buildkitd — is software Kanea drives rather than
       software it contains, but it is no longer software you have to find: <code>kanea
       init</code> installs each of them at a version pinned by SHA-256 in the binary, under
       Kanea's own prefix and on Kanea's own sockets, so nothing already on the node changes.
@@ -299,7 +301,7 @@ Webhooks ────────▶  │ │ REST + WS  │ │ (embedded)│ �
                     │            └────────┬─────────┘                        │
                     │   ┌─────────┬───────┼────────┬──────────┐              │
                     │   │ Runtime │Network│ GitOps │ Notifier │              │
-                    │   │containerd│Cilium│BuildKit│          │              │
+                    │   │containerd│ eBPF │BuildKit│          │              │
                     │   └────┬────┴───┬───┴────┬───┴──────────┘              │
                     └────────┼────────┼────────┼───────────────┬─────────────┘
                              │        │        │               ▼
@@ -310,7 +312,7 @@ Webhooks ────────▶  │ │ REST + WS  │ │ (embedded)│ �
 │  L7 routing · TLS termination · middleware · request metrics           │ ◀── :80/:443
 └────────────────────────────────────────────────────────────────────────┘
 
-External:  containerd  ·  cilium-agent  ·  etcd  ·  Linux kernel (eBPF, cgroups v2)</pre>
+External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfilter, bpffs)</pre>
 
     <h3 id="arch-processes">Two processes, one binary</h3>
     <p>
@@ -396,60 +398,91 @@ External:  containerd  ·  cilium-agent  ·  etcd  ·  Linux kernel (eBPF, cgrou
         volumes; pressure must never surprise the control plane.</li>
     </ul>
 
-    <h3 id="arch-network">Network driver — standalone Cilium</h3>
+    <h3 id="arch-network">Network driver — eBPF datapath</h3>
     <p>
-      cilium-agent runs with <code>--enable-k8s=false</code> against a single-node etcd
-      kvstore. Kanea speaks to it over a hand-written client on
-      <code>/var/run/cilium/cilium.sock</code> — importing
+      The datapath is Kanea's own: three small eBPF programs, a handful of pinned maps and
+      plain netlink plumbing, all loaded and written by <code>kanead</code> from one object
+      compiled into the binary. There is no network agent, no kvstore and no CNI. The loader
+      is the standalone <code>github.com/cilium/ebpf</code> library — importing
       <code>github.com/cilium/cilium</code> would pull the Kubernetes client graph, which is
-      the one dependency the project does not have.
+      the one dependency the project does not have. The programs are compiled ahead of time
+      and committed, so <code>go build</code> needs no clang and the node needs no BTF: they
+      read only UAPI context types, so there is no CO-RE and no <code>vmlinux.h</code>.
     </p>
 
-    <h4>Attach order is load-bearing</h4>
+    <h4>IP is identity</h4>
     <p>
-      Per alloc: <b>pre-create netns → CNI <code>ADD</code> → <code>PATCH
-      /v1/endpoint/…</code> with identity labels → start the task.</b> The CNI plugin cannot
-      carry labels, and an endpoint without them holds <code>reserved:init</code>, which is
-      policy-enforced deny in <i>both</i> directions. Labels have to land before the
-      workload's first instruction. The PATCH returns 5xx while the endpoint regenerates and
-      is retried with bounded backoff.
+      <code>kanead</code> allocates every alloc address from the node CIDR and every service
+      VIP from the service CIDR, durably in the Store. Because the platform that hands out
+      addresses is the same one that writes the kernel's maps, the identity map — <code>alloc
+      IP → {project, service}</code> — is written by the allocator itself. There is no
+      identity-allocation protocol, no label race and no settle window. The numeric project
+      and service ids behind the maps are Store-allocated, monotonic and <b>never reused</b>,
+      which is what keeps a pinned map meaningful across a <code>kanead</code> restart.
+    </p>
+
+    <h4>Attach is deny-closed by construction</h4>
+    <p>
+      Per alloc, in order: <b>netns → identity map write → veth created with the host side
+      down → policy programs attached at tc → addresses and static neighbours → link up → the
+      host <code>/32</code> route last.</b> The first moment a packet can reach or leave the
+      alloc, policy is already enforcing and identity is already resolved; a skipped step
+      fails closed, because an identity miss is a drop. The deny-by-default guarantee is
+      <b>structural, not temporal</b> — there is no unlabelled window to hold shut with
+      retries, the way the previous design held its <code>reserved:init</code> state closed.
+      Attach has no wait loop and completes in milliseconds.
+    </p>
+
+    <h4>Load balancing is connect-time</h4>
+    <p>
+      One cgroup <code>connect4</code> program at the root cgroup, held by a pinned
+      <code>bpf_link</code>, rewrites <code>VIP:port → backend</code> at
+      <code>connect(2)</code> — for host processes and containers alike, which is the one
+      property the edge depends on: it dials a VIP with a plain dialer. There is no per-packet
+      NAT and no conntrack entry per flow, and <b>an established connection never consults a
+      map</b>: <code>kanead</code> can restart, or recreate every map, without touching live
+      traffic. Backends update by <b>generation flip</b> — the new set is written under the
+      next generation and one atomic map update commits it, so a concurrent
+      <code>connect()</code> sees a complete old set or a complete new one, never a torn one.
+      A VIP with no backends refuses at <code>connect()</code> rather than black-holing into a
+      timeout. Service ports are <b>TCP-only</b> in v1, refused at <code>plan</code> otherwise.
+    </p>
+
+    <h4>Policy is SYN-gated map entries</h4>
+    <p>
+      The tc program on each alloc's host-side veth admits a source carrying the host identity
+      (the edge's upstream dials, <code>kanead</code>'s DNS replies and probes), a source in
+      the same project, or a source named by an <code>allow_from</code> edge (R14) — and drops
+      everything else, including any source the identity map does not know. There is no policy
+      file, no selector language and no translation step that could make a rule silently match
+      nothing; policy <i>is</i> map entries the datapath enforces directly, and rules only ever
+      union, so <code>allow_from</code> can never weaken the project default-deny.
     </p>
     <div class="callout warn">
-      <b class="label">Project ≡ namespace</b>
+      <b class="label">One honest weakening</b>
       <p>
-        Identity labels are <code>kanea=true</code>, <code>project=&lt;p&gt;</code>,
-        <code>service=&lt;s&gt;</code> — <b>and</b>
-        <code>k8s:io.kubernetes.pod.namespace=&lt;project&gt;</code>. Cilium rewrites every
-        peer selector to require that namespace label, so without it every policy rule
-        matches nothing and silently denies. There is no Kubernetes here; the label is
-        Cilium's own policy vocabulary.
+        Enforcement is per connection attempt: TCP that is not a SYN passes, which is what
+        lets cross-project replies flow without a conntrack. That is deliberately weaker than
+        stateful tracking — an in-node ACK probe traverses the filter and is stopped only by
+        the receiving stack's RST — and it is stated in the threat model rather than hidden.
+        The upgrade to an LRU conntrack map is additive.
       </p>
     </div>
-
-    <h4>Two file interfaces, not two APIs</h4>
     <p>
-      Cilium 1.18 removed the writable service and policy REST APIs, so Kanea programs both
-      through watched files:
-    </p>
-    <ul>
-      <li><b>Service load balancing</b> via <code>--lb-state-file</code> — a JSON file of
-        Kubernetes-<i>shaped</i> Service and EndpointSlice objects (schema only: no API
-        server, no CRDs). One frontend per service, backends are healthy alloc IPs, and
-        eBPF does Maglev load balancing with no userspace proxy in the path. A full rewrite
-        of the file <i>is</i> the batching primitive.</li>
-      <li><b>Network policy</b> via <code>--static-cnp-path</code>. Each project gets a
-        default isolation policy: intra-project allowed, ingress from the edge allowed,
-        everything else denied.</li>
-    </ul>
-    <p>
-      Both are written temp-then-<code>rename(2)</code>, because the agent watches them with
-      fsnotify and a partially written file must never be observable. <b>A malformed policy
-      file is fatal to the agent</b> — a crash loop on restart — so every generated policy is
-      validated before it is written and Kanea owns that directory exclusively.
+      A second, small egress program is load-bearing for A10: it drops the cloud-metadata
+      range <code>169.254.0.0/16</code> in the kernel with a per-alloc drop counter — not
+      asserted in a policy file — along with any service-CIDR destination that escaped
+      connect-time rewrite, and it counts per-endpoint traffic. Masquerade for routed pod
+      traffic is one nftables rule in an owned <code>kanea</code> table; a FORWARD-drop policy
+      another tool installs can eat that traffic, and <code>kanea doctor</code> detects and
+      names it.
     </p>
     <p>
-      Cilium's state is <b>derived state</b>. The Store is the source of truth; on restore the
-      kvstore is wiped and rebuilt from desired state, and etcd files are never backed up.
+      Datapath state is <b>derived state</b>. Programs, maps and the cgroup link are pinned
+      under <code>/sys/fs/bpf/kanea</code> with a schema stamp; a <code>kanead</code> restart
+      leaves the dataplane untouched, and a stamp mismatch recreates and repopulates the maps
+      inside the first reconcile pass — safe precisely because established flows bypass them.
+      Nothing under the pin root is ever backed up.
     </p>
 
     <h3 id="arch-edge">The edge</h3>
@@ -473,7 +506,7 @@ External:  containerd  ·  cilium-agent  ·  etcd  ·  Linux kernel (eBPF, cgrou
     <p>
       Because it already sits in the request path, the edge is the <b>primary source of L7
       metrics</b> for exposed services: requests per second and latency percentiles at no
-      extra data-plane cost. Hubble covers east-west.
+      extra data-plane cost. The datapath's own map counters cover east-west.
     </p>
     <p>
       ACME runs in <code>kanead</code>, never in the edge — obtaining a certificate means
@@ -487,7 +520,7 @@ External:  containerd  ·  cilium-agent  ·  etcd  ·  Linux kernel (eBPF, cgrou
     </p>
 
 <pre class="diagram">/sys/fs/cgroup
-├── kanea.slice                # kanead, kanea-edge (+ drop-ins for containerd, cilium, etcd)
+├── kanea.slice                # kanead, kanea-edge (+ containerd and buildkitd, via their own units)
 │     memory.min      = system_reserve_memory     # kernel-protected floor (default 1 GiB)
 │     memory.swap.max = 0                         # the floor is RAM, not swap
 │     cpu.weight      = 10000
@@ -521,8 +554,8 @@ External:  containerd  ·  cilium-agent  ·  etcd  ·  Linux kernel (eBPF, cgrou
     <p>
       Three scrapers feed one bounded in-memory time series: containerd cgroup metrics (CPU,
       memory), the edge (requests per second, latency percentiles for exposed services), and
-      Hubble when it is enabled (east-west L7). Roughly 27 MiB at the 2 000-alloc target,
-      and there is a test that says so.
+      the datapath's own per-CPU map counters (east-west flows and drops, on by default).
+      Roughly 27 MiB at the 2 000-alloc target, and there is a test that says so.
     </p>
     <div class="callout warn">
       <b class="label">"No data" is never zero</b>
@@ -951,7 +984,7 @@ service "web" {
       <li><code>cpu</code> comes from containerd cgroup metrics and is a percentage of the
         alloc's <i>declared</i> limit — the number the workload can actually use.</li>
       <li><code>rps</code> and <code>p95_latency_ms</code> come from the edge for exposed
-        services, and from Hubble for east-west traffic when it is enabled.</li>
+        services, and from the datapath's own map counters for east-west traffic.</li>
       <li><code>count</code> must fall inside <code>[min, max]</code>, otherwise the
         autoscaler would immediately contradict the spec.</li>
     </ul>
@@ -1050,7 +1083,7 @@ restart {
     <div class="rule"><b>R11</b><div><p><b>Resource limits are mandatory; declaring them is optional.</b> Omitted → <code>cpu = 100</code>, <code>memory = 256</code>, plus a default <code>pids.max</code>. No alloc ever runs unlimited. A <code>memory.max</code> breach OOM-kills the alloc, emits an event, and the restart policy applies. Declared values are the admission units counted against the node's workload budget.</p></div></div>
     <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully — <code>redis-server --save ""</code> is how you disable snapshots.</p></div></div>
     <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> is an allowlist over a drop-everything default.</b> Only the set stock images legitimately need may be requested: <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>SETGID</code>, <code>SETUID</code>, <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_BIND_SERVICE</code>, <code>NET_RAW</code>, <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. Privilege-equivalent ones — <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends — are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Granted capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
-    <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; Cilium ingress rules union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b> — <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
+    <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; the datapath's ingress rules only ever union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b> — <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
     <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time — but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config, <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist.</p></div></div>
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous — named <code>http</code>, or the only one declared. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
     <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device — checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
@@ -1223,7 +1256,7 @@ spec_version = 1
       and the systemd units. Run it once, as root.
     </p>
     <pre class="plain">sudo kanea init [--data-dir=/var/lib/kanea] [--log-dir=…] [--unit-dir=/etc/systemd/system]
-                [--network=cilium|none] [--containerd=…] [--cilium-socket=…]
+                [--network=ebpf|netns] [--containerd=…] [--node-cidr=…] [--cluster-cidr=…]
                 [--skip-checks] [--skip-units]</pre>
     <div class="callout warn">
       <b class="label">The key is shown once</b>
@@ -1236,9 +1269,9 @@ spec_version = 1
 
     <h4><code>kanea doctor</code></h4>
     <p>
-      Verifies the node: dependencies and their versions, the containerd and cilium sockets,
-      kernel version, cgroups v2 and slice placement, the effective memory floor, the build
-      socket, disk headroom and clock synchronisation. Safe to run any time.
+      Verifies the node: dependencies and their versions, the containerd socket, bpffs and the
+      cgroup2 mount, kernel version, cgroups v2 and slice placement, the effective memory
+      floor, the build socket, disk headroom and clock synchronisation. Safe to run any time.
     </p>
 
     <h4><code>kanea upgrade</code></h4>
@@ -1403,8 +1436,8 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
 
     <h4><code>kanea agent</code></h4>
     <pre class="plain">kanea agent [--data-dir=…] [--log-dir=…] [--volume-dir=…] [--socket=…]
-            [--containerd=…] [--cilium=…] [--cni-conf=…] [--cni-bin=…]
-            [--policy-dir=…] [--lb-state-file=…] [--service-cidr=…]
+            [--containerd=…] [--network=ebpf|netns] [--node-cidr=…] [--cluster-cidr=…]
+            [--service-cidr=…] [--bpf-dir=…] [--dns-listen=…]
             [--allowed-host-paths=…] [--passthrough-config=…]
             [--listen=…] [--listen-cert=…] [--listen-key=…] [--dashboard=true]
             [--autoscale=true] [--log-level=info]

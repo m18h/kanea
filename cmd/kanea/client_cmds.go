@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/scaling"
 )
 
 // socketFlag adds the shared --socket flag.
@@ -281,6 +283,9 @@ func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	socket := socketFlag(fs)
 	project := fs.String("project", "", "filter by project")
+	traffic := fs.Bool("traffic", false,
+		"show the edge's status-code and byte breakdown per service (PRD §9.1.1)")
+	asJSON := fs.Bool("json", false, "emit the status as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -301,6 +306,10 @@ func runStatus(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		return writeStatusJSON(ctx, client, health, services, allocs, *project, *traffic)
+	}
+
 	o := newOut()
 	o.printf("kanead    %s (store index %d)\n", health.Status, health.StoreIndex)
 	o.printf("socket    %s\n", client.Socket())
@@ -314,26 +323,7 @@ func runStatus(args []string) error {
 	// Per service: desired count against what is actually running, plus the
 	// unhappy states called out by name. A status screen that only prints
 	// totals hides exactly the thing the operator is looking for.
-	counts := map[string]*tally{}
-	for _, a := range allocs {
-		key := a.Project + "/" + a.Service
-		if counts[key] == nil {
-			counts[key] = &tally{}
-		}
-		switch a.State {
-		case reconciler.AllocRunning:
-			counts[key].running++
-			if !a.Healthy && !a.LastProbeAt.IsZero() {
-				counts[key].unhealthy++
-			}
-		case reconciler.AllocBackoff:
-			counts[key].backoff++
-		case reconciler.AllocFailed:
-			counts[key].failed++
-		default:
-			counts[key].other++
-		}
-	}
+	counts := tallyAllocs(allocs)
 
 	o.table()
 	o.println("SERVICE\tDESIRED\tRUNNING\tHEALTH\tIMAGE")
@@ -366,6 +356,12 @@ func runStatus(args []string) error {
 		return err
 	}
 
+	if *traffic {
+		if err := printTraffic(ctx, client, services, *project); err != nil {
+			return err
+		}
+	}
+
 	tail := newOut()
 	tail.println()
 	if unhealthy == 0 {
@@ -374,6 +370,196 @@ func runStatus(args []string) error {
 		tail.printf("%d service(s) need attention — see `kanea ps` and `kanea logs <service>`.\n", unhealthy)
 	}
 	return tail.Err()
+}
+
+// tallyAllocs groups alloc records by service and by state.
+//
+// Shared by the table and the --json form so the two cannot disagree about
+// whether a service is healthy — which is exactly the sort of drift a second
+// copy of this loop would introduce.
+func tallyAllocs(allocs []reconciler.AllocRecord) map[string]*tally {
+	counts := map[string]*tally{}
+	for _, a := range allocs {
+		key := a.Project + "/" + a.Service
+		if counts[key] == nil {
+			counts[key] = &tally{}
+		}
+		switch a.State {
+		case reconciler.AllocRunning:
+			counts[key].running++
+			// Probed() is the guard: Healthy is only ever written by a probe,
+			// so a service that declares no check has it false forever.
+			if !a.Healthy && a.Probed() {
+				counts[key].unhealthy++
+			}
+		case reconciler.AllocBackoff:
+			counts[key].backoff++
+		case reconciler.AllocFailed:
+			counts[key].failed++
+		default:
+			counts[key].other++
+		}
+	}
+	return counts
+}
+
+// printTraffic renders the edge's per-service breakdown (§9.1.1).
+//
+// Only services the edge has actually seen appear. A service with no `expose`
+// block has no edge traffic by definition, and a row of zeroes for it would
+// read as "nobody is using this" rather than "this was never reachable from
+// outside".
+func printTraffic(ctx context.Context, client *api.Client,
+	services []reconciler.Desired, project string,
+) error {
+	type row struct {
+		service  string
+		sample   scaling.ServiceBreakdown
+		hasCodes bool
+	}
+	var rows []row
+	for _, svc := range services {
+		if project != "" && svc.Project != project {
+			continue
+		}
+		sample, err := client.Stats(ctx, svc.Project, svc.Service)
+		if err != nil {
+			// One service's sample failing must not take the whole table down:
+			// the status command is what an operator runs when things are
+			// already wrong.
+			continue
+		}
+		if sample.Edge == nil {
+			continue
+		}
+		rows = append(rows, row{
+			service:  svc.Project + "/" + svc.Service,
+			sample:   *sample.Edge,
+			hasCodes: len(sample.Edge.Codes) > 0,
+		})
+	}
+
+	o := newOut()
+	o.println()
+	if len(rows) == 0 {
+		o.println("No edge traffic recorded. Either nothing is exposed, or kanea-edge is not being scraped.")
+		return o.Err()
+	}
+
+	o.table()
+	o.println("SERVICE\tREQUESTS\tCODES\tIN\tOUT")
+	for _, r := range rows {
+		total := 0.0
+		for _, n := range r.sample.Codes {
+			total += n
+		}
+		o.printf("%s\t%.0f\t%s\t%s\t%s\n", r.service, total, formatCodes(r.sample.Codes),
+			formatBytes(r.sample.RequestBytes), formatBytes(r.sample.ResponseBytes))
+	}
+	return o.Err()
+}
+
+// formatCodes renders a status-code breakdown, worst first.
+//
+// Descending by code rather than by count on purpose: a 502 that happened
+// twice is what the operator is looking for, and sorting by volume would bury
+// it under a million 200s.
+func formatCodes(codes map[string]float64) string {
+	if len(codes) == 0 {
+		return "—"
+	}
+	keys := make([]string, 0, len(codes))
+	for code := range codes {
+		keys = append(keys, code)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(keys)))
+
+	parts := make([]string, 0, len(keys))
+	for _, code := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%.0f", code, codes[code]))
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatBytes renders a byte count in the largest unit that keeps it readable.
+func formatBytes(n float64) string {
+	const unit = 1024.0
+	switch {
+	case n < unit:
+		return fmt.Sprintf("%.0fB", n)
+	case n < unit*unit:
+		return fmt.Sprintf("%.1fKiB", n/unit)
+	case n < unit*unit*unit:
+		return fmt.Sprintf("%.1fMiB", n/(unit*unit))
+	default:
+		return fmt.Sprintf("%.1fGiB", n/(unit*unit*unit))
+	}
+}
+
+// statusJSON is `kanea status --json`.
+type statusJSON struct {
+	Status     string             `json:"status"`
+	StoreIndex uint64             `json:"store_index"`
+	Socket     string             `json:"socket"`
+	Services   []statusServiceRow `json:"services"`
+}
+
+type statusServiceRow struct {
+	Project string `json:"project"`
+	Service string `json:"service"`
+	Desired int    `json:"desired"`
+	Running int    `json:"running"`
+	Health  string `json:"health"`
+	Settled bool   `json:"settled"`
+	Image   string `json:"image,omitempty"`
+	// Edge is present only with --traffic, and only for a service the edge has
+	// seen. Absent means "not measured", never "no traffic".
+	Edge *scaling.ServiceBreakdown `json:"edge,omitempty"`
+}
+
+// writeStatusJSON emits the machine-readable form (§21 UX: every CLI mutation
+// has --json, and the read commands that feed a script want it too).
+func writeStatusJSON(ctx context.Context, client *api.Client, health api.Health,
+	services []reconciler.Desired, allocs []reconciler.AllocRecord,
+	project string, traffic bool,
+) error {
+	counts := tallyAllocs(allocs)
+
+	out := statusJSON{
+		Status:     health.Status,
+		StoreIndex: health.StoreIndex,
+		Socket:     client.Socket(),
+		Services:   []statusServiceRow{},
+	}
+	for _, svc := range services {
+		if project != "" && svc.Project != project {
+			continue
+		}
+		t := counts[svc.Project+"/"+svc.Service]
+		if t == nil {
+			t = &tally{}
+		}
+		state, settled := serviceHealth(svc.Count, t.running, t.backoff, t.failed, t.unhealthy)
+		row := statusServiceRow{
+			Project: svc.Project, Service: svc.Service,
+			Desired: svc.Count, Running: t.running,
+			Health: state, Settled: settled, Image: svc.Image,
+		}
+		if traffic {
+			if sample, err := client.Stats(ctx, svc.Project, svc.Service); err == nil {
+				row.Edge = sample.Edge
+			}
+		}
+		out.Services = append(out.Services, row)
+	}
+
+	body, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	o := newOut()
+	o.printf("%s\n", body)
+	return o.Err()
 }
 
 // serviceHealth summarises one service for `kanea status`, and reports whether

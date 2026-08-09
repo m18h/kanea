@@ -23,11 +23,11 @@ func NetnsPath(allocID string) string {
 // CreateNetns makes a persistent, named network namespace for an alloc and
 // brings its loopback up.
 //
-// The ordering matters and was established in M0 spike ②: create the netns,
-// run CNI ADD against it, patch the endpoint's identity, and only then start
-// the task. Attaching the network after the task starts leaves a window in
-// which the workload runs with no connectivity — and on Cilium, with an
-// unlabelled endpoint whose traffic is denied in both directions (spike ①).
+// The ordering matters: create the netns, attach the datapath (which writes
+// the alloc's identity and plumbs its veth, §5.2.5), and only then start the
+// task. Attaching the network after the task starts leaves a window in which
+// the workload runs with no connectivity — and under the datapath, with no
+// identity, so its traffic is dropped.
 //
 // It is idempotent: an existing netns is reused rather than recreated, so a
 // retrying reconciler does not tear the network out from under a running alloc.

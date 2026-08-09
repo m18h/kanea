@@ -209,10 +209,10 @@ func TestDryRunFailsOnAHashMismatch(t *testing.T) {
 func TestImageComponentSkipsWithoutAPuller(t *testing.T) {
 	inst, _, _ := testInstall(t)
 	img := &Component{
-		Name: "cilium", Version: "1.19.6", Kind: KindImage,
-		Image: "quay.io/cilium/cilium", Tag: "v1.19.6",
+		Name: "buildkit", Version: "0.32.0", Kind: KindImage,
+		Image: "docker.io/moby/buildkit", Tag: "v0.32.0-rootless",
 		Digest: "sha256:" + hashOf([]byte("x")),
-		Files:  []File{{From: "usr/bin/cilium-dbg", To: "bin/cilium-dbg", Mode: "0755"}},
+		Files:  []File{{From: "usr/bin/buildctl", To: "bin/buildctl", Mode: "0755"}},
 	}
 
 	results, err := inst.Install(context.Background(), []*Component{img})

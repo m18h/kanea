@@ -43,9 +43,9 @@ var (
 // spec itself.
 type AllocSpec struct {
 	// ID is the alloc identifier and the containerd container id. It must be
-	// at least 5 characters: the Cilium CNI plugin derives an interface name
-	// from the first 5 characters of "<id>:<ifname>", and a shorter id leaks
-	// the separator into an interface name (M0 spike ①).
+	// at least MinAllocIDLength characters: the datapath derives a host veth
+	// name from a hash of the id (internal/datapath), and the floor keeps ids
+	// long enough to stay collision-safe and legible.
 	ID string
 	// Project scopes the containerd namespace (one namespace per project,
 	// PRD §5.2.4) and is part of the alloc's labels.

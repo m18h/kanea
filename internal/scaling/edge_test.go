@@ -57,7 +57,10 @@ func (h *edgeHarness) scrape(t *testing.T) {
 // observe records n requests of a given latency and status against a service.
 func (h *edgeHarness) observe(service string, n int, latency time.Duration, status int) {
 	for range n {
-		h.edge.Observe(service, latency, status)
+		h.edge.Observe(edge.Observation{
+			Service: service, Status: status, Method: http.MethodGet,
+			Protocol: edge.ProtocolHTTP, Duration: latency,
+		})
 	}
 }
 
@@ -258,7 +261,10 @@ func TestNewEdgeScraperRequiresAStore(t *testing.T) {
 // silently rots when one side is renamed.
 func TestEdgeExpositionNamesMatchWhatTheScraperReads(t *testing.T) {
 	m := edge.NewMetrics()
-	m.Observe("shop/web", time.Millisecond, 200)
+	m.Observe(edge.Observation{
+		Service: "shop/web", Status: 200, Method: http.MethodGet,
+		Protocol: edge.ProtocolHTTP, Duration: time.Millisecond,
+	})
 	var builder strings.Builder
 	if _, err := m.WriteTo(&builder); err != nil {
 		t.Fatalf("WriteTo: %v", err)

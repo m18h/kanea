@@ -12,10 +12,10 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// MinAllocIDLength is the shortest usable alloc id. Cilium derives a temporary
-// interface name from the first 5 characters of "<container-id>:<ifname>", so a
-// shorter id puts a ':' in an interface name and CNI ADD fails with a bare
-// EINVAL (M0 spike ①). Catching it here turns that into a clear error.
+// MinAllocIDLength is the shortest usable alloc id. The datapath derives a
+// host veth name from a hash of the id (internal/datapath), and keeping a
+// floor of 5 leaves headroom and matches the id lengths the reconciler mints.
+// Catching a too-short id here turns a downstream failure into a clear error.
 const MinAllocIDLength = 5
 
 // invalidID is (uid_t)-1, which is a sentinel rather than a user (PRD §6.2 R23).

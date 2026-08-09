@@ -14,8 +14,8 @@ import (
 // Restore (PRD §15.3).
 //
 // The recovery order §15.3 sets is: master key, then the Store snapshot and its
-// segment replay, then the Cilium kvstore is *wiped and rebuilt* from desired
-// state, then images are re-pulled, then endpoints and edge routes come back.
+// segment replay, then the datapath's maps are *repopulated* from desired
+// state, then images are re-pulled, then allocs and edge routes come back.
 //
 // Only the first two steps live here. The rest are the reconciler's ordinary
 // job — a restored Store is a Store with desired state in it, and convergence

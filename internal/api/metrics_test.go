@@ -220,3 +220,167 @@ func TestStatsTopicNeedsAServiceAndAPipeline(t *testing.T) {
 		t.Fatalf("frame = %+v, want an error for an unscoped stats subscription", frame)
 	}
 }
+
+// The passthrough and backend health (PRD §9.1.1).
+
+// fakeEdgeExposition stands in for scaling.EdgeExposition.
+type fakeEdgeExposition struct {
+	body      string
+	at        time.Time
+	ok        bool
+	breakdown map[string]scaling.ServiceBreakdown
+}
+
+func (f *fakeEdgeExposition) Snapshot() (string, time.Time, bool) {
+	return f.body, f.at, f.ok
+}
+
+func (f *fakeEdgeExposition) Breakdown(service string) (scaling.ServiceBreakdown, bool) {
+	b, ok := f.breakdown[service]
+	return b, ok
+}
+
+func withEdgeMetrics(f *fakeEdgeExposition) func(*api.ServerConfig) {
+	return func(cfg *api.ServerConfig) { cfg.EdgeMetrics = f }
+}
+
+func TestExporterRepublishesTheEdgesLabelledFamilies(t *testing.T) {
+	held := &fakeEdgeExposition{
+		ok: true, at: time.Now(),
+		body: `# TYPE kanea_edge_service_requests_total counter
+kanea_edge_service_requests_total{service="shop/web",code="502",method="GET",protocol="https"} 3
+`,
+	}
+	h := newAuthHarness(t, withMetrics(func(*scaling.Metrics) {}), withEdgeMetrics(held))
+
+	body := scrapeMetrics(t, h)
+	// Verbatim. There is nothing to compute, so a parse-and-re-serialise round
+	// trip could only introduce a discrepancy between what the edge measured
+	// and what an operator reads.
+	if !strings.Contains(body, held.body) {
+		t.Errorf("the retained exposition was not republished as-is:\n%s", body)
+	}
+	if !strings.Contains(body, "kanea_edge_up 1") {
+		t.Errorf("a fresh scrape did not report the edge as up:\n%s", body)
+	}
+}
+
+func TestExporterReportsTheEdgeDown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		held *fakeEdgeExposition
+	}{
+		{"never scraped", &fakeEdgeExposition{}},
+		{"stale", &fakeEdgeExposition{ok: true, at: time.Now().Add(-time.Hour), body: "x 1\n"}},
+		{"not configured", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := []func(*api.ServerConfig){withMetrics(func(*scaling.Metrics) {})}
+			if tc.held != nil {
+				opts = append(opts, withEdgeMetrics(tc.held))
+			}
+			h := newAuthHarness(t, opts...)
+
+			// Published unconditionally. A gap in kanea_edge_service_* has two
+			// causes — the edge is down, or nothing is exposed — and without
+			// this they are indistinguishable.
+			if body := scrapeMetrics(t, h); !strings.Contains(body, "kanea_edge_up 0") {
+				t.Errorf("expected kanea_edge_up 0:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestServerUpIsOnlyPublishedForProbedAllocs(t *testing.T) {
+	h := newAuthHarness(t, withMetrics(func(*scaling.Metrics) {}))
+	ctx := context.Background()
+
+	records := []reconciler.AllocRecord{
+		// Probed and passing.
+		{
+			ID: "shop-web-0", Project: "shop", Service: "web", Index: 0,
+			State: reconciler.AllocRunning, Healthy: true, LastProbeAt: time.Now(),
+		},
+		// Probed and failing.
+		{
+			ID: "shop-web-1", Project: "shop", Service: "web", Index: 1,
+			State: reconciler.AllocRunning, Healthy: false, LastProbeAt: time.Now(),
+		},
+		// Never probed — the service declares no `check` block. Healthy is
+		// written solely by a probe, so this record's false is not a fact
+		// about the alloc, and publishing it would report every check-free
+		// service as entirely down.
+		{
+			ID: "blog-cms-0", Project: "blog", Service: "cms", Index: 0,
+			State: reconciler.AllocRunning, Healthy: false,
+		},
+	}
+	for _, rec := range records {
+		if _, err := store.PutValue(ctx, h.store, store.KindAlloc, rec.Key(), rec); err != nil {
+			t.Fatalf("seed alloc: %v", err)
+		}
+	}
+
+	body := scrapeMetrics(t, h)
+	for _, want := range []string{
+		`kanea_edge_server_up{project="shop",service="web",alloc="shop/web/0"} 1`,
+		`kanea_edge_server_up{project="shop",service="web",alloc="shop/web/1"} 0`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `service="cms"`) {
+		t.Errorf("an unprobed alloc was published as down:\n%s", body)
+	}
+}
+
+func TestStatsCarriesTheEdgeBreakdown(t *testing.T) {
+	held := &fakeEdgeExposition{
+		ok: true, at: time.Now(),
+		breakdown: map[string]scaling.ServiceBreakdown{
+			"shop/web": {
+				Codes:         map[string]float64{"200": 41, "502": 1},
+				RequestBytes:  1024,
+				ResponseBytes: 8192,
+			},
+		},
+	}
+	h := newAuthHarness(t, withMetrics(func(*scaling.Metrics) {}), withEdgeMetrics(held))
+
+	req := h.request(t, http.MethodGet, api.PathStats+"?project=shop&service=web", nil)
+	req.Header.Set("Authorization", "Bearer "+h.token(t, auth.RoleViewer))
+	resp, body := h.do(t, req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET stats = %d: %s", resp.StatusCode, body)
+	}
+
+	var sample api.StatsSample
+	if err := json.Unmarshal([]byte(body), &sample); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if sample.Edge == nil {
+		t.Fatal("no edge breakdown in the sample")
+	}
+	if sample.Edge.Codes["502"] != 1 || sample.Edge.ResponseBytes != 8192 {
+		t.Errorf("breakdown = %+v", *sample.Edge)
+	}
+
+	// A service the edge has never reported gets no breakdown at all, rather
+	// than one full of zeroes: "not exposed" and "served nothing" are
+	// different facts and the dashboard renders them differently.
+	req = h.request(t, http.MethodGet, api.PathStats+"?project=blog&service=cms", nil)
+	req.Header.Set("Authorization", "Bearer "+h.token(t, auth.RoleViewer))
+	_, body = h.do(t, req)
+
+	// A fresh target: json.Unmarshal leaves a pointer field alone when the key
+	// is absent, so decoding into the struct above would report the previous
+	// service's breakdown and pass.
+	var unexposed api.StatsSample
+	if err := json.Unmarshal([]byte(body), &unexposed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if unexposed.Edge != nil {
+		t.Errorf("an unreported service carried a breakdown: %+v", *unexposed.Edge)
+	}
+}

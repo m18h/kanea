@@ -18,10 +18,11 @@ control over it. Three things follow, and they shape everything below:
 - **Workloads are hostile by assumption.** A container is a thing built from a
   Containerfile somebody wrote. It is inside the trust boundary of the node's
   kernel and outside every other one.
-- **The control plane is root.** `kanead` talks to containerd and Cilium over
-  sockets that are root-equivalent by design. There is no meaningful privilege
-  boundary between "compromised kanead" and "compromised node", so the
-  boundaries worth defending are the ones *in front of* it.
+- **The control plane is root.** `kanead` talks to containerd over a socket
+  that is root-equivalent by design, and it loads and programs the
+  node's eBPF datapath itself. There is no meaningful privilege boundary
+  between "compromised kanead" and "compromised node", so the boundaries worth
+  defending are the ones *in front of* it.
 - **The operators are few and identifiable.** v1 has two roles and no
   delegation. That makes authorization simple enough to enforce in one place,
   which at this scale is worth more than expressiveness.
@@ -36,7 +37,7 @@ control over it. Three things follow, and they shape everything below:
 | TLS private keys | `certs` bucket → `/run/kanea-edge/certs.json` 0640 | Traffic interception for the served names |
 | Platform state | `state.db` (bbolt) | What runs, where, and with what access |
 | Audit trail | `audit` bucket, hash-chained | The ability to say what happened |
-| The node itself | containerd + Cilium sockets | Everything above, plus the workloads |
+| The node itself | the containerd socket + the BPF pin root (`/sys/fs/bpf/kanea`) | Everything above, plus the workloads |
 
 ### Trust boundaries
 
@@ -47,7 +48,7 @@ control over it. Three things follow, and they shape everything below:
     │                    ← boundary 2: the edge cannot write state
  kanead       (root; API on a 0600 unix socket + an optional TLS listener)
     │                    ← boundary 3: auth middleware, deny-by-default
- Store / containerd / cilium-agent
+ Store / containerd / eBPF datapath
     │                    ← boundary 4: per-alloc namespaces, all caps dropped
  workload containers
 ```
@@ -173,8 +174,19 @@ The exceptions are host volumes, devices and sockets, and all three are
 port** (§3.13) is a fourth thing a spec can ask for that reaches past the node's
 edge, and it is bounded the same way: by the node, not by the spec.
 
-Network policy is deny-by-default per project: an unlabelled endpoint is
-`reserved:init`, which denies both directions.
+Network policy is deny-by-default per project, and the deny is structural,
+not temporal: the datapath's policy program is attached and
+the alloc's identity written *before* its interface can carry a packet, and a
+source the identity map does not know is dropped (PRD §5.2.5). There is no
+unlabelled window to defend, and a skipped attach step fails closed.
+
+One honest weakening, stated here because hiding it would be worse: policy is
+enforced **per connection attempt** (TCP SYN), and non-SYN TCP passes the
+filter — that is what lets cross-project replies flow without a conntrack. An
+in-node ACK probe therefore traverses the filter and is stopped only by the
+receiving stack's RST; a cross-project attacker can learn that an address
+exists, not talk to it. The upgrade to stateful tracking is additive and
+parked, not precluded.
 
 ### 3.6 The browser (A03, A05)
 
@@ -330,11 +342,15 @@ need to deploy.
 
 ### 3.11 The host-component supply chain (A08; PRD §5.2.12)
 
-Since v1.30, `kanea init` downloads containerd, `runc`, the CNI plugins, etcd,
-cilium-agent and `buildkitd` and installs them as root. That is a genuinely new
-surface, and the largest one added since the release workflow itself: an
-attacker who controls what those downloads return controls the container
-runtime on every node that installs.
+`kanea init` downloads host components and installs them as root: containerd,
+`runc` and `buildkitd`. The network layer is deliberately not among them — the
+datapath's programs are compiled into the `kanea` binary itself (§5.2.5), so no
+cilium image, etcd or CNI plugin is fetched or run as root. That download is a
+real surface: an attacker who controls what it returns controls the container
+runtime on every node that installs. Keeping the list to three components —
+rather than the six an agent-based datapath would need — is itself a
+supply-chain improvement: the artefacts a node never fetches are ones an
+attacker cannot reach.
 
 **What is defended:**
 
@@ -553,6 +569,40 @@ resource, so unlike §3.12 there is nothing for the node to permit.
   the volume's top-level directory only — a recursive one would overwrite
   ownership a workload set deliberately — and a chown that fails fails the alloc.
 
+### 3.16 Edge metric labels (A03, A09; PRD §9.1.1)
+
+`/v1/metrics` now carries the shape of a service's traffic — status codes,
+methods, protocols, bytes moved, connection counts, certificate expiry. That is
+more than it carried before v1.35, and it is more than a service list reveals:
+request volume and error rates describe how a business is doing.
+
+- **It is authenticated, and it always was.** §5.2.1 lists two unauthenticated
+  routes and this is not one of them. A Prometheus server scrapes it with a
+  viewer token. This section records a widened disclosure on an existing
+  boundary, not a new one.
+- **Every label is bounded, and the bound is a security property, not a
+  budget.** `method` is a token from the request line; an attacker who could
+  make it a label value could grow `kanead`'s heap by sending requests, which
+  is a remote memory-exhaustion primitive against the control plane —
+  constraint #11's concern arriving through the front door. It is allowlisted
+  to nine values plus `OTHER`. `code` comes from the upstream, and a service
+  answering a distinct status per request is capped and folded the same way.
+  Past `maxSeriesPerService` a service holds one overflow series and
+  `kanea_edge_series_dropped_total` says so.
+- **The retained exposition is bounded too.** `kanead` does not supervise the
+  edge and does not control its version, so the scrape is capped at
+  `maxRetainedBytes` rather than trusted to be well-behaved.
+- **A certificate's common name is the one label value Kanea does not
+  choose.** It is escaped for the exposition format explicitly, so a name
+  containing a quote or a newline cannot inject a line into the scrape output —
+  which a naive renderer would let it do, and which would let whoever obtained
+  that certificate write arbitrary series into an operator's monitoring.
+- **No secret, token, path or header value is ever a label.** The edge's
+  `Headers` middleware can be configured with values that are secrets; none of
+  them reach a metric. There is deliberately no `path` dimension either: it is
+  client-chosen and unbounded, and it leaks URLs into a system that retains
+  them far longer than a log does.
+
 ---
 
 ## 4. Attack walkthroughs
@@ -583,10 +633,12 @@ form post carries the cookie and nothing else — exactly the request the CSRF
 check rejects.
 
 **A workload is compromised.** No capabilities, no escalation, no route to
-another project's services (policy), no cloud metadata (egress policy), no way
-to exhaust the node (cgroup ceiling). It can reach what its project's policy
-allows, which is the point of declaring it. Unless it holds a socket grant —
-see below, where this stops being true.
+another project's services (the datapath's default-deny, §3.5 — with the
+SYN-gating caveat stated there), no cloud metadata (the egress program drops
+`169.254.0.0/16` in the kernel, with a counter), no way to exhaust the node
+(cgroup ceiling). It can reach what its project's policy allows, which is the
+point of declaring it. Unless it holds a socket grant — see below, where this
+stops being true.
 
 **A spec asks for the container runtime socket.** It parses: `socket` blocks are
 valid HCL and the grant name is well-formed. It then fails at the node, because
@@ -636,7 +688,7 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | A07 | Login and global rate limits, token expiry, OIDC + PKCE | **Built** |
 | A08 | Digest pinning honoured; release signing | **Partial** — signing is M10 |
 | A09 | Hash-chained audit log, retention; MCP tool calls audited through the same routes | **Built** — signed export is M10 |
-| A10 | Metadata-endpoint egress policy | **Built** — git/webhook SSRF rules are M7/M8 |
+| A10 | Metadata-endpoint egress block, enforced by the datapath's own egress program (v1.36 — previously claimed via a Cilium egress policy that was never emitted) | **Built** — git/webhook SSRF rules are M7/M8 |
 
 ---
 

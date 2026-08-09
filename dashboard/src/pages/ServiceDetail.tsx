@@ -9,9 +9,16 @@ import {
   servicesResponseSchema,
   statsSampleSchema,
   type AllocStats,
+  type EdgeBreakdown,
   type StatsSample,
 } from '@/lib/api'
-import { allocStateVariant, groupAllocs, serviceHealth } from '@/lib/state'
+import {
+  allocStateVariant,
+  formatBytes,
+  groupAllocs,
+  groupCodes,
+  serviceHealth,
+} from '@/lib/state'
 import { Sparkline } from '@/components/Sparkline'
 import { useSeries } from '@/hooks/useSeries'
 
@@ -99,7 +106,62 @@ export function ServiceDetail({ project, service }: { project: string; service: 
         </CardContent>
       </Card>
 
+      <EdgePanel edge={stats.data?.edge} />
+
       <LogPanel project={project} service={service} />
+    </div>
+  )
+}
+
+/**
+ * EdgePanel shows what the edge saw (PRD §9.1.1): the status-code split and
+ * the bytes moved.
+ *
+ * Rendered only when the edge has actually reported this service. A service
+ * with no `expose` block is not reachable from outside, and a panel of zeroes
+ * for it would read as "nobody is using this" rather than "this was never
+ * measured" — the same distinction the metric gauges draw by being absent.
+ */
+function EdgePanel({ edge }: { edge?: EdgeBreakdown | undefined }) {
+  if (!edge) return null
+
+  const classes = groupCodes(edge.codes)
+  const total = classes.reduce((sum, c) => sum + c.count, 0)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Edge traffic</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          {classes.length === 0 ? (
+            <span className="text-muted-foreground">No requests recorded yet.</span>
+          ) : (
+            classes.map((c) => (
+              <Badge key={c.klass} variant={c.variant}>
+                {c.klass} · {c.count.toLocaleString()}
+              </Badge>
+            ))
+          )}
+        </div>
+        <dl className="grid gap-4 sm:grid-cols-3">
+          <Total label="Requests" value={total.toLocaleString()} />
+          <Total label="Received" value={formatBytes(edge.request_bytes)} />
+          <Total label="Sent" value={formatBytes(edge.response_bytes)} />
+        </dl>
+      </CardContent>
+    </Card>
+  )
+}
+
+function Total({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-1">
+      <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
+      {/* Cumulative for the life of the edge process, not a rate — the panel
+          says "Requests", never "Requests/s", so the two are not confused. */}
+      <dd className="font-mono text-sm tabular-nums">{value}</dd>
     </div>
   )
 }

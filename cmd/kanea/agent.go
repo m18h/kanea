@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +23,8 @@ import (
 	"github.com/m18h/kanea/internal/autoupdate"
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/certsource"
+	"github.com/m18h/kanea/internal/datapath"
+	"github.com/m18h/kanea/internal/datapath/dpmap"
 	"github.com/m18h/kanea/internal/edge"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/logging"
@@ -29,6 +32,7 @@ import (
 	"github.com/m18h/kanea/internal/network"
 	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/passthrough"
+	"github.com/m18h/kanea/internal/provision"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/scaling"
@@ -84,20 +88,22 @@ func runAgent(args []string) error {
 	volumeDir := fs.String("volume-dir", "", "local volume root (default <data-dir>/volumes)")
 	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
 	containerdSocket := fs.String("containerd", runtime.DefaultSocket, "containerd socket")
-	networkMode := fs.String("network", networkCilium,
-		"network driver: cilium, or netns for development (no policy, no service LB)")
-	ciliumSocket := fs.String("cilium", network.DefaultSocketPath, "cilium-agent API socket")
-	cniConf := fs.String("cni-conf", network.DefaultCNIConfPath, "CNI configuration list")
-	cniBin := fs.String("cni-bin", network.DefaultCNIBinDir, "CNI plugin directory")
-	policyDir := fs.String("policy-dir", network.DefaultPolicyDir, "cilium --static-cnp-path directory")
+	networkMode := fs.String("network", networkEBPF,
+		"network driver: ebpf, or netns for development (no policy, no service LB)")
+	bpfDir := fs.String("bpf-dir", dpmap.PinRoot,
+		"bpffs directory the datapath pins its maps, programs and links under")
+	nodeCIDR := fs.String("node-cidr", provision.DefaultNodeCIDR,
+		"this node's container subnet; its .1 is the datapath host address")
+	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
+		"what the masquerade rule treats as internal; must contain --node-cidr")
 	hostPaths := fs.String("allowed-host-paths", "",
 		"comma-separated directories that `host` volumes may mount from (default: none)")
 	passthroughConfig := fs.String("passthrough-config", "",
 		"HCL file granting host devices and sockets to named projects (default: no grants)")
-	lbStateFile := fs.String("lb-state-file", network.DefaultLBStateFile, "cilium --lb-state-file path")
 	serviceCIDR := fs.String("service-cidr", reconciler.DefaultServiceCIDR, "pool for service frontend addresses")
 	dnsListen := fs.String("dns-listen", "",
-		"internal DNS listen address (default: the cilium_host address; \"off\" disables)")
+		"internal DNS listen address (default: the node CIDR's .1, the "+
+			datapath.HostInterface+" address; \"off\" disables)")
 	dnsUpstream := fs.String("dns-upstream", "",
 		"comma-separated upstream resolvers for external names (default: the host's)")
 	baseDomain := fs.String("base-domain", "",
@@ -165,9 +171,6 @@ func runAgent(args []string) error {
 		"containerd's Prometheus endpoint (\"off\" disables cgroup metrics)")
 	edgeMetrics := fs.String("edge-metrics", scaling.DefaultEdgeMetricsURL,
 		"kanea-edge's metrics endpoint (\"off\" disables the L7 signal)")
-	hubbleMetrics := fs.String("hubble-metrics", "",
-		"cilium-agent's Hubble endpoint for east-west metrics, e.g. "+
-			scaling.DefaultHubbleMetricsURL+" (default: off — Hubble costs CPU per request, PRD §9.1)")
 	autoscale := fs.Bool("autoscale", true, "act on the scaling policies services declare (PRD §9.2)")
 	buildkit := fs.String("buildkit", gitops.DefaultBuildkitSocket,
 		"rootless buildkitd address (\"off\" disables GitOps and builds, PRD §10.2)")
@@ -186,6 +189,21 @@ func runAgent(args []string) error {
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if err := validNetworkMode(*networkMode); err != nil {
+		return err
+	}
+	// kanead is the IPAM now (PRD v1.36): nothing downstream re-validates the
+	// subnets, so a typo has to be refused here rather than presenting as a
+	// datapath that hands out unroutable addresses.
+	var cidrs agentCIDRs
+	if *networkMode == networkEBPF {
+		parsed, err := parseAgentCIDRs(*nodeCIDR, *clusterCIDR, *serviceCIDR)
+		if err != nil {
+			return err
+		}
+		cidrs = parsed
 	}
 
 	logger, closer, err := logging.New(logging.Config{Level: *logLevel, Format: "text"})
@@ -260,7 +278,7 @@ func runAgent(args []string) error {
 		return fmt.Errorf("volume dir: %w", err)
 	}
 
-	dns, err := buildDNS(*networkMode, *dnsListen, *dnsUpstream, logger)
+	dns, err := buildDNS(*networkMode, *dnsListen, *dnsUpstream, cidrs.node, logger)
 	if err != nil {
 		return err
 	}
@@ -308,17 +326,26 @@ func runAgent(args []string) error {
 		Logger:        logger,
 	})
 
-	net, err := buildNetwork(ctx, *networkMode, network.Config{
-		SocketPath:  *ciliumSocket,
-		CNIConfPath: *cniConf,
-		CNIBinDir:   *cniBin,
-		PolicyDir:   *policyDir,
-		LBStateFile: *lbStateFile,
+	net, err := buildNetwork(ctx, *networkMode, datapath.Config{
+		NodeCIDR:    cidrs.node,
+		ClusterCIDR: cidrs.cluster,
+		ServiceCIDR: cidrs.service,
+		BPFDir:      *bpfDir,
+		Store:       st,
 		DNS:         dns,
 		Logger:      logger,
 	}, logger)
 	if err != nil {
 		return err
+	}
+
+	// The east-west metrics view, when the driver has one. Only the real
+	// datapath does: netns mode has no counters, and says so in startMetrics.
+	var flows scaling.FlowSource
+	if dp, ok := net.(*datapath.Datapath); ok {
+		if source := dp.CounterSource(); source != nil {
+			flows = datapathFlows{source: source, datapath: dp}
+		}
 	}
 
 	// The API wakes the reconciler after every apply, so a deploy converges
@@ -344,6 +371,13 @@ func runAgent(args []string) error {
 	// The metrics pipeline never touches the Store (AGENTS.md #2): it is an
 	// in-memory time series the scrapers write and the autoscaler reads.
 	metrics := scaling.NewMetrics(scaling.MetricsConfig{})
+
+	// The edge's labelled families bypass that time series entirely (§9.1.1):
+	// the scrape loop fills this holder and the exporter reads it, so the
+	// per-code and per-method cardinality never reaches the rings the
+	// autoscaler evaluates. Created here, before either side, because both take
+	// it and neither may depend on the other having started.
+	edgeExposition := scaling.NewEdgeExposition()
 
 	// One breaker, fed by the reconciler and read by the autoscaler (§4.3).
 	// Two of them would each see half the node's failures and neither would
@@ -541,7 +575,8 @@ func runAgent(args []string) error {
 		Backups: backups, CA: certificateAuthority(certs),
 		PublishPorts: portPolicy,
 		OIDC:         provider, Sessions: users,
-		Metrics: metrics, Breaker: breaker, Node: scaling.NewNodeReader(""),
+		Metrics: metrics, EdgeMetrics: edgeExposition,
+		Breaker: breaker, Node: scaling.NewNodeReader(""),
 		Exec:   driver,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
 		AuthConfigured: configured, InsecureCookies: *insecureCookies,
@@ -616,9 +651,10 @@ func runAgent(args []string) error {
 	}()
 	startMetrics(ctx, metricsSettings{
 		metrics:       metrics,
+		exposition:    edgeExposition,
 		containerdURL: *containerdMetrics,
 		edgeURL:       *edgeMetrics,
-		hubbleURL:     *hubbleMetrics,
+		flows:         flows,
 		interval:      *metricsInterval,
 		autoscale:     *autoscale,
 		store:         st,
@@ -688,86 +724,139 @@ func sweepAuthState(ctx context.Context, users *auth.Store, trail *audit.Log,
 
 // Network driver names for --network.
 const (
-	// networkCilium is the product: eBPF datapath, per-project policy, service LB.
-	networkCilium = "cilium"
+	// networkEBPF is the product: Kanea's own eBPF datapath — connect-time
+	// service LB, per-project policy, per-CPU counters (PRD v1.36, §5.2.5).
+	networkEBPF = "ebpf"
 	// networkNetns gives each alloc a bare namespace and nothing else. It exists
-	// so kanead can run on a host without Cilium — a laptop, a CI job — and is
-	// not a supported deployment: no policy is enforced and no service is load
-	// balanced, so allocs are unreachable by name.
+	// so kanead can run on a host without the datapath — a laptop, a CI job —
+	// and is not a supported deployment: no policy is enforced and no service is
+	// load balanced, so allocs are unreachable by name.
 	networkNetns = "netns"
 )
 
+// validNetworkMode refuses anything but the two modes, up front. Before v1.36
+// any value other than one recognised name silently selected the product mode,
+// so a typo configured a node by accident.
+func validNetworkMode(mode string) error {
+	if mode != networkEBPF && mode != networkNetns {
+		return fmt.Errorf("unknown --network %q: want %s or %s", mode, networkEBPF, networkNetns)
+	}
+	return nil
+}
+
+// agentCIDRs is the parsed subnet trio the ebpf mode runs on.
+type agentCIDRs struct {
+	node, cluster, service netip.Prefix
+}
+
+// parseAgentCIDRs validates the subnets against each other, mirroring the
+// shape of preflight's checkSubnets: `kanea doctor` can only warn in advance,
+// while this is the refusal that actually gates startup — GitOps and systemd
+// reach kanead without ever passing through doctor.
+func parseAgentCIDRs(node, cluster, service string) (agentCIDRs, error) {
+	var out agentCIDRs
+	for _, p := range []struct {
+		flag  string
+		value string
+		into  *netip.Prefix
+	}{
+		{"--node-cidr", node, &out.node},
+		{"--cluster-cidr", cluster, &out.cluster},
+		{"--service-cidr", service, &out.service},
+	} {
+		prefix, err := netip.ParsePrefix(p.value)
+		if err != nil {
+			return out, fmt.Errorf("%s %q is not a CIDR", p.flag, p.value)
+		}
+		if !prefix.Addr().Is4() {
+			return out, fmt.Errorf("%s %q is not an IPv4 prefix", p.flag, p.value)
+		}
+		*p.into = prefix.Masked()
+	}
+	if !out.cluster.Contains(out.node.Addr()) || out.node.Bits() < out.cluster.Bits() {
+		return out, fmt.Errorf("--node-cidr %s is not within --cluster-cidr %s", node, cluster)
+	}
+	for _, c := range []struct {
+		flag   string
+		prefix netip.Prefix
+	}{
+		{"--node-cidr", out.node}, {"--cluster-cidr", out.cluster},
+	} {
+		if c.prefix.Overlaps(out.service) {
+			return out, fmt.Errorf("%s %s overlaps --service-cidr %s; a service frontend would be "+
+				"handed an address that is also a container address", c.flag, c.prefix, service)
+		}
+	}
+	return out, nil
+}
+
 // buildNetwork selects the network driver.
 //
-// An unreachable cilium-agent is a warning, not a startup failure. Refusing to
-// start would take the control API down with it — and the API is exactly what
-// an operator needs in order to see why the node is unhealthy. The reconciler
-// already treats a failed action as retryable, so attaches resume on their own
-// once the agent is back.
-func buildNetwork(ctx context.Context, mode string, cfg network.Config, logger *slog.Logger) (reconciler.Network, error) {
+// An Init failure in ebpf mode is a hard startup error, deliberately unlike
+// the warn-and-continue the old external agent got: there is no separate
+// process that might come up later. Loading the programs *is* the datapath —
+// if that fails, nothing will ever pass traffic, there is nothing to retry
+// against, and a control plane that started anyway would converge every alloc
+// onto a network that silently drops everything.
+func buildNetwork(ctx context.Context, mode string, cfg datapath.Config, logger *slog.Logger) (reconciler.Network, error) {
 	switch mode {
 	case networkNetns:
 		logger.Warn("network policy and service load balancing are disabled",
 			"network", networkNetns, "detail", "development mode: allocs get a bare namespace")
 		return reconciler.NetnsNetwork{}, nil
 
-	case networkCilium:
-		net, err := network.New(cfg)
+	case networkEBPF:
+		dp, err := datapath.New(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("network: %w", err)
 		}
-		healthCtx, cancel := context.WithTimeout(ctx, ciliumHealthTimeout)
-		defer cancel()
-		if err := net.Health(healthCtx); err != nil {
-			logger.Warn("cilium agent is not answering; allocs cannot attach until it is",
-				"socket", cfg.SocketPath, "error", err)
+		if err := dp.Init(ctx); err != nil {
+			return nil, fmt.Errorf("network: %w", err)
 		}
-		return net, nil
+		return dp, nil
 
 	default:
-		return nil, fmt.Errorf("unknown --network %q: want %s or %s", mode, networkCilium, networkNetns)
+		return nil, fmt.Errorf("unknown --network %q: want %s or %s", mode, networkEBPF, networkNetns)
 	}
 }
-
-// ciliumHealthTimeout bounds the startup probe. It is short on purpose: this is
-// a diagnostic, and kanead starts either way.
-const ciliumHealthTimeout = 5 * time.Second
 
 // DNS wiring.
 const (
 	// dnsOff disables the embedded resolver.
 	dnsOff = "off"
-	// ciliumHostInterface carries the node's address inside the cluster CIDR.
-	// It is the one address reachable from every alloc's namespace *and* from
-	// the host, which is exactly what a node-local resolver needs.
-	ciliumHostInterface = "cilium_host"
 )
 
 // buildDNS constructs the embedded resolver, or nil when it is not wanted.
 //
-// The listen address defaults to the cilium_host interface rather than a
-// wildcard. That is a security decision, not a convenience one: a resolver
-// bound to 0.0.0.0 is reachable on the node's public interface, which makes it
-// a DNS amplification source and lets anyone on the network enumerate the
-// services running here. network.NewDNS refuses a wildcard outright; this
-// picks a sensible specific address so nobody is tempted to pass one.
-func buildDNS(mode, listen, upstreams string, logger *slog.Logger) (*network.DNS, error) {
+// The listen address defaults to the node CIDR's .1 — the address Init puts on
+// the datapath's host anchor (kanea0) — rather than a wildcard. That is a
+// security decision, not a convenience one: a resolver bound to 0.0.0.0 is
+// reachable on the node's public interface, which makes it a DNS amplification
+// source and lets anyone on the network enumerate the services running here.
+// network.NewDNS refuses a wildcard outright; this picks a sensible specific
+// address so nobody is tempted to pass one.
+//
+// The address is computed from the CIDR rather than read off the interface:
+// at this point Init has not run and kanea0 may not exist yet, and the CIDR
+// determines the address either way. The socket itself is bound in Serve,
+// which runAgent starts only after buildNetwork's Init has created the
+// interface, so the address is bindable by then.
+func buildDNS(mode, listen, upstreams string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
 	if listen == dnsOff {
 		logger.Warn("internal DNS is disabled; services are reachable only by address")
 		return nil, nil
 	}
-	if mode != networkCilium {
-		// Without the Cilium datapath there are no service frontends to answer
-		// with, so a resolver would serve an empty zone.
+	if mode == networkNetns {
+		// Without the datapath there are no service frontends to answer with,
+		// so a resolver would serve an empty zone.
+		logger.Info("internal DNS is disabled in netns mode",
+			"detail", "no service frontends exist without the datapath")
 		return nil, nil
 	}
 
 	if listen == "" {
-		addr, err := interfaceAddr(ciliumHostInterface)
-		if err != nil {
-			return nil, fmt.Errorf("internal DNS: %w (pass --dns-listen, or --dns-listen=off)", err)
-		}
-		listen = net.JoinHostPort(addr, strconv.Itoa(network.DefaultDNSPort))
+		hostAddr := nodeCIDR.Masked().Addr().Next() // the .1, datapath.HostInterface's address
+		listen = net.JoinHostPort(hostAddr.String(), strconv.Itoa(network.DefaultDNSPort))
 	}
 
 	resolvers, err := upstreamResolvers(upstreams)
@@ -787,26 +876,6 @@ func nameserverOf(dns *network.DNS) string {
 		return ""
 	}
 	return dns.Listen()
-}
-
-// interfaceAddr returns the first IPv4 address on a named interface.
-func interfaceAddr(name string) (string, error) {
-	iface, err := net.InterfaceByName(name)
-	if err != nil {
-		return "", fmt.Errorf("interface %s not found", name)
-	}
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return "", fmt.Errorf("interface %s: %w", name, err)
-	}
-	for _, a := range addrs {
-		if ipnet, ok := a.(*net.IPNet); ok {
-			if v4 := ipnet.IP.To4(); v4 != nil {
-				return v4.String(), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("interface %s has no IPv4 address", name)
 }
 
 // upstreamResolvers parses the forwarding targets, defaulting to the host's.

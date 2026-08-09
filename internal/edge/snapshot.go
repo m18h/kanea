@@ -17,8 +17,8 @@ import (
 // database, so an unprivileged kanea-edge user cannot even traverse into it —
 // and widening it to hand one file over would be the wrong trade. This is
 // derived, node-local state that is rebuilt from the Store on every start
-// (constraint #9), which is what /run is for; it sits beside the Cilium file
-// interfaces rather than beside the durable state.
+// (constraint #9), which is what /run is for; it sits in /run rather than
+// beside the durable state.
 const DefaultSnapshotPath = "/run/kanea-edge/routes.json"
 
 // SnapshotName is the published file's name.
@@ -26,7 +26,7 @@ const SnapshotName = "routes.json"
 
 // tempSuffix is used for the write-then-rename. It deliberately does not end in
 // ".json": a reader that globs the directory must never pick up a half-written
-// file (the same rule the Cilium file interfaces follow — PRD §5.2.5).
+// file (the write-then-rename discipline — PRD §5.2.6).
 const tempSuffix = ".tmp"
 
 // Snapshot is everything kanea-edge needs to serve traffic.
@@ -131,9 +131,9 @@ type Route struct {
 	Service string `json:"service"`
 	// Domains are the hostnames this service answers on, lowercased.
 	Domains []string `json:"domains"`
-	// Upstream is the service's Cilium frontend address (§7.1), not an alloc
-	// address. The eBPF LB does the balancing, so the edge holds one address
-	// per service and never a backend list — a scale event changes nothing here.
+	// Upstream is the service's VIP (§7.1), not an alloc address. The eBPF LB
+	// does the balancing, so the edge holds one address per service and never a
+	// backend list — a scale event changes nothing here.
 	Upstream string `json:"upstream"`
 	// Port is the frontend port, chosen by the R16 rule: the port named "http",
 	// or the only one declared.

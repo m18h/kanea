@@ -20,7 +20,7 @@ const DefaultMaxConns = 256
 
 // dialTimeout bounds the connection to the upstream VIP.
 //
-// Five seconds: the upstream is a Cilium frontend on this node, so a dial that
+// Five seconds: the upstream is a service VIP on this node, so a dial that
 // takes longer is a service that is down rather than one that is far away.
 const dialTimeout = 5 * time.Second
 
@@ -39,6 +39,10 @@ var ErrTooManyConns = errors.New("edge: listener is at its connection limit")
 type relay struct {
 	log     *slog.Logger
 	limiter *connLimiter
+	// metrics is the §7.2.2 counter set. Published ports had none before
+	// v1.35, which is why ErrTooManyConns above says it exists "so the refusal
+	// is countable" while nothing counted it.
+	metrics *Metrics
 
 	mu     sync.Mutex
 	cfg    Listener
@@ -97,7 +101,7 @@ func (c *connLimiter) inFlight() int {
 }
 
 // newRelay builds a relay for one listener.
-func newRelay(cfg Listener, limiter *connLimiter, log *slog.Logger,
+func newRelay(cfg Listener, limiter *connLimiter, log *slog.Logger, metrics *Metrics,
 	dial func(network, address string) (net.Conn, error),
 ) (*relay, error) {
 	rules, err := compile(cfg.asRoute())
@@ -109,8 +113,14 @@ func newRelay(cfg Listener, limiter *connLimiter, log *slog.Logger,
 			return net.DialTimeout(network, address, dialTimeout)
 		}
 	}
+	if metrics == nil {
+		// A relay with no collector is a test's relay. Counting into a discarded
+		// one keeps every call site below unconditional, which is what stops a
+		// nil check from being forgotten on the path that matters.
+		metrics = NewMetrics()
+	}
 	return &relay{
-		log: log, limiter: limiter, cfg: cfg, rules: rules, dial: dial,
+		log: log, limiter: limiter, metrics: metrics, cfg: cfg, rules: rules, dial: dial,
 		live: map[net.Conn]struct{}{},
 	}, nil
 }
@@ -157,6 +167,7 @@ func (t *relay) serve(ln net.Listener) {
 func (t *relay) handle(client net.Conn) {
 	cfg, rules := t.config()
 	name := cfg.Name()
+	entrypoint := EntrypointForPort(cfg.Port)
 
 	// The address check comes first, before the upstream is dialled. It has to:
 	// the upstream sees the edge's address rather than the client's, so it
@@ -165,6 +176,7 @@ func (t *relay) handle(client net.Conn) {
 	if !rules.allowsAddress(connAddr(client)) {
 		t.log.Debug("address refused by ip_restriction",
 			"service", name, "port", cfg.Port, "remote", client.RemoteAddr().String())
+		t.metrics.TCPRefused(name, entrypoint, ReasonIPRestriction)
 		_ = client.Close() //nolint:errcheck // cleanup path
 		return
 	}
@@ -178,6 +190,7 @@ func (t *relay) handle(client net.Conn) {
 	if !t.take(client, limit) {
 		t.log.Warn("published listener refused a connection at its limit",
 			"service", name, "port", cfg.Port, "max_conns", limit)
+		t.metrics.TCPRefused(name, entrypoint, ReasonListenerLimit)
 		_ = client.Close() //nolint:errcheck // cleanup path
 		return
 	}
@@ -187,9 +200,17 @@ func (t *relay) handle(client net.Conn) {
 	if !t.limiter.acquire() {
 		t.log.Warn("published connection refused: the node-wide limit is full",
 			"service", name, "port", cfg.Port)
+		t.metrics.TCPRefused(name, entrypoint, ReasonNodeLimit)
 		return
 	}
 	defer t.limiter.release()
+
+	// Counted from here, past every refusal: a connection that was turned away
+	// was never relayed, and folding the two together would make a listener at
+	// its ceiling look busy rather than full.
+	t.metrics.TCPAccepted(name, entrypoint)
+	var in, out int64
+	defer func() { t.metrics.TCPClosed(name, entrypoint, in, out) }()
 
 	upstream, err := t.dial("tcp", cfg.Address())
 	if err != nil {
@@ -199,7 +220,7 @@ func (t *relay) handle(client net.Conn) {
 	}
 	defer func() { _ = upstream.Close() }() //nolint:errcheck // cleanup path
 
-	relayBytes(client, upstream)
+	in, out = relayBytes(client, upstream)
 }
 
 // take registers a connection if the per-listener limit allows it.
@@ -253,18 +274,23 @@ func (t *relay) closeLive() int {
 // rely on seeing EOF while still writing back; without CloseWrite a client that
 // has finished sending waits for a response that the upstream will not produce
 // because it is still waiting for input.
-func relayBytes(client, upstream net.Conn) {
+// It reports the bytes moved in each direction: in is client→upstream, out is
+// upstream→client. The counts come from io.Copy's own return rather than from a
+// wrapping reader, so the splice fast path below is preserved — a wrapper would
+// force every byte through the Go heap purely to be counted.
+func relayBytes(client, upstream net.Conn) (in, out int64) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		copyAndCloseWrite(upstream, client)
+		in = copyAndCloseWrite(upstream, client)
 	}()
 	go func() {
 		defer wg.Done()
-		copyAndCloseWrite(client, upstream)
+		out = copyAndCloseWrite(client, upstream)
 	}()
 	wg.Wait()
+	return in, out
 }
 
 // copyAndCloseWrite copies src into dst and then half-closes dst.
@@ -272,15 +298,18 @@ func relayBytes(client, upstream net.Conn) {
 // For TCP→TCP io.Copy dispatches to internal/poll.Splice, so payload bytes move
 // kernel-to-kernel and never enter the Go heap. That is the whole cost of a
 // published port: one userspace hop that touches no user data.
-func copyAndCloseWrite(dst, src net.Conn) {
-	_, _ = io.Copy(dst, src) //nolint:errcheck // cleanup path
+// It returns the bytes copied, which io.Copy reports even when it stops on an
+// error — a connection reset partway through still moved everything before it.
+func copyAndCloseWrite(dst, src net.Conn) int64 {
+	n, _ := io.Copy(dst, src) //nolint:errcheck // cleanup path
 	if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 		_ = cw.CloseWrite() //nolint:errcheck // cleanup path
-		return
+		return n
 	}
 	// Not half-closeable — a fake in a test, or a wrapped connection. Closing
 	// outright is the honest fallback: leaving it open would hang the peer.
 	_ = dst.Close() //nolint:errcheck // cleanup path
+	return n
 }
 
 // connAddr is a connection's source address, unmapped.

@@ -10,8 +10,8 @@ import (
 
 // Minimal DNS wire-format handling (RFC 1035).
 //
-// This is hand-written rather than imported, for the same reason the Cilium
-// client is: it sits in the path of every service call a workload makes, and
+// This is hand-written rather than imported: it sits in the path of every
+// service call a workload makes, and
 // the subset actually needed is small — parse one question, build an A answer,
 // or relay the query verbatim to an upstream. Forwarded responses are never
 // parsed at all, they are passed back as bytes, so the parsing surface exposed

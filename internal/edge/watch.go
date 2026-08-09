@@ -30,6 +30,10 @@ type Watcher struct {
 	interval time.Duration
 	log      *slog.Logger
 	apply    func([]byte) error
+	// metrics records reload outcomes (§9.1.1). Optional: the watcher is also
+	// used in tests and by tooling that has no collector.
+	metrics *Metrics
+	now     func() time.Time
 
 	// last is the raw bytes last successfully loaded, so an unchanged file
 	// costs a read and a compare rather than a parse and a rebuild.
@@ -54,6 +58,11 @@ type WatcherConfig struct {
 	// Apply decodes and installs a changed file. An error is reported and the
 	// previous projection is kept. It is called from the watcher goroutine.
 	Apply func(body []byte) error
+	// Metrics records reload outcomes. Optional.
+	Metrics *Metrics
+	// Now is injectable so a reload-timestamp assertion does not depend on
+	// the clock.
+	Now func() time.Time
 }
 
 // NewWatcher builds a reloader.
@@ -73,12 +82,17 @@ func NewWatcher(cfg WatcherConfig) (*Watcher, error) {
 	if cfg.Name == "" {
 		cfg.Name = "projection"
 	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	return &Watcher{
 		name:     cfg.Name,
 		path:     cfg.Path,
 		interval: cfg.Interval,
 		log:      cfg.Logger,
 		apply:    cfg.Apply,
+		metrics:  cfg.Metrics,
+		now:      cfg.Now,
 	}, nil
 }
 
@@ -136,6 +150,11 @@ func (w *Watcher) reload() {
 				"projection", w.name, "path", w.path, "error", err)
 			w.rejected = body
 		}
+		// Counted on every rejected poll, not once per distinct bad file. The
+		// log is deduplicated because a repeated line buries everything else; a
+		// counter has the opposite problem, and a rate that stays flat at one
+		// failure would read as a single transient rather than a stuck edge.
+		w.record(false)
 		return
 	}
 
@@ -143,7 +162,15 @@ func (w *Watcher) reload() {
 	// the next tick instead of being remembered as "seen".
 	w.last = body
 	w.rejected = nil
+	w.record(true)
 	w.log.Info("projection reloaded", "projection", w.name, "path", w.path)
+}
+
+// record reports a reload outcome, if a collector is attached.
+func (w *Watcher) record(ok bool) {
+	if w.metrics != nil {
+		w.metrics.Reloaded(ok, w.now())
+	}
 }
 
 // ParseTable decodes and indexes a route snapshot body.

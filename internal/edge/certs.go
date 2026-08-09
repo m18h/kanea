@@ -52,6 +52,15 @@ type Certificate struct {
 	// NotAfter is the leaf's expiry, carried so the edge can report it without
 	// parsing and so a stale bundle is recognisable.
 	NotAfter time.Time `json:"not_after"`
+	// Source is the §7.3 mode that supplied this certificate: acme,
+	// self-signed or provided. Carried for the expiry metric's label and for
+	// nothing else — the edge does not know the precedence rule that chose it
+	// (certsource.Publisher.merged resolves that), and must not learn one.
+	//
+	// omitempty, and empty is tolerated: a bundle written by a pre-v1.35 kanead
+	// carries no source, and refusing to serve TLS over a missing metric label
+	// would be a spectacularly bad trade.
+	Source string `json:"source,omitempty"`
 }
 
 // HTTPChallenge is one pending ACME HTTP-01 response.
@@ -195,3 +204,32 @@ func LoadBundle(path string) (Bundle, error) {
 
 // BundlePath is where the bundle lives under a given directory.
 func BundlePath(dir string) string { return filepath.Join(dir, BundleName) }
+
+// expiriesOf turns a bundle into the expiry gauges the metrics collector holds.
+//
+// One entry per certificate, labelled with its first domain — not one per name
+// it covers. A wildcard covering forty subdomains is one thing that expires on
+// one date, and forty gauges saying so would make a single renewal look like a
+// fleet-wide event.
+//
+// A certificate from a pre-v1.35 kanead carries no source. It is labelled
+// "unknown" rather than dropped: the expiry is the number worth having, and
+// withholding it because a label is missing gets the trade backwards.
+func expiriesOf(b Bundle) []CertExpiry {
+	out := make([]CertExpiry, 0, len(b.Certificates))
+	for _, c := range b.Certificates {
+		if len(c.Domains) == 0 {
+			continue // Validate refuses these; belt and braces before an index
+		}
+		source := c.Source
+		if source == "" {
+			source = "unknown"
+		}
+		out = append(out, CertExpiry{
+			CommonName: c.Domains[0],
+			Source:     source,
+			NotAfter:   c.NotAfter,
+		})
+	}
+	return out
+}

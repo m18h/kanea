@@ -13,8 +13,7 @@
 **Container orchestration in one binary.**
 
 Kanea is a lightweight container orchestration platform written in Go. Services run
-on **containerd**, networking and load balancing are **standalone Cilium** (eBPF, no
-Kubernetes at any layer), TLS comes from **Let's Encrypt, a per-node CA, or
+on **containerd**, networking and load balancing are **Kanea's own eBPF datapath**, TLS comes from **Let's Encrypt, a per-node CA, or
 certificates you already have**, and it ships a
 real-time **shadcn/ui dashboard**, an **MCP server** for AI agents, **GitOps
 pipelines** (rootless BuildKit), **eBPF-driven autoscaling**, and **encrypted
@@ -32,9 +31,10 @@ The installer fetches the binary, verifies it, and stops. Checksum verification 
 mandatory and there is no flag to skip it; the Sigstore signature is verified too
 when `cosign` is on `PATH`. It generates no keys and starts nothing.
 
-`kanea init` then installs the runtime — containerd, `runc`, the CNI plugins, etcd,
-cilium-agent and rootless `buildkitd` — at versions pinned by SHA-256 in the binary
-(PRD §5.2.12). It installs under its own prefix on its own socket, so a node that
+`kanea init` then installs the runtime — containerd, `runc` and rootless
+`buildkitd` — at versions pinned by SHA-256 in the binary (PRD §5.2.12). The
+network layer needs no component: the eBPF datapath is compiled into `kanea`
+itself (§5.2.5). It installs under its own prefix on its own socket, so a node that
 ran Docker yesterday runs it tomorrow.
 
 Prefer to do it by hand? Every release publishes
@@ -124,7 +124,7 @@ sudo kanea init --node-cidr 10.90.0.0/24 --cluster-cidr 10.90.0.0/16
 ```
 
 `kanea doctor` verifies the node at any time — components, versions against the
-pinned matrix, kvstore, disk and clock. `kanea install --list` prints what is
+pinned matrix, bpffs, disk and clock. `kanea install --list` prints what is
 pinned; `--dry-run` downloads and verifies every artefact without writing.
 
 ### Air-gapped nodes
@@ -154,12 +154,11 @@ registry the node can reach.
 | Kernel | ≥ 5.10, cgroups v2 unified hierarchy |
 | Init system | systemd |
 | Clock | NTP-synchronised |
-| Kubernetes | none, at any layer |
 
-That is the whole list. containerd, `runc`, the CNI plugins, etcd, cilium-agent
-and rootless `buildkitd` are installed by `kanea init` at pinned versions — they
-are no longer prerequisites you supply. Already have a containerd you want to
-keep using? `kanea init --containerd external` adopts it instead.
+That is the whole list. containerd, `runc` and rootless `buildkitd` are
+installed by `kanea init` at pinned versions — Kanea supplies them, not you.
+Already have a containerd you want to keep using? `kanea init --containerd
+external` adopts it instead.
 
 ## Status
 

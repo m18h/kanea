@@ -909,7 +909,7 @@ func TestDeletingAServiceClearsEvenFailedAllocRecords(t *testing.T) {
 
 // A network attachment can outlive everything that refers to it: teardown
 // detaches after the container is removed, so a kanead killed in that window
-// leaves a namespace and a Cilium endpoint holding an IP that no alloc claims.
+// leaves a namespace and a datapath attachment holding an IP that no alloc claims.
 // Nothing in the planner sees it, because the planner reasons only about allocs
 // it has heard of.
 func TestReconcileReapsOrphanedAttachments(t *testing.T) {

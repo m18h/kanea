@@ -44,6 +44,11 @@ linters:
     paths:
       - node_modules
       - dashboard/node_modules
+      # bpf2go output (committed, regenerated only by `make bpf` under the
+      # digest-pinned toolchain). `generated: lax` already skips it by its
+      # header; the explicit path is belt-and-braces, because a lint issue
+      # in a generated file has no fix except upstream.
+      - internal/datapath/bpf/kanea_.*\.go$
     rules:
       # Tests may ignore errors and use lax patterns. unparam is excluded too:
       # a test helper spells out its arguments so the call site reads as a

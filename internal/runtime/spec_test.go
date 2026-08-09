@@ -445,8 +445,8 @@ func TestValidate(t *testing.T) {
 }
 
 func TestShortIDErrorExplainsWhy(t *testing.T) {
-	// The 5-character floor comes from Cilium's interface-name derivation
-	// (M0 spike ①); an operator hitting it deserves to know that.
+	// The 5-character floor keeps alloc ids long enough for the datapath's
+	// veth-name derivation; an operator hitting it deserves to know that.
 	alloc := validAlloc()
 	alloc.ID = "web"
 	err := alloc.Validate()

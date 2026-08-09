@@ -39,6 +39,28 @@ security: ## Security gates: gosec + govulncheck + gitleaks (AGENTS.md constrain
 #     && go run ./cmd/gendb -out $(CURDIR)/.cache/vulndb
 #   GOVULNDB=file://$(CURDIR)/.cache/vulndb make security
 
+# The BPF toolchain: cilium/ebpf's own builder image (Go + clang/LLVM, the
+# same one its CI uses), pinned BY DIGEST so `make bpf` output is a function
+# of the committed sources — tag 1777990914, the toolchain cilium/ebpf
+# v0.22.0 builds with. The generated artifacts are committed; `bpf-verify`
+# regenerates and diffs, so a hand-edited artifact or a drifted toolchain is
+# a CI failure, not a code path (AGENTS.md, PRD v1.36).
+BPF_IMAGE      := ghcr.io/cilium/ebpf-builder@sha256:22ce6d5aad2f15df921db21770e759554cbda52f6d4e291b1ff58b4b9a5d6fcb
+BPF2GO_VERSION := v0.22.0
+
+.PHONY: bpf
+bpf: ## Regenerate the committed BPF artifacts (requires docker)
+	docker run --rm -v $(CURDIR):/src -w /src/internal/datapath/bpf \
+		--env HOME=/tmp $(BPF_IMAGE) \
+		go run github.com/cilium/ebpf/cmd/bpf2go@$(BPF2GO_VERSION) \
+			-go-package bpf -cc clang-22 -target bpfel,bpfeb \
+			-cflags '-O2 -g -Wall -Werror' kanea kanea.c
+
+.PHONY: bpf-verify
+bpf-verify: ## Regenerate BPF artifacts and diff — CI gate (requires docker)
+	$(MAKE) bpf
+	git diff --exit-code internal/datapath/bpf/
+
 .PHONY: dashboard
 dashboard: ## Dashboard gates: lint, typecheck, test, build, audit
 	@if [ -f dashboard/package.json ]; then \
@@ -54,7 +76,7 @@ tools: ## Install dev tools (gitleaks via package manager: brew install gitleaks
 	$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
 
 .PHONY: check
-check: vet test lint security dashboard ## Run all gates (CI parity) — must pass before merge
+check: vet test lint security dashboard bpf-verify ## Run all gates (CI parity) — must pass before merge
 
 .PHONY: clean
 clean: ## Remove build artifacts

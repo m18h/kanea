@@ -127,7 +127,7 @@ func restoreAtStart(ctx context.Context, opts bootRestoreOptions) error {
 		"archive", result.Archive.ID, "taken", result.Archive.CreatedAt,
 		"index", result.Index, "replayed", result.Replayed,
 		"requested_by", request.RequestedBy,
-		"detail", "the Cilium kvstore is derived state and is rebuilt, not restored; "+
+		"detail", "the network datapath is derived state and is rebuilt, not restored; "+
 			"images are re-pulled as services converge")
 	return nil
 }

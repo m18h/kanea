@@ -360,7 +360,7 @@ func TestExposeWithoutATLSBlockSaysNothing(t *testing.T) {
 func TestExposeWarnsOnTheDeprecatedTLSSpelling(t *testing.T) {
 	tests := []struct{ name, body, want string }{
 		{"true", `tls { letsencrypt = true }`, `mode = "acme"`},
-		{"false", `tls { letsencrypt = false }`, "no longer means no certificate"},
+		{"false", `tls { letsencrypt = false }`, "does not mean no certificate"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

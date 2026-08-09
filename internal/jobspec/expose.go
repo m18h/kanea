@@ -234,8 +234,8 @@ func validateExposeTLS(svc *Service) hcl.Diagnostics {
 			svc.Name, certsource.ModeACME)
 		if !*t.LetsEncrypt {
 			detail = fmt.Sprintf("Service %q writes `letsencrypt = false`. Write "+
-				"`mode = %q` if you meant plain HTTP: since v1.33 an absent mode no longer "+
-				"means no certificate, it means whatever this node's --tls-default is.",
+				"`mode = %q` if you meant plain HTTP: an absent mode does not mean "+
+				"no certificate, it means whatever this node's --tls-default is.",
 				svc.Name, certsource.ModePlaintext)
 		}
 		diags = append(diags, &hcl.Diagnostic{

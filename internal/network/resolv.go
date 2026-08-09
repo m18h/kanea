@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"net/netip"
@@ -66,6 +67,36 @@ func WriteResolvConf(dir, project, nameserver string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// writeFileIfChangedMode swaps a file in atomically, skipping the write when
+// the content already matches, and reports whether it wrote. The temp file
+// lives in the same directory (rename is only atomic within a filesystem) but
+// carries a leading dot and a .tmp suffix so a half-written file is never
+// observed under the target name.
+func writeFileIfChangedMode(path string, body []byte, mode os.FileMode) (bool, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return false, fmt.Errorf("state dir %s: %w", dir, err)
+	}
+
+	// #nosec G304 — path comes from configuration, not from a request, and is
+	// the same file this function is about to write.
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, body) {
+		return false, nil
+	}
+
+	tmp := filepath.Join(dir, "."+filepath.Base(path)+".tmp")
+	if err := os.WriteFile(tmp, body, mode); err != nil {
+		return false, fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		if rmErr := os.Remove(tmp); rmErr != nil && !os.IsNotExist(rmErr) {
+			return false, fmt.Errorf("install %s: %w (and temp file left behind: %w)", path, err, rmErr)
+		}
+		return false, fmt.Errorf("install %s: %w", path, err)
+	}
+	return true, nil
 }
 
 // hostResolvConf is where the node's own resolver configuration lives.

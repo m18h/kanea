@@ -8,11 +8,10 @@
 //   - **kanea-edge** — per-service request rates and latency percentiles, the
 //     *primary* signal for exposed services because the edge is already in the
 //     request path. See edge.go.
-//   - **Hubble** — east-west flows and policy drops, opt-in and off by default.
-//     Its L7 parsing costs CPU per request and its ring buffer drops flows
-//     under load, so it loses fidelity exactly when the numbers matter; and
-//     cilium-agent with Hubble on was the largest resident process M0 measured.
-//     What it adds is the traffic the edge never sees. See hubble.go.
+//   - **the datapath** — east-west connects and drops from the eBPF datapath's
+//     own per-CPU counters (PRD v1.36), on by default because reading a pinned
+//     map costs nothing per request. What it adds is the traffic the edge
+//     never sees: service-to-service calls inside the node. See datapath.go.
 //
 // The evaluator (evaluator.go) turns those into replica counts with HPA-style
 // proportional rules plus the guardrails §9.2 requires, and the loop (loop.go)

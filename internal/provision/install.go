@@ -21,12 +21,12 @@ import (
 // runs it tomorrow, and an install that breaks other software is not a property
 // a single-binary platform gets to have.
 type Layout struct {
-	// Prefix holds binaries: <Prefix>/bin and <Prefix>/cni/bin. Manifest file
-	// destinations are relative to it.
+	// Prefix holds binaries: <Prefix>/bin. Manifest file destinations are
+	// relative to it.
 	Prefix string
-	// ConfDir holds containerd's config and the CNI conflist.
+	// ConfDir holds containerd's config.
 	ConfDir string
-	// DataDir holds containerd's content store and etcd's data.
+	// DataDir holds containerd's content store.
 	DataDir string
 	// RunDir holds the sockets.
 	RunDir string
@@ -38,21 +38,29 @@ type Layout struct {
 	// NodeCIDR and ClusterCIDR are the container subnet (PRD §5.2.5). Empty
 	// means the compiled default.
 	//
-	// They live here because they have to reach the generated cilium unit: the
-	// flags `kanea supervise cilium` already accepted were unreachable, since
-	// the unit invoked it bare. Changing the subnet meant hand-editing a file
-	// the next install overwrites.
+	// They live here because `kanea install` and `kanea doctor` validate them
+	// before they reach the eBPF datapath: the datapath is compiled into the
+	// binary and configured through kanead's argv (cmd/kanea/units.go renders
+	// the subnet into the kanead unit), so a bad CIDR is caught here rather than
+	// surfacing as a datapath that hands out unroutable addresses.
 	NodeCIDR    string
 	ClusterCIDR string
 }
 
-// ValidateNetworking checks the CIDRs before they are interpolated into the
-// agent's argv.
+// Default CIDRs. Both are RFC 1918 space chosen not to collide with the
+// defaults of the things Kanea sits next to (Docker's 172.17/16, and the
+// 10.42/16 k3s uses).
+const (
+	DefaultNodeCIDR    = "10.244.0.0/24"
+	DefaultClusterCIDR = "10.244.0.0/16"
+)
+
+// ValidateNetworking checks the CIDRs before they configure the datapath.
 //
-// Today a typo surfaces as a cilium-agent crash loop under Restart=always,
-// which reads as "cilium is broken" rather than "you wrote 10.244.0/24". The
-// containment rule is cilium's own: --ipv4-native-routing-cidr must cover
-// --ipv4-range, so a node CIDR outside its cluster CIDR is a configuration
+// A typo otherwise surfaces on a live node rather than here: the containment
+// rule is that the cluster CIDR must cover the node CIDR — the range the
+// datapath masquerades as internal has to contain the range it allocates alloc
+// addresses from — so a node CIDR outside its cluster CIDR is a configuration
 // that cannot route.
 func (l Layout) ValidateNetworking() error {
 	node, cluster := l.Networking()
@@ -76,7 +84,7 @@ func (l Layout) ValidateNetworking() error {
 	if !parsed["--cluster-cidr"].Overlaps(parsed["--node-cidr"]) ||
 		parsed["--cluster-cidr"].Bits() > parsed["--node-cidr"].Bits() {
 		return fmt.Errorf("--node-cidr %s is not inside --cluster-cidr %s; "+
-			"cilium's native routing CIDR has to cover the range it allocates from",
+			"the native routing CIDR has to cover the range it allocates from",
 			node, cluster)
 	}
 	return nil
@@ -117,10 +125,6 @@ func DefaultLayout() Layout {
 
 // BinDir is where component executables land.
 func (l Layout) BinDir() string { return filepath.Join(l.Prefix, "bin") }
-
-// CNIBinDir is where CNI plugins land — Kanea's own, not /opt/cni/bin, which
-// belongs to whatever else on the node uses CNI.
-func (l Layout) CNIBinDir() string { return filepath.Join(l.Prefix, "cni", "bin") }
 
 // receiptDir records what is installed. Kept inside the prefix so removing the
 // prefix removes the record with it: a receipt that outlives its binaries
@@ -305,8 +309,8 @@ func (i *Installer) installImage(ctx context.Context, c *Component, arch string)
 	}
 	files := c.ResolveFiles(arch)
 	if len(files) == 0 {
-		// Nothing to place on the host: the image is the deliverable, which is
-		// how cilium-agent works. Having it locally is the install.
+		// Nothing to place on the host: the image itself is the deliverable, and
+		// having it locally is the install.
 		return nil
 	}
 	// #nosec G301 — see writeFileAtomic.

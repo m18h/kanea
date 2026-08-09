@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kanea — container orchestration in one binary</title>
-<meta name="description" content="Kanea is a single-binary container orchestration platform: containerd for the runtime, standalone Cilium and eBPF for the network, Let's Encrypt for TLS, and no Kubernetes at any layer.">
+<meta name="description" content="Kanea is a single-binary container orchestration platform: containerd for the runtime, its own eBPF datapath for the network, Let's Encrypt for TLS, and no Kubernetes at any layer.">
 <meta property="og:title" content="Kanea">
 <meta property="og:description" content="Container orchestration in one binary. eBPF-native, Kubernetes-free.">
 <meta property="og:type" content="website">
@@ -44,13 +44,12 @@
   <section class="hero">
     <div class="wrap">
       <div class="badges">
-        <span class="badge on">M0–M10 complete</span>
         <span class="badge">Linux amd64 · arm64</span>
         <span class="badge">Apache-2.0</span>
       </div>
       <h1>Container orchestration<br><em>in one binary</em>.</h1>
       <p class="sub">
-        Kanea runs your services on <b>containerd</b>, networks them with <b>standalone Cilium</b>,
+        Kanea runs your services on <b>containerd</b>, networks them with <b>its own eBPF datapath</b>,
         terminates TLS with <b>Let's Encrypt</b>, and ships a live dashboard, an MCP server,
         GitOps pipelines and encrypted S3 backups. One static binary. No Kubernetes anywhere —
         not underneath, not for the CNI, not for the load balancer.
@@ -101,12 +100,13 @@
         </div>
         <div class="card">
           <span class="tag">Network</span>
-          <h3>Standalone Cilium, no k8s</h3>
+          <h3>First-party eBPF, no k8s</h3>
           <p>
-            eBPF endpoints, service load balancing, and network policy driven straight
-            over the agent's unix socket. Projects are default-deny at the boundary,
-            services find each other over internal DNS, and Hubble supplies the L7
-            metrics the autoscaler reads.
+            Connect-time service load balancing, per-project default-deny policy and
+            per-alloc plumbing from three eBPF programs compiled into the binary —
+            no network agent, no kvstore, no CNI. Services find each other over
+            internal DNS, and the same maps supply the east-west metrics the
+            autoscaler reads.
           </p>
         </div>
         <div class="card">
@@ -234,9 +234,9 @@
         </div>
         <div class="card">
           <h3>eBPF autoscaling</h3>
-          <p>CPU, memory, requests-per-second and p95 latency, scraped from containerd, Hubble
-             and the edge. The autoscaler writes one number and the reconciler converges —
-             it is not a second scheduler.</p>
+          <p>CPU, memory, requests-per-second and p95 latency, scraped from containerd, the
+             datapath's own counters and the edge. The autoscaler writes one number and the
+             reconciler converges — it is not a second scheduler.</p>
         </div>
         <div class="card">
           <h3>Notifications</h3>
@@ -274,8 +274,8 @@
         and starts nothing — those are decisions with consequences, and a script that
         made them for you would be making them at the moment you understand the node
         least. <code>kanea init</code> then installs the runtime itself: containerd,
-        runc, the CNI plugins, etcd, cilium-agent and rootless buildkitd, at versions
-        pinned by SHA-256 inside the binary. Under its own prefix, on its own socket —
+        runc and rootless buildkitd, at versions pinned by SHA-256 inside the binary
+        — the network layer needs no component, its eBPF programs travel inside kanea. Under its own prefix, on its own socket —
         a node that ran Docker yesterday runs it tomorrow.
       </p>
 
@@ -350,9 +350,8 @@ sudo install -m 0755 kanea /usr/local/bin/kanea</pre>
         </table>
       </div>
       <p class="note" style="margin-top:20px">
-        That is the whole list. containerd, runc, the CNI plugins, etcd, cilium-agent and
-        rootless buildkitd are installed by <code>kanea init</code> at pinned versions —
-        they are no longer prerequisites you supply.
+        That is the whole list. containerd, runc and rootless buildkitd are installed by
+        <code>kanea init</code> at pinned versions — Kanea supplies them, not you.
       </p>
 
       <h3 style="margin:38px 0 10px">Air-gapped nodes</h3>
@@ -378,7 +377,7 @@ sudo kanea init --bundle kanea-bundle.tar.gz</pre>
       </p>
       <p class="note" style="margin-top:20px">
         <code>kanea doctor</code> checks all of this on a live node — dependencies, versions,
-        kvstore, disk and clock — and <code>kanea init</code> refuses to proceed if the node
+        bpffs, disk and clock — and <code>kanea init</code> refuses to proceed if the node
         cannot support what it is about to be given.
       </p>
     </div>

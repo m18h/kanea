@@ -179,21 +179,20 @@ func TestExtractSelectsNamedFiles(t *testing.T) {
 	}
 }
 
-// Upstream images move binaries between releases — Cilium ships cilium-cni at
-// /opt/cni/bin in some and /usr/bin in others — so a second location is tried
-// rather than failing the install.
+// Upstream archives move binaries between releases, so a second location is
+// tried rather than failing the install.
 func TestExtractFallsBackToAltPath(t *testing.T) {
 	dest := t.TempDir()
-	archive := buildTarGz(t, []tarEntry{{name: "usr/bin/cilium-cni", body: "plugin"}})
+	archive := buildTarGz(t, []tarEntry{{name: "usr/bin/tool", body: "binary"}})
 
 	err := extractTarGz(bytes.NewReader(archive), extractOptions{
 		dest:  dest,
-		files: []File{{From: "opt/cni/bin/cilium-cni", Alt: "usr/bin/cilium-cni", To: "cni/bin/cilium-cni", Mode: "0755"}},
+		files: []File{{From: "opt/bin/tool", Alt: "usr/bin/tool", To: "bin/tool", Mode: "0755"}},
 	})
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(dest, "cni/bin/cilium-cni")); err != nil || string(got) != "plugin" {
+	if got, err := os.ReadFile(filepath.Join(dest, "bin/tool")); err != nil || string(got) != "binary" {
 		t.Errorf("alt path was not used: %q, %v", got, err)
 	}
 }

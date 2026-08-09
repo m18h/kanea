@@ -62,7 +62,7 @@ var implemented = map[string]bool{
 	"backup": true, "restore": true, "init": true, "doctor": true,
 	"upgrade": true, "ui": true, "exec": true,
 	// M10, host components (PRD §5.2.12, v1.30):
-	"install": true, "supervise": true, "bundle": true,
+	"install": true, "bundle": true,
 	// Certificate sources (PRD §7.3, v1.33):
 	"ca": true,
 }

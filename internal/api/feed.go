@@ -69,6 +69,11 @@ type StatsSample struct {
 	P95    *float64 `json:"p95_latency_ms,omitempty"`
 	// Allocs carries the per-alloc breakdown the service detail page shows.
 	Allocs []AllocStats `json:"allocs,omitempty"`
+	// Edge carries the labelled totals from kanea-edge (§9.1.1): the status
+	// code split and the bytes moved. Absent when the edge has not been
+	// scraped or the service is not exposed, which is a different fact from a
+	// service that has served nothing.
+	Edge *scaling.ServiceBreakdown `json:"edge,omitempty"`
 }
 
 // AllocStats is one alloc's resource use.
@@ -109,6 +114,16 @@ func (s *Server) statsFor(ctx context.Context, service string) StatsSample {
 	sample.Memory = s.latestValue(service, scaling.MetricMemory)
 	sample.RPS = s.latestValue(service, scaling.MetricRPS)
 	sample.P95 = s.latestValue(service, scaling.MetricP95)
+
+	// Not gated on metricStaleAfter, unlike the gauges above. Those are rates
+	// this process derived and a stale one is a wrong answer; these are the
+	// edge's own cumulative counters, and the last known total is still the
+	// last known total.
+	if s.edgeMetrics != nil {
+		if breakdown, ok := s.edgeMetrics.Breakdown(service); ok {
+			sample.Edge = &breakdown
+		}
+	}
 
 	// The alloc list comes from the Store rather than from the metric subjects:
 	// an alloc that started a second ago has a record and no samples yet, and

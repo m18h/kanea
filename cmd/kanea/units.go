@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/provision"
 )
 
 // systemd units (PRD §5.2.11, §20 M10).
@@ -30,6 +31,13 @@ type unitOptions struct {
 	reserve string
 	// binary is the absolute path to the kanea executable.
 	binary string
+	// network is kanead's --network mode; empty means the default (ebpf).
+	network string
+	// nodeCIDR and clusterCIDR are rendered into kanead's ExecStart, so the
+	// subnets `kanea init` was told about survive into the daemon's argv
+	// rather than living only in the operator's shell history.
+	nodeCIDR    string
+	clusterCIDR string
 }
 
 // unitFile is one file to write.
@@ -113,6 +121,18 @@ func workloadSlice() string {
 
 // kaneadService is the control-plane daemon.
 func kaneadService(opts unitOptions) string {
+	mode := opts.network
+	if mode == "" {
+		mode = networkEBPF
+	}
+	node := opts.nodeCIDR
+	if node == "" {
+		node = provision.DefaultNodeCIDR
+	}
+	cluster := opts.clusterCIDR
+	if cluster == "" {
+		cluster = provision.DefaultClusterCIDR
+	}
 	return heredoc(`
 		[Unit]
 		Description=Kanea control plane (kanead)
@@ -121,7 +141,11 @@ func kaneadService(opts unitOptions) string {
 		Wants=network-online.target
 		# Not a hard dependency: kanead retries containerd and reports it, which
 		# is more useful than refusing to start.
-		After=cilium.service
+		#
+		# No network unit to order after: the eBPF datapath is kanead's own
+		# (PRD v1.36, §5.2.5). The After=cilium.service that used to sit here
+		# named a unit that never existed — the supervised unit was
+		# kanea-cilium.service — so it ordered nothing, silently.
 
 		[Service]
 		# Type=exec, not notify: kanead sends no sd_notify readiness message, and
@@ -129,7 +153,8 @@ func kaneadService(opts unitOptions) string {
 		# exec still catches the common failure — a missing or unexecutable
 		# binary — which Type=simple would report as a successful start.
 		Type=exec
-		ExecStart=` + opts.binary + ` agent --data-dir ` + opts.dataDir + ` --log-dir ` + opts.logDir + `
+		ExecStart=` + opts.binary + ` agent --data-dir ` + opts.dataDir + ` --log-dir ` + opts.logDir +
+		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + `
 		Restart=always
 		RestartSec=5s
 		Slice=kanea.slice

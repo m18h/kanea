@@ -10,10 +10,9 @@
     "which goes through review and the §14 gates.",
     "",
     "Versions are the ones M0 validated. Changing one means re-running the",
-    "relevant spike, not editing a number: spikes/cilium-standalone found the",
-    "writable service REST API removed in Cilium 1.18, and spikes/kaniko-build",
-    "found BuildKit's frontend defaulting to Dockerfile. Both are the kind of",
-    "thing a patch bump can reintroduce."
+    "relevant spike, not editing a number: spikes/kaniko-build found BuildKit's",
+    "frontend defaulting to Dockerfile, the kind of thing a patch bump can",
+    "reintroduce."
   ],
 
   "kind": "components",
@@ -51,51 +50,6 @@
       ]
     },
     {
-      "name": "cni-plugins",
-      "version": "1.9.1",
-      "kind": "archive",
-      "summary": "CNI reference plugins",
-      "url": "https://github.com/containernetworking/plugins/releases/download/v{{.Version}}/cni-plugins-linux-{{.Arch}}-v{{.Version}}.tgz",
-      "hashes": {
-        "amd64": "b98f74a0f8522f0a83867178729c1aa70f2158f90c45a2ca8fa791db1c76b303",
-        "arm64": "56171987d3947707c3563db2f4001bccaf50fd63468611b9f3cbecb1375ee7ec"
-      },
-      "_files": "The whole archive is extracted into the CNI bin directory: the plugin set is what the conflist may reference, and picking a subset here means a conflist edit becomes a manifest edit.",
-      "files": [
-        {"from": ".", "to": "cni/bin", "mode": "0755", "exclude": ["LICENSE", "README.md"]}
-      ]
-    },
-    {
-      "name": "etcd",
-      "version": "3.7.1",
-      "kind": "archive",
-      "summary": "Cilium kvstore (derived state, never backed up)",
-      "url": "https://github.com/etcd-io/etcd/releases/download/v{{.Version}}/etcd-v{{.Version}}-linux-{{.Arch}}.tar.gz",
-      "hashes": {
-        "amd64": "e8cd3fa8064c98137c5dbd78b76f969417ace84efb83c481041d7a52ffdd8fb9",
-        "arm64": "d7e25e08f694b6ed7792fc7b7a891fe2c3f3d3dccfe2f3bfdb1547b0eb75b6da"
-      },
-      "files": [
-        {"from": "etcd-v{{.Version}}-linux-{{.Arch}}/etcd", "to": "bin/etcd", "mode": "0755"},
-        {"from": "etcd-v{{.Version}}-linux-{{.Arch}}/etcdctl", "to": "bin/etcdctl", "mode": "0755"}
-      ]
-    },
-    {
-      "name": "cilium",
-      "version": "1.19.6",
-      "kind": "image",
-      "summary": "eBPF dataplane; runs as a containerd task",
-      "image": "quay.io/cilium/cilium",
-      "tag": "v{{.Version}}",
-      "_digest": "The multi-arch index digest, so one pin covers both architectures and containerd resolves the per-arch manifest itself.",
-      "digest": "sha256:0df5b2750b64c49843aba1d649e9eaf61467cb0645ad3171db6f6962c095ac92",
-      "_files": "Only these two. cilium-agent stays inside the image and runs as a task — it needs its bundled helpers, iptables and BPF templates, and unpacking that onto a host is unsupported upstream (PRD §5.2.12). cilium-cni has to be a host file because containerd execs it.",
-      "files": [
-        {"from": "opt/cni/bin/cilium-cni", "alt": "usr/bin/cilium-cni", "to": "cni/bin/cilium-cni", "mode": "0755"},
-        {"from": "usr/bin/cilium-dbg", "alt": "usr/bin/cilium", "to": "bin/cilium-dbg", "mode": "0755"}
-      ]
-    },
-    {
       "name": "buildkit",
       "version": "0.32.0",
       "kind": "image",
@@ -103,7 +57,7 @@
       "image": "docker.io/moby/buildkit",
       "tag": "v{{.Version}}-rootless",
       "digest": "sha256:40615b4a00f9a791b6fd1d6c41ebfc690e4f4b2e3710240bdd043b4467bc4d7a",
-      "_files": "Unlike cilium, these extract cleanly and run on the host — PRD §23.2 already specified it that way.",
+      "_files": "These extract cleanly and run on the host — PRD §23.2 specified it that way.",
       "files": [
         {"from": "usr/bin/buildkitd", "to": "bin/buildkitd", "mode": "0755"},
         {"from": "usr/bin/buildctl", "to": "bin/buildctl", "mode": "0755"},

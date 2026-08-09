@@ -102,6 +102,27 @@ jobs:
             ./bin/kanea install --dry-run --arch "$arch"
           done
 
+  bpf-verify:
+    # The datapath's BPF artifacts are committed bpf2go output (PRD v1.36
+    # §5.2.5): `go build` needs no clang, and generation happens only under
+    # the digest-pinned toolchain container via `make bpf`. This job
+    # regenerates and diffs, so it asks the one question the build cannot:
+    # do the committed artifacts still come from the committed sources?
+    #
+    # A failure here means someone edited a generated file by hand, or
+    # edited kanea.c/headers.h without running `make bpf` — both are the
+    # drift the committed-artifact scheme exists to catch.
+    name: BPF artifacts — regenerate and diff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Regenerate and diff
+        run: make bpf-verify
+
   install-smoke:
     # `kanea install` places binaries, writes units and starts daemons. None of
     # that can be tested off a real Linux host, and the S3 `Put` defect in
@@ -116,16 +137,16 @@ jobs:
           cache: true
       - name: Build
         run: go build -o ./bin/kanea ./cmd/kanea
-      # Cilium is left out deliberately: it needs BPF features a hosted runner
-      # does not reliably have, and a flaky required job teaches people to
-      # ignore CI. The dataplane is exercised on a real node instead (§20 M10).
+      # The datapath is left out deliberately: it needs BPF features a hosted
+      # runner does not reliably have, and a flaky required job teaches people
+      # to ignore CI. The dataplane is exercised on a real node instead
+      # (§20 M10) — the same reasoning that kept cilium out before it.
       - name: Install the host components
-        run: sudo ./bin/kanea install --only containerd,runc,cni-plugins,etcd,buildkit
+        run: sudo ./bin/kanea install --only containerd,runc,buildkit
       - name: The sockets answer
         run: |
           set -euo pipefail
           sudo systemctl is-active --quiet kanea-containerd.service
-          sudo systemctl is-active --quiet kanea-etcd.service
           test -S /run/kanea/containerd.sock
           sudo /usr/local/lib/kanea/bin/ctr --address /run/kanea/containerd.sock version
       # The coexistence promise, tested rather than asserted: the runner's own
@@ -139,13 +160,13 @@ jobs:
       - name: Constraint #11 — every unit joined kanea.slice
         run: |
           set -euo pipefail
-          for unit in kanea-containerd kanea-etcd; do
+          for unit in kanea-containerd; do
             slice=$(systemctl show -p Slice --value "$unit.service")
             [ "$slice" = "kanea.slice" ] || { echo "$unit is in $slice"; exit 1; }
           done
       - name: Journal on failure
         if: failure()
-        run: sudo journalctl -u kanea-containerd -u kanea-etcd --no-pager -n 200
+        run: sudo journalctl -u kanea-containerd --no-pager -n 200
 
   install-smoke-airgapped:
     # The job that matters for the offline path. `unshare -rn` gives the
@@ -173,11 +194,10 @@ jobs:
           set -euo pipefail
           sudo unshare -rn -- \
             ./bin/kanea install --bundle bundle.tar.gz \
-              --only containerd,runc,cni-plugins,etcd \
+              --only containerd,runc \
               --skip-units
           test -x /usr/local/lib/kanea/bin/containerd
           test -x /usr/local/lib/kanea/bin/runc
-          test -x /usr/local/lib/kanea/bin/etcd
       # A bundle is not trusted more than the network: its contents are checked
       # against the hashes in the binary. Corrupting one must be caught.
       - name: A tampered bundle is refused

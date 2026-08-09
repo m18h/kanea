@@ -380,9 +380,9 @@ func (p *Publish) ResolvedMode() string {
 
 // NetworkPolicy is the per-service ingress allowlist (R14).
 //
-// It only ever *adds* reachability. Cilium ingress rules union, so an entry
-// here cannot weaken the project's default-deny boundary — which is what makes
-// it safe to let a job spec influence policy at all.
+// It only ever *adds* reachability. The datapath unions ingress allow edges, so
+// an entry here cannot weaken the project's default-deny boundary — which is
+// what makes it safe to let a job spec influence policy at all.
 type NetworkPolicy struct {
 	// AllowFrom names the peers permitted to reach this service, each a
 	// fully-qualified "<project>/<service>" exactly as written in the file.

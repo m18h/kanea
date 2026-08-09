@@ -34,8 +34,8 @@ func TestPlatformChecksDoNotDependOnComponents(t *testing.T) {
 	})
 
 	componentNames := map[string]bool{
-		"containerd": true, "cilium-agent": true, "etcd": true,
-		"buildkit": true, "cni": true, "version matrix": true, "upstream": true,
+		"containerd": true, "buildkit": true, "bpf": true,
+		"version matrix": true, "upstream": true,
 	}
 	for _, r := range results {
 		if componentNames[r.Name] {
@@ -55,9 +55,8 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 	results := componentChecks(preflightOptions{
 		dataDir: t.TempDir(), layout: layout,
 		containerdSocket: filepath.Join(layout.RunDir, "containerd.sock"),
-		ciliumSocket:     filepath.Join(layout.RunDir, "cilium.sock"),
 		buildkitSocket:   provision.BuildkitSocket(layout),
-		networkMode:      "cilium",
+		networkMode:      networkEBPF,
 		offline:          true,
 	})
 
@@ -66,13 +65,12 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 		got[r.Name] = true
 	}
 	for _, want := range []string{
-		"containerd",     // §5.2.4
-		"cilium-agent",   // §5.2.5
-		"etcd",           // the kvstore identities depend on
-		"buildkit",       // §5.2.11: "that the build socket answers"
-		"cni",            // the plugin and the conflist
-		"version matrix", // §15.4, §22 R1
-		"fuse",           // §8
+		"containerd",       // §5.2.4
+		"bpf",              // §5.2.5: bpffs, cgroup2, and the pin directory
+		"buildkit",         // §5.2.11: "that the build socket answers"
+		"version matrix",   // §15.4, §22 R1
+		"container subnet", // --node-cidr/--cluster-cidr against --service-cidr
+		"fuse",             // §8
 	} {
 		if !got[want] {
 			t.Errorf("component checks do not cover %q", want)
@@ -80,16 +78,16 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 	}
 }
 
-// --network none is a supported single-node configuration, and it means no
-// dataplane and therefore no kvstore for one.
-func TestNetworkNoneSkipsCiliumAndEtcd(t *testing.T) {
+// --network netns is the development configuration, and it means no datapath
+// and therefore nothing for the BPF check to gate on.
+func TestNetworkNetnsSkipsTheBPFCheck(t *testing.T) {
 	results := componentChecks(preflightOptions{
 		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: "none", buildkitSocket: "off", offline: true,
+		networkMode: networkNetns, buildkitSocket: "off", offline: true,
 	})
 	for _, r := range results {
-		if r.Name == "cilium-agent" || r.Name == "etcd" {
-			t.Errorf("--network none still runs the %q check", r.Name)
+		if r.Name == "bpf" {
+			t.Errorf("--network netns still runs the %q check", r.Name)
 		}
 	}
 }
@@ -97,7 +95,7 @@ func TestNetworkNoneSkipsCiliumAndEtcd(t *testing.T) {
 func TestBuildkitOffSkipsTheBuildCheck(t *testing.T) {
 	results := componentChecks(preflightOptions{
 		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: "none", buildkitSocket: "off", offline: true,
+		networkMode: networkNetns, buildkitSocket: "off", offline: true,
 	})
 	for _, r := range results {
 		if r.Name == "buildkit" {
@@ -110,7 +108,7 @@ func TestBuildkitOffSkipsTheBuildCheck(t *testing.T) {
 func TestOfflineSkipsTheOnlyNetworkCheck(t *testing.T) {
 	opts := preflightOptions{
 		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: "none", buildkitSocket: "off", offline: true,
+		networkMode: networkNetns, buildkitSocket: "off", offline: true,
 	}
 	for _, r := range componentChecks(opts) {
 		if r.Name == "upstream" {

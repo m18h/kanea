@@ -41,9 +41,9 @@ type Driver interface {
 	Remove(ctx context.Context, project, id string) error
 }
 
-// Network wires an alloc's namespace up and tears it down. M1 uses the plain
-// netns implementation; M2 swaps in the Cilium CNI attach/detach behind the
-// same seam (the ordering it must preserve is documented in runtime/netns.go).
+// Network wires an alloc's namespace up and tears it down. The netns mode uses
+// the plain netns implementation; the ebpf mode swaps in the datapath's
+// attach/detach behind the same seam (internal/datapath).
 type Network interface {
 	Attach(ctx context.Context, spec runtime.AllocSpec) error
 	Detach(ctx context.Context, spec runtime.AllocSpec) error
@@ -58,7 +58,7 @@ type Network interface {
 // endpoint with no container and no record — invisible to the planner, which
 // reasons only about allocs it has heard of. And load balancing: backend
 // addresses are read live rather than remembered, because they are reassigned
-// whenever the agent restarts with a fresh kvstore (constraint #9).
+// whenever the datapath's maps are repopulated after a restart (constraint #9).
 //
 // The implementation must return only attachments it owns. Reaping deletes.
 type NetworkInspector interface {
@@ -503,9 +503,9 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 // is the truth about whether traffic can be served; the record is the truth
 // about why, which is a different question.
 //
-// A ready endpoint is required as well: one that has not resolved its identity
-// carries reserved:init and has its traffic denied in both directions, so
-// advertising it would route requests straight into a drop.
+// A ready attachment is required as well: one whose identity is not present is
+// not yet fit to receive traffic, so advertising it would route requests into a
+// drop.
 func backendsFor(w World, d Desired, attachments map[string]network.Attachment) []network.Backend {
 	backends := make([]network.Backend, 0, d.Count)
 	for i := range d.Count {
@@ -790,8 +790,8 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	}
 
 	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
-	// Network before task: an alloc must never run without its network, and on
-	// Cilium an unlabelled endpoint has its traffic denied (M0 spikes ①, ②).
+	// Network before task: an alloc must never run without its network, and the
+	// datapath denies an attachment whose identity is not yet written (§5.2.5).
 	if r.network != nil {
 		if err := r.network.Attach(ctx, spec); err != nil {
 			return fmt.Errorf("attach network: %w", err)
@@ -1176,10 +1176,9 @@ func sortedRecords(m map[string]AllocRecord) []AllocRecord {
 	return out
 }
 
-// NetnsNetwork is the M1 network: a persistent netns per alloc, no CNI. M2
-// replaces it with the Cilium attach (CNI ADD plus the endpoint label patch)
-// behind the same interface — the ordering guarantees are identical, which is
-// why the seam is here.
+// NetnsNetwork is the dev/CI network: a persistent netns per alloc, no IPs, no
+// policy, no LB. The ebpf mode replaces it with the datapath behind the same
+// interface (internal/datapath) — the seam is why netns can stand in at all.
 type NetnsNetwork struct{}
 
 // Attach creates the alloc's network namespace.
@@ -1196,8 +1195,8 @@ func (NetnsNetwork) Detach(_ context.Context, spec runtime.AllocSpec) error {
 // NetnsNetwork deliberately does not implement NetworkInspector. /run/netns is a
 // shared host resource and a bare namespace carries no mark of who made it, so
 // "everything I did not expect" would include namespaces belonging to other
-// tools — and reaping means deleting. The Cilium driver can reap precisely
-// because its endpoints carry an ownership label.
+// tools — and reaping means deleting. The datapath driver can reap precisely
+// because its veths carry an ownership alias (internal/datapath).
 
 // probeHealth runs due health checks and returns the records that changed.
 //

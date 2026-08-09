@@ -260,7 +260,7 @@ func offlineRestore(opts offlineRestoreOptions) error {
 		orUnset(result.Archive.Node))
 	o.printf("  replayed  %d change(s), now at index %d\n", result.Replayed, result.Index)
 	o.println()
-	o.println("Start kanead. The reconciler rebuilds the rest: the Cilium kvstore is")
+	o.println("Start kanead. The reconciler rebuilds the rest: the network datapath is")
 	o.println("derived state and is never restored, images are re-pulled, and endpoints")
 	o.println("and edge routes come back as services converge.")
 	return o.Err()

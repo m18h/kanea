@@ -60,3 +60,52 @@ export function serviceHealth(service: { Count: number }, allocs: Alloc[]): Heal
   if (running < service.Count) return { label: 'starting', settled: false }
   return { label: 'ok', settled: true }
 }
+
+/** CodeClass groups status codes the way an operator reads them. */
+export interface CodeClass {
+  /** klass is "2xx", "3xx", "4xx", "5xx" or "other". */
+  klass: string
+  count: number
+  variant: NonNullable<BadgeProps['variant']>
+}
+
+/**
+ * groupCodes folds the edge's exact status codes into classes (PRD §9.1.1).
+ *
+ * The exposition keeps exact codes because Prometheus users want them; a
+ * dashboard tile does not. Five buckets fit on a card and answer the question
+ * a glance is asking — is anything failing — where twenty codes would need
+ * reading rather than seeing.
+ *
+ * Returned in class order rather than by volume: 5xx is always in the same
+ * place, so its absence is as visible as its presence.
+ */
+export function groupCodes(codes: Record<string, number> | null | undefined): CodeClass[] {
+  const order: { klass: string; variant: NonNullable<BadgeProps['variant']> }[] = [
+    { klass: '2xx', variant: 'ok' },
+    { klass: '3xx', variant: 'muted' },
+    { klass: '4xx', variant: 'warn' },
+    { klass: '5xx', variant: 'error' },
+    { klass: 'other', variant: 'muted' },
+  ]
+
+  const totals = new Map<string, number>()
+  for (const [code, count] of Object.entries(codes ?? {})) {
+    const digit = code.charAt(0)
+    const klass = /^[2345]$/.test(digit) ? `${digit}xx` : 'other'
+    totals.set(klass, (totals.get(klass) ?? 0) + count)
+  }
+
+  return order
+    .filter(({ klass }) => totals.has(klass))
+    .map(({ klass, variant }) => ({ klass, count: totals.get(klass) ?? 0, variant }))
+}
+
+/** formatBytes renders a byte count in the largest unit that stays readable. */
+export function formatBytes(n: number): string {
+  const unit = 1024
+  if (n < unit) return `${n} B`
+  if (n < unit ** 2) return `${(n / unit).toFixed(1)} KiB`
+  if (n < unit ** 3) return `${(n / unit ** 2).toFixed(1)} MiB`
+  return `${(n / unit ** 3).toFixed(1)} GiB`
+}

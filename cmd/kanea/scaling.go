@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/m18h/kanea/internal/datapath"
 	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/scaling"
@@ -218,52 +219,76 @@ func listAllAllocs(ctx context.Context, st store.Store) ([]reconciler.AllocRecor
 	}
 }
 
-// probeHubble reports at startup whether Hubble is actually usable.
+// datapathFlows adapts the datapath's counter view to scaling's FlowSource.
 //
-// Three outcomes, and they need different words because they need different
-// fixes: unreachable means the agent has no Hubble listener, no flow data means
-// the `--hubble-metrics` flag was written in a form cilium-agent accepts and
-// ignores, and success means the pipeline is live.
-func probeHubble(ctx context.Context, scraper *scaling.HubbleScraper, url string, logger *slog.Logger) {
-	probeCtx, cancel := context.WithTimeout(ctx, hubbleProbeTimeout)
-	defer cancel()
-
-	switch _, err := scraper.Scrape(probeCtx); {
-	case errors.Is(err, scaling.ErrHubbleNoFlows):
-		logger.Error("hubble answers but reports no flows; east-west metrics will stay empty",
-			"url", url,
-			"fix", "cilium-agent's --hubble-metrics takes a space-separated list inside one "+
-				"value: --hubble-metrics='flow drop'. A comma-separated list is read as one "+
-				"unknown metric name, and a repeated flag keeps only the last — both silently")
-	case err != nil:
-		// Not fatal: kanead does not supervise cilium-agent, and an agent that
-		// is still starting is a normal thing to find at boot.
-		logger.Warn("hubble is not answering yet; east-west metrics will start when it does",
-			"url", url, "error", err)
-	default:
-		logger.Info("scraping east-west metrics from hubble", "url", url,
-			"detail", "per-service attribution needs a label context on the agent, e.g. "+
-				"--hubble-metrics='flow:destinationContext=labels drop:destinationContext=labels'; "+
-				"without one, flows are recorded against the node")
-	}
+// Connects already come back keyed by "project/service". Drops are keyed by
+// destination address and reason, and the address becomes a service through
+// the datapath's own attachment view — the same live query the reconciler
+// trusts, never the Store (constraint #2). Anything unattributable — a VIP
+// with no backends, metadata-service egress, an alloc that detached between
+// the drop and this read — folds into the node subject rather than being
+// lost: a number nobody can break down is still a number worth having.
+type datapathFlows struct {
+	source   *datapath.CounterSource
+	datapath *datapath.Datapath
 }
 
-// hubbleProbeTimeout bounds the startup probe. It is a diagnostic, and kanead
-// starts either way.
-const hubbleProbeTimeout = 3 * time.Second
+// ServiceConnects returns cumulative connection attempts per service.
+func (f datapathFlows) ServiceConnects(ctx context.Context) (map[string]uint64, error) {
+	return f.source.ServiceConnects(ctx)
+}
+
+// Drops returns cumulative datapath drops per service.
+func (f datapathFlows) Drops(ctx context.Context) (map[string]uint64, error) {
+	raw, err := f.source.Drops()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]uint64, len(raw))
+	if len(raw) == 0 {
+		return out, nil
+	}
+
+	attachments, err := f.datapath.Attachments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byAddr := make(map[netip.Addr]string, len(attachments))
+	for _, att := range attachments {
+		if att.Service.Project == "" || att.Service.Service == "" {
+			continue
+		}
+		if addr, err := netip.ParseAddr(att.IPv4); err == nil {
+			byAddr[addr] = att.Service.String()
+		}
+	}
+	for key, count := range raw {
+		subject, ok := byAddr[netip.AddrFrom4(key.DstIP)]
+		if !ok {
+			subject = scaling.NodeSubject
+		}
+		out[subject] += count
+	}
+	return out, nil
+}
 
 // metricsSettings is what startMetrics needs to build the pipeline.
 type metricsSettings struct {
-	metrics       *scaling.Metrics
+	metrics *scaling.Metrics
+	// exposition receives the edge's labelled families for the exporter
+	// (§9.1.1). It never reaches the time series above.
+	exposition    *scaling.EdgeExposition
 	containerdURL string
 	edgeURL       string
-	hubbleURL     string
-	interval      time.Duration
-	autoscale     bool
-	store         store.Store
-	notify        chan<- struct{}
-	emit          func(notify.Event)
-	breaker       scaling.Breaker
+	// flows is the datapath's east-west counter view; nil in netns mode,
+	// which has no counters.
+	flows     scaling.FlowSource
+	interval  time.Duration
+	autoscale bool
+	store     store.Store
+	notify    chan<- struct{}
+	emit      func(notify.Event)
+	breaker   scaling.Breaker
 }
 
 // off disables a scrape target.
@@ -297,6 +322,7 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 	if cfg.edgeURL != scrapeOff {
 		scraper, err := scaling.NewEdgeScraper(scaling.EdgeConfig{
 			URL: cfg.edgeURL, Metrics: cfg.metrics, Logger: logger,
+			Exposition: cfg.exposition,
 		})
 		if err != nil {
 			logger.Error("cannot start the edge metrics scrape", "error", err)
@@ -308,25 +334,24 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 		logger.Warn("edge metrics are disabled; rps and latency scaling rules will never fire")
 	}
 
-	// Hubble is opt-in and off unless an operator names its endpoint. §21's
-	// footprint budget is why: M0 spike ① measured cilium-agent at 152.8 MiB
-	// with Hubble on, the largest resident component on the node, and §9.1
-	// makes the edge the primary signal precisely so this is a choice rather
-	// than a requirement.
-	if cfg.hubbleURL != "" {
-		scraper, err := scaling.NewHubbleScraper(scaling.HubbleConfig{
-			URL: cfg.hubbleURL, Metrics: cfg.metrics, Logger: logger,
+	// East-west metrics come from the datapath's own per-CPU counters, on by
+	// default (PRD v1.36): reading a pinned map costs nothing per request,
+	// which is what lets this be a default where Hubble — 152.8 MiB of
+	// resident cilium-agent as M0 spike ① measured it — had to be opt-in.
+	if cfg.flows != nil {
+		scraper, err := scaling.NewDatapathScraper(scaling.DatapathConfig{
+			Source: cfg.flows, Metrics: cfg.metrics, Logger: logger,
 		})
 		if err != nil {
-			logger.Error("cannot start the hubble metrics scrape", "error", err)
+			logger.Error("cannot start the east-west metrics scrape", "error", err)
 		} else {
-			// Probed once at startup, in front of the operator who just typed
-			// the flag, rather than leaving them to notice a warning five
-			// seconds into a log. M0 spike ① asked for this check by name: the
-			// failure it catches serves 200 OK and looks like success.
-			probeHubble(ctx, scraper, cfg.hubbleURL, logger)
 			go scraper.Run(ctx, cfg.interval)
+			logger.Info("scraping east-west metrics from the datapath", "interval", cfg.interval)
 		}
+	} else {
+		logger.Info("east-west metrics are disabled",
+			"detail", "the netns network mode has no datapath counters; "+
+				"flows_per_second and drops_per_second rules will never fire")
 	}
 
 	// Sweeping is housekeeping: Forget covers the services that leave cleanly,

@@ -3,8 +3,10 @@ package edge
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -213,7 +215,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Host-routed traffic scopes its rate-limit buckets under the empty string,
 	// which is what keeps every existing key byte-identical.
-	p.serveRoute(w, r, route, "")
+	p.serveRoute(w, r, route, "", entrypointFor(r))
+}
+
+// entrypointFor names the listener a host-routed request arrived on (§9.1.1).
+//
+// Derived from the connection rather than plumbed through: :80 and :443 share
+// one Proxy and one ServeHTTP, and whether the request was terminated with TLS
+// is exactly the distinction between the two entrypoints. A published port does
+// not come through here — its entrypoint is fixed at bind time.
+func entrypointFor(r *http.Request) string {
+	if r.TLS != nil {
+		return EntrypointWebSecure
+	}
+	return EntrypointWeb
 }
 
 // serveRoute is the chain from IP restriction onward, in the order PRD §7.2.1
@@ -230,29 +245,104 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // scope namespaces the rate-limit buckets. Without it a client throttled on
 // shop.example.com would get a fresh allowance by connecting to the same
 // service on :8096.
-func (p *Proxy) serveRoute(w http.ResponseWriter, r *http.Request, route compiled, scope string) {
+func (p *Proxy) serveRoute(w http.ResponseWriter, r *http.Request, route compiled, scope, entrypoint string) {
 	addr := peerAddr(r)
 	if !route.allowsAddress(addr) {
 		p.log.Debug("address refused by ip_restriction",
 			"service", route.Name(), "host", r.Host, "remote", addr.String())
-		p.metrics.Refused(route.Name())
+		p.metrics.Refused(route.Name(), ReasonIPRestriction)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
 	if !p.withinRateLimit(w, r, route, addr, scope) {
-		p.metrics.Refused(route.Name())
+		p.metrics.Refused(route.Name(), ReasonRateLimit)
 		return
 	}
 
 	p.applyDeadline(w, r)
+
+	// Body bytes are counted as they are read rather than taken from
+	// Content-Length: a chunked request declares none, and a client that
+	// declares one and sends less would be credited with bytes that never
+	// arrived.
+	body := &countingBody{ReadCloser: r.Body}
+	if r.Body != nil {
+		r.Body = body
+	}
+
+	p.metrics.RequestStarted(route.Name())
+	defer p.metrics.RequestFinished(route.Name())
+
 	// Timed around the upstream call only. What §9.1 wants is how long the
 	// service takes, and folding the middleware's own microseconds into that
 	// would make the edge's own cost look like the service's latency.
 	started := p.now()
 	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	p.rp.ServeHTTP(recorder, r.WithContext(context.WithValue(r.Context(), routeKey{}, route)))
-	p.metrics.Observe(route.Name(), p.now().Sub(started), recorder.status)
+
+	p.metrics.Observe(Observation{
+		Service:       route.Name(),
+		Entrypoint:    entrypoint,
+		Status:        recorder.status,
+		Method:        r.Method,
+		Protocol:      protocolOf(r, recorder.hijacked),
+		Duration:      p.now().Sub(started),
+		RequestBytes:  body.n.Load(),
+		ResponseBytes: recorder.bytes.Load(),
+		TLSVersion:    tlsVersionOf(r),
+		TLSCipher:     tlsCipherOf(r),
+	})
+}
+
+// protocolOf derives the `protocol` label (§9.1.1).
+//
+// Derived, never read from r.Proto: the request line is the client's to write,
+// and a label taken from it is a label the client chooses. A hijacked
+// connection is a successful upgrade — the only way the edge learns that a
+// request became a websocket, since a hijacked response never calls
+// WriteHeader and would otherwise be recorded as a plain 200.
+func protocolOf(r *http.Request, hijacked bool) string {
+	switch {
+	case hijacked:
+		return ProtocolWebsocket
+	case r.TLS != nil:
+		return ProtocolHTTPS
+	default:
+		return ProtocolHTTP
+	}
+}
+
+func tlsVersionOf(r *http.Request) string {
+	if r.TLS == nil {
+		return ""
+	}
+	return tls.VersionName(r.TLS.Version)
+}
+
+func tlsCipherOf(r *http.Request) string {
+	if r.TLS == nil {
+		return ""
+	}
+	return tls.CipherSuiteName(r.TLS.CipherSuite)
+}
+
+// countingBody counts the request body bytes that actually arrive.
+//
+// It does not own the body: ReverseProxy closes what it is given, and this
+// forwards that through. Closing here as well would close the caller's body
+// twice, which net/http tolerates and which would still be wrong.
+type countingBody struct {
+	io.ReadCloser
+	n atomic.Int64
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.n.Add(int64(n))
+	}
+	return n, err
 }
 
 // statusRecorder remembers the status for the metrics observation.
@@ -264,6 +354,13 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status  int
 	written bool
+	// bytes counts the response body written. Atomic because a streaming
+	// handler may write from a goroutine other than the one that observes.
+	bytes atomic.Int64
+	// hijacked records that the connection was taken over — a websocket
+	// upgrade, which never reaches WriteHeader and would otherwise be counted
+	// as an ordinary 200.
+	hijacked bool
 }
 
 func (w *statusRecorder) WriteHeader(status int) {
@@ -275,7 +372,11 @@ func (w *statusRecorder) WriteHeader(status int) {
 
 func (w *statusRecorder) Write(b []byte) (int, error) {
 	w.written = true
-	return w.ResponseWriter.Write(b)
+	n, err := w.ResponseWriter.Write(b)
+	if n > 0 {
+		w.bytes.Add(int64(n))
+	}
+	return n, err
 }
 
 func (w *statusRecorder) Flush() {
@@ -289,7 +390,14 @@ func (w *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("edge: %T cannot be hijacked", w.ResponseWriter)
 	}
-	return h.Hijack()
+	conn, rw, err := h.Hijack()
+	if err == nil {
+		// Only a successful hijack is an upgrade. Marking a failed one would
+		// label an error response as a websocket.
+		w.hijacked = true
+		w.status = http.StatusSwitchingProtocols
+	}
+	return conn, rw, err
 }
 
 func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }

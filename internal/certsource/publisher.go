@@ -235,6 +235,7 @@ func (p *Publisher) merged() []edge.Certificate {
 				CertPEM:  c.CertPEM,
 				KeyPEM:   c.KeyPEM,
 				NotAfter: c.NotAfter,
+				Source:   string(mode),
 			})
 		}
 	}

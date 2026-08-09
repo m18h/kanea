@@ -6,10 +6,11 @@
 # with consequences, and a script that made them for you would be making them at
 # the moment you understand the node least.
 #
-# The runtime is not among them. `kanea init` installs containerd, Cilium, etcd
-# and buildkitd at versions the binary pins (PRD §5.2.12), because Kanea had
-# already chosen those versions — it dictates Cilium's flag set and enforces a
-# version matrix — and the prerequisite list was only making you type them out.
+# The runtime is not among them. `kanea init` installs containerd, runc and
+# buildkitd at versions the binary pins (PRD §5.2.12) and enforces a version
+# matrix, so they are not a prerequisite list you assemble by hand. The network
+# layer needs no component at all: the eBPF datapath's programs are compiled
+# into the kanea binary itself (§5.2.5).
 #
 # Run it with bash, not sh: `set -o pipefail` is not POSIX, and the checksum
 # check below is a pipeline whose *first* command is the one that can fail.
@@ -29,7 +30,7 @@ need curl
 need tar
 need install
 
-# Kanea is a Linux platform: containerd, cgroups v2, netns and Cilium are all
+# Kanea is a Linux platform: containerd, cgroups v2, netns and eBPF are all
 # Linux. Said here rather than discovered after a download.
 [ "$(uname -s)" = "Linux" ] || die "kanead runs on Linux (found $(uname -s))"
 
@@ -117,9 +118,9 @@ Next:
 
          sudo kanea init
 
-     It checks the node, installs the runtime (containerd, runc, the CNI
-     plugins, etcd, cilium-agent and rootless buildkitd, at pinned versions),
-     runs the master-key ceremony and writes the systemd units.
+     It checks the node, installs the runtime (containerd, runc and rootless
+     buildkitd, at pinned versions), runs the master-key ceremony and writes
+     the systemd units.
 
      Have somewhere to record the key before you start — it is shown once,
      and without it every backup is unreadable.

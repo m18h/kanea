@@ -23,7 +23,7 @@ import (
 // about how it starts follows from that. It opens no database — bbolt is
 // single-writer, and the edge holding a handle would mean a control-plane
 // restart could not proceed. It reads one file kanead publishes. It needs no
-// containerd, no Cilium socket, no state directory. A kanead that is down,
+// containerd, no datapath, no state directory. A kanead that is down,
 // crashed, or mid-upgrade is invisible here: the last route table keeps
 // serving.
 func runEdge(args []string) error {

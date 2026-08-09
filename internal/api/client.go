@@ -201,6 +201,17 @@ func (c *Client) Allocs(ctx context.Context, project, service string) ([]reconci
 	return out.Allocs, nil
 }
 
+// Stats fetches one service's point-in-time sample, including the edge's
+// labelled totals (§9.1.1).
+func (c *Client) Stats(ctx context.Context, project, service string) (StatsSample, error) {
+	q := url.Values{}
+	q.Set("project", project)
+	q.Set("service", service)
+	var out StatsSample
+	err := c.do(ctx, http.MethodGet, PathStats+"?"+q.Encode(), nil, &out)
+	return out, err
+}
+
 // Logs streams alloc logs to w until the stream ends or the context is
 // cancelled. With Follow set it does not return on its own.
 func (c *Client) Logs(ctx context.Context, opts LogOptions, w io.Writer) (err error) {

@@ -112,6 +112,10 @@ type ServerConfig struct {
 	Metrics MetricsSource
 	// Breaker reports the circuit breaker's state to the exporter.
 	Breaker BreakerSource
+	// EdgeMetrics is the edge's labelled families, republished verbatim by the
+	// exporter (§9.1.1). Nil reports kanea_edge_up 0 and nothing else, which is
+	// the honest answer for a node whose edge is not being scraped.
+	EdgeMetrics EdgeExpositionSource
 	// Node reads the machine's own CPU, memory and load (§17). Nil omits them,
 	// which is what a non-Linux build gets.
 	Node NodeSource
@@ -194,6 +198,7 @@ type Server struct {
 	audit           AuditLog
 	accounts        Accounts
 	metrics         MetricsSource
+	edgeMetrics     EdgeExpositionSource
 	breaker         BreakerSource
 	node            NodeSource
 	exec            Execer
@@ -248,7 +253,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		publishPorts: cfg.PublishPorts,
 		auth:         cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
-		metrics: cfg.Metrics, breaker: cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
+		metrics: cfg.Metrics, edgeMetrics: cfg.EdgeMetrics,
+		breaker: cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
 		insecureCookies: cfg.InsecureCookies,
 	}
 

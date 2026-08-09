@@ -27,8 +27,8 @@ func VIPKey(project, service string) string { return vipKeyPrefix + project + "/
 // address DNS answers with and clients cache, so it has to outlive the thing
 // that programs it — the agent's LB state is rebuilt from scratch after a
 // restart, and a service whose frontend moved would have every existing client
-// pointing at nothing. Constraint #9 says Cilium state must be rebuildable from
-// the Store; that only works if the Store is where the assignment lives.
+// pointing at nothing. Constraint #9 says datapath state must be rebuildable
+// from the Store; that only works if the Store is where the assignment lives.
 type vipAllocator struct {
 	store  Store
 	prefix netip.Prefix

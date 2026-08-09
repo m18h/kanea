@@ -55,9 +55,8 @@ func fail(name, detail, fix string) checkResult {
 type preflightOptions struct {
 	dataDir          string
 	containerdSocket string
-	ciliumSocket     string
-	// networkMode is "cilium" or "none"; the Cilium checks are skipped for the
-	// latter, which is a supported single-node configuration.
+	// networkMode is "ebpf" or "netns"; the BPF checks are skipped for the
+	// latter, which is the development configuration.
 	networkMode string
 	// buildkitSocket is the rootless build daemon's address; "off" skips it.
 	buildkitSocket string
@@ -102,15 +101,10 @@ func componentChecks(opts preflightOptions) []checkResult {
 			"run `kanea install` — Kanea installs and supervises its own containerd "+
 				"(PRD §5.2.12); or point --containerd at an existing one"),
 		checkVersionMatrix(opts.layout),
-		checkCNIPlugins(opts.layout),
 		checkSubnets(opts.layout, opts.serviceCIDR),
 	}
-	if opts.networkMode != "none" {
-		results = append(results,
-			checkSocket("cilium-agent", opts.ciliumSocket,
-				"systemctl status kanea-cilium — or run kanead with --network none"),
-			checkEtcd(),
-		)
+	if opts.networkMode != networkNetns {
+		results = append(results, checkBPF())
 	}
 	if opts.buildkitSocket != "off" {
 		results = append(results, checkBuildkit(opts.buildkitSocket, opts.layout))
@@ -277,42 +271,6 @@ func checkSubnets(layout provision.Layout, serviceCIDR string) checkResult {
 		Detail: node + " in " + cluster + ", services " + serviceCIDR}
 }
 
-// checkCNIPlugins verifies the plugin binary and the conflist.
-//
-// Both are checked because they fail differently and at the worst moment: a
-// missing conflist surfaces per-alloc as a read error at deploy time, not at
-// startup, since internal/network loads it lazily on every call.
-func checkCNIPlugins(layout provision.Layout) checkResult {
-	plugin := filepath.Join(layout.CNIBinDir(), "cilium-cni")
-	if _, err := os.Stat(plugin); err != nil {
-		return fail("cni", plugin+" is not present",
-			"run `kanea install --only cilium` — containerd execs this on every alloc")
-	}
-	conflist := filepath.Join(layout.ConfDir, "cni", "net.d", "05-cilium.conflist")
-	if _, err := os.Stat(conflist); err != nil {
-		return fail("cni", conflist+" is not present",
-			"run `kanea install` — without it every deploy fails at network attach, not at startup")
-	}
-	return pass("cni", "cilium-cni and its conflist are in place")
-}
-
-// checkEtcd verifies Cilium's kvstore answers.
-//
-// Derived state (§18 rule 9), so this is not about data — it is that a Cilium
-// agent with no kvstore allocates no identities, and an endpoint with no
-// identity is policy-denied in both directions.
-func checkEtcd() checkResult {
-	conn, err := net.DialTimeout("tcp", provision.EtcdEndpoint, 2*time.Second)
-	if err != nil {
-		return fail("etcd", provision.EtcdEndpoint+" refuses connections",
-			"systemctl status kanea-etcd — Cilium allocates no identities without it")
-	}
-	if err := conn.Close(); err != nil {
-		return warn("etcd", "answered but the connection would not close", "")
-	}
-	return pass("etcd", provision.EtcdEndpoint)
-}
-
 // checkBuildkit verifies the build daemon, which §5.2.11 has always said
 // `doctor` does and which it has never done.
 func checkBuildkit(socket string, layout provision.Layout) checkResult {
@@ -353,7 +311,7 @@ func checkFUSE() checkResult {
 
 // checkPlatform refuses a host Kanea cannot run workloads on.
 //
-// Not a warning. containerd, cgroups v2, netns and Cilium are Linux, and a
+// Not a warning. containerd, cgroups v2, netns and eBPF are Linux, and a
 // macOS or Windows host is a development machine — where the CLI is useful and
 // the daemon is not.
 func checkPlatform() checkResult {
@@ -394,9 +352,9 @@ func checkCgroupV2() checkResult {
 	return pass("cgroups v2", "unified hierarchy with cpu, memory and pids")
 }
 
-// minKernel is the oldest kernel Kanea is tested against. Cilium's eBPF
-// dataplane needs considerably newer than the distribution minimum, and a node
-// below this fails in ways that look like Kanea bugs.
+// minKernel is the oldest kernel Kanea is tested against. Kanea's own eBPF
+// datapath (PRD §5.2.5) needs considerably newer than the distribution
+// minimum, and a node below this fails in ways that look like Kanea bugs.
 const minKernel = "5.10"
 
 func checkKernel() checkResult {
@@ -410,7 +368,7 @@ func checkKernel() checkResult {
 	version := strings.TrimSpace(string(release))
 	if older, err := kernelOlderThan(version, minKernel); err == nil && older {
 		return fail("kernel", version,
-			"Cilium's eBPF dataplane needs "+minKernel+" or newer; upgrade the kernel")
+			"Kanea's eBPF datapath (PRD §5.2.5) needs "+minKernel+" or newer; upgrade the kernel")
 	}
 	return pass("kernel", version)
 }

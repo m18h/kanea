@@ -7,8 +7,8 @@ import (
 
 // The wire protocol: JSON-RPC 2.0 carrying MCP's method set.
 //
-// Hand-written rather than taken from an SDK, for the same reason the Cilium
-// client is (AGENTS.md): the surface Kanea needs is small and fully specified,
+// Hand-written rather than taken from an SDK, for the same reason the DNS wire
+// codec is (AGENTS.md): the surface Kanea needs is small and fully specified,
 // and a dependency that speaks a protocol on your behalf is a dependency that
 // decides what your protocol version is, what your error shapes are, and what
 // gets logged. The methods below are the whole of it.

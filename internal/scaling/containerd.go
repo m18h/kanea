@@ -400,11 +400,10 @@ func splitExpositionLine(line []byte) (name, labels, value []byte, ok bool) {
 
 // labelValue extracts one label from a raw Prometheus label set.
 //
-// Quote-aware, and it has to be: a label *value* may contain commas, and
-// Hubble's label context uses that — it renders a whole identity into one
-// value, `destination="k8s:io.kubernetes.pod.namespace=shop,project=shop,..."`.
-// Splitting on commas first truncates that at the first one, which reads as a
-// perfectly plausible label and attributes every flow to the wrong subject.
+// Quote-aware, and it has to be: a label *value* may legally contain commas —
+// a container id, an escaped path. Splitting on commas first truncates such a
+// value at the first one, which reads as a perfectly plausible label and
+// attributes every sample to the wrong subject.
 //
 // The returned string is a copy, because it outlives the scanner's buffer.
 func labelValue(labels []byte, want string) string {

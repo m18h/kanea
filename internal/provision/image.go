@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	containerd "github.com/containerd/containerd/v2/client"
@@ -21,18 +20,11 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-// OCI image components (PRD §5.2.12): cilium and buildkit.
+// OCI image components (PRD §5.2.12): buildkit.
 //
-// The asymmetry between them is deliberate and worth stating where someone
-// will read it. BuildKit's binaries are self-contained, so `buildkitd`,
-// `buildctl` and `rootlesskit` are extracted onto the host and run there —
-// §23.2 specified it that way. cilium-agent is not: it needs its bundled
-// helpers, its iptables and its BPF templates, and unpacking that image onto a
-// host is unsupported upstream and a large surface to get quietly wrong. So the
-// agent stays inside the image and runs as a containerd task (M0 spike ①
-// validated that form 25/25); only `cilium-cni` and `cilium-dbg` come out,
-// because containerd execs the CNI plugin and it therefore has to be a host
-// file.
+// BuildKit's binaries are self-contained, so `buildkitd`, `buildctl` and
+// `rootlesskit` are extracted onto the host and run there — §23.2 specified it
+// that way.
 //
 // Files are pulled out by reading the image's layers rather than by mounting a
 // snapshot. That buys three things: no mount syscall and no root requirement
@@ -42,7 +34,7 @@ import (
 
 // SystemNamespace holds the platform's own images, apart from the per-project
 // namespaces workloads use (§5.2.4). A workload namespace is a project's;
-// cilium is not any project's.
+// buildkit's image is not any project's.
 const SystemNamespace = "kanea-system"
 
 // ImageClient pulls and unpacks image components through containerd.
@@ -71,10 +63,6 @@ func (c *ImageClient) scope(ctx context.Context) context.Context {
 }
 
 // Fetch pulls an image by digest and unpacks it into the snapshotter.
-//
-// Unpacked because cilium-agent is *run* from this image, not merely read.
-// Fetching without unpacking would leave the task creation to discover the
-// missing snapshot much later, when the dataplane is supposed to come up.
 func (c *ImageClient) Fetch(ctx context.Context, ref string) error {
 	ctx = c.scope(ctx)
 	if !strings.Contains(ref, "@sha256:") {
@@ -120,8 +108,8 @@ func (c *ImageClient) Unpack(ctx context.Context, ref string, files []File, dest
 // Export writes an image to an OCI archive, for a bundle.
 //
 // One architecture, matching the bundle's. A bundle is already per-arch
-// because the artefacts are, and carrying both platforms of two images to a
-// node that can use one would add roughly the size of everything else in it.
+// because the artefacts are, and carrying both platforms of an image to a node
+// that can use one would add roughly the size of everything else in it.
 // Authoring a bundle for an architecture other than the authoring machine's is
 // ordinary — a pull is not run, it is fetched.
 func (c *ImageClient) Export(ctx context.Context, ref, arch, destPath string) error {
@@ -295,45 +283,3 @@ func scanLayer(ctx context.Context, layers layerReader, desc ocispec.Descriptor,
 		found[f.To] = true
 	}
 }
-
-// CiliumArgs is the agent's command line (PRD §5.2.5, M0 spike ①).
-//
-// Every one of these is load-bearing and the set is not a starting point to
-// tune. --enable-k8s=false is the whole premise; --kube-proxy-replacement is
-// required for kanea-edge to reach a service VIP; --lb-state-file and
-// --static-cnp-path are the file interfaces that replaced the writable REST
-// APIs removed in 1.18; --policy-default-local-cluster=false stops every
-// policy selector matching nothing.
-// The layout is taken but unused: the agent writes its socket and its two
-// file control surfaces to Cilium's own paths, not Kanea's, and internal/network
-// reads them there. It stays in the signature because every other component's
-// paths do come from the layout, and a lone exception invites someone to
-// "fix" it by pointing these at the prefix — where the network driver would
-// never look.
-func CiliumArgs(_ Layout, nodeCIDR, clusterCIDR string) []string {
-	return []string{
-		"cilium-agent",
-		"--enable-k8s=false",
-		"--kvstore=etcd",
-		"--kvstore-opt=etcd.address=" + EtcdEndpoint,
-		"--identity-allocation-mode=kvstore",
-		"--ipam=cluster-pool",
-		"--ipv4-range=" + nodeCIDR,
-		"--enable-ipv4=true",
-		"--enable-ipv6=false",
-		"--routing-mode=native",
-		"--ipv4-native-routing-cidr=" + clusterCIDR,
-		"--enable-ipv4-masquerade=true",
-		"--kube-proxy-replacement=true",
-		"--policy-default-local-cluster=false",
-		"--lb-state-file=" + filepath.Join(CiliumRunDir, "lb-state.json"),
-		"--static-cnp-path=" + filepath.Join(CiliumRunDir, "policies"),
-		"--cgroup-root=/run/cilium/cgroupv2",
-		"--bpf-root=/sys/fs/bpf",
-	}
-}
-
-// CiliumRunDir is where the agent's socket and its two file control surfaces
-// live. It is Cilium's own path, not Kanea's: the agent writes the socket, and
-// internal/network already reads it there.
-const CiliumRunDir = "/var/run/cilium"

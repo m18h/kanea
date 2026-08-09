@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/scaling"
+	"github.com/m18h/kanea/internal/store"
 )
 
 // PathMetrics is the Prometheus exporter (PRD §9.1).
@@ -31,6 +33,19 @@ type MetricsSource interface {
 type BreakerSource interface {
 	Open() bool
 	Trips() int
+}
+
+// EdgeExpositionSource is the edge's labelled families, held verbatim by the
+// scrape loop (§9.1.1, scaling.EdgeExposition).
+//
+// An interface with one method rather than a *scaling.EdgeScraper: the exporter
+// must answer whether or not the scrape loop is running, and a concrete
+// dependency would make that a startup-ordering question.
+type EdgeExpositionSource interface {
+	Snapshot() (body string, at time.Time, ok bool)
+	// Breakdown is the structured per-service view /v1/stats serves, so the
+	// dashboard and the CLI never have to parse an exposition.
+	Breakdown(service string) (scaling.ServiceBreakdown, bool)
 }
 
 // exported lists the series the exporter publishes, with the Prometheus name
@@ -56,7 +71,7 @@ var exported = []struct {
 }
 
 // handleMetrics renders the exposition format.
-func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if s.metrics == nil {
 		writeError(w, http.StatusServiceUnavailable, errNoMetrics)
 		return
@@ -106,6 +121,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	out.printf("# TYPE kanea_websocket_connections gauge\n")
 	out.printf("kanea_websocket_connections %d\n", s.ws.count())
 
+	s.writeEdgePassthrough(out)
+	s.writeServerUp(out, r)
+
 	if s.breaker != nil {
 		open := 0
 		if s.breaker.Open() {
@@ -121,6 +139,75 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 
 	if out.err != nil {
 		s.log.Debug("write metrics", "error", out.err)
+	}
+}
+
+// writeEdgePassthrough republishes the edge's labelled families verbatim
+// (§9.1.1).
+//
+// Verbatim, and as counters. The gauges above are derived — a rate this process
+// computed from two readings — and are omitted once stale, because a rate from
+// three scrapes ago is not the current rate. A counter is the opposite: it is
+// true whenever it was read, `rate()` does the derivation, and a counter reset
+// is something Prometheus already understands. So a stale exposition is still
+// published, and kanea_edge_up is what says how stale.
+func (s *Server) writeEdgePassthrough(out *exposition) {
+	body, at, ok := "", time.Time{}, false
+	if s.edgeMetrics != nil {
+		body, at, ok = s.edgeMetrics.Snapshot()
+	}
+
+	// Published unconditionally, including when no scrape has ever succeeded.
+	// A gap in kanea_edge_service_* has two causes — the edge is down, or
+	// nothing is exposed — and without this they are indistinguishable.
+	up := 0
+	if ok && time.Since(at) <= metricStaleAfter {
+		up = 1
+	}
+	out.printf("# HELP kanea_edge_up Whether kanea-edge answered its last scrape.\n")
+	out.printf("# TYPE kanea_edge_up gauge\n")
+	out.printf("kanea_edge_up %d\n", up)
+
+	if ok && body != "" {
+		out.printf("%s", body)
+	}
+}
+
+// writeServerUp publishes per-alloc backend health (§9.1.1).
+//
+// Only for allocs a probe has actually run against. AllocRecord.Healthy is
+// written solely by a probe, so a service with no `check` block has it false
+// for every alloc forever — publishing that would report every check-free
+// service as entirely down. Probed() is the guard, and it is the same
+// distinction §9.2 draws with "no data is never zero": a missing probe and a
+// dead backend must not produce the same number.
+func (s *Server) writeServerUp(out *exposition, r *http.Request) {
+	allocs, err := listAll[reconciler.AllocRecord](r.Context(), s.store, store.KindAlloc)
+	if err != nil {
+		s.log.Debug("cannot list allocs for server_up", "error", err)
+		return
+	}
+
+	probed := make([]reconciler.AllocRecord, 0, len(allocs))
+	for _, a := range allocs {
+		if a.Probed() {
+			probed = append(probed, a)
+		}
+	}
+	if len(probed) == 0 {
+		return
+	}
+	sort.Slice(probed, func(i, j int) bool { return probed[i].Key() < probed[j].Key() })
+
+	out.printf("# HELP kanea_edge_server_up Whether a probed alloc last answered its health check.\n")
+	out.printf("# TYPE kanea_edge_server_up gauge\n")
+	for _, a := range probed {
+		up := 0
+		if a.Healthy {
+			up = 1
+		}
+		out.printf("kanea_edge_server_up{project=%q,service=%q,alloc=%q} %d\n",
+			a.Project, a.Service, a.Key(), up)
 	}
 }
 

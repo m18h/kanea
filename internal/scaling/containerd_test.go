@@ -340,8 +340,7 @@ func BenchmarkScrapeParse(b *testing.B) {
 	}
 }
 
-// A label *value* may contain commas, and Hubble's label context uses that: it
-// renders a whole identity into one value. A parser that splits on commas
+// A label *value* may legally contain commas. A parser that splits on commas
 // before honouring quotes truncates it at the first one — which reads as a
 // perfectly plausible label and attributes every sample to the wrong subject.
 func TestLabelParsingHonoursQuotedCommas(t *testing.T) {
@@ -350,8 +349,8 @@ func TestLabelParsingHonoursQuotedCommas(t *testing.T) {
 		Subject: "shop/web/alloc,0", Service: "shop/web",
 		CPUMillis: oneCore, MemoryBytes: 100,
 	}}
-	// A container id containing a comma is unusual but legal, and it exercises
-	// the same path a Hubble identity does.
+	// A container id containing a comma is unusual but legal, and it is the
+	// value that catches a comma-first parser.
 	body := "container_memory_usage_bytes{container_id=\"alloc,0\",namespace=\"kanea\"} 50\n"
 	s, m := newScraper(t, body, allocs, c)
 

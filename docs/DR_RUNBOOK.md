@@ -51,7 +51,7 @@ prompt — the point is to establish that you actually recorded it.
 | Backed up | Not backed up |
 |---|---|
 | The whole Store: projects, services, allocs, certs (including the self-signed CA at `ca/self-signed`), secrets, pipelines, audit log, accounts and tokens | Container images — re-pulled from the registry |
-| Change segments between snapshots (RPO bound) | The Cilium kvstore — **derived state, rebuilt from desired state, never restored** (§18) |
+| Change segments between snapshots (RPO bound) | The datapath's pinned BPF maps — **derived state, repopulated from desired state, never restored** (§18) |
 | | Workload logs and metrics — file and in-memory pipelines, by design (constraint #2) |
 | | Container filesystems and local volume contents |
 
@@ -112,8 +112,9 @@ kanea install --bundle ./kanea-bundle.tar.gz   # or from a bundle, no egress
 ```
 
 The version matrix is compiled into that binary, so installing the *right*
-Kanea version installs the right containerd and Cilium with it — one fewer
-thing to reconstruct correctly under time pressure. `kanea doctor --offline`
+Kanea version installs the right containerd with it — and carries the eBPF
+datapath inside itself — one fewer thing to reconstruct correctly under time
+pressure. `kanea doctor --offline`
 confirms it before you go further.
 
 If the disaster you are recovering from also took your network, the bundle is
@@ -174,9 +175,9 @@ systemctl start kanead
 ```
 
 From here it is an ordinary startup. The reconciler reads desired state and
-converges: the Cilium kvstore is rebuilt from that state rather than restored,
-images are pulled, endpoints are recreated, and edge routes come back as
-services become healthy. There is no separate "recovery mode", which is the
+converges: the datapath's maps are repopulated from that state rather than
+restored, images are pulled, allocs are re-attached, and edge routes come back
+as services become healthy. There is no separate "recovery mode", which is the
 point — coming back from a backup is the same code path as starting up.
 
 ---

@@ -138,6 +138,17 @@ func (s *listenerSet) Apply(want []Listener) {
 			s.reconfigure(entry, cfg)
 		}
 	}
+
+	// A withdrawn port must stop being reported, or its entrypoint's gauges sit
+	// at whatever they held when the listener went away — a connection count
+	// that never returns to zero because nothing is left to decrement it. The
+	// two well-known entrypoints are always kept: they belong to the main
+	// server, which this set does not own.
+	keep := map[string]bool{EntrypointWeb: true, EntrypointWebSecure: true}
+	for port := range wanted {
+		keep[EntrypointForPort(port)] = true
+	}
+	s.proxy.Metrics().RetainEntrypoints(keep)
 }
 
 // rebindRequired is deliberately narrow.
@@ -166,7 +177,7 @@ func (s *listenerSet) bind(cfg Listener) {
 	entry := &listenerEntry{cfg: cfg, ln: ln}
 	switch cfg.Mode {
 	case ListenerTCP:
-		relay, err := newRelay(cfg, s.limiter, s.log, s.dial)
+		relay, err := newRelay(cfg, s.limiter, s.log, s.proxy.Metrics(), s.dial)
 		if err != nil {
 			// Validate compiled this already, so it cannot normally fail. If it
 			// somehow does, the port stays unbound rather than open and unruled.
@@ -238,13 +249,32 @@ func (s *listenerSet) httpServer(cfg Listener) *http.Server {
 		IdleTimeout:       s.idleTimeout,
 		MaxHeaderBytes:    s.maxHeaderBytes,
 		ErrorLog:          slog.NewLogLogger(s.log.Handler(), slog.LevelDebug),
+		ConnState:         connStateCounter(s.proxy.Metrics(), EntrypointForPort(cfg.Port)),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodConnect {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
-			s.proxy.serveRoute(w, r, route, scope)
+			s.proxy.serveRoute(w, r, route, scope, EntrypointForPort(cfg.Port))
 		}),
+	}
+}
+
+// connStateCounter tracks open connections on an entrypoint (§9.1.1).
+//
+// http.Server's ConnState hook is the only place a *connection* is visible —
+// the handler sees requests, and keep-alive means those are not the same thing.
+// StateNew and StateClosed are the pair; StateHijacked is also terminal, since
+// a hijacked connection leaves the server's accounting for good and would
+// otherwise never be decremented.
+func connStateCounter(m *Metrics, entrypoint string) func(net.Conn, http.ConnState) {
+	return func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			m.ConnOpened(entrypoint)
+		case http.StateClosed, http.StateHijacked:
+			m.ConnClosed(entrypoint)
+		}
 	}
 }
 

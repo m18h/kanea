@@ -170,7 +170,7 @@ func TestHTTPSourceRefusesAPlaintextRedirect(t *testing.T) {
 }
 
 func TestHTTPSourceRefusesImageComponents(t *testing.T) {
-	c := &Component{Name: "cilium", Kind: KindImage, Image: "quay.io/cilium/cilium", Digest: "sha256:" + strings.Repeat("a", 64)}
+	c := &Component{Name: "buildkit", Kind: KindImage, Image: "docker.io/moby/buildkit", Digest: "sha256:" + strings.Repeat("a", 64)}
 	if _, err := NewHTTPSource().Open(context.Background(), c, "amd64"); err == nil {
 		t.Fatal("Open accepted an image component")
 	}

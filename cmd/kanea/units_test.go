@@ -46,6 +46,11 @@ func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
 		"OOMScoreAdjust=-900",
 		"Slice=kanea.slice",
 		"ExecStart=/usr/local/bin/kanea agent",
+		// The network mode and subnets survive into the daemon's argv rather
+		// than living only in the operator's shell history (PRD v1.36).
+		"--network ebpf",
+		"--node-cidr 10.244.0.0/24",
+		"--cluster-cidr 10.244.0.0/16",
 		// A control-plane restart must not take the workloads with it.
 		"KillMode=process",
 		// Not Type=notify: nothing in kanead sends sd_notify, and systemd would
@@ -54,6 +59,15 @@ func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
 	} {
 		if !strings.Contains(service, want) {
 			t.Errorf("kanead.service is missing %q:\n%s", want, service)
+		}
+	}
+	// The datapath is kanead's own (PRD v1.36): there is no network unit to
+	// order after, and the After=cilium.service this used to carry named a
+	// unit that never existed.
+	for _, line := range strings.Split(service, "\n") {
+		if strings.HasPrefix(line, "After=") && strings.Contains(line, "cilium") {
+			t.Errorf("kanead.service orders itself after a network unit (%q); "+
+				"the datapath is kanead's own", line)
 		}
 	}
 
@@ -86,6 +100,30 @@ func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(dir, "kanea-workloads.slice")); err != nil {
 		t.Errorf("the workload slice was not written: %v", err)
+	}
+}
+
+// The values `kanea init` was told about render into ExecStart; the defaults
+// above are only what an empty unitOptions falls back to.
+func TestKaneadUnitRendersTheNetworkFlags(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeUnits(newOut(), unitOptions{
+		dir: dir, dataDir: "/var/lib/kanea", logDir: "/var/log/kanea",
+		reserve: "1G", binary: "/usr/local/bin/kanea",
+		network: networkNetns, nodeCIDR: "10.9.0.0/24", clusterCIDR: "10.9.0.0/16",
+	}); err != nil {
+		t.Fatalf("write units: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "kanead.service")) // #nosec G304 — a test path
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for _, want := range []string{
+		"--network netns", "--node-cidr 10.9.0.0/24", "--cluster-cidr 10.9.0.0/16",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("kanead.service is missing %q:\n%s", want, body)
+		}
 	}
 }
 
@@ -221,6 +259,38 @@ func definedFlags(t *testing.T, sub string) map[string]bool {
 		t.Fatalf("kanea %s -h printed no flags; the usage format has changed", sub)
 	}
 	return defined
+}
+
+// kanead is the IPAM now (PRD v1.36), so the subnet trio is refused at
+// startup rather than presenting as a datapath handing out unroutable
+// addresses. `kanea doctor` runs the same shape of check, but only this one
+// gates: GitOps and systemd reach kanead without ever passing through doctor.
+func TestParseAgentCIDRsRefusesWhatTheDatapathCannotRun(t *testing.T) {
+	cases := map[string]struct {
+		node, cluster, service string
+		ok                     bool
+	}{
+		"the defaults":            {"10.244.0.0/24", "10.244.0.0/16", "172.20.0.0/16", true},
+		"not a CIDR":              {"10.244.0.0", "10.244.0.0/16", "172.20.0.0/16", false},
+		"an IPv6 node":            {"fd00::/64", "10.244.0.0/16", "172.20.0.0/16", false},
+		"node outside cluster":    {"10.9.0.0/24", "10.244.0.0/16", "172.20.0.0/16", false},
+		"node wider than cluster": {"10.0.0.0/8", "10.244.0.0/16", "172.20.0.0/16", false},
+		"cluster overlaps services": {
+			"10.244.0.0/24", "10.244.0.0/16", "10.244.128.0/17", false},
+		"node overlaps services": {
+			"10.244.0.0/24", "10.244.0.0/16", "10.244.0.0/24", false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := parseAgentCIDRs(tc.node, tc.cluster, tc.service)
+			if tc.ok && err != nil {
+				t.Fatalf("parseAgentCIDRs(%s, %s, %s): %v", tc.node, tc.cluster, tc.service, err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("parseAgentCIDRs(%s, %s, %s) accepted a bad trio", tc.node, tc.cluster, tc.service)
+			}
+		})
+	}
 }
 
 func TestKernelComparison(t *testing.T) {

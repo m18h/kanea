@@ -37,7 +37,7 @@ func runInstall(args []string) error {
 	adopt := fs.String("containerd", "",
 		"\"external\" (or a socket path) adopts an existing containerd instead of installing one")
 	nodeCIDR := fs.String("node-cidr", provision.DefaultNodeCIDR,
-		"this node's container subnet; also moves the internal DNS address, which lives on cilium_host")
+		"this node's container subnet; its .1 is the datapath host address")
 	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
 		"the native routing CIDR; it must contain --node-cidr")
 	arch := fs.String("arch", provision.HostArch(),
@@ -99,9 +99,9 @@ func runInstall(args []string) error {
 		RunDir: *runDir, UnitDir: *unitDir,
 		NodeCIDR: *nodeCIDR, ClusterCIDR: *clusterCIDR,
 	}
-	// Refused here rather than interpolated into a unit: a bad CIDR would
-	// otherwise reach cilium-agent's argv and present as a crash loop under
-	// Restart=always, which reads as "cilium is broken".
+	// Refused here rather than left to configure the datapath: a bad CIDR would
+	// otherwise surface on a live node as unroutable alloc addresses rather than
+	// as the plain "you wrote 10.244.0/24" it is.
 	if err := layout.ValidateNetworking(); err != nil {
 		return err
 	}
@@ -371,8 +371,6 @@ func installSource(bundlePath string) (provision.Source, error) {
 func unitNames(components []*provision.Component) []string {
 	units := map[string]string{
 		"containerd": "kanea-containerd",
-		"etcd":       "kanea-etcd",
-		"cilium":     "kanea-cilium",
 		"buildkit":   "kanea-buildkit",
 	}
 	var out []string

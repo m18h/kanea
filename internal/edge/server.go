@@ -125,6 +125,7 @@ func New(cfg Config) (*Server, error) {
 		Path:     cfg.SnapshotPath,
 		Interval: cfg.PollInterval,
 		Logger:   cfg.Logger,
+		Metrics:  proxy.Metrics(),
 		Apply: func(body []byte) error {
 			table, err := ParseTable(body)
 			if err != nil {
@@ -151,6 +152,7 @@ func New(cfg Config) (*Server, error) {
 			Path:     cfg.BundlePath,
 			Interval: cfg.PollInterval,
 			Logger:   cfg.Logger,
+			Metrics:  proxy.Metrics(),
 			Apply: func(body []byte) error {
 				bundle, err := ParseBundle(body)
 				if err != nil {
@@ -161,6 +163,11 @@ func New(cfg Config) (*Server, error) {
 					return err
 				}
 				s.certs.set(ring)
+				// Published from the bundle rather than from the keyring: the
+				// keyring is indexed by domain and a wildcard covering forty
+				// names would otherwise become forty identical expiry gauges
+				// for one certificate.
+				proxy.Metrics().SetCertificates(expiriesOf(bundle))
 				cfg.Logger.Info("certificates in force",
 					"index", bundle.Index, "certificates", ring.len(),
 					"pending_challenges", len(ring.challenges))
@@ -183,6 +190,7 @@ func New(cfg Config) (*Server, error) {
 		IdleTimeout:       cfg.IdleTimeout,
 		MaxHeaderBytes:    cfg.MaxHeaderBytes,
 		ErrorLog:          slog.NewLogLogger(cfg.Logger.Handler(), slog.LevelDebug),
+		ConnState:         connStateCounter(proxy.Metrics(), EntrypointWeb),
 	}
 	if cfg.HTTPSAddr != "" {
 		s.https = &http.Server{
@@ -192,6 +200,7 @@ func New(cfg Config) (*Server, error) {
 			IdleTimeout:       cfg.IdleTimeout,
 			MaxHeaderBytes:    cfg.MaxHeaderBytes,
 			ErrorLog:          slog.NewLogLogger(cfg.Logger.Handler(), slog.LevelDebug),
+			ConnState:         connStateCounter(proxy.Metrics(), EntrypointWebSecure),
 		}
 	}
 	if cfg.StatusAddr != "" {

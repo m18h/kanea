@@ -112,6 +112,20 @@ export const allocStatsSchema = z.object({
   memory_bytes: z.number().optional(),
 })
 
+/**
+ * The edge's labelled totals (PRD §9.1.1).
+ *
+ * Cumulative counters for the life of the edge process, not a rate. Absent
+ * entirely when the edge has not been scraped or the service is not exposed —
+ * which is a different fact from a service that has served nothing, and the
+ * UI has to render the two differently.
+ */
+export const edgeBreakdownSchema = z.object({
+  codes: z.record(z.string(), z.number()).nullish(),
+  request_bytes: z.number(),
+  response_bytes: z.number(),
+})
+
 export const statsSampleSchema = z.object({
   service: z.string(),
   at: z.string(),
@@ -120,10 +134,12 @@ export const statsSampleSchema = z.object({
   rps: z.number().optional(),
   p95_latency_ms: z.number().optional(),
   allocs: z.array(allocStatsSchema).nullish(),
+  edge: edgeBreakdownSchema.optional(),
 })
 
 export type StatsSample = z.infer<typeof statsSampleSchema>
 export type AllocStats = z.infer<typeof allocStatsSchema>
+export type EdgeBreakdown = z.infer<typeof edgeBreakdownSchema>
 
 /** Topics the live socket carries (PRD §12.1). */
 export const Topic = {

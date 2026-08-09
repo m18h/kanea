@@ -13,7 +13,6 @@ import (
 
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/gitops"
-	"github.com/m18h/kanea/internal/network"
 	"github.com/m18h/kanea/internal/provision"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
@@ -28,9 +27,8 @@ func runInit(args []string) error {
 	dataDir := fs.String("data-dir", defaultDataDir, "state directory")
 	logDir := fs.String("log-dir", defaultLogDir, "workload log directory")
 	unitDir := fs.String("unit-dir", defaultUnitDir, "where to write systemd units")
-	networkMode := fs.String("network", "cilium", "network mode: cilium or none")
+	networkMode := fs.String("network", networkEBPF, "network mode: ebpf or netns")
 	containerdSocket := fs.String("containerd", runtime.DefaultSocket, "containerd socket")
-	ciliumSocket := fs.String("cilium-socket", network.DefaultSocketPath, "cilium-agent socket")
 	reserve := fs.String("reserve", defaultReserve,
 		"memory reserved for the control plane (PRD §5.2.11)")
 	skipChecks := fs.Bool("skip-checks", false, "run the ceremony without the preflight checks")
@@ -40,12 +38,17 @@ func runInit(args []string) error {
 	bundlePath := fs.String("bundle", "", "install the host components from an offline bundle")
 	prefix := fs.String("prefix", provision.DefaultPrefix, "where component binaries are installed")
 	nodeCIDR := fs.String("node-cidr", provision.DefaultNodeCIDR,
-		"this node's container subnet; also moves the internal DNS address, which lives on cilium_host")
+		"this node's container subnet; also moves the internal DNS address, its .1")
 	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
-		"the native routing CIDR; it must contain --node-cidr")
+		"what the datapath masquerades as internal; it must contain --node-cidr")
 	buildkitSocket := fs.String("buildkit", gitops.DefaultBuildkitSocket,
 		"rootless buildkitd address (\"off\" skips the build daemon)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	// Refused, not defaulted: before v1.36 any unknown value here silently
+	// meant the product mode, so a typo configured a node by accident.
+	if err := validNetworkMode(*networkMode); err != nil {
 		return err
 	}
 
@@ -63,7 +66,7 @@ func runInit(args []string) error {
 
 	opts := preflightOptions{
 		dataDir: *dataDir, containerdSocket: effectiveSocket,
-		ciliumSocket: *ciliumSocket, networkMode: *networkMode,
+		networkMode:    *networkMode,
 		buildkitSocket: *buildkitSocket,
 		layout:         componentLayout(*prefix, *nodeCIDR, *clusterCIDR),
 		serviceCIDR:    reconciler.DefaultServiceCIDR,
@@ -100,10 +103,6 @@ func runInit(args []string) error {
 		if adoptContainerd {
 			installArgs = append(installArgs, "--containerd", "external")
 		}
-		if *networkMode == "none" {
-			// No dataplane means no cilium and no kvstore for it to use.
-			installArgs = append(installArgs, "--only", "containerd,runc,cni-plugins,buildkit")
-		}
 		if err := runInstall(installArgs); err != nil {
 			return err
 		}
@@ -120,6 +119,7 @@ func runInit(args []string) error {
 		if err := writeUnits(o, unitOptions{
 			dir: *unitDir, dataDir: *dataDir, logDir: *logDir,
 			reserve: *reserve, binary: executablePath(),
+			network: *networkMode, nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
 		}); err != nil {
 			return err
 		}
@@ -296,9 +296,8 @@ func componentLayout(prefix string, cidrs ...string) provision.Layout {
 func runDoctor(args []string) error {
 	fset := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	dataDir := fset.String("data-dir", defaultDataDir, "state directory")
-	networkMode := fset.String("network", "cilium", "network mode: cilium or none")
+	networkMode := fset.String("network", networkEBPF, "network mode: ebpf or netns")
 	containerdSocket := fset.String("containerd", runtime.DefaultSocket, "containerd socket")
-	ciliumSocket := fset.String("cilium-socket", network.DefaultSocketPath, "cilium-agent socket")
 	buildkitSocket := fset.String("buildkit", gitops.DefaultBuildkitSocket, "buildkitd address")
 	prefix := fset.String("prefix", provision.DefaultPrefix, "component install prefix")
 	// Exactly one check reaches the network — whether component artefacts are
@@ -317,12 +316,15 @@ func runDoctor(args []string) error {
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
+	if err := validNetworkMode(*networkMode); err != nil {
+		return err
+	}
 
 	o := newOut()
 	o.printf("kanea doctor — %s\n\n", version)
 	ok := renderChecks(o, preflight(preflightOptions{
 		dataDir: *dataDir, containerdSocket: *containerdSocket,
-		ciliumSocket: *ciliumSocket, networkMode: *networkMode,
+		networkMode:    *networkMode,
 		buildkitSocket: *buildkitSocket,
 		layout:         componentLayout(*prefix, *docNodeCIDR, *docClusterCIDR),
 		serviceCIDR:    *docServiceCIDR,
