@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Adopted v1.29 |
+| **Status** | Adopted v1.34 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-08-08 |
+| **Last updated** | 2026-08-09 (v1.34) |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,16 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.34 amendments** — lets a spec say **who a container runs as** (§6.2 **R23**) and **who owns its data** (§6.2 **R24**), which v1 could express neither of. This is a §14 A05 change before it is an ergonomic one, and the evidence was already in this document: §6.1's postgres task granted `CAP_CHOWN`, `CAP_SETUID`, `CAP_SETGID` and `CAP_DAC_OVERRIDE` — the last of which bypasses file permission checks outright — for one reason, that its data directory was root-owned and the container had to fix that itself before it could drop privileges. **The platform handed a workload the power to escalate because it could not state the one fact that made escalating unnecessary.** With `user { uid = 999, gid = 999 }` and a volume owned to match, that task now starts with **no capabilities at all**, and §6.1 has been rewritten to show it. The two rules ship together because each is inert alone: a non-root user with no writable volume cannot start, and a volume owned by a uid nothing runs as is decoration. **IDs are numeric, never names.** Resolving `user = "postgres"` means reading `/etc/passwd` out of the image's own rootfs, which is a container-controlled file deciding which uid the control plane runs a process as — `kanea exec --user` already refused exactly this, and the job spec does not get a weaker rule than the debug command. A name is also not stable across a rebuild, so under R19 auto-update it would silently come to mean a different uid than the one that was reviewed. **A volume inherits the task's user unless it overrides it**, because the failure mode of not inheriting is a permission denial at startup — precisely what this exists to remove — and the defaulting is spec-internal rather than node-dependent, so unlike `expose.tls` it is resolved at conversion and `kanea plan` shows what will actually happen. **Ownership is refused wherever the driver cannot enforce it**: on `host`, because R15's directory belongs to the operator and chowning it is the same trespass as creating it, and on `nfs`, because the kernel client has no `uid=` and ownership is the server's to decide. That is R21's rule about a control the layer below silently drops, applied to storage — `smb`, `s3fs` and `mountpoint-s3` all take ownership at mount time and get it, and the two that cannot are a `plan` error rather than a field that reads as enforced and is not. **Inheritance stops at those two**, so only a *declared* field is ever refused: a default that became a hard error would mean adding `user` to a task broke every NFS volume that service happened to have, and there would be no field to opt out of something nobody wrote. The chown is the volume's top-level directory only, at each alloc start: bounded and idempotent, where `chown -R` would put O(files) in the alloc start path and would overwrite ownership a workload set deliberately.
+
+> **v1.33 amendments** — makes a node with no public name usable, which is the shape most single-node installs actually have. Three things, and they are one story: a homelabber points a wildcard record at a box on their LAN, has no inbound port 80 for HTTP-01 and no DNS provider for DNS-01, wants Jellyfin on `:8096` and Postgres on `:5432`, and already uses `10.244/16` for something else. **The certificate bundle becomes a merge of three sources** (§7.3) — ACME, a per-node self-signed CA, and certificates the operator put on the node — and `kanea-edge` is unchanged by that, which is the test of whether the seam is in the right place: it polls one file and does not know what signed anything in it. **`kanead` still owns every source**, because issuance is *writing*, and the edge not writing is the property §5.2.6 exists to preserve; a CA private key living in the process that terminates untrusted public traffic is precisely what this design refuses. **A spec names a certificate source, never a path** — R17's rule applied to TLS: `mode = "provided"` names a grant an operator defined in the node's own config, the certificate's own SANs decide what it covers, so a wildcard needs no filename convention and a declared domain list that could disagree with the certificate does not exist. **Plaintext becomes declarable** (§6.2 **R20**): it was already reachable and nobody could say so, since a service with no certificate silently served HTTP; a declared-plaintext route is now never redirected and never receives HSTS — the one header a mistake in which the browser remembers for two years. The **self-signed CA is deliberately not a §15.4 key-ceremony artefact**, and the reason it is not is the reason the master key is one: the master key is unrecoverable and every backup dies with it, while the CA lives in the Store, travels in the archive, and costs a re-trust rather than the platform. **`--acme-directory` stops defaulting to Let's Encrypt staging** — staging existed to absorb a first-attempt misconfiguration, and `--tls-default self-signed` does that better, with a certificate that actually works instead of one every browser rejects. Second, **services can be published on node ports** (§6.2 **R21**/**R22**, new §7.2.2), which v1 could not express at all. **It lives in the edge, not in netfilter**: a DNAT rule can only target an alloc address, which reintroduces the backend list the service-VIP design exists to avoid and makes the data path depend on `kanead` having run recently, while Cilium's own hostPort is fed by a Kubernetes watcher that does not exist here. **The two listener kinds are named separately because they guarantee different things** — an alternate-port HTTP listener keeps the whole §7.2.1 chain, a raw TCP listener keeps only `ip_restriction`, and a spec declaring middleware a TCP listener cannot honour is a `plan` error rather than a silently dropped control: R16's "an ingress control that fails open is worse than one that is absent", inverted. **On a TCP listener the upstream sees the edge's address, not the client's**, so `pg_hba.conf` host rules and address-based bans become meaningless behind a published port; `ip_restriction` is enforced at accept time, before a byte is forwarded, and that is the entire mitigation. **The permitted port range is the node's decision**, like `storage.allowed_host_paths` and the passthrough grants, because a spec is not a trusted document and a GitOps push that could claim `:22` would be deciding something that belongs to whoever owns the machine. Third, **the container subnet is an install-time flag** (§5.2.5): it was compiled in, the flags that existed on `kanea supervise cilium` were never passed by anything, and neither CIDR was validated or checked for overlap against the service CIDR.
+
+> **v1.32 amendments** — adds **image auto-update** (§6.2 **R19**, §6.1 `update`), the feature people reach for watchtower to get, and adds it as *policy* rather than as a container holding the runtime socket. v1.31 made that container possible; this makes it unnecessary, which is the better answer for the same request. The mechanism is already built: §10.2's pipeline pins a built digest onto a service and the reconciler converges, so an updater is that seam with a different trigger — **it is not a second deployer any more than the autoscaler is a second scheduler** (§9.2). It resolves the tag a service already declares, and when the digest behind it moves, pins the new one; `SpecHash` changes, and the *existing* rolling update runs with the `max_parallel`, `min_healthy` and health checks that every other deploy gets. Three things follow from that and are worth stating. **It deliberately follows a moving tag**, which is the one thing §14 A08 otherwise refuses — so it is opt-in per service, off by default, refused on a service whose image is already a digest (there is nothing to follow) and refused on a service with a `build` block (the pipeline owns that image, and two writers pinning one field would fight). **The declared tag stays in the spec and the resolved digest lives beside it**: `image` remains `jellyfin/jellyfin:10.9` and a separate pinned digest is what actually runs, because pinning over the tag would destroy the thing the next poll has to re-resolve. That digest is server-owned state, so an apply preserves it exactly as it already preserves the restart generation and the sync loop's last commit — an apply that reset it would redeploy the service on every `kanea apply`. **A failed update reverts.** Unattended is the case where nobody is watching, so the previous digest is kept and re-pinned if the new one does not converge within a deadline; convergence means healthy where a `check` block exists and not crash-looping where it does not, because `AllocRecord.Healthy` is written only by a probe and a service with no check would otherwise look permanently failed. Also adds **registry credentials to the pull path** (`task.registry_auth_ref`), which did not exist at all: `EnsureImage` pulled anonymously, so private images never worked and an updater that could not read a private registry would have been a feature for public images only.
+
+> **v1.31 amendments** — adds **host device and socket passthrough** (§6.2 **R17**/**R18**, §15.1, §14 A05), the two things a single-node platform is asked for that v1 could not express at all: a transcoder that needs `/dev/dri`, a dongle on `/dev/bus/usb`, and the watchtower-shaped container that expects the runtime socket at `/var/run/docker.sock`. Both are holes in the §14 A05 hardening defaults, and the honest way to add them is to say so rather than to find a phrasing under which they are not. The model is **R15's, extended twice**. R15 already separates *shape* from *permission* — a spec says what it wants, the server config says what is allowed, and the default allows nothing — and that split survives here unchanged, because it is the only part of this that is load-bearing. What R15 does not do, and this does: **a spec names a grant, never a path.** An operator defines `device "gpu"` or `socket "containerd"` in the node's own config and a spec asks for it by name; the node resolves the name locally, so no host path ever enters the Store, the API or a git repository. That is §18 rule 5 applied to a case that would otherwise violate it quietly — `handleApply` round-trips a desired record verbatim, so a path *field* on that record is an input surface whether or not the HCL parser is the thing that filled it. And **grants are project-scoped**, which `storage.allowed_host_paths` is not: a prefix allowlist is proportionate for a shared data directory and is not proportionate for a socket, so each grant names the projects that may claim it and a grant naming none is a config error rather than a permissive default. **A socket grant confers node-level control on the container that receives it, and this document does not claim otherwise.** A container holding the runtime socket can start another container without the hardening defaults; there is no containment story, and the alternative that would have one — a filtering proxy exposing a narrowed verb set — is a second protocol to implement, keep current with containerd, and be wrong about in exactly the cases that matter. The control is that an operator, on the node, in a file no spec author can write, decided which project gets it. That is the same control R15 has, applied to a larger consequence and therefore named more precisely.
+
+> **v1.30 amendments** — **Kanea installs, pins and supervises the node's runtime layer** (new **§5.2.12**), which the document had assigned to the operator in §5.1 and half-assigned to `kanea init` everywhere else. §5.2.4 already said init *can* install containerd and §5.2.11 already made it responsible for the entire rootless build daemon; neither was built, and three code comments claimed setup work init had never done. The honest reading is that Kanea had already chosen these versions — §5.2.5 dictates a mandatory cilium-agent flag set, §15.4 requires a version matrix, and M0 found behaviour that moves between releases in both directions (the writable service REST API **removed** in Cilium 1.18; BuildKit's `filename=` default) — so the prerequisite list was making an operator type out a decision Kanea had made for them, and owning it badly. **Components are pinned by version and SHA-256 in a manifest compiled into the binary**, which *is* the §15.4 version matrix rather than a second copy of it to drift: a hash fetched from beside the artefact proves only that the two agree, so bumping a component is now a code change with a review. **They install under Kanea's own prefix, on Kanea's own sockets** — a node that ran Docker yesterday still runs it tomorrow, and an install that breaks other software is not a property a single-binary platform gets to have; adopting an existing containerd stays available on request and is the one case §5.2.11's drop-in language still describes, because **you do not need a drop-in for a unit you wrote**. **Cilium runs as a containerd task while BuildKit's binaries are extracted to the host** — an asymmetry with a reason: buildkitd is self-contained, whereas cilium-agent needs its bundled helpers, its iptables and its BPF templates, and unpacking that image onto a host is unsupported upstream and a large surface to get quietly wrong; M0 spike ① validated the task form 25/25 and that is the form that ships. **The offline bundle is in the first cut rather than deferred**: install code that is *handed* bytes instead of fetching them costs almost nothing to build now and cannot be retrofitted without producing a second install path that nobody exercises — and an installer that assumes egress excludes precisely the environments most likely to want a single-node platform with no Kubernetes in it. A bundle is verified against the hashes in the binary and never against a manifest of its own, since a bundle that supplied its own hashes would be a bundle that authenticates itself. §21's platform prerequisites accordingly narrow to what no installer can supply: a kernel, cgroups v2, systemd and a clock.
 
 > **v1.29 amendments** — covers **publication**, which the document had been silent on. Kanea is released under **Apache-2.0** and that is now a requirement in §21 rather than a file nobody specified: the patent grant is the reason, and for a platform whose whole premise is that you can run it yourself, the terms on which you may are part of the product. The **repository is deliberately not named here** — a URL is packaging, it changes when an org does, and a document that hard-codes one acquires a class of edit that teaches nobody anything. **§20 M10's exit criterion moves from "v1.0 tagged" to "v0.1.0 tagged"**: §14 A06 and §21 both require an SBOM attached to releases and the release workflow publishes none, so a v1.0 cut today would fail its own non-functional requirements on the one artefact that runs as root. What v1.0 additionally needs is now stated where the criterion is, instead of being inferred from two other sections. The **status moves from Draft to Adopted** — the document is public, the site presents it as the specification, and "Draft" on a specification that has driven ten milestones describes the process that produced it rather than its standing. Finally: the landing page's job-spec example is checked against `internal/jobspec`'s own parser and validator rather than written from memory, for the reason v1.10 records — a §6.1 example that does not parse is worse than no example, and single-line HCL blocks are exactly where that goes wrong.
 
@@ -217,7 +227,10 @@ Job spec (HCL) ──parse/validate──▶ Desired state (Store)
    │  Edge ingress proxy: L7 routing, TLS termination, LE certs, L7 metrics          │ ◀── public :80/:443
    └─────────────────────────────────────────────────────────────────────────────────┘
 
-   External:   containerd daemon │ cilium-agent daemon │ Linux kernel (eBPF, cgroups v2, netfilter)
+   Host components (Kanea installs, pins and supervises them — §5.2.12):
+               containerd + runc + CNI plugins │ cilium-agent │ etcd (cilium kvstore) │ rootless buildkitd
+
+   External:   Linux kernel (eBPF, cgroups v2, netfilter) │ systemd
 ```
 
 ### 5.2 Components
@@ -244,11 +257,13 @@ Job spec (HCL) ──parse/validate──▶ Desired state (Store)
 - Talks to containerd over its socket via the official Go client (`github.com/containerd/containerd/v2/client`).
 - One containerd **namespace per project** (`kanea-<project>`) → free isolation of images/containers per project.
 - Responsibilities: image pull (with auth from secrets store; digest pinning supported), container/task lifecycle, per-alloc network namespace setup (CNI call), cgroup metrics sampling, stdout/stderr capture (§17).
-- Kanea requires containerd ≥ 1.7; `kanea init` can install/configure it.
+- **Kanea installs containerd itself** at the version its manifest pins (§5.2.12), under its own prefix and on its own socket, and supervises it with a unit it wrote. A containerd already on the node is left alone — it is another program's, and replacing its socket would make installing Kanea an act that breaks other software. `--containerd external` adopts an existing daemon instead, for the operator who wants one runtime on the box; that is the only configuration in which Kanea depends on a containerd whose version it did not choose, so it is the only one that has to be asked for.
 - **Node disk hygiene:** image GC (keep-last-N in use), **build cache caps across both content stores** — containerd's and the rootless `buildkitd` user's `$HOME/.local/share/buildkit` (§10.2) — per-service log caps (§17); disk watermark alerts at 80%/90% (event + notification). One disk holds images, logs, state, and volumes — pressure must never surprise the control plane.
 
 #### 5.2.5 Network driver (Cilium standalone)
-- Cilium agent runs **without Kubernetes** (`--enable-k8s=false`), backed by an embedded/single-node etcd kvstore (`--identity-allocation-mode=kvstore`, `--ipv4-range=<node CIDR>`), CNI config at `/etc/cni/net.d/05-cilium.conflist`. `--kube-proxy-replacement=true` (socket LB, required for `kanea-edge` → service VIP) and `--policy-default-local-cluster=false` are mandatory.
+- Cilium agent runs **without Kubernetes** (`--enable-k8s=false`), backed by an embedded/single-node etcd kvstore (`--identity-allocation-mode=kvstore`, `--ipv4-range=<node CIDR>`), CNI config at `/etc/kanea/cni/net.d/05-cilium.conflist` — under Kanea's own prefix, because §5.2.12 leaves the distribution's `/etc/cni/net.d` to whatever else on the node uses CNI.
+- **The subnet is the operator's, and it is set at install time** (v1.33). `kanea install` and `kanea init` take `--node-cidr` (this node's pod allocation range, `--ipv4-range`) and `--cluster-cidr` (`--ipv4-native-routing-cidr`), and write them into the `kanea-cilium.service` unit they generate — before v1.33 the values were compiled in and the flags that existed on `kanea supervise cilium` were reachable only by hand-editing a generated unit that the next install overwrote. A node whose LAN already uses the default range has to be able to move it. Both are validated as IPv4 prefixes before they reach the agent's argv, the node CIDR must sit inside the cluster CIDR (native routing must cover the allocation range), and **neither may overlap the service CIDR** (§7.1) — a check nothing performed, and which the shipped defaults passed by coincidence rather than by construction. Changing the node CIDR also moves the internal resolver, which defaults to the first address on `cilium_host` and is what every alloc's `resolv.conf` points at; it is not a cilium-side setting alone.
+- `--kube-proxy-replacement=true` (socket LB, required for `kanea-edge` → service VIP) and `--policy-default-local-cluster=false` are mandatory.
 - **Per-alloc attach order (M0-validated, order is load-bearing):** pre-create netns → CNI `ADD` → **`PATCH /v1/endpoint/container-id:<alloc>`** with the identity labels → task start. The Cilium CNI plugin cannot carry labels (it hardcodes an empty label set and forwards only `K8S_POD_*` args), and an endpoint without labels holds `reserved:init`, which is **policy-enforced deny in both directions** — so labels must land before the workload's first instruction. The label PATCH returns 5xx while the endpoint is regenerating and must be retried with bounded backoff.
 - **Identity labels** are `kanea=true`, `project=<p>`, `service=<s>` **plus `k8s:io.kubernetes.pod.namespace=<project>`**: Cilium rewrites every peer selector to require that namespace label, so without it every policy rule matches nothing and silently denies. **Project ≡ namespace** in Cilium's policy semantics.
 - Service LB: Kanea programs **Cilium services** through the agent's **`--lb-state-file`** (a watched JSON file of Kubernetes-*shaped* Service + EndpointSlice objects — schema only, no API server, no CRDs): frontend ClusterIP per service, backends = healthy alloc IPs → eBPF load balancing (Maglev), no userspace proxy in the data path. The writable service REST API was removed in Cilium 1.18.
@@ -265,9 +280,11 @@ Job spec (HCL) ──parse/validate──▶ Desired state (Store)
 - **How it gets its state — the edge snapshot.** The Store is the source of truth, but the edge does not open it: bbolt locks the whole file, so a second process opening `state.db` even read-only blocks until `kanead` exits rather than returning stale data. Instead `kanead` **projects** what the edge needs — routes (host → service frontend), certificates, and pending ACME challenge responses — into `/run/kanea-edge/routes.json`, written temp-then-`rename(2)` so a partially written file is never observable (§5.2.5's discipline). The edge polls that file and reloads on change; the projection carries the Store index it was built from, so a reload can be logged and a stale snapshot recognised.
   - **One direction only.** The edge never writes state. That is what lets it run as an unprivileged user with no Store access, and it means a compromised edge — the process that terminates untrusted public traffic — cannot mutate the platform (§14, A01). It is also why `kanead` and not the edge runs ACME (§7.3): obtaining a certificate means writing one.
   - **Two files, two permissions.** Routes (`routes.json`, 0644) carry nothing secret — the domains are in public DNS. Certificates (`certs.json`, 0640) carry private keys. They are separate files precisely so neither has to compromise: the route table stays readable by whatever user the edge runs as, and the key does not.
+  - **The certificate bundle is a merge, and the edge is not told what merged it** (v1.33, §7.3). `kanead` publishes one file holding certificates from every configured source; the edge selects on SNI and has no notion of ACME, of a local CA, or of a file an operator dropped on the node. That is the test of whether the seam is in the right place — adding a fourth source should not be an edge change, and it is not.
   - **A missing or stale snapshot is not an outage.** The edge keeps serving the last table it loaded for as long as `kanead` is absent, and starts with an empty table (every request 404) rather than refusing to start if the file does not exist yet. "The control plane is down" must never become "the site is down" (§21).
 - Routes `Host: service.project.<base_domain>` → service's Cilium frontend IP; WebSocket and gRPC supported.
-- Terminates TLS with Let's Encrypt certs (§7); redirects HTTP→HTTPS; security headers injected (§14, A05).
+- **The edge also binds the node ports services publish** (v1.33, §7.2.2), from the same projection and the same poll. Adding, removing or reconfiguring one is a live operation: an upstream, address restriction or connection-cap change is swapped behind the socket, so redeploying one service never drops a live session on another port or on its own, and only a change of listener *kind* rebinds. **A bind that fails is a recorded failure, not an outage** — a port held by something else on the node must not freeze the whole route table, so the rest of the snapshot takes effect, the reason is reported on the status listener, and the next poll retries. An accept loop dying on a published port can never take down 443.
+- Terminates TLS with certificates `kanead` published (§7.3); redirects HTTP→HTTPS **except for a route the operator declared plaintext** (R20), which is also the one route that never receives HSTS even when the request arrived over TLS — a certificate this node happens to hold for other services is not the operator saying they want this one redirected, and HSTS is the single header a mistake in which cannot be taken back. Security headers otherwise injected (§14, A05).
 - **Hardening (required, not optional):** `ReadHeaderTimeout`/`ReadTimeout`/`IdleTimeout`/`MaxHeaderBytes` (slowloris), per-route upstream timeouts, bounded connection pools, flush intervals for streaming, client-supplied `X-Forwarded-*` stripped, unknown `Host` → 404 (also DNS-rebinding defense for the co-hosted API), `GOMEMLIMIT` set.
 - **Edge middleware chain (per service, from the `expose` block — §6.1, §7.2):** Host match → IP allow/deny → rate limit → header transforms → upstream proxy. Middleware config is validated at `kanea plan` time — fail-closed, never silently ignored at runtime.
 - **Primary source of per-service L7 request metrics for exposed services** (rps, latency percentiles) — it's already in the request path at zero extra data-plane cost; Hubble/eBPF covers east-west (§9).
@@ -298,9 +315,22 @@ The control plane must survive anything workloads do — a runaway container can
 - **"Memory lock" = guarantee, not `mlock`.** Literal `mlockall` on the Go control plane is **rejected**: the GC grows the heap unpredictably and `RLIMIT_MEMLOCK` turns pin-overflow into hard allocation failure — the lock itself could crash `kanead`. The guarantee comes from `memory.min` (the kernel refuses to reclaim the floor under pressure), `OOMScoreAdjust=-900`, and no swap in the slice.
 - **Per-alloc limits are mandatory** (§6.2 R11): `resources.cpu` (MHz) → `cpu.max` quota; `resources.memory` (MiB) → `memory.max` (hard; breach OOM-kills the alloc, the reconciler restarts it per policy, event emitted); a default `pids.max` caps fork-bombs. All are set via the containerd OCI spec at task creation, and every task's cgroup is placed under the workload parent.
 - **Admission control:** workload budget = total RAM − reserve. `kanea plan` renders the budget; `apply` refuses Σ declared memory above the budget unless `resources.oversubscribe = true` in the server config (§15.1).
-- **Setup:** `kanea init` installs the `kanea.slice` / `kanea-workloads.slice` systemd units plus drop-ins extending the same floor to containerd, cilium-agent and `buildkitd`. It also provisions the **rootless build daemon**: the `kanea-buildkit` system user with subuid/subgid ranges, the `uidmap` package, and the `buildkitd` unit (`rootlesskit --net=host`, socket in the daemon user's `$HOME` — *not* under a copy-up'd `/run`, where it would be invisible to clients — and root-reachable only). On non-systemd hosts `kanead` creates the hierarchy directly at startup (it runs as root anyway). `kanea doctor` verifies cgroup v2, hierarchy placement, the effective floor, and that the build socket answers.
+- **Setup:** `kanea init` installs the `kanea.slice` / `kanea-workloads.slice` systemd units. Since v1.30 the host components' units are Kanea's own (§5.2.12), so each simply declares `Slice=kanea.slice` — **you do not need a drop-in for a unit you wrote**. Drop-ins remain for exactly one case: an adopted external containerd (`--containerd external`), whose unit belongs to the distribution and must be extended rather than replaced. Init also provisions the **rootless build daemon**: the `kanea-buildkit` system user with subuid/subgid ranges, the `uidmap` package, and the `buildkitd` unit (`rootlesskit --net=host`, socket in the daemon user's `$HOME` — *not* under a copy-up'd `/run`, where it would be invisible to clients — and root-reachable only). On non-systemd hosts `kanead` creates the hierarchy directly at startup (it runs as root anyway) and `kanea install` places binaries without writing units, naming what has to be supervised by hand. `kanea doctor` verifies cgroup v2, hierarchy placement, the effective floor, and that the build socket answers.
 - The cgroup hierarchy is **node-local runtime state** — never represented in the Store, never replicated (§18); it is rebuilt on every boot/agent start.
 - **Process hardening complements the resource guarantees:** both Kanea units run with `NoNewPrivileges=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`, `RestrictAddressFamilies`; `kanea-edge` additionally runs as its own unprivileged user (§5.2.6). Combined with the §14 workload hardening defaults and Cilium default-deny policies (§7.1), this gives three isolation layers: resource (cgroups), process (sandboxing), network (eBPF policy).
+
+#### 5.2.12 Host components
+
+Kanea runs on a kernel, cgroups v2, systemd and a clock. Everything else it needs — containerd, `runc`, the CNI plugins, etcd, cilium-agent and rootless `buildkitd` — **Kanea installs, pins and supervises itself**. `curl | bash` then `kanea init` produces a working node; the §21 UX requirement is five minutes from `init` to a first HTTPS service, and a prerequisite list is not a way to spend them.
+
+- **The manifest is the version matrix.** One embedded table gives, per component and architecture, the pinned version and either a **SHA-256** (release artefacts) or an **image digest** (OCI images). §15.4's version matrix and §22 R1's `init`/`doctor` enforcement read this table rather than a second copy of it. **Hashes are compiled into the binary and never fetched**: a checksum retrieved from beside the artefact proves only that the two agree. The consequence is deliberate — bumping a component is a code change that goes through review and the §14 gates.
+- **Two acquisition kinds.** Release artefacts (containerd, `runc`, CNI plugins, etcd) are downloaded and verified. OCI images (cilium, BuildKit) are pulled **by digest**, never by tag, because a tag is a mutable pointer to a root filesystem.
+- **Cilium runs as a containerd task; BuildKit's binaries are extracted to the host.** `buildkitd`, `buildctl` and `rootlesskit` are self-contained and extract cleanly (§23.2). cilium-agent is not: it needs its bundled helpers, its iptables and its BPF templates, and unpacking that image onto a host is unsupported upstream. Only `cilium-cni` and `cilium-dbg` are extracted, because the CNI plugin is executed by containerd on the host and therefore has to be a host file.
+- **Install order is load-bearing.** containerd + `runc` + CNI first, then containerd starts, and only then are the cilium and BuildKit images pulled — through Kanea's own runtime. The platform bootstraps itself in one direction and there is no other.
+- **Own prefix, own sockets.** Binaries land under `/usr/local/lib/kanea`, configuration under `/etc/kanea`, state under `/var/lib/kanea`, sockets under `/run/kanea`. Nothing at a distribution's paths is read, written or restarted. `--containerd external` opts into adopting an existing daemon (§5.2.4); `--network none` skips cilium and etcd; `--buildkit off` skips the build daemon.
+- **Air-gapped installation is first-class, not a workaround.** The installer is *handed* artefact bytes rather than fetching them, so the same code path serves both: `kanea bundle create` writes a per-architecture bundle on a connected machine, and `kanea install --bundle` consumes it with no network access at all. Bundle contents are verified against the hashes **in the binary**, never against a manifest inside the bundle — a bundle that supplied its own hashes would be a bundle that authenticates itself. Selecting a bundle disables network fetching entirely: an air-gapped install that silently falls back for one missing component fails later, on a node nobody can reach. Releases publish the bundle as a signed asset covered by the same `checksums.txt`. This covers **Kanea's own components**; workload images still come from a registry the node can reach (§10.2).
+- **etcd is derived state** (§18 rule 9). It is Cilium's kvstore, it is rebuilt from the Store, and it is never backed up or restored.
+- **`kanea doctor` verifies what `kanea install` established**, offline when asked, and enforces the matrix: a component present at a version the manifest does not pin is a finding, not a shrug.
 
 ---
 
@@ -390,6 +420,15 @@ service "web" {
   network {
     port "http" { container = 3000 }
 
+    # Also reachable at <node address>:8080, with or without a domain (R21,
+    # §7.2.2). The label names the port above — there is no field here for a
+    # container port number, so this cannot forward somewhere undeclared.
+    publish "http" {
+      host = 8080
+      mode = "http"                              # "http" (default) | "tcp"
+      ip_restriction { allow = ["192.168.0.0/16"] }
+    }
+
     # Ingress beyond the default (§7.1): the project boundary is default-deny,
     # so a peer in another project is only reachable through an explicit edge.
     policy {
@@ -401,7 +440,10 @@ service "web" {
   expose {
     # domains optional — defaults to web.shop.<base_domain>
     domains = ["shop.example.com", "www.shop.example.com"]
-    tls { letsencrypt = true }
+
+    # Where the certificate comes from (R20, §7.3). Omit the block entirely and
+    # the node's --tls-default decides; there is no field here for a path.
+    tls { mode = "acme" }                        # acme | self-signed | provided | plaintext
 
     # Edge middleware (§7.2) — evaluated in order: IP restriction → rate limit → headers
     ip_restriction {
@@ -507,10 +549,17 @@ service "postgres" {
   task "db" {
     image = "postgres:17@sha256:…"            # digest pinning recommended
 
-    # Stock images routinely chown their data dir and drop to their own user at
-    # startup. Workloads run with ALL capabilities dropped (§14, A05), so those
-    # few must be requested explicitly — and only from the permitted set (R13).
-    capabilities = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID", "CAP_DAC_OVERRIDE"]
+    # Numeric only (R23): a username would be read from the image's own
+    # /etc/passwd, and it would mean a different uid after a rebuild.
+    #
+    # No `capabilities` line. Stock images ask for CAP_CHOWN, CAP_SETUID and
+    # CAP_SETGID so they can chown a root-owned data directory and drop to
+    # their own user at startup — this says both facts up front instead, so
+    # there is nothing left to do at startup and nothing to grant.
+    user {
+      uid = 999
+      gid = 999
+    }
 
     resources {
       cpu    = 1000
@@ -528,6 +577,9 @@ service "postgres" {
   volume "data" {
     storage    = "local-ssd"                  # named storage resource (§8)
     mount_path = "/var/lib/postgresql/data"
+    # uid/gid inherit task.user, and the mode defaults to 0700 (R24) — which is
+    # also the only mode postgres will start on. Declare `uid`, `gid` or `mode`
+    # here to override; `uid = 0` is how you ask for root explicitly.
   }
 }
 
@@ -550,7 +602,7 @@ service "assets" {
   }
   # auto domain: assets.shop.<base_domain>
   expose {
-    tls { letsencrypt = true }
+    tls { mode = "acme" }
   }
 }
 ```
@@ -577,6 +629,22 @@ service "assets" {
 
 - **R16** — **`expose` is validated at `plan`, fail-closed** (§7.2, §7.2.1). A service may only be exposed if it declares a port to expose (`expose` without `network { port … }` is an error, not a route to nowhere), and the upstream port must be unambiguous — named `http`, or the sole declared port. Every `domains` entry is validated as a hostname (labels, length, no scheme, no path, no port, no trailing dot) and **no two services may claim the same domain**, counting the auto-FQDNs that omitted `domains` blocks generate. Middleware is checked here too, because an ingress control that fails open is worse than one that is absent: `ip_restriction` entries must parse as CIDRs, `rate_limit` needs a positive `requests` and a valid `window` with `per` one of `ip` / `header:<name>` / `service`, and `headers` may not set or remove the hop-by-hop headers or the `X-Forwarded-*` set the edge owns (§5.2.6) — a spec that could rewrite `X-Forwarded-For` would be forging the identity every other control is keyed on.
 
+- **R17** — **`task.device` names an operator grant, not a device.** A `device` block carries a label (local to the task) and a `grant` naming an entry in the node's passthrough config (§15.1). The job spec has no field for a device path, which is the point: a spec author cannot request `/dev/mem` because there is nowhere to write it. Parse time validates only shape — the grant name is a DNS-1123 label, and labels are unique within a task. Everything else is the node's: `kanead` refuses a grant it does not have, a grant whose `allow` list does not name the requesting project, and a path that is not a character or block device when it is resolved. Resolution happens **after** symlink evaluation and at every alloc start, not once at load, because a path that was a device when the daemon booted and is a regular file now is the swap the check exists to catch. The device appears inside the container at its host path, and the grant carries the cgroup permissions (`rw` by default, never `m` unless the operator writes it) — a `Linux.Devices` node without a matching allow rule in the device cgroup is a node the container can see and cannot open. An alloc whose device grant fails does not start (§8's "mount failures fail the alloc loudly"); it never starts without the device it asked for.
+
+- **R18** — **`task.socket` is R17 for unix sockets, and is acknowledged as privilege delegation.** A `socket` block names a `grant` and the absolute `mount_path` it should appear at inside the container (`/var/run/docker.sock` for the docker-compatible tooling this exists to serve). `mount_path` is validated at parse time as absolute, clean and free of `..`, may not sit under `/dev`, `/proc` or `/sys`, and may not collide with another socket or a declared volume — two things on one path means one of them silently wins. The bind carries `nosuid`, `noexec` and `nodev`. **None of that makes it safe, and it is not intended to**: a container given the container runtime's socket can create containers that do not have the §14 A05 defaults, so the grant is equivalent to root on the node and §15.1's config is the only control over it. It is therefore project-scoped, empty by default, and readable in one file by whoever owns the machine. The reasoning is R15's, at a consequence R15's prefix allowlist would understate — which is why this is a separate grant kind with its own name rather than a relaxation of the `host` volume driver's "must be a directory" check.
+
+- **R19** — **`update.auto` follows the tag the service already declares.** Off by default. When on, `kanead` re-resolves `task.image`'s tag against its registry every `update.interval` (default 6 h, minimum 5 min — a poll loop is a request to someone else's registry), and when the digest behind the tag has moved it pins the new one and lets the reconciler converge through the ordinary rolling update. It is **refused at parse time on a service whose image is already a digest** (a digest does not move, so the request is a contradiction) and **on a service with a `build` block** (§10.2's pipeline pins that image; two writers on one field is a fight, not a feature). The declared tag is never overwritten — the resolved digest is separate state, and it is preserved across `kanea apply` like the restart generation (§16.1). **A failed update reverts:** the digest that was running is kept, and if the new one has not converged within `update.deadline` (default 10 min) it is re-pinned and the service returns to what worked. Converged means *healthy* for a service with a `check` block and *running without crash-looping* for one without, because `Healthy` is only ever written by a probe (§6.2 R7). Both outcomes emit events (§11): `image.updated`, `image.update_failed`. Private registries are read with `task.registry_auth_ref`, a `secret:` reference under the same project scoping as every other credential (R5).
+
+- **R20** — **`expose.tls.mode` names a certificate source, never a path.** One of `acme`, `self-signed`, `provided` or `plaintext` (§7.3); an unknown value is an error rather than a fallback, because a mode nobody recognises would otherwise decide how the service is served by accident. **An absent `tls` block is not "no TLS"** — it means "the node decides", resolved against `--tls-default` when `kanead` reads desired state rather than when the CLI converts the spec, so the same spec cannot mean different things on two machines. `mode = "provided"` may carry a `name` selecting one of the certificates an operator configured on this node (§15.1), validated at parse time only as a DNS-1123 label — everything else is the node's, which is R17's split exactly: **the spec has no field for a certificate path, a filename or PEM bytes**, because GitOps deploys specs automatically and `handleApply` round-trips a desired record verbatim, so a path *field* is an input surface whether or not the HCL parser is what filled it. `name` on any other mode is an error, since there is nothing for it to select. The pre-v1 spelling `tls { letsencrypt = true }` still parses as `mode = "acme"` and warns; `letsencrypt = false` warns more loudly, because it used to be indistinguishable from an absent field and now is not.
+
+- **R21** — **`network { publish }` binds a node port, and declares what that port can enforce** (§7.2.2). The block's label names the `network { port }` it forwards to — there is deliberately **no field for a container port number**, so a published port cannot name a port the service never declared. `host` is the node port, 1–65535. `mode` is `http` (default) or `tcp`. It is a sibling of `expose`, not a field of it: `expose` is host-routing-shaped — its `domains` default to an auto-FQDN and its `tls` requests a certificate *for those domains* — and nesting a portless, certificate-less listener inside it would make every one of those fields conditionally meaningful and force R16's unambiguous-port rule to weaken. **A `tcp` listener that declares `rate_limit` or `headers` is an error**, because a raw stream carries no requests to count and no headers to rewrite, and a control the edge would silently drop is worse than one the spec never claimed — R16's fail-closed rule, inverted. `max_conns` is `tcp` only. Within a service, one container port publishes on one host port and one host port serves one container port; **across the applied set, no two services may claim the same host port**, counted the same way R16 counts domains, because each spec is individually fine and the collision is between them.
+
+- **R22** — **the permitted port range belongs to the node.** 80, 443 and the control-plane API and status ports are reserved at `plan` time, because they are constants of the platform. Everything else is gated by `kanead`'s `--publish-ports` (default `1024-65535`, `off` to disable publishing entirely) and enforced at **apply**, not only at `plan` — GitOps never goes through the CLI, so a check that lived only in the CLI would not be a check. Ports below 1024 are therefore refused by default: a spec able to claim 22, 25 or 53 on this node's address would be deciding something that belongs to whoever owns the machine. The node publishes its own range so `kanea plan` can report the refusal in front of the person who typed it, but the range is the daemon's answer and the daemon is where it is enforced. This is R15's and R17's split for the third time: the spec says what it wants, the node says what is allowed, and the default is restrictive.
+
+- **R23** — **`task.user` is the workload's identity, and it is numeric.** An optional `user` block carries `uid`, `gid` and an optional `groups` list of supplementary GIDs; each is a non-negative integer below 2³²−1, `groups` holds no duplicates and is bounded in length. **There is no field for a username**, and the omission is the same one R17 makes for device paths: resolving `"postgres"` means reading `/etc/passwd` out of the container's own rootfs, which lets a container-controlled file decide which uid the control plane runs a process as. `kanea exec --user` already refused that, and the job spec does not get the weaker rule. A name is also not stable — it resolves to whatever the next base-image rebuild says — so under R19 auto-update it would come to mean a different uid than the one anybody reviewed. **An absent block is not "root"**: it means the image's own `USER` directive stands, which is what every spec written before this rule already meant, so adding the rule changes no running service. When the block is present it overrides the image, and it is applied alongside the other §14 A05 defaults rather than through the runtime's user-resolution helpers, which read the rootfs. `kanea exec` and an `exec` health check both inherit it, because both derive from the task's own process spec — a probe running as root against a workload running as 999 would create files the workload cannot read. **A non-root user is not a substitute for R13**: capabilities are still dropped to nothing and still granted only from the permitted set. It is, in practice, what makes most of those grants unnecessary.
+
+- **R24** — **volume ownership is declared where it can be enforced, and refused where it cannot.** A `volume` block may carry `uid`, `gid` and `mode` (an octal string, `"0700"` — HCL has no octal literal). **Omitted, they inherit `task.user`**, and a volume that ends up owned takes mode `0700` if it declared none; a volume of a task with no `user` block is left exactly as it is today, root-owned `0750`. Inheritance is resolved when the spec is converted, not on the node — unlike R20's TLS mode this defaulting is spec-internal and means the same thing on every machine, so resolving it early is what lets `kanea plan` show the ownership that will actually be applied. Declaring the fields explicitly overrides the inheritance, and `uid = 0` is how root is asked for on purpose. **Which of the §8 drivers can honour this differs, and a spec that asks the ones that cannot is a `plan` error**, not a silently dropped field — R21's rule about a control the layer below discards, applied to storage. A `local` volume is chowned and chmodded; `smb` takes `uid`/`gid`/`file_mode`/`dir_mode`, `s3fs` takes `uid`/`gid`/`umask`, and `mountpoint-s3` takes `--uid`/`--gid`/`--file-mode`/`--dir-mode`, all at mount time. **`host` is refused** because the directory is the operator's — R15 says Kanea never creates it and never deletes it, and chowning it is the same trespass by a smaller name. **`nfs` is refused** because the kernel client has no `uid=` option at all: ownership is the server's and idmapd's, and a field that looked enforced here would be a lie told at the layer least able to detect it. **Inheritance stops at those two, and only a declared field is refused.** A `host` or `nfs` volume in a service whose task names a user is simply left unowned — because a default that became a hard error would mean adding `user` to a task broke every NFS volume that service happened to have, with no field to opt out of something nobody typed. The task's user block is a statement about the process; it is not a claim about what an NFS server does with its files. The chown covers the volume's **top-level directory only**, reapplied at each alloc start — bounded and idempotent, where a recursive one would put O(files) in the alloc start path and would overwrite ownership a workload set deliberately. A chown that fails fails the alloc, like a mount that fails (§8): a workload started against a directory it cannot write looks healthy and does the wrong thing.
+
 ---
 
 ## 7. Networking Model
@@ -598,12 +666,12 @@ service "assets" {
 
 ### 7.2 North-south (public exposure)
 
-- Only the edge proxy listens publicly (80/443).
+- Only the edge proxy listens publicly — on 80/443, and on the node ports services publish (§7.2.2).
 - **Automatic FQDNs:** every service with an `expose` block gets `service.project.<base_domain>` (e.g., `web.shop.apps.example.com`) — `base_domain` set in server config. Custom `domains` override/extend.
 - Operator sets one **wildcard DNS record** (`*.apps.example.com → node IP`) once; all services routable instantly.
 - **Upstream selection:** a route points at the service's Cilium frontend (§7.1), not at an alloc — the eBPF LB does the balancing, so the edge holds one upstream address per service and never a backend list. The port is the one named **`http`**, or the service's only port if it declares exactly one. A service that exposes several ports without an `http` among them is a **`plan` error** (R16): v1 routes by Host alone, so there is no request attribute left to choose a port with, and picking one silently is how traffic ends up at the metrics listener.
 - **A domain belongs to one service.** Two services claiming the same host — including two that default to the same auto-FQDN — is a `plan` error, not a last-writer-wins race in the edge (R16).
-- Path prefixes and multiple ports per service: v1.1 (v1 = host-based routing only).
+- Path prefixes are v1.1 — **host-based routing is host-based only**. Several ports per service are reachable from v1.33, but by publishing each on its own node port (§7.2.2), not by multiplexing them onto one Host-routed listener; that is still v1.1.
 
 ### 7.2.1 Edge middleware (ingress controls)
 
@@ -620,16 +688,86 @@ Per-service controls declared in the `expose` block (§6.1), enforced by `kanea-
 - **Fail-closed:** middleware config is schema-validated at `kanea plan` — invalid rules never reach the edge silently.
 - **Roadmap (v1.1+):** path-prefix routing, edge basic-auth, CORS policies, per-route timeouts, Wasm middleware (§19.1).
 
-### 7.3 TLS / Let's Encrypt
+### 7.2.2 Published ports (node ports)
 
-- ACME via `lego` (preferred; supports many DNS providers) or `autocert` fallback.
+Host routing needs a name, and a single-node install often has none — or has one and still wants the thing on a port anyway. A `network { publish "<port>" { host = N } }` block (R21) makes a service reachable at `<node address>:N`, with or without any `expose` block at all. The two compose: a service can be world-facing on its domain with a rate limit and LAN-only on its port without one.
+
+- **The listener lives in `kanea-edge`, not in netfilter.** The alternatives were considered and do not work here. A DNAT rule can only target a live alloc address — a service VIP is not an address on any interface and the socket-LB translation that would resolve it has already been skipped for externally-originated traffic — so netfilter would have to be reprogrammed on every alloc create, stop and scale, reintroducing the backend list the VIP design exists to avoid (§7.1) and making the *data path* depend on `kanead` having run recently. Cilium's own hostPort is driven by a Kubernetes watcher that does not exist with `--enable-k8s=false`. NodePort through `--lb-state-file` would preserve source addresses and is rejected anyway: it is an interface M0 validated for ClusterIP only, it bypasses every ingress control in §7.2.1, and widening the node-port range makes the agent reserve and defend it against the host's own sockets.
+- **Two kinds, named separately, because they guarantee different things.**
+
+| `mode` | Reaches | Keeps | Loses |
+|---|---|---|---|
+| `http` (default) | Any HTTP service | The whole §7.2.1 chain — IP restriction, rate limit, header transforms, security headers, `X-Forwarded-*`, WebSocket upgrade, per-service L7 metrics | The unknown-`Host` 404, which was a DNS-rebinding defence and buys nothing on a port that maps to exactly one service |
+| `tcp` | Anything — Postgres, a game server, a mail relay | `ip_restriction`, a per-listener connection cap, drain on shutdown | Everything else. There is no request to count and no header to rewrite |
+
+- **The route is fixed when the listener binds, not looked up per request.** A published port is reached by address, so the `Host` header is an IP literal that would never match a domain in the table.
+- **A spec that declares middleware a TCP listener cannot honour is a `plan` error** (R21), not a control the edge quietly drops. This is §7.2.1's fail-closed rule inverted: a rate limit that is *ignored* is worse than one that is *absent*, because the spec says the service is protected and it is not.
+- **The upstream sees the edge's address, not the client's.** There is no `X-Forwarded-For` for a raw stream, so `pg_hba.conf` host rules, address-based bans and anything else that authenticates by source address stop meaning anything behind a published TCP port. `ip_restriction` is checked at accept time, before the upstream is dialled and before a byte is forwarded, and that is the entire mitigation. PROXY protocol would restore the address and is deliberately not built (§19.3): most services do not speak it, and a misconfiguration prepends garbage to the stream and presents as protocol corruption rather than as a config error.
+- **The permitted range is the node's decision, not the spec's.** `kanead` takes `--publish-ports` (default `1024-65535`; `off` disables publishing entirely) and refuses anything outside it at apply, not only at `plan` — GitOps never goes through the CLI. 80, 443 and the control-plane API and status ports are reserved outright. Ports below 1024 are refused by default because a spec that could claim 22, 25 or 53 on this node's address would be deciding something that belongs to whoever owns the machine — the same split as `storage.allowed_host_paths` (R15) and the passthrough grants (R17–R18): the spec says what it wants, the node says whether it is allowed, and the default is restrictive.
+- **The connection ceiling is bounded and stated.** Per-listener `max_conns` (default 256) and a process-wide `--max-published-conns` (default 1024) are refusals, never queues — the discipline §10.2 uses for builds. A queued TCP connection is a client holding a socket open until it times out anyway.
+- **Cilium policy needs nothing.** The per-project isolation policy already admits the `host` entity without a port restriction, and the edge is a host process carrying no endpoint identity — edge→VIP:5432 is permitted exactly as edge→VIP:8080 already is. Adding `toPorts` as "hardening" would turn a permissive union into one that must enumerate every port every service ever declares, and getting it wrong denies traffic silently.
+
+§6.1 shows the `http` kind. The `tcp` kind, on the two things people actually ask for:
+
+```hcl
+service "survival" {
+  project = "games"
+  task "mc" {
+    image = "itzg/minecraft-server:2024.1.0"
+    env   = { EULA = "TRUE" }
+    resources { cpu = 4000  memory = 6144 }
+  }
+  network {
+    port "game" { container = 25565 }
+    publish "game" { host = 25565  mode = "tcp"  max_conns = 200 }
+  }
+}
+
+service "postgres" {
+  project = "home"
+  task "pg" {
+    image = "postgres:16.3"
+    env   = { POSTGRES_PASSWORD = "secret:home/pg-password" }
+    resources { cpu = 1000  memory = 1024 }
+  }
+  network {
+    port "pg" { container = 5432 }
+    publish "pg" {
+      host = 5432
+      mode = "tcp"
+      # The only control a raw listener has, and the only thing standing
+      # between this and the internet if the node has no firewall. Postgres
+      # will see the edge's address, not the client's, so its own host rules
+      # cannot do this job.
+      ip_restriction { allow = ["192.168.1.0/24"] }
+    }
+  }
+}
+```
+
+### 7.3 TLS & certificate sources
+
+**A service says where its certificate comes from, and there are four answers** (R20). `expose.tls.mode` is one of `acme`, `self-signed`, `provided` or `plaintext`; an absent `tls` block means whatever the node's `--tls-default` is, so a homelabber sets the policy once and annotates nothing. Every source publishes into the same bundle the edge already reads (§5.2.6), and **`kanead` owns all of them** — obtaining or minting a certificate is *writing*, and the edge does not write.
+
+| `mode` | Where the certificate comes from | For |
+|---|---|---|
+| `acme` | Let's Encrypt or another ACME CA | A node with a public name and a reachable :80 or a DNS provider |
+| `self-signed` | A CA this node generated, installed once on the operator's devices | A LAN with wildcard DNS, no inbound :80 and no DNS-01 credential |
+| `provided` | A certificate the operator put on the node and named in its config | A private CA, a Cloudflare origin certificate, a certificate another ACME client renews |
+| `plaintext` | Nothing. Plain HTTP, declared | A service behind someone else's terminator, or one that genuinely wants HTTP |
+
+- **`plaintext` exists because it was already happening and nothing could say so.** Before v1.33 a service whose certificate had not been issued — or on a node with no ACME configured at all — simply served HTTP, and the only signal was its absence. Declaring it makes it reviewable, and gives the edge the one fact it needs to stop redirecting the route and to withhold HSTS (§5.2.6).
+- **The self-signed CA is per node, generated on first use, and lives in the Store.** ECDSA P-256, ten years, kept in the `certs` bucket beside the ACME account key — so it travels in the encrypted archive and is restored with everything else. Leaves are 90 days, deliberately Let's Encrypt's number: the 2/3 renewal rule below then exercises the renewal path every two months instead of once a decade, which is when a bug in it is cheap. `kanea ca show` prints the CA certificate to install on a phone, laptop or TV; there is no command and no API route that returns the CA *key*, in the same spirit as §16.3's rule about secrets. It is **not** a §15.4 key-ceremony artefact and the distinction is the point: the master key is unrecoverable and every backup dies with it, whereas losing this CA costs re-trusting some devices. A restore onto a node with no archive therefore produces a *new* CA, and every device that trusted the old one must be re-trusted (§15.3).
+- **A `provided` certificate is named, not pathed** — R17's rule at TLS. The operator defines `certificate "<name>" { cert, key, allow }` in the node's own config (§15.1), listing the projects that may claim it; a spec asks for `mode = "provided"` and optionally a name. **What the certificate covers is read from its own SANs**, never declared: a domain list that could disagree with the certificate is a configuration that lies, and reading the SANs is also why a wildcard needs no filename convention. The files are re-read on a short poll rather than watched, because certbot and its kin write-then-rename and a watch registered on the old inode never fires; an operator who rotates a certificate should not wait for the renewal pass.
+- **Nothing ever falls back to a weaker source.** A service whose `provided` certificate is missing, unreadable or not allowed to it emits `cert.failed` and serves plaintext — it does *not* quietly get a self-signed one. A silent downgrade to a certificate nothing trusts is worse than plain HTTP, because plain HTTP is visibly plain HTTP while a browser interstitial is something an operator learns to click through, and then clicks through on the day it means something. An *expired* provided certificate is published anyway, with the event naming the date: refusing it at midnight turns a stale site into an unreachable one.
 - Challenges: **HTTP-01** (via edge proxy), **TLS-ALPN-01**, **DNS-01** (needed for wildcards).
 - **`kanead` runs the ACME client; the edge only serves what it is handed.** Issuance writes to the `certs` bucket, renewal is a control-plane timer, and a failure is an event — none of which the edge can do, because it holds no Store handle and no write access (§5.2.6). What the edge gets is a projection: the certificate bundle, and for HTTP-01 the `token → keyAuth` pairs it answers `/.well-known/acme-challenge/*` with. Since publishing and the edge's poll are not synchronous, **`kanead` fetches its own challenge URL through the edge and waits for the right answer before telling the CA to validate** — a validation that fails only because the edge had not reloaded yet costs a failed-validation slot, and that limit takes an hour to clear.
 - **Certificates are projected separately from routes**, into `/run/kanea-edge/certs.json` at 0640 (group-readable by the edge user, set up by `kanea init`). The route table is world-readable because the edge runs as its own user and nothing in it is secret; a private key is neither of those things, so it gets its own file rather than dragging the route table's permissions down or pushing the key's up.
 - **A host with no certificate still serves plaintext.** The HTTP→HTTPS redirect applies only to hosts the edge holds a certificate for; redirecting the rest would turn "not issued yet" into "unreachable" and break the HTTP-01 validation that would have fixed it. `/.well-known/acme-challenge/*` is never redirected. An unknown SNI is refused at the handshake rather than answered with some other host's certificate.
 - **Delivery order (M3 → M5):** **HTTP-01 ships in M3** and is what the auto-FQDNs of §7.2 use — the edge owns port 80, so it is the challenge with no prerequisites. **DNS-01 and the wildcard default ship in M5**, once the secrets store exists to hold the update credential as a `secret:` reference (R3/R5). **TLS-ALPN-01 is deferred past M5** (v1.20): it is the alternative for a node that does *not* own port 80, which is not a situation Kanea is in.
 - **DNS-01 is RFC 2136, TSIG-signed** (v1.20): dynamic updates against BIND, Knot or PowerDNS, spoken directly with `miekg/dns` rather than through a provider catalogue that would link every vendor SDK into the binary. An unsigned update is refused — one is a passing ACME challenge for every name in the zone. Hosted providers are a curated list, added individually.
-- **ACME rate limits are a design input:** hundreds of per-service certs + frequent redeploys hit Let's Encrypt limits (50 certs/registered domain/week, duplicate-cert 5/week, failed-validation caps). Beyond ~20 exposed services, Kanea **defaults to a wildcard cert via DNS-01** — **per project**, `*.<project>.<base_domain>`, because a wildcard covers exactly one label and the generated names of §7.2 are `service.project.<base_domain>`. Per-service certs remain for custom domains, which are somebody else's zone and not Kanea's to ask a CA for `*.` of. Without a DNS-01 solver the threshold is a **loud warning** rather than a switch: a wildcard cannot be validated over HTTP. The LE staging endpoint is used in CI and during `init` testing.
+- **ACME rate limits are a design input:** hundreds of per-service certs + frequent redeploys hit Let's Encrypt limits (50 certs/registered domain/week, duplicate-cert 5/week, failed-validation caps). Beyond ~20 exposed services, Kanea **defaults to a wildcard cert via DNS-01** — **per project**, `*.<project>.<base_domain>`, because a wildcard covers exactly one label and the generated names of §7.2 are `service.project.<base_domain>`. Per-service certs remain for custom domains, which are somebody else's zone and not Kanea's to ask a CA for `*.` of. Without a DNS-01 solver the threshold is a **loud warning** rather than a switch: a wildcard cannot be validated over HTTP. **The collapse is an ACME rate-limit workaround and applies to no other source** — a CA this node owns has no rate limit — so it is skipped entirely for a project any of whose exposed services resolved to a different mode.
+- **`--acme-directory` defaults to production** (v1.33), not to the LE staging endpoint. Staging's job was to absorb the first attempt, when the DNS is usually still wrong; `mode = "self-signed"` does that job better, because it yields HTTPS that actually works rather than a certificate that is untrusted *and* expires. Staging remains available by name, and is what CI and `init` testing use.
 - Certs stored in Store (`certs` bucket), replicated to S3 with the rest of state; renewed at 2/3 of lifetime; renewal events emitted (notification-able).
 - Internal traffic (alloc↔alloc) plaintext within the node in v1; Cilium transparent encryption (WireGuard/IPsec) as a config flag, v1.1.
 
@@ -639,13 +777,13 @@ Per-service controls declared in the `expose` block (§6.1), enforced by `kanea-
 
 Named **storage resources** are defined at server level (config) or project level (job spec), then referenced by service `volume` blocks. Credentials always via secrets store.
 
-| Driver | Mechanism | Notes |
-|---|---|---|
-| `local` | Host path under `data_dir/volumes/` | Default; per-alloc or shared |
-| `host` | An existing operator-owned directory, named by `path` | **Off unless enabled:** the path must sit under a prefix in the server config's `storage.allowed_host_paths` (§15.1), which defaults to empty. Shared by every alloc of the service |
-| `s3` | FUSE mount — **`mountpoint-s3` (default, read-mostly)** or **`s3fs` (opt-in read-write)**, selected by `mode` (M0 spike ③) | Any S3-compatible endpoint; read-only is the default; **not for latency-sensitive or many-small-files data** (one round trip per file op: 200 files ≈ 30 s at 30 ms RTT). `goofys` is rejected (unmaintained since 2020, no arm64 build); `rclone mount` is not a built-in driver (defers uploads ~6 s past `close()`) |
-| `nfs` | Kernel NFS mount | `server`, `export`, mount options |
-| `smb` | Kernel CIFS mount | `server`, `share`, credentials, `vers=3.0` default |
+| Driver | Mechanism | Ownership (R24) | Notes |
+|---|---|---|---|
+| `local` | Host path under `data_dir/volumes/` | `chown` + `chmod` on the volume directory | Default; per-alloc or shared |
+| `host` | An existing operator-owned directory, named by `path` | **Refused** — the directory is the operator's | **Off unless enabled:** the path must sit under a prefix in the server config's `storage.allowed_host_paths` (§15.1), which defaults to empty. Shared by every alloc of the service |
+| `s3` | FUSE mount — **`mountpoint-s3` (default, read-mostly)** or **`s3fs` (opt-in read-write)**, selected by `mode` (M0 spike ③) | `--uid`/`--gid`/`--file-mode`/`--dir-mode` (ro); `uid=`/`gid=`/`umask=` (rw) | Any S3-compatible endpoint; read-only is the default; **not for latency-sensitive or many-small-files data** (one round trip per file op: 200 files ≈ 30 s at 30 ms RTT). `goofys` is rejected (unmaintained since 2020, no arm64 build); `rclone mount` is not a built-in driver (defers uploads ~6 s past `close()`) |
+| `nfs` | Kernel NFS mount | **Refused** — no `uid=` exists; the server decides | `server`, `export`, mount options |
+| `smb` | Kernel CIFS mount | `uid=`, `gid=`, `file_mode=`, `dir_mode=` | `server`, `share`, credentials, `vers=3.0` default |
 
 ```hcl
 storage "s3-media" {
@@ -739,7 +877,7 @@ Sources:                              Aggregation:                      Consumer
 ## 11. Notifications
 
 - **Channels:** generic **webhook** (JSON POST, HMAC-SHA256 signed, `X-Kanea-Signature`), **Telegram** (bot API), **Slack/Discord** (incoming-webhook compatible payload), **SMTP** email, **ntfy.sh**.
-- **Events:** `deploy.started/succeeded/failed`, `service.unhealthy/healthy`, `service.crashed`, `scale.up/down`, `cert.issued/renewed/failed`, `build.started/succeeded/failed`, `backup.succeeded/failed`, `auth.login_failed`.
+- **Events:** `deploy.started/succeeded/failed`, `service.unhealthy/healthy`, `service.crashed`, `scale.up/down`, `cert.issued/renewed/failed`, `build.started/succeeded/failed`, `image.updated/update_failed` (§6.2 R19), `backup.succeeded/failed`, `auth.login_failed`.
 - Config at server level (defaults) and project level (overrides), with event filters (glob patterns, e.g. `on = ["deploy.*", "scale.up"]`).
 - Delivery: at-least-once with retry/backoff; failures logged, never block the control plane.
 - **Storm protection:** events are coalesced into digests under load ("42 allocs restarted in 5m" — one message, not 42), with per-channel rate limits and severity floors; a crash-looping fleet must never get the Telegram bot rate-limited or blocked.
@@ -807,14 +945,14 @@ OWASP Top 10 (2021) compliance is a **release gate**: every milestone's definiti
 
 | # | Category | Kanea controls |
 |---|---|---|
-| **A01** | Broken Access Control | Auth middleware on **every** API/WS route (deny-by-default); project-scope checks on all object access (no IDOR — IDs resolved through project ownership); **secret references project-scoped at spec validation (§6.2, R5)**; role checks (`admin`/`viewer`) enforced server-side; CLI tokens scoped and revocable; WebSocket Origin allowlist (anti-CSWSH); CSRF tokens on cookie-auth mutations; `exec` admin-only + audited; **MCP tools pass through the same authz + audit pipeline, secrets are write-only via tools (§16.3)**; edge IP allow/deny middleware (§7.2.1) |
-| **A02** | Cryptographic Failures | TLS 1.2+ everywhere (API, dashboard, edge); bcrypt/argon2id for passwords; secrets encrypted at rest in Store (XChaCha20-Poly1305, key from `data_dir/master.key` 0600 or external KMS later); cert/key material 0600; backups encrypted client-side before S3 upload; **master key escrowed at `init` via key ceremony (print-once + passphrase-derived KEK option) — without it, S3 backups are unrecoverable (§15.3)**; secrets injected via tmpfs files by default, not env vars (§6.2, R3) |
+| **A01** | Broken Access Control | Auth middleware on **every** API/WS route (deny-by-default); project-scope checks on all object access (no IDOR — IDs resolved through project ownership); **secret references project-scoped at spec validation (§6.2, R5)**; role checks (`admin`/`viewer`) enforced server-side; CLI tokens scoped and revocable; WebSocket Origin allowlist (anti-CSWSH); CSRF tokens on cookie-auth mutations; `exec` admin-only + audited; **MCP tools pass through the same authz + audit pipeline, secrets are write-only via tools (§16.3)**; edge IP allow/deny middleware (§7.2.1). **A published port is unauthenticated reachability to a container, by design (§7.2.2)** — that is what the operator asked for, and it is stated rather than mitigated: on a `tcp` listener `ip_restriction` is the only control, it is checked at accept time before the upstream is dialled, and the upstream sees the edge's address, so its own address-based rules cannot do this job. The port range is the node's (R22), never the spec's |
+| **A02** | Cryptographic Failures | TLS 1.2+ everywhere (API, dashboard, edge); bcrypt/argon2id for passwords; secrets encrypted at rest in Store (XChaCha20-Poly1305, key from `data_dir/master.key` 0600 or external KMS later); cert/key material 0600; backups encrypted client-side before S3 upload; **master key escrowed at `init` via key ceremony (print-once + passphrase-derived KEK option) — without it, S3 backups are unrecoverable (§15.3)**; secrets injected via tmpfs files by default, not env vars (§6.2, R3); **the self-signed CA's private key (§7.3) sits in the `certs` bucket at exactly the protection every leaf key there already has, and no API route, CLI command or MCP tool returns it** — `kanea ca show` emits the certificate only |
 | **A03** | Injection | Strict HCL schema validation, no eval of user input; DNS-1123 name validation (§4.2); no shell invocation with user-controlled strings (buildctl/containerd called with arg arrays, never a shell); log output HTML-escaped in dashboard; SQL N/A (BoltDB); path-join sanitization for volume subpaths |
 | **A04** | Insecure Design | Secure-by-default config (localhost-only if unauthenticated, HTTPS-only API); threat model maintained in `docs/THREAT_MODEL.md`; security review per milestone |
-| **A05** | Security Misconfiguration | Hardened defaults; security headers on all responses: `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`; no debug/pprof endpoints in release builds. **Workload hardening defaults:** drop `ALL` capabilities (the explicit allowlist is `task.capabilities`, bounded by a permitted set that excludes every privilege-equivalent capability — §6.2 R13), `no-new-privileges`, default seccomp profile, no `privileged` escape hatch in the v1 spec, per-alloc PID/IPC/cgroup namespaces, optional read-only rootfs — Kanea's own tasks get the same treatment |
+| **A05** | Security Misconfiguration | Hardened defaults; security headers on all responses: `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`; no debug/pprof endpoints in release builds. **Workload hardening defaults:** drop `ALL` capabilities (the explicit allowlist is `task.capabilities`, bounded by a permitted set that excludes every privilege-equivalent capability — §6.2 R13), `no-new-privileges`, default seccomp profile, no `privileged` escape hatch **a job spec can declare**, per-alloc PID/IPC/cgroup namespaces, optional read-only rootfs — Kanea's own tasks get the same treatment. **A workload can declare the uid/gid it runs as and the ownership of its volumes (§6.2 R23–R24)**, which is what makes most `task.capabilities` grants unnecessary: an image asks for `CAP_CHOWN`/`CAP_SETUID`/`CAP_SETGID` in order to fix a root-owned data directory and drop privileges, and a spec that states both facts up front leaves nothing to grant. It is **declarable, not default** — an absent `user` block means the image's own `USER` stands, because overriding it globally would break every image that ships a correct one. **Device and socket passthrough (§6.2 R17–R18) is the one way past these defaults, and it is not spec-declarable:** a spec asks for a grant by name, the grant lives in the node's config, names the projects that may claim it, and defaults to not existing. A socket grant is node-level control for the container holding it and is documented as such rather than mitigated |
 | **A06** | Vulnerable Components | `govulncheck` + `npm audit` gates in CI; Dependabot/Renovate; SBOM (`syft`) attached to releases; pinned base images (buildkit, cilium) by digest |
 | **A07** | Identification & Auth Failures | Rate-limited login (5/min/IP + exponential account backoff); session rotation on privilege change; token expiry; OIDC delegates MFA to IdP and uses PKCE + state/nonce + full ID-token validation with deny-by-default role mapping; global API rate limits and WS connection caps beyond login; **per-service edge rate limits via expose middleware (§7.2.1)**; no credentials in logs/audit (redaction filters) |
-| **A08** | Software & Data Integrity Failures | Release binaries signed (cosign) + checksums; image digest pinning honored (`image@sha256:` enforced when given); TLS-only registries (no insecure registries); pipeline deploys pin built digests; backup archives carry SHA-256 manifest verified before restore; Git webhook HMAC validation + replay protection |
+| **A08** | Software & Data Integrity Failures | Release binaries signed (cosign) + checksums; image digest pinning honored (`image@sha256:` enforced when given); TLS-only registries (no insecure registries); pipeline deploys pin built digests; backup archives carry SHA-256 manifest verified before restore; Git webhook HMAC validation + replay protection. **`update.auto` (§6.2 R19) is the one deliberate exception and follows a moving tag by design** — opt-in per service, off by default, and it still runs a digest: the tag is resolved once and pinned, so every alloc of a deploy runs the same image and the digest that ran is recorded |
 | **A09** | Logging & Monitoring Failures | Append-only **audit log** (all mutating API calls, auth events, restores) in Store, viewable in dashboard, with **signed periodic export for tamper evidence**; security events surfaced as notifications; log retention configurable |
 | **A10** | SSRF | Containers blocked from cloud metadata (169.254.169.254) via default Cilium egress policy; Git sync URLs validated (scheme allowlist https/ssh, no local addresses unless `allow_insecure_git`); webhook delivery validates target URL against config, not user input at send-time; outbound notification webhooks https-only with RFC1918/link-local destinations blocked by default |
 
@@ -846,7 +984,19 @@ resources {                              # node resource isolation (§5.2.11)
 edge {                                   # defaults for all exposed services (§7.2.1)
   default_security_headers = true
   default_rate_limit { requests = 1000  window = "1m"  per = "ip" }
+
+  # Which node ports a spec may claim (§7.2.2, R22). "off" disables publishing.
+  # Below 1024 is refused by default: a spec able to claim :22 would be deciding
+  # something that belongs to whoever owns the machine.
+  publish {
+    ports     = "1024-65535"
+    max_conns = 1024                     # process-wide ceiling across every tcp listener
+  }
 }
+
+# Where an exposed service's certificate comes from when its spec does not say
+# (§7.3, R20): acme | self-signed | provided | plaintext.
+tls_default = "acme"
 
 storage {                                # host-volume allowlist (§8, §6.2 R15)
   # Empty by default: no job spec can mount a host directory until an operator
@@ -855,12 +1005,36 @@ storage {                                # host-volume allowlist (§8, §6.2 R15
   allowed_host_paths = []                # e.g. ["/srv/kanea", "/opt/shared"]
 }
 
+# Device and socket grants (§6.2 R17–R18). Read from a separate file named by
+# `--passthrough-config`, which defaults to "" — no file, no grants, and a spec
+# asking for one fails its alloc rather than starting without it.
+#
+# A spec never names a path: it asks for a grant by name, and the node resolves
+# it. `allow` is required and may not be empty — a grant nobody is named for is
+# a typo, not a permissive default.
+device "gpu" {
+  nodes = ["/dev/dri/renderD128"]         # char/block devices, resolved per alloc
+  allow = ["media"]                        # projects that may request it
+  mode  = "rw"                             # cgroup permissions; "m" only if written
+}
+
+# A socket grant is root on the node for whoever holds it (R18). It is listed
+# here, per project, because that is the only control over it.
+socket "containerd" {
+  path  = "/run/kanea/containerd.sock"
+  allow = ["ops"]
+}
+
 containerd { socket = "/run/containerd/containerd.sock" }
 
 cilium {
   enabled      = true
   kvstore      = "embedded-etcd"         # or external etcd endpoints
-  cluster_cidr = "10.200.0.0/16"
+  # Set at install time and written into the agent's unit (§5.2.5). Both are
+  # validated as IPv4 prefixes; node_cidr must sit inside cluster_cidr, and
+  # neither may overlap service_cidr.
+  node_cidr    = "10.244.0.0/24"         # this node's alloc allocation range
+  cluster_cidr = "10.244.0.0/16"         # native routing CIDR
   service_cidr = "10.201.0.0/16"         # service frontends (VIPs), outside cluster_cidr
   # File interfaces Kanea owns exclusively (§5.2.5); paths follow the agent's state dir.
   lb_state_file = "/var/run/cilium/lb-state.json"
@@ -869,7 +1043,22 @@ cilium {
 
 acme {
   email     = "ops@example.com"
+  directory = "production"               # or "staging", or a directory URL
   # dns01 { provider = "cloudflare", auth_ref = "secret:acme/cloudflare" }
+}
+
+# Certificates the operator put on this node (§7.3, R20). Read from a separate
+# file named by `--tls-certs-config`, which defaults to "" — no file, no
+# certificates. Same shape and same reasoning as the device and socket grants
+# above: a spec asks for one by name and never names a path, and `allow` is
+# required because a certificate nobody is named for is a typo.
+#
+# What it covers is read from the certificate's own SANs, never declared here —
+# a domain list that could disagree with the certificate is one that lies.
+certificate "shop" {
+  cert  = "/etc/kanea/tls/shop.crt"       # leaf + intermediates, PEM
+  key   = "/etc/kanea/tls/shop.key"
+  allow = ["shop"]                        # projects that may claim it
 }
 
 auth {
@@ -920,7 +1109,7 @@ storage "local-ssd" { type = "local" }
 
 - **Replication model — Store-level CDC, not Litestream:** bbolt has **no WAL** (it is a copy-on-write B+tree that rewrites pages in place), so Litestream-style log shipping is impossible. Instead, every `Store` mutation emits a **change record** (carrying its monotonic index, §15.2) that the replicator ships as change segments to the S3-compatible bucket continuously, with periodic full snapshots as segment bases. The DB file is compacted on a schedule (§5.2.3).
 - **Encryption & key escrow (critical):** all segments/snapshots are client-side encrypted (§14, A02). The master key is **escrowed at `kanea init` via a key ceremony** (print-once + written confirmation, or passphrase-derived KEK) — *if the key dies with the node, every backup is unreadable.* The DR runbook starts with key recovery.
-- **Backup:** scheduled (cron) + on-demand snapshots. Archive = state snapshot + certs + secrets (encrypted; SHA-256 manifest verified before restore).
+- **Backup:** scheduled (cron) + on-demand snapshots. Archive = state snapshot + certs + secrets (encrypted; SHA-256 manifest verified before restore). The `certs` bucket carries **the node's self-signed CA** (§7.3) along with every leaf, so it needs no separate path — but a node rebuilt *without* an archive generates a **new** CA, and every device that trusted the old one must be re-trusted. That is the cost of the CA deliberately not being escrowed, and the runbook says so.
 - **Restore:** `kanea restore --from s3://bucket/prefix [--snapshot <id>]` on a stopped node; or **first-boot auto-restore** — if `state.replication.s3` is set and local state is empty, the agent offers pull-and-restore.
 - **Recovery order:** master key → Store snapshot + segment replay → **Cilium kvstore wiped and rebuilt from desired state** (derived state; etcd files are never backed up/restored, §5.2.5) → images re-pulled (parallel queue, bounded concurrency) → endpoints recreated (bounded concurrency, exposed services first) → edge routes live.
 - **Realistic targets:** **RPO ≤ 5 min** (change segments). **RTO: control plane ≤ 15 min; full workload convergence is best-effort** — a fresh node must re-pull every image, and registry bandwidth/rate limits dominate. A registry mirror is recommended; an optional image pre-seed flag exists for small fleets.
@@ -930,7 +1119,7 @@ storage "local-ssd" { type = "local" }
 
 - **State migrations:** BoltDB buckets carry schema versions; `kanea agent` runs forward-only migrations at startup (with a pre-migration local snapshot + automatic S3 snapshot when replication is configured). Job specs are versioned via `spec_version` (§6.2, R6).
 - **Upgrade flow:** `kanea upgrade` (or package manager) → `kanea-edge` drains and restarts first (brief, connection-drained), then `kanead` restarts; running allocs and eBPF dataplane are untouched throughout.
-- **Compatibility:** a version matrix pins supported containerd/Cilium versions per Kanea release; `kanea init` and `kanea doctor` enforce it.
+- **Compatibility:** the component manifest (§5.2.12) **is** the version matrix — one table, compiled into the binary, pinning every host component per Kanea release. `kanea init` installs from it and `kanea doctor` enforces it. A matrix kept separately from the thing that installs would be a matrix that describes a node nobody has.
 - **Rollback:** previous binary + pre-upgrade snapshot restore; documented in the ops runbook.
 
 ---
@@ -960,6 +1149,8 @@ GET    /api/v1/events?filter=…
 GET    /api/v1/storage | POST /api/v1/storage
 GET    /api/v1/backups | POST /api/v1/backups | POST /api/v1/backups/{id}/restore
 GET    /api/v1/audit
+GET    /api/v1/certs/ca                        # this node's self-signed CA certificate (never the key)
+GET    /api/v1/edge/policy                     # permitted publish range + reserved ports (§7.2.2)
 POST   /api/v1/webhooks/git/{project}          # HMAC-validated
 GET    /api/v1/notifications/channels | POST …/test
 ```
@@ -967,10 +1158,13 @@ GET    /api/v1/notifications/channels | POST …/test
 ### 16.2 CLI (`kanea`)
 
 ```
-kanea init                 # interactive first-install: config, auth, deps/kernel/NTP checks, key ceremony
+kanea init                 # interactive first-install: kernel/NTP checks, host components, config, auth, key ceremony
+kanea install              # install/upgrade the pinned host components (§5.2.12); --only, --dry-run, --bundle
+kanea bundle create        # author an offline bundle on a connected machine (air-gapped installs)
+kanea supervise <comp>     # ExecStart for an image-backed component (cilium); systemd-managed, not typed
 kanea agent -config=…      # run the control-plane daemon (systemd-managed normally)
 kanea edge -config=…       # run the edge ingress proxy (separate systemd unit)
-kanea doctor               # verify node health: deps, versions, kvstore, disk, clock
+kanea doctor               # verify node health: deps, versions, kvstore, disk, clock; --offline
 kanea plan app.hcl         # dry-run diff
 kanea run app.hcl          # apply job spec
 kanea run --image=nginx:1.27-alpine --name web --project demo   # minimal image-only deploy, no spec file
@@ -984,6 +1178,7 @@ kanea build shop/web       # trigger pipeline
 kanea project sync shop
 kanea backup create|list|verify
 kanea restore --from s3://…
+kanea ca show|info         # this node's self-signed CA, to install on your devices (§7.3)
 kanea token create --role viewer
 kanea upgrade [--check]   # drain edge, restart services, run state migrations
 kanea mcp                  # stdio MCP server for local AI agents (§16.3)
@@ -1053,7 +1248,7 @@ Deliberately out of v1 scope, evaluated and parked. The architecture keeps the d
 
 ### 19.3 Longer-horizon parking lot
 
-Multi-node clustering (per §18 constraints) · embedded OCI registry · canary auto-promotion · path-based edge routing · Hubble UI integration · per-project ACLs · multi-task services (sidecars) · **cross-project service references** (explicit policy edges) · gVisor/Kata runtime classes for hostile multi-tenant workloads. (Each is marked v1.1+ where first mentioned; listed here for consolidation.)
+Multi-node clustering (per §18 constraints) · embedded OCI registry · canary auto-promotion · path-based edge routing · Hubble UI integration · per-project ACLs · multi-task services (sidecars) · **cross-project service references** (explicit policy edges) · gVisor/Kata runtime classes for hostile multi-tenant workloads · **published-port extensions** (§7.2.2): UDP (a session table with its own expiry and no accept-time hook is a different program wearing the same block's name), PROXY protocol or TPROXY to restore the client's source address, and a `bind` address to put a listener on one NIC · **`tls` on a published port** (the certificate is chosen by SNI and a client connecting to an IP sends none, so it would work only when the client has a name — and a client with a name has :443). (Each is marked v1.1+ where first mentioned; listed here for consolidation.)
 
 ---
 
@@ -1071,7 +1266,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 | **M7** | GitOps & pipelines | Git sync (poll + webhooks), BuildKit runner (rootless `buildkitd` unit + `buildctl` driver; `Containerfile`/`Dockerfile` detection), pipeline objects + dashboard page | Push to GitHub → build → rolling deploy → event |
 | **M8** | Notifications | Channel dispatcher (webhook, Telegram, Slack/Discord, SMTP, ntfy), filters, storm coalescing/digests, SSRF egress rules, test action, dashboard page | Configured channels receive filtered events; digest mode verified under event storm |
 | **M9** | MCP server | MCP streamable-HTTP + stdio transports, read/mutate/destructive tool tiers, resources, token scopes, audit integration | AI agent can plan/apply/scale/stream logs via MCP; viewer vs admin scoping and `confirm` gating verified |
-| **M10** | Hardening & packaging | S3 state replication (CDC segments), backup/restore + **key escrow ceremony** + DR runbook, upgrade & schema-migration framework (§15.4), `kanea init`, systemd units (`kanead` + `kanea-edge` in `kanea.slice`, `kanea-workloads.slice`, containerd/cilium drop-ins, §5.2.11), install script, signed releases, docs site | Fresh-node restore from S3 verified in CI (incl. key ceremony); upgrade+rollback tested; **v0.1.0 tagged** (v1.29). **v1.0 additionally requires**: an SBOM attached to releases (§14 A06, §21 — the release workflow publishes none today), and `init`→first HTTPS service exercised on a real node rather than in CI, which is the §21 UX requirement and the only one no test can stand in for |
+| **M10** | Hardening & packaging | S3 state replication (CDC segments), backup/restore + **key escrow ceremony** + DR runbook, upgrade & schema-migration framework (§15.4), `kanea init`, systemd units (`kanead` + `kanea-edge` in `kanea.slice`, `kanea-workloads.slice`, §5.2.11), **host-component installer + offline bundle (§5.2.12, v1.30)**, install script, signed releases, docs site | Fresh-node restore from S3 verified in CI (incl. key ceremony); upgrade+rollback tested; **`kanea init` brings up containerd, cilium, etcd and buildkitd on a bare node, online and from a bundle** (v1.30); **v0.1.0 tagged** (v1.29). **v1.0 additionally requires**: an SBOM attached to releases (§14 A06, §21 — the release workflow publishes none today), and `init`→first HTTPS service exercised on a real node rather than in CI, which is the §21 UX requirement and the only one no test can stand in for |
 
 **Definition of done (every milestone):** OWASP §14 checks reviewed, `govulncheck` clean, tests green, docs updated.
 
@@ -1081,8 +1276,8 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 
 | Category | Requirement |
 |---|---|
-| **Platform** | Linux amd64/arm64; kernel ≥ 5.10 (eBPF); cgroups v2; containerd ≥ 1.7; cilium-agent ≥ 1.18; NTP-synced clock (ACME/OIDC/HMAC validity) — checked at `init` |
-| **Footprint** | kanea idle RSS ≤ 150 MiB, **total platform ≤ 1 GiB including cilium-agent, etcd, containerd, and kanea-edge** (Hubble off by default) — the 1 GiB budget is the default `system_reserve_memory` (§5.2.11); dashboard bundle ≤ 1.5 MiB gzipped. M0 measurement: cilium-agent 153 MiB (Hubble **on**, spike ①) + **rootless `buildkitd` 157 MiB (spike ④)** + containerd 42 MiB + etcd 23 MiB ≈ 375 MiB before Kanea's own processes — cilium-agent and buildkitd are the two largest resident components and the reserve must cover both |
+| **Platform** | Linux amd64/arm64; kernel ≥ 5.10 (eBPF); cgroups v2; systemd; NTP-synced clock (ACME/OIDC/HMAC validity) — checked at `init`, and this is the whole list. containerd, `runc`, CNI plugins, etcd, cilium-agent and rootless `buildkitd` are **installed by `kanea init` at pinned versions** (§5.2.12), online or from an offline bundle; they are no longer prerequisites the operator supplies |
+| **Footprint** | kanea idle RSS ≤ 150 MiB, **total platform ≤ 1 GiB including cilium-agent, etcd, containerd, and kanea-edge** (Hubble off by default) — the 1 GiB budget is the default `system_reserve_memory` (§5.2.11); dashboard bundle ≤ 1.5 MiB gzipped. M0 measurement: cilium-agent 153 MiB (Hubble **on**, spike ①) + **rootless `buildkitd` 157 MiB (spike ④)** + containerd 42 MiB + etcd 23 MiB ≈ 375 MiB before Kanea's own processes — cilium-agent and buildkitd are the two largest resident components and the reserve must cover both. **Published ports (§7.2.2) add a bounded, operator-set term:** `--max-published-conns` × ~24 KiB, which is ~24 MiB at the default 1024 and is why the default is not larger — a ceiling nobody has turned on must not pre-spend a tenth of the budget |
 | **Storage** | S3 volumes cost **one object-store round trip per file operation** (~30 ms typical): creating or listing a 200-file directory takes tens of seconds, and a FUSE call with a dead backend blocks for tens of seconds uninterruptibly — S3 volumes are for bulk/read-mostly data, never for hot paths or many small files (M0 spike ③) |
 | **Scale** | ≥ 500 services / ≥ 2000 allocs per node; reconcile loop ≤ 1 s at that scale |
 | **Performance** | API p95 ≤ 100 ms (local); log stream latency ≤ 500 ms; **scale decision ≤ 20 s from a sustained metric breach** (v1.21: a 15 s averaging window — three samples at the 5 s scrape resolution — plus one 5 s evaluation tick; a large spike decides sooner) |
@@ -1090,7 +1285,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 | **Security** | §14 gates in CI; signed releases; SBOM published |
 | **Licensing** | **Apache-2.0**, chosen for the explicit patent grant — the norm for the infrastructure Kanea sits next to (containerd, Cilium, BuildKit) and the one property a permissive licence without it does not give a self-hosted platform. No per-file headers: a convention applied to every file is a convention that will be applied unevenly, and `LICENSE` is not ambiguous. No CLA. Third-party terms travel with the module graph and are not restated here |
 | **Reliability** | `kanead` restart disturbs neither running allocs **nor north-south traffic** (separate `kanea-edge` process); reconciler heals drift ≤ 30 s; log drains never backpressure workloads; workloads can never starve or OOM-kill the control plane (cgroup memory floor + OOM-killer policy, §5.2.11); disk watermark alerts at 80/90% |
-| **UX** | `init`→first HTTPS service ≤ 5 min on a fresh VM; every CLI mutation has `--json` |
+| **UX** | `init`→first HTTPS service ≤ 5 min on a fresh VM — **including on a node with no public name**, where that means `--tls-default self-signed`, `kanea ca show`, and one certificate installed on one device (§7.3); every CLI mutation has `--json` |
 | **i18n/a11y** | Dashboard EN only v1; WCAG 2.1 AA contrast via shadcn theme |
 
 ---
@@ -1141,8 +1336,9 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 
 ### 23.2 Key dependencies (candidate versions)
 
+- `containerd`, `runc`, CNI plugins and `etcd` — **host daemons Kanea installs at manifest-pinned versions** (§5.2.12), verified against SHA-256 hashes compiled into the binary. The pins live in `internal/provision/components.json`, which is also the §15.4 version matrix; this list names the components, not the numbers, because a document is the wrong place to keep a value a test can check
 - `github.com/containerd/containerd/v2` — runtime client
-- `cilium-agent` **≥ 1.18 on host (pin/test 1.19.x)** — driven over its REST API on `/var/run/cilium/cilium.sock` with a **hand-written client** (`net/http` + minimal structs). `github.com/cilium/cilium` is deliberately **not** a Go dependency: it pulls the Kubernetes client graph and ships `replace` directives consumers don't inherit (violates the no-kube-imports constraint and inflates the CVE surface)
+- `cilium-agent` **≥ 1.18, pinned at 1.19.x and installed by Kanea** (§5.2.12: digest-pinned image, run as a containerd task; only `cilium-cni` and `cilium-dbg` are extracted to the host) — driven over its REST API on `/var/run/cilium/cilium.sock` with a **hand-written client** (`net/http` + minimal structs). `github.com/cilium/cilium` is deliberately **not** a Go dependency: it pulls the Kubernetes client graph and ships `replace` directives consumers don't inherit (violates the no-kube-imports constraint and inflates the CVE surface)
 - `github.com/hashicorp/hcl/v2` — job specs & config
 - `go.etcd.io/bbolt` — state
 - `github.com/go-acme/lego/v4` — ACME
