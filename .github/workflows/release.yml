@@ -26,7 +26,7 @@ jobs:
       # what makes the signature attributable without a key to look after.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Tags and full history: the version stamp is derived from them, and a
           # shallow clone would produce a binary that reports the wrong one.
@@ -38,7 +38,7 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
