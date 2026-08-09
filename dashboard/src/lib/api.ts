@@ -17,7 +17,22 @@ export const resourcesSchema = z.object({
 export const exposeSchema = z.object({
   Domains: z.array(z.string()).nullish(),
   Port: z.number(),
+  // Where the certificate comes from (R20). Empty means the node's
+  // --tls-default decides, so this is not a value to render as "none".
+  TLSMode: z.string().optional(),
+  TLSName: z.string().optional(),
+  // The pre-v1.33 spelling, still on records written before the upgrade.
   LetsEncrypt: z.boolean().optional(),
+})
+
+// A node port the edge binds for this service (R21, §7.2.2). A service can
+// publish without being exposed: Jellyfin on :8096 with no domain is the case
+// the feature exists for.
+export const publishSchema = z.object({
+  Port: z.string(),
+  Host: z.number(),
+  Mode: z.string().optional(),
+  MaxConns: z.number().optional(),
 })
 
 export const serviceSchema = z.object({
@@ -27,6 +42,7 @@ export const serviceSchema = z.object({
   Image: z.string(),
   Resources: resourcesSchema,
   Expose: exposeSchema.nullish(),
+  Publish: z.array(publishSchema).nullish(),
   DependsOn: z.array(z.string()).nullish(),
 })
 
