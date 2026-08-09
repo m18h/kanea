@@ -9,6 +9,10 @@
   --border: hsl(240 3.7% 15.9%);
   --accent: hsl(173 70% 48%);
   --accent-dim: hsl(173 50% 22%);
+  /* The logo's own amber (logo/kanea-mark-dark.svg). It is deliberately not
+     --accent: the mark carries one fixed colour across every surface, and
+     recolouring it per theme would make it a different logo on each. */
+  --mark: #f2b544;
   --shadow: 0 1px 2px hsl(0 0% 0% / .4), 0 8px 24px hsl(0 0% 0% / .25);
   --radius: 10px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -25,6 +29,9 @@
     --border: hsl(240 6% 89%);
     --accent: hsl(173 80% 27%);
     --accent-dim: hsl(173 60% 92%);
+    /* logo/kanea-mark-light.svg — the same amber, darkened for contrast on
+       white. Same hue, so it still reads as one mark. */
+    --mark: #e09b1a;
     --shadow: 0 1px 2px hsl(240 10% 4% / .06), 0 8px 24px hsl(240 10% 4% / .06);
     color-scheme: light;
   }

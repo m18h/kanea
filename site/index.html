@@ -9,7 +9,7 @@
 <meta property="og:description" content="Container orchestration in one binary. eBPF-native, Kubernetes-free.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://m18h.github.io/kanea/">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2314b8a6'/><path d='M10 8v16M22 8L12.5 16 22 24' stroke='%2309090b' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,10 +17,15 @@
 <header>
   <div class="wrap">
     <a class="brand" href="#top">
-      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="7" fill="currentColor" opacity=".08"/>
-        <path d="M10 8v16M22 8L12.5 16 22 24" stroke="currentColor" stroke-width="3.2"
-              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <!-- logo/kanea-mark-{light,dark}.svg, inlined: the arc and the dots take
+           currentColor so one copy serves both themes, and only the amber is
+           fixed. See logo/README.md. -->
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
       </svg>
       Kanea
     </a>
@@ -158,7 +163,7 @@
 
   <span class="k">expose</span> {
     domains = [<span class="s">"shop.example.com"</span>]
-    <span class="k">tls</span> { letsencrypt = true }
+    <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
     <span class="k">rate_limit</span> {
       requests = 100
       window   = <span class="s">"1m"</span>
@@ -263,12 +268,15 @@
   <section id="install">
     <div class="wrap">
       <p class="eyebrow">Install</p>
-      <h2>Four steps, and none of them are hidden</h2>
+      <h2>Two steps, and none of them are hidden</h2>
       <p class="lede">
-        The installer fetches the binary, verifies it, and stops. It does not install
-        containerd or Cilium, does not generate keys, and does not start anything —
-        those are decisions with consequences, and a script that made them for you
-        would be making them at the moment you understand the node least.
+        The installer fetches the binary, verifies it, and stops. It generates no keys
+        and starts nothing — those are decisions with consequences, and a script that
+        made them for you would be making them at the moment you understand the node
+        least. <code>kanea init</code> then installs the runtime itself: containerd,
+        runc, the CNI plugins, etcd, cilium-agent and rootless buildkitd, at versions
+        pinned by SHA-256 inside the binary. Under its own prefix, on its own socket —
+        a node that ran Docker yesterday runs it tomorrow.
       </p>
 
       <ol class="steps">
@@ -279,17 +287,17 @@
           <pre class="plain">curl -fsSL https://m18h.github.io/kanea/install.sh | bash</pre>
         </li>
         <li>
-          <h3>Bring your own runtime</h3>
-          <p>Install <b>containerd</b> and <b>cilium-agent</b> (≥ 1.18, pin 1.19.x) with your
-             distribution's packages. Kanea will not choose their versions for you — that is
-             how a platform ends up owning a dependency it cannot support.</p>
-        </li>
-        <li>
           <h3>Run the first-install ceremony</h3>
-          <p>Checks the node, runs the master-key ceremony and writes the systemd units.
-             Have somewhere to record the key <em>before</em> you start: it is shown once,
-             and without it every backup is unreadable.</p>
+          <p>Checks the node, <b>installs the runtime</b>, runs the master-key ceremony and
+             writes the systemd units. Have somewhere to record the key <em>before</em> you
+             start: it is shown once, and without it every backup is unreadable.</p>
           <pre class="plain">sudo kanea init</pre>
+          <p>Every component is pinned by version and SHA-256 in the binary — that table is
+             also the version matrix <code>kanea doctor</code> enforces, so there is no
+             second copy to drift. <code>kanea install --list</code> shows it;
+             <code>--dry-run</code> downloads and verifies everything without writing a byte.
+             Already running a containerd you want to keep? <code>--containerd external</code>
+             adopts it instead.</p>
         </li>
         <li>
           <h3>Start it and make yourself an admin</h3>
@@ -335,13 +343,39 @@ sudo install -m 0755 kanea /usr/local/bin/kanea</pre>
           <tbody>
             <tr><td>Platform</td><td><code>linux/amd64</code>, <code>linux/arm64</code></td></tr>
             <tr><td>Kernel</td><td><code>≥ 5.10</code>, cgroups v2 unified hierarchy</td></tr>
-            <tr><td>containerd</td><td><code>≥ 1.7</code></td></tr>
-            <tr><td>cilium-agent</td><td><code>≥ 1.18</code> (pin <code>1.19.x</code>)</td></tr>
+            <tr><td>Init system</td><td>systemd</td></tr>
             <tr><td>Clock</td><td>NTP-synchronised</td></tr>
             <tr><td>Kubernetes</td><td>none, at any layer</td></tr>
           </tbody>
         </table>
       </div>
+      <p class="note" style="margin-top:20px">
+        That is the whole list. containerd, runc, the CNI plugins, etcd, cilium-agent and
+        rootless buildkitd are installed by <code>kanea init</code> at pinned versions —
+        they are no longer prerequisites you supply.
+      </p>
+
+      <h3 style="margin:38px 0 10px">Air-gapped nodes</h3>
+      <p class="lede" style="margin-bottom:18px">
+        A node with no egress is a supported installation, not a workaround. Build a bundle
+        where there is a network, carry it across, install from it. The same hashes govern
+        both paths, so it is the same code — not a second installer that rots between
+        releases.
+      </p>
+      <div class="window">
+        <div class="bar"><i></i><i></i><i></i><span>air-gapped install</span></div>
+<pre><span class="c"># on a machine with a network</span>
+kanea bundle create --arch amd64 -o kanea-bundle.tar.gz
+
+<span class="c"># on the air-gapped node</span>
+sudo kanea init --bundle kanea-bundle.tar.gz</pre>
+      </div>
+      <p class="note" style="margin-top:20px">
+        The bundle carries no hashes of its own. Its contents are checked against the ones
+        compiled into the installing node's binary — a bundle that supplied its own would be
+        a bundle that authenticates itself. Releases publish one per architecture, covered by
+        the same signed <code>checksums.txt</code>.
+      </p>
       <p class="note" style="margin-top:20px">
         <code>kanea doctor</code> checks all of this on a live node — dependencies, versions,
         kvstore, disk and clock — and <code>kanea init</code> refuses to proceed if the node

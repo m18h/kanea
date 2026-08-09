@@ -5,6 +5,7 @@ import { isActive, matchPath } from '@/lib/paths'
 import { useQuery } from '@tanstack/react-query'
 import { LogOut, Moon, Sun } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Mark } from '@/components/Mark'
 import { Overview } from '@/pages/Overview'
 import { Services } from '@/pages/Services'
 import { ServiceDetail } from '@/pages/ServiceDetail'
@@ -71,7 +72,10 @@ function Shell() {
       <header className="border-b">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-baseline gap-4">
-            <span className="text-lg font-semibold tracking-tight">Kanea</span>
+            <span className="flex items-center gap-2 self-center">
+              <Mark size={22} />
+              <span className="text-lg font-semibold tracking-tight">Kanea</span>
+            </span>
             <nav className="flex gap-3">
               {nav.map((item) => (
                 <Link

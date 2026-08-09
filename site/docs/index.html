@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Documentation — Kanea</title>
 <meta name="description" content="Kanea documentation: concepts, architecture, the complete job spec reference, and every CLI command.">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2314b8a6'/><path d='M10 8v16M22 8L12.5 16 22 24' stroke='%2309090b' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -13,10 +13,13 @@
 <header>
   <div class="wrap">
     <a class="brand" href="../">
-      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="7" fill="currentColor" opacity=".08"/>
-        <path d="M10 8v16M22 8L12.5 16 22 24" stroke="currentColor" stroke-width="3.2"
-              stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <!-- Same inlined mark as the landing page; see logo/README.md. -->
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
       </svg>
       Kanea
     </a>
@@ -58,6 +61,7 @@
     <a class="sub" href="#spec-storage">storage</a>
     <a class="sub" href="#spec-service">service</a>
     <a class="sub" href="#spec-task">task</a>
+    <a class="sub" href="#spec-passthrough">device and socket</a>
     <a class="sub" href="#spec-network">network</a>
     <a class="sub" href="#spec-expose">expose</a>
     <a class="sub" href="#spec-health_check">health_check</a>
@@ -86,18 +90,18 @@
 
   <main class="prose">
     <p class="eyebrow">Documentation</p>
-    <h1>Kanea documentation</h1>
-    <p>
+    <!--<h1>Kanea documentation</h1>-->
+    <!--<p>
       Everything on one page: what the concepts are, how the system is put together, the
       complete job spec reference, and every CLI command. The contents on the left track
       where you are — and the whole thing is one document, so your browser's find works
       across all of it.
-    </p>
+    </p>-->
 
     <!-- ================= overview ================= -->
     <h2 id="overview">Overview</h2>
 
-<p>
+    <p>
       Kanea runs containers on one machine and gives that machine the things a platform
       normally needs a cluster for: service discovery, load balancing, network policy,
       TLS, autoscaling, GitOps, backups. It is one static binary, and the concepts it
@@ -276,7 +280,9 @@ kanea logs -f demo/web</pre>
 <p>
       One binary produces two long-running processes and a CLI. Everything else on the node
       — containerd, cilium-agent, etcd, buildkitd — is software Kanea drives rather than
-      software it contains.
+      software it contains, but it is no longer software you have to find: <code>kanea
+      init</code> installs each of them at a version pinned by SHA-256 in the binary, under
+      Kanea's own prefix and on Kanea's own sockets, so nothing already on the node changes.
     </p>
 
     <h3 id="arch-shape">The shape</h3>
@@ -380,7 +386,10 @@ External:  containerd  ·  cilium-agent  ·  etcd  ·  Linux kernel (eBPF, cgrou
         <code>no-new-privileges</code>, the default seccomp profile, and its own PID and IPC
         namespaces. A capability a workload genuinely needs is named in the spec and drawn
         from a permitted set; the privilege-equivalent ones are rejected when the spec is
-        parsed. There is no <code>privileged</code> escape hatch in v1.</li>
+        parsed. <b>No job spec can lift any of it on its own</b> — there is no
+        <code>privileged</code> field. The one way past these defaults is a host device or
+        socket the operator granted on the node (R17, R18), which a spec requests by name
+        and can never define.</li>
       <li><b>Disk hygiene is part of the driver.</b> Image GC, build-cache caps across
         <i>both</i> content stores — containerd's and the rootless buildkitd user's — per-service
         log caps, and watermark alerts at 80% and 90%. One disk holds images, logs, state and
@@ -766,19 +775,105 @@ service "web" {
           <tr><td><code>capabilities</code></td><td>list(string)</td><td>Explicit allowlist against the drop-everything default (R13).</td></tr>
           <tr><td><code>env</code></td><td>map</td><td>Values may be <code>secret:</code> references or <code>${service.…}</code> interpolations.</td></tr>
           <tr><td><code>resources</code></td><td>block</td><td><code>cpu</code> in MHz, <code>memory</code> in MiB. Omitted → <code>cpu = 100</code>, <code>memory = 256</code>.</td></tr>
+          <tr><td><code>registry_auth_ref</code></td><td>string</td><td><code>secret:</code> reference to a docker <code>config.json</code> used to <b>pull</b> the image. Project-scoped like every other reference (R5).</td></tr>
+          <tr><td><code>device</code></td><td>block</td><td>Requests a host device the operator granted, by name (R17). See below.</td></tr>
+          <tr><td><code>socket</code></td><td>block</td><td>Requests a host unix socket the operator granted, by name (R18). See below.</td></tr>
         </tbody>
       </table>
     </div>
 
+    <h3 id="spec-passthrough">device and socket</h3>
+    <p>
+      A GPU for transcoding, a USB dongle, or the container runtime's socket for
+      a watchtower-style updater. Both blocks name a <b>grant</b> and never a
+      path: the operator defines grants on the node, and the spec asks for one
+      by name. There is no field to write a device path into, which is the
+      property the whole model rests on — a spec cannot request
+      <code>/dev/mem</code> because there is nowhere to say it.
+    </p>
+    <pre><code><span class="k">service</span> <span class="s">"jellyfin"</span> {
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"jellyfin:10.9"</span>
+
+    <span class="k">device</span> <span class="s">"dri"</span> {
+      <span class="k">grant</span> = <span class="s">"gpu"</span>          <span class="c"># defined by the operator, not here</span>
+    }
+  }
+}
+
+<span class="k">service</span> <span class="s">"watchtower"</span> {
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"watchtower:1.7"</span>
+
+    <span class="k">socket</span> <span class="s">"runtime"</span> {
+      <span class="k">grant</span>      = <span class="s">"containerd"</span>
+      <span class="k">mount_path</span> = <span class="s">"/var/run/docker.sock"</span>
+    }
+  }
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>grant</code></td><td>string</td><td>Required, on both blocks. Names an entry in the node's <code>--passthrough-config</code>.</td></tr>
+          <tr><td><code>mount_path</code></td><td>string</td><td><code>socket</code> only, required. Where the socket appears in the container. A device appears at its host path.</td></tr>
+          <tr><td><code>read_only</code></td><td>bool</td><td><code>socket</code> only. Restricts the filesystem entry, not the protocol spoken over it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The operator side is a separate file, and the default is that it does not
+      exist — a spec asking for a grant on a node with none fails its alloc
+      rather than starting without it. Grants name the projects that may claim
+      them:
+    </p>
+    <pre><code><span class="c"># /etc/kanea/passthrough.hcl — the node's, never the repository's</span>
+<span class="k">device</span> <span class="s">"gpu"</span> {
+  <span class="k">nodes</span> = [<span class="s">"/dev/dri/renderD128"</span>]
+  <span class="k">allow</span> = [<span class="s">"media"</span>]
+}
+
+<span class="k">socket</span> <span class="s">"containerd"</span> {
+  <span class="k">path</span>  = <span class="s">"/run/kanea/containerd.sock"</span>
+  <span class="k">allow</span> = [<span class="s">"ops"</span>]
+}</code></pre>
+    <p>
+      <b>A socket grant is root on this node for whoever holds it.</b> A
+      container with the runtime socket can start other containers without the
+      hardening defaults. There is no containment story and none is claimed: the
+      control is that granting it happens on the machine, in a file no spec
+      author can write, and names one project.
+    </p>
+
     <h3 id="spec-network">network</h3>
     <pre class="plain">network {
-  port "http" { container = 3000 }
+  port "http" { container = 8096 }
+
+  publish "http" {
+    host = 8096                                  # http://&lt;node&gt;:8096
+    mode = "http"                                # "http" (default) | "tcp"
+    ip_restriction { allow = ["192.168.0.0/16"] }
+  }
+
   policy { allow_from = ["analytics/collector"] }
 }</pre>
     <ul>
       <li><code>port "&lt;name&gt;"</code> — <code>container</code> is the port inside the
         container. The name is what <code>expose</code> and <code>health_check</code> refer
         to, and what <code>${service.x.port.&lt;name&gt;}</code> resolves.</li>
+      <li><code>publish "&lt;port name&gt;"</code> — a node port the edge binds for this
+        service, with or without a domain. The label names the <code>port</code> above;
+        there is deliberately no field for a container port number, so a published
+        port can never forward somewhere the service did not declare. See R21.</li>
+      <li><code>mode = "tcp"</code> relays bytes for Postgres, a game server, or anything
+        that is not HTTP. It keeps <code>ip_restriction</code> and nothing else — a
+        <code>rate_limit</code> or <code>headers</code> block on one is a plan error rather
+        than a control that is silently dropped. On a tcp listener the upstream sees the
+        edge's address, not the client's, so <code>ip_restriction</code> is the whole
+        mitigation and it is enforced at accept time.</li>
+      <li>Which node ports a spec may claim belongs to the node, not the spec
+        (<code>--publish-ports</code>, unprivileged by default). A repository anyone can
+        push to must not be able to take :22. See R22.</li>
       <li><code>policy.allow_from</code> — fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>
         peers permitted to reach this service. See R14.</li>
     </ul>
@@ -790,7 +885,7 @@ service "web" {
         <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td><code>domains</code></td><td>list(string)</td><td>Omitted → <code>&lt;service&gt;.&lt;project&gt;.&lt;base_domain&gt;</code>. No two services may claim the same domain, counting generated ones.</td></tr>
-          <tr><td><code>tls</code></td><td>block</td><td><code>letsencrypt = true</code></td></tr>
+          <tr><td><code>tls</code></td><td>block</td><td><code>mode</code> — <code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code>; <code>name</code> selects one of the node's <code>provided</code> grants. Omit the block and the node's <code>--tls-default</code> decides. A mode names a source, never a path.</td></tr>
           <tr><td><code>ip_restriction</code></td><td>block</td><td><code>allow</code>, <code>deny</code> — lists of CIDRs. Empty <code>allow</code> means the world; <b>deny wins</b>.</td></tr>
           <tr><td><code>rate_limit</code></td><td>block</td><td><code>requests</code>, <code>window</code>, <code>per</code>, <code>burst</code>. <code>per</code> is <code>ip</code>, <code>service</code>, or <code>header:&lt;name&gt;</code>.</td></tr>
           <tr><td><code>headers</code></td><td>block</td><td><code>request_set</code>, <code>request_remove</code>, <code>response_set</code>, <code>response_remove</code>.</td></tr>
@@ -866,6 +961,10 @@ service "web" {
   strategy     = "rolling"   # rolling | replace
   max_parallel = 1
   min_healthy  = "30s"
+
+  auto     = true            # follow task.image's tag (R19); off by default
+  interval = "6h"            # how often to re-resolve it; minimum 5m
+  deadline = "10m"           # how long a new digest has to prove itself
 }
 
 restart {
@@ -877,6 +976,22 @@ restart {
       flight — anything already unavailable spends the budget first, so a failing deploy
       halts rather than marching through every replica. <code>min_healthy</code> applies only
       to allocs this deploy has already replaced.
+    </p>
+    <p>
+      <b><code>auto</code> is the watchtower feature, as policy rather than as a container
+      holding your runtime socket.</b> Kanea re-resolves the tag the service already
+      declares, and when the digest behind it moves it pins the new one — the tag stays in
+      the spec, the digest is what runs. That is an ordinary deploy nobody typed: it rolls
+      with <code>max_parallel</code>, waits <code>min_healthy</code> and is gated by the
+      service's health check, because it goes through the same machinery every other deploy
+      does. If the new digest does not converge within <code>deadline</code>, the previous
+      one is re-pinned and the service goes back to what worked.
+    </p>
+    <p>
+      It is refused on a service whose <code>image</code> is already a digest (nothing to
+      follow) and on one with a <code>build</code> block (the pipeline owns that image).
+      Private registries need <code>task.registry_auth_ref</code>. Both outcomes emit
+      events: <code>image.updated</code> and <code>image.update_failed</code>.
     </p>
 
     <h3 id="spec-build">build</h3>
@@ -938,6 +1053,9 @@ restart {
     <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; Cilium ingress rules union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b> — <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
     <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time — but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config, <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist.</p></div></div>
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous — named <code>http</code>, or the only one declared. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
+    <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device — checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
+    <div class="rule"><b>R18</b><div><p><b><code>task.socket</code> is R17 for unix sockets, and is privilege delegation.</b> <code>mount_path</code> is validated as absolute, clean and <code>..</code>-free, may not sit under <code>/dev</code>, <code>/proc</code> or <code>/sys</code>, and may not collide with another socket or a volume. The bind carries <code>nosuid</code>, <code>noexec</code> and <code>nodev</code>. <b>None of that makes it safe and none of it is meant to</b>: a container holding the container runtime's socket can create containers without the hardening defaults, so the grant is equivalent to root on the node. The server config is the only control over it, which is why it is project-scoped and empty by default.</p></div></div>
+    <div class="rule"><b>R19</b><div><p><b><code>update.auto</code> follows the tag the service declares.</b> Off by default. Kanea re-resolves <code>task.image</code>'s tag every <code>interval</code> (default 6h, minimum 5m) and pins the digest behind it when it moves; the declared tag is never overwritten, because it is what the next poll re-reads. The pinned digest is server-owned and survives <code>kanea apply</code> — except when you edit <code>image</code> or turn <code>auto</code> off, which both hand authority back to the spec. <b>A failed update reverts</b> to the digest that was running if the new one has not converged within <code>deadline</code>: converged means healthy where a <code>check</code> block exists, and running without crash-looping where it does not. Refused on a digest-pinned image and on a service with a <code>build</code> block.</p></div></div>
 
     <h3 id="spec-example">Full example</h3>
     <p>
@@ -1034,7 +1152,7 @@ spec_version = 1
 
   <span class="k">expose</span> {
     domains = [<span class="s">"shop.example.com"</span>, <span class="s">"www.shop.example.com"</span>]
-    <span class="k">tls</span> { letsencrypt = true }
+    <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
 
     <span class="k">ip_restriction</span> {
       deny = [<span class="s">"198.51.100.7/32"</span>]
@@ -1287,6 +1405,7 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
     <pre class="plain">kanea agent [--data-dir=…] [--log-dir=…] [--volume-dir=…] [--socket=…]
             [--containerd=…] [--cilium=…] [--cni-conf=…] [--cni-bin=…]
             [--policy-dir=…] [--lb-state-file=…] [--service-cidr=…]
+            [--allowed-host-paths=…] [--passthrough-config=…]
             [--listen=…] [--listen-cert=…] [--listen-key=…] [--dashboard=true]
             [--autoscale=true] [--log-level=info]
             [--backup-s3-endpoint=…] [--backup-s3-region=…] [--backup-s3-access-key=…]
@@ -1296,6 +1415,13 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
       <code>--listen-key</code>. Credential-shaped options such as
       <code>--oidc-client-secret</code> and <code>--acme-dns-tsig-secret</code> take
       <code>secret:</code> references, never literals.
+    </p>
+    <p>
+      <code>--allowed-host-paths</code> and <code>--passthrough-config</code> are the two
+      operator gates: the first lists directories <code>host</code> volumes may come from
+      (R15), the second names the file granting devices and sockets to projects (R17, R18).
+      Both are empty by default, and both are deliberately node configuration — a job spec
+      can reference what they permit and can never add to it.
     </p>
 
     <h4><code>kanea edge</code></h4>

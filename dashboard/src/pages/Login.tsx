@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
+import { Mark } from '@/components/Mark'
 import { useSession } from '@/hooks/useSession'
 import { login } from '@/lib/session'
 import { fetchHealth } from '@/lib/api'
@@ -49,7 +50,10 @@ export function Login() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-base">Sign in to Kanea</CardTitle>
+          <div className="flex items-center gap-2.5">
+            <Mark size={26} />
+            <CardTitle className="text-base">Sign in to Kanea</CardTitle>
+          </div>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={onSubmit}>

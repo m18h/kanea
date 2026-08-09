@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Kanea</title>
+    <!-- Inlined rather than served from public/: the dashboard is embedded in
+         the binary, and a data URI is one fewer asset to route. logo/ holds the
+         source files this is drawn from. -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>" />
   </head>
   <body>
     <div id="root"></div>
