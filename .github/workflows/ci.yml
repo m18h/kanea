@@ -253,8 +253,6 @@ jobs:
   dashboard:
     name: Dashboard — lint, typecheck, test, build, audit
     runs-on: ubuntu-latest
-    # dashboard/ is scaffolded in milestone M4; skip gracefully until then.
-    if: hashFiles('dashboard/package.json') != ''
     defaults:
       run:
         working-directory: dashboard
