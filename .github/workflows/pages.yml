@@ -47,7 +47,7 @@ jobs:
           # being the thing that command fetches, say so here.
           grep -q "^#!/usr/bin/env bash" site/install.sh
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v3
         with:
