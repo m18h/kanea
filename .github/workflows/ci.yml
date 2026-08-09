@@ -147,14 +147,17 @@ jobs:
         run: |
           set -euo pipefail
           sudo systemctl is-active --quiet kanea-containerd.service
-          test -S /run/kanea/containerd.sock
+          # sudo because /run/kanea is 0710 root:root (Layout.Directories) — an
+          # unprivileged stat cannot traverse it, and the socket being root-only
+          # is the design, not the defect under test.
+          sudo test -S /run/kanea/containerd.sock
           sudo /usr/local/lib/kanea/bin/ctr --address /run/kanea/containerd.sock version
       # The coexistence promise, tested rather than asserted: the runner's own
       # containerd (Docker's) must be untouched and still on its own socket.
       - name: A pre-existing containerd is untouched
         run: |
           set -euo pipefail
-          test -S /run/containerd/containerd.sock
+          sudo test -S /run/containerd/containerd.sock
           docker run --rm hello-world >/dev/null
           echo "the distribution's containerd still serves Docker"
       - name: Constraint #11 — every unit joined kanea.slice
