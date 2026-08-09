@@ -130,8 +130,9 @@ header nav a:hover { color: var(--fg); }
   border: 1px solid var(--border); background: var(--bg-soft); color: var(--fg);
 }
 .btn:hover { border-color: var(--muted); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: hsl(240 10% 4%); }
-.btn.primary:hover { filter: brightness(1.08); }
+/* The one loud button wears the logo's own amber (--mark), white on top. */
+.btn.primary { background: var(--mark); border-color: var(--mark); color: #fff; }
+.btn.primary:hover { filter: brightness(1.06); }
 
 /* ---------- grids ---------- */
 .grid { display: grid; gap: 18px; }
