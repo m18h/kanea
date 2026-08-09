@@ -158,6 +158,10 @@ type hclTask struct {
 	Capabilities []string       `hcl:"capabilities,optional"`
 	Env          hcl.Expression `hcl:"env,optional"`
 	Resources    *hclResources  `hcl:"resources,block"`
+	// User is the uid/gid the workload runs as (R23). A block rather than two
+	// loose attributes because the three fields are one decision, and because
+	// an absent block has to be distinguishable from `uid = 0`.
+	User *hclUser `hcl:"user,block"`
 	// RegistryAuthRef is the *pull* credential (R19). Distinct from the build
 	// block's field of the same name, which pushes: a project may well read a
 	// public base image and push to a private registry, or the reverse.
@@ -170,6 +174,25 @@ type hclTask struct {
 type hclResources struct {
 	CPU    *int `hcl:"cpu,optional"`
 	Memory *int `hcl:"memory,optional"`
+}
+
+// hclUser is the numeric identity a workload runs as (R23).
+//
+// There is deliberately no `name` field. Resolving one means reading
+// /etc/passwd out of the container's own rootfs, which would let a
+// container-controlled file decide which uid the control plane runs a process
+// as — the same thing `kanea exec --user` already refuses. A name is also not
+// stable across an image rebuild, so under R19 it would quietly come to mean a
+// different uid than the one that was reviewed.
+//
+// Pointers, so that an omitted field is distinguishable from `uid = 0`.
+type hclUser struct {
+	UID *int `hcl:"uid,optional"`
+	GID *int `hcl:"gid,optional"`
+	// Groups are supplementary GIDs, for a workload that has to reach a volume
+	// owned by a group it is not the primary member of.
+	Groups   []int     `hcl:"groups,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 // hclDevice and hclSocket name a grant, never a path (R17, R18). There is
@@ -278,11 +301,20 @@ type hclHealthCheck struct {
 }
 
 type hclVolume struct {
-	Name      string    `hcl:"name,label"`
-	Storage   string    `hcl:"storage"`
-	MountPath string    `hcl:"mount_path"`
-	ReadOnly  bool      `hcl:"read_only,optional"`
-	DefRange  hcl.Range `hcl:",def_range"`
+	Name      string `hcl:"name,label"`
+	Storage   string `hcl:"storage"`
+	MountPath string `hcl:"mount_path"`
+	ReadOnly  bool   `hcl:"read_only,optional"`
+	// Ownership (R24). Omitted, uid and gid inherit task.user and mode defaults
+	// to 0700; declared, they override. Pointers for the same reason hclUser
+	// uses them: `uid = 0` is a legitimate request for root.
+	//
+	// Mode is a string because HCL has no octal literal — `mode = 0700` would
+	// parse as decimal 700, which is 0o1274 and not what anyone means.
+	UID      *int      `hcl:"uid,optional"`
+	GID      *int      `hcl:"gid,optional"`
+	Mode     *string   `hcl:"mode,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclScaling struct {
@@ -399,6 +431,11 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 	if diags.HasErrors() {
 		return nil, diags
 	}
+
+	// Volume ownership inherits task.user (R24), and it is resolved here rather
+	// than in convertService because it needs the storage a volume names, which
+	// is spec-level and a service does not have.
+	resolveVolumeOwnership(spec)
 
 	// Pass 2 — evaluate env with a context that knows every service's DNS name
 	// and ports, and record the reference edges while doing it (R9, R10).
@@ -551,10 +588,11 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 	}
 	for i := range s.Volumes {
 		v := &s.Volumes[i]
-		out.Volumes = append(out.Volumes, &Volume{
+		vol := &Volume{
 			Name: v.Name, Storage: v.Storage, MountPath: v.MountPath, ReadOnly: v.ReadOnly,
-			DefRange: v.DefRange,
-		})
+			UID: v.UID, GID: v.GID, Mode: v.Mode, DefRange: v.DefRange,
+		}
+		out.Volumes = append(out.Volumes, vol)
 	}
 	if s.Scaling != nil {
 		out.Scaling = &Scaling{Min: s.Scaling.Min, Max: s.Scaling.Max, Cooldown: s.Scaling.Cooldown}
@@ -585,6 +623,18 @@ func convertTask(t *hclTask) *Task {
 		RegistryAuthRef: t.RegistryAuthRef,
 		Env:             map[string]string{},
 		Resources:       Resources{CPU: DefaultCPU, Memory: DefaultMemory},
+	}
+	if t.User != nil {
+		// Carried as written. Range checking is validateUser's job, and it runs
+		// against the converted spec — narrowing here would turn a value the
+		// operator has to be told about into one that silently became legal.
+		out.User = &User{Groups: t.User.Groups, DefRange: t.User.DefRange}
+		if t.User.UID != nil {
+			out.User.UID = *t.User.UID
+		}
+		if t.User.GID != nil {
+			out.User.GID = *t.User.GID
+		}
 	}
 	if t.Resources != nil {
 		out.ResourcesDeclared = true

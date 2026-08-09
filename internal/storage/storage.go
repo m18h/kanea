@@ -99,6 +99,45 @@ type Request struct {
 	Target string
 	// ReadOnly mounts it read-only.
 	ReadOnly bool
+	// UID, GID and Mode are the ownership the mount presents (PRD §6.2 R24),
+	// nil for none. They live on the Request rather than on the Resource
+	// because ownership is the *volume's* decision: two services mounting one
+	// storage resource already get distinct targets, so they may legitimately
+	// see it owned differently.
+	//
+	// Note Resource.Mode is a different thing entirely — it selects the S3
+	// driver, ro or rw. Do not conflate them.
+	UID  *uint32
+	GID  *uint32
+	Mode *uint32
+}
+
+// ownershipRefusedBy names the drivers that cannot carry ownership (R24).
+//
+// jobspec refuses these at `plan`, which is where an operator should meet them.
+// This copy is the backstop for a record that reached the Store another way,
+// and it is small and static enough that the duplication is cheaper than a
+// dependency from storage to jobspec — which would point the wrong way.
+var ownershipRefusedBy = map[string]string{
+	TypeHost: "a host volume is the operator's own directory, which Kanea neither creates " +
+		"nor changes (R15)",
+	TypeNFS: "the kernel NFS client has no uid= or gid= mount option; ownership is the " +
+		"server's to decide",
+}
+
+// owned reports whether this request carries any ownership.
+func (r Request) owned() bool { return r.UID != nil || r.GID != nil || r.Mode != nil }
+
+// idOptions renders the uid= and gid= options the kernel mounts share.
+func (r Request) idOptions() []string {
+	var opts []string
+	if r.UID != nil {
+		opts = append(opts, fmt.Sprintf("uid=%d", *r.UID))
+	}
+	if r.GID != nil {
+		opts = append(opts, fmt.Sprintf("gid=%d", *r.GID))
+	}
+	return opts
 }
 
 // Timeouts. Every one of these exists because the alternative is a control

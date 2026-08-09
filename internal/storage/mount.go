@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,18 @@ import (
 // with a bucket name or a server address interpolated into it would be a command
 // injection reachable from a job spec (PRD §14, A03).
 func (m *Manager) mountCommand(ctx context.Context, req Request) (name string, args []string, cleanup func(), err error) {
+	// Ownership on a driver that cannot carry it is refused at `plan` (R24), so
+	// reaching here means a record got into the Store some other way. Refusing
+	// again costs nothing and keeps the guarantee true rather than merely
+	// usually true — a volume that silently ignored the ownership it was given
+	// is exactly the outcome the rule exists to prevent.
+	if req.owned() {
+		if why, refused := ownershipRefusedBy[req.Resource.Type]; refused {
+			return "", nil, nil, fmt.Errorf("%w: %s is type %q and cannot own a volume: %s",
+				ErrUnsupported, req.Resource.Name, req.Resource.Type, why)
+		}
+	}
+
 	switch req.Resource.Type {
 	case TypeNFS:
 		name, args = nfsCommand(req)
@@ -71,6 +84,16 @@ func (m *Manager) smbCommand(ctx context.Context, req Request) (string, []string
 	source := "//" + req.Resource.Server + "/" + req.Resource.Share
 
 	opts := []string{"credentials=" + credPath, "vers=3.0"}
+	opts = append(opts, req.idOptions()...)
+	if req.Mode != nil {
+		// cifs wants the two separately, and it has no umask. Directories take
+		// the mode as written; files take it without the execute bits, because
+		// a data file that is executable because its directory had to be
+		// traversable is a permission nobody asked for.
+		opts = append(opts,
+			fmt.Sprintf("dir_mode=0%o", *req.Mode),
+			fmt.Sprintf("file_mode=0%o", *req.Mode&^0o111))
+	}
 	if req.ReadOnly {
 		opts = append(opts, "ro")
 	}
@@ -106,6 +129,13 @@ func (m *Manager) s3Command(ctx context.Context, req Request) (string, []string,
 		if req.Resource.Endpoint != "" {
 			opts = append(opts, "url="+req.Resource.Endpoint)
 		}
+		opts = append(opts, req.idOptions()...)
+		if req.Mode != nil {
+			// s3fs takes a umask, not a mode: it masks bits off the driver's
+			// own defaults rather than setting them, so the requested mode has
+			// to be inverted.
+			opts = append(opts, fmt.Sprintf("umask=0%o", ^*req.Mode&0o777))
+		}
 		if req.ReadOnly {
 			opts = append(opts, "ro")
 		}
@@ -114,7 +144,8 @@ func (m *Manager) s3Command(ctx context.Context, req Request) (string, []string,
 		}
 		// allow_other is required because the mount is established by an
 		// unprivileged helper and traversed by root-run containerd. It needs
-		// user_allow_other in /etc/fuse.conf, which `kanea init` sets up.
+		// user_allow_other in /etc/fuse.conf, which `kanea install` sets up
+		// (internal/provision.SetupFUSE) and `kanea doctor` verifies.
 		opts = append(opts, "allow_other")
 		return "s3fs", []string{req.Resource.Bucket, req.Target, "-o", strings.Join(opts, ",")}, cleanup, nil
 	}
@@ -124,6 +155,21 @@ func (m *Manager) s3Command(ctx context.Context, req Request) (string, []string,
 		"--profile", awsProfile,
 		"--allow-other",
 		"--read-only",
+	}
+	// mountpoint-s3 takes flags rather than -o k=v, which is also why
+	// Resource.Options is not passed through on this branch: there is no
+	// mechanical mapping from an option string to a flag set. A typed field is
+	// the only way ownership can reach this driver at all.
+	if req.UID != nil {
+		args = append(args, "--uid", strconv.FormatUint(uint64(*req.UID), 10))
+	}
+	if req.GID != nil {
+		args = append(args, "--gid", strconv.FormatUint(uint64(*req.GID), 10))
+	}
+	if req.Mode != nil {
+		mode := fmt.Sprintf("0%o", *req.Mode)
+		args = append(args, "--dir-mode", mode,
+			"--file-mode", fmt.Sprintf("0%o", *req.Mode&^0o111))
 	}
 	if req.Resource.Endpoint != "" {
 		args = append(args, "--endpoint-url", req.Resource.Endpoint, "--force-path-style")

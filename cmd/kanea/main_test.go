@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/reconciler"
 )
 
@@ -210,5 +211,133 @@ func TestBlockedOnIgnoresZeroCountAndMissingDependencies(t *testing.T) {
 
 	if got := blockedOn(api, services, map[string]*tally{}); len(got) != 0 {
 		t.Fatalf("blockedOn = %v, want nothing blocking", got)
+	}
+}
+
+// PRD §6.2 R23–R24, end to end: HCL text through toDesired to the alloc spec
+// the runtime is handed. Each layer has its own test; this is the one that
+// would catch a field that is carried correctly everywhere and dropped at a
+// seam — which is where a chain this long actually breaks.
+func TestUserAndVolumeOwnershipSurviveConversion(t *testing.T) {
+	src := `
+spec_version = 1
+project "shop" {}
+storage "local-ssd" { type = "local" }
+service "db" {
+  project = "shop"
+  task "pg" {
+    image = "postgres:17"
+    user {
+      uid    = 999
+      gid    = 998
+      groups = [1000]
+    }
+  }
+  volume "data" {
+    storage    = "local-ssd"
+    mount_path = "/var/lib/postgresql/data"
+  }
+  volume "shared" {
+    storage    = "local-ssd"
+    mount_path = "/shared"
+    uid        = 0
+    mode       = "0770"
+  }
+}
+`
+	spec, diags := jobspec.ParseSource(jobspec.Options{}, "test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse:\n%s", jobspec.FormatDiagnostics(diags))
+	}
+	all, err := toDesired(spec)
+	if err != nil {
+		t.Fatalf("toDesired: %v", err)
+	}
+	d := all[0]
+
+	if d.User == nil || d.User.UID != 999 || d.User.GID != 998 {
+		t.Fatalf("desired user = %+v, want 999:998", d.User)
+	}
+	if len(d.User.AdditionalGIDs) != 1 || d.User.AdditionalGIDs[0] != 1000 {
+		t.Errorf("additional gids = %v, want [1000]", d.User.AdditionalGIDs)
+	}
+
+	// Inherited from the task, with the default mode.
+	data := d.Volumes[0]
+	if data.UID == nil || *data.UID != 999 || data.GID == nil || *data.GID != 998 {
+		t.Errorf("data volume owner = %v:%v, want the task's 999:998", data.UID, data.GID)
+	}
+	if data.Mode == nil || *data.Mode != 0o700 {
+		t.Errorf("data volume mode = %v, want 0700", data.Mode)
+	}
+
+	// Declared: uid 0 is root asked for on purpose, and the undeclared gid
+	// still inherits rather than becoming 0.
+	shared := d.Volumes[1]
+	if shared.UID == nil || *shared.UID != 0 {
+		t.Errorf("shared volume uid = %v, want an explicit 0", shared.UID)
+	}
+	if shared.GID == nil || *shared.GID != 998 {
+		t.Errorf("shared volume gid = %v, want the inherited 998", shared.GID)
+	}
+	if shared.Mode == nil || *shared.Mode != 0o770 {
+		t.Errorf("shared volume mode = %v, want 0770", shared.Mode)
+	}
+
+	// And through to what the runtime is handed.
+	alloc := reconciler.AllocSpecFor(d, 0, t.TempDir(), t.TempDir())
+	if alloc.User == nil || alloc.User.UID != 999 || alloc.User.GID != 998 {
+		t.Fatalf("alloc user = %+v, want 999:998", alloc.User)
+	}
+	if err := alloc.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+}
+
+// The two refusals, with the positions R1 requires. A diagnostic without a
+// file and line is what makes a spec error an unsolvable one.
+func TestOwnershipRefusalsCarryPositions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		storage string
+		wantErr string
+	}{
+		{
+			name:    "host",
+			storage: "storage \"vol\" {\n  type = \"host\"\n  path = \"/srv/data\"\n}",
+			wantErr: "the operator already owns",
+		},
+		{
+			name:    "nfs",
+			storage: "storage \"vol\" {\n  type   = \"nfs\"\n  server = \"10.0.0.5\"\n  export = \"/e\"\n}",
+			wantErr: "no uid= or gid= mount option",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "spec_version = 1\nproject \"shop\" {}\n" + tc.storage + `
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+  volume "d" {
+    storage    = "vol"
+    mount_path = "/d"
+    uid        = 999
+  }
+}
+`
+			_, diags := jobspec.ParseSource(jobspec.Options{}, "shop.hcl", []byte(src))
+			if !diags.HasErrors() {
+				t.Fatal("expected a refusal, got none")
+			}
+			out := jobspec.FormatDiagnostics(diags)
+			if !strings.Contains(out, tc.wantErr) {
+				t.Errorf("diagnostics = %q, want %q", out, tc.wantErr)
+			}
+			// file:line,col — the position, not just the complaint.
+			if !strings.Contains(out, "shop.hcl:") {
+				t.Errorf("diagnostics = %q, want a file and line", out)
+			}
+			t.Logf("%s", out)
+		})
 	}
 }

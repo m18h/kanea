@@ -543,3 +543,98 @@ func TestSpecSetsAllocHostname(t *testing.T) {
 		t.Errorf("Hostname = %q, want the alloc id %q", s.Hostname, alloc.ID)
 	}
 }
+
+// PRD §6.2 R23: the declared uid/gid is what the workload runs as.
+
+func TestUserOverridesTheImage(t *testing.T) {
+	alloc := validAlloc()
+	alloc.User = &User{UID: 999, GID: 998, AdditionalGIDs: []uint32{1000, 2000}}
+
+	// Stand in for what oci.WithImageConfig leaves behind: this option list is
+	// appended after it at container creation, so the image's USER is already
+	// in Process.User by the time these run. Overriding it is the whole point,
+	// and a test starting from a zero User would pass without the override.
+	s := &oci.Spec{
+		Version: specs.Version,
+		Process: &specs.Process{
+			Args: []string{"/bin/sh"},
+			User: specs.User{UID: 101, GID: 101},
+		},
+		Root:  &specs.Root{Path: "rootfs"},
+		Linux: &specs.Linux{},
+	}
+	for i, opt := range specOpts(alloc) {
+		if err := opt(context.Background(), nil, nil, s); err != nil {
+			t.Fatalf("spec option %d: %v", i, err)
+		}
+	}
+
+	if s.Process.User.UID != 999 || s.Process.User.GID != 998 {
+		t.Errorf("user = %d:%d, want 999:998 — the image's own USER won",
+			s.Process.User.UID, s.Process.User.GID)
+	}
+	if len(s.Process.User.AdditionalGids) != 2 ||
+		s.Process.User.AdditionalGids[0] != 1000 || s.Process.User.AdditionalGids[1] != 2000 {
+		t.Errorf("additional gids = %v, want [1000 2000]", s.Process.User.AdditionalGids)
+	}
+}
+
+// A nil user is not a request to run as root. Every spec written before R23
+// means "the image decides", and reading it as 0:0 would silently promote every
+// workload on the node to root on upgrade.
+func TestNoUserLeavesTheImagesChoiceAlone(t *testing.T) {
+	s := &oci.Spec{
+		Version: specs.Version,
+		Process: &specs.Process{
+			Args: []string{"/bin/sh"},
+			User: specs.User{UID: 101, GID: 101},
+		},
+		Root:  &specs.Root{Path: "rootfs"},
+		Linux: &specs.Linux{},
+	}
+	for i, opt := range specOpts(validAlloc()) {
+		if err := opt(context.Background(), nil, nil, s); err != nil {
+			t.Fatalf("spec option %d: %v", i, err)
+		}
+	}
+	if s.Process.User.UID != 101 || s.Process.User.GID != 101 {
+		t.Errorf("user = %d:%d, want the image's 101:101 untouched",
+			s.Process.User.UID, s.Process.User.GID)
+	}
+}
+
+// A non-root user does not weaken the R13 defaults. It is what makes most of
+// them unnecessary, which is a different claim.
+func TestUserKeepsTheHardeningDefaults(t *testing.T) {
+	alloc := validAlloc()
+	alloc.User = &User{UID: 999, GID: 999}
+	s := buildSpec(t, alloc)
+
+	if !s.Process.NoNewPrivileges {
+		t.Error("no-new-privileges is off for a non-root workload")
+	}
+	caps := s.Process.Capabilities
+	if caps == nil || len(caps.Bounding) != 0 || len(caps.Effective) != 0 {
+		t.Errorf("capabilities = %+v, want everything still dropped", caps)
+	}
+}
+
+func TestUserRejectsTheUnchangedSentinel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		user *User
+	}{
+		{"uid", &User{UID: invalidID, GID: 999}},
+		{"gid", &User{UID: 999, GID: invalidID}},
+		{"supplementary group", &User{UID: 999, GID: 999, AdditionalGIDs: []uint32{invalidID}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			alloc := validAlloc()
+			alloc.User = tc.user
+			err := alloc.Validate()
+			if err == nil || !strings.Contains(err.Error(), "unchanged") {
+				t.Errorf("Validate() = %v, want a complaint about the sentinel", err)
+			}
+		})
+	}
+}

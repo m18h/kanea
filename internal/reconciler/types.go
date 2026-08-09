@@ -61,6 +61,11 @@ type Desired struct {
 	Capabilities []string
 	// Env is the fully resolved environment for each alloc.
 	Env map[string]string
+	// User is the numeric identity the workload runs as (jobspec R23). Nil
+	// means the image's own USER stands — the pre-R23 meaning of every record
+	// already in a Store, which is why it is a pointer and why SpecHash omits
+	// it when unset.
+	User *runtime.User `json:"user,omitempty"`
 	// Resources are the mandatory per-alloc limits.
 	Resources runtime.Resources
 	// Volumes are the service's declared volumes. Host paths are resolved
@@ -416,6 +421,18 @@ type Volume struct {
 	MountPath string
 	// ReadOnly mounts it read-only.
 	ReadOnly bool
+	// UID, GID and Mode are the volume's ownership (jobspec R24), already
+	// resolved against the task's user. All nil means "leave it alone", which
+	// is every volume of every spec written before R24.
+	//
+	// The json tags matter and the pointers matter. Volume is hashed whole by
+	// SpecHash, the fields above it carry no tags and marshal under their Go
+	// names, and these three are omitted entirely when nil — so a record that
+	// predates this feature hashes exactly as it did before, and upgrading
+	// kanead does not roll every alloc on the node.
+	UID  *uint32 `json:"uid,omitempty"`
+	GID  *uint32 `json:"gid,omitempty"`
+	Mode *uint32 `json:"mode,omitempty"`
 	// resolvedHostPath is the allowlist-checked directory for a host volume,
 	// filled in by the reconciler just before the alloc is created. It is
 	// unexported and untagged on purpose: it is a node-local fact, so it must
@@ -426,6 +443,9 @@ type Volume struct {
 // HostPath returns the resolved directory for a host volume, if one has been
 // checked against the allowlist.
 func (v Volume) HostPath() string { return v.resolvedHostPath }
+
+// Owned reports whether ownership is to be applied to this volume.
+func (v Volume) Owned() bool { return v.UID != nil || v.GID != nil || v.Mode != nil }
 
 // DeviceRequest asks for a host device by grant name (jobspec R17).
 //

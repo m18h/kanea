@@ -18,6 +18,9 @@ import (
 // EINVAL (M0 spike ①). Catching it here turns that into a clear error.
 const MinAllocIDLength = 5
 
+// invalidID is (uid_t)-1, which is a sentinel rather than a user (PRD §6.2 R23).
+const invalidID uint32 = 1<<32 - 1
+
 // DefaultPidsLimit contains fork bombs when the caller does not set one.
 // PRD §5.2.11 requires a pids cap on every alloc, not just a memory cap.
 const DefaultPidsLimit int64 = 256
@@ -45,6 +48,18 @@ func (s AllocSpec) Validate() error {
 	case s.Resources.MemoryBytes <= 0:
 		return fmt.Errorf("%w: alloc %s has no memory limit; no alloc may run unlimited (PRD §6.2 R11)",
 			ErrInvalidSpec, s.ID)
+	}
+	if s.User != nil {
+		// (uid_t)-1 is the kernel's "leave this unchanged" sentinel in chown(2)
+		// and setresuid(2), not a user. A spec that reached here holding it
+		// would produce a container running as whatever the image said, which
+		// is the opposite of what asking for a uid means.
+		for _, id := range append([]uint32{s.User.UID, s.User.GID}, s.User.AdditionalGIDs...) {
+			if id == invalidID {
+				return fmt.Errorf("%w: alloc %s declares id %d, which the kernel reserves to mean "+
+					"\"unchanged\"", ErrInvalidSpec, s.ID, id)
+			}
+		}
 	}
 	for _, m := range s.Mounts {
 		if !filepath.IsAbs(m.Source) || !filepath.IsAbs(m.Destination) {
@@ -129,6 +144,23 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 		}
 		// No setuid escalation, even if the image ships setuid binaries.
 		s.Process.NoNewPrivileges = true
+
+		// Run as the declared uid/gid (PRD §6.2 R23), overriding the image's
+		// USER — this runs after oci.WithImageConfig, which is what makes the
+		// override work. A nil user leaves the image's own choice alone; it is
+		// not a request to run as root.
+		//
+		// Set directly rather than through oci.WithUser or oci.WithUserID:
+		// both read the container's /etc/passwd to fill in the group, and a
+		// file inside the image deciding which gid the control plane runs a
+		// process as is the thing R23 refuses. The consequence is that an
+		// unlisted gid stays exactly what the spec said, which is the point.
+		if spec.User != nil {
+			s.Process.User.UID = spec.User.UID
+			s.Process.User.GID = spec.User.GID
+			s.Process.User.AdditionalGids = append(
+				[]uint32(nil), spec.User.AdditionalGIDs...)
+		}
 
 		if spec.ReadOnlyRootfs {
 			s.Root = &specs.Root{Path: rootPath(s), Readonly: true}

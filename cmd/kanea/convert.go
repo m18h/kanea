@@ -59,6 +59,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			// The pull credential is a reference the node resolves, never a
 			// value: a resolved credential here would travel into the Store.
 			RegistryAuthRef: svc.Task.RegistryAuthRef,
+			User:            convertUser(svc.Task.User),
 			Resources: runtime.Resources{
 				CPUMillis:   svc.Task.Resources.CPU * 1000 / NominalCoreMHz,
 				MemoryBytes: int64(svc.Task.Resources.Memory) << 20,
@@ -107,9 +108,18 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				return nil, fmt.Errorf("service %s/%s: volume %q references undeclared storage %q",
 					svc.Project, svc.Name, v.Name, v.Storage)
 			}
+			mode, err := convertMode(v.Mode)
+			if err != nil {
+				return nil, fmt.Errorf("service %s/%s: volume %q: %w",
+					svc.Project, svc.Name, v.Name, err)
+			}
 			desired.Volumes = append(desired.Volumes, reconciler.Volume{
 				Name: v.Name, Storage: v.Storage, MountPath: v.MountPath, ReadOnly: v.ReadOnly,
 				Resource: storageResource(st),
+				// Ownership arrives already resolved against task.user: the
+				// inheritance is spec-internal, so jobspec did it at conversion
+				// and `kanea plan` shows what will actually be applied (R24).
+				UID: convertID(v.UID), GID: convertID(v.GID), Mode: mode,
 			})
 		}
 		// Grants cross as names. There is nothing to resolve here and nowhere to
@@ -320,6 +330,47 @@ func convertHealthCheck(svc *jobspec.Service) *reconciler.HealthCheck {
 		}
 	}
 	return out
+}
+
+// convertUser narrows a validated user block to the runtime's numeric form
+// (R23).
+//
+// jobspec carries these as ints so that validateUser can report an
+// out-of-range value as written; this is where they become the uint32s the OCI
+// spec uses, after validation has refused the ones that would not survive it.
+// It is the same boundary Resources is narrowed at, a few lines up.
+func convertUser(u *jobspec.User) *runtime.User {
+	if u == nil {
+		return nil
+	}
+	out := &runtime.User{UID: uint32(u.UID), GID: uint32(u.GID)} // #nosec G115 — bounded by validateUser
+	for _, g := range u.Groups {
+		out.AdditionalGIDs = append(out.AdditionalGIDs, uint32(g)) // #nosec G115 — same bound
+	}
+	return out
+}
+
+// convertID narrows one validated uid or gid, preserving "undeclared".
+func convertID(id *int) *uint32 {
+	if id == nil {
+		return nil
+	}
+	v := uint32(*id) // #nosec G115 — bounded by validateVolumeOwnership
+	return &v
+}
+
+// convertMode parses a validated volume mode. The error is unreachable after
+// validation and returned rather than dropped, because "unreachable" is a claim
+// about a caller and this function has more than one.
+func convertMode(mode *string) (*uint32, error) {
+	if mode == nil {
+		return nil, nil
+	}
+	v, err := jobspec.ParseMode(*mode)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 // storageResource converts a declared storage resource into the form the mount

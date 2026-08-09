@@ -870,15 +870,62 @@ func (r *Reconciler) ensureVolumes(ctx context.Context, d Desired, index int) er
 			return fmt.Errorf("volume %s: %w", v.Name, err)
 		}
 		if !v.Resource.NeedsMount() {
+			// A local volume is a directory Kanea owns, so ownership (R24) is
+			// a chown on it. For a mounted volume this directory is only the
+			// mount point and vanishes underneath the mount, so the ownership
+			// travels in the mount command instead.
+			if err := applyOwnership(path, *v); err != nil {
+				return fmt.Errorf("volume %s: %w", v.Name, err)
+			}
 			continue
 		}
 		if r.mounts == nil {
 			return fmt.Errorf("volume %s needs a %s mount but no mount manager is configured",
 				v.Name, v.Resource.Type)
 		}
-		req := storage.Request{Resource: v.Resource, Target: path, ReadOnly: v.ReadOnly}
+		req := storage.Request{
+			Resource: v.Resource, Target: path, ReadOnly: v.ReadOnly,
+			UID: v.UID, GID: v.GID, Mode: v.Mode,
+		}
 		if err := r.mounts.Ensure(ctx, req); err != nil {
 			return fmt.Errorf("volume %s: %w", v.Name, err)
+		}
+	}
+	return nil
+}
+
+// applyOwnership chowns and chmods a local volume's directory (jobspec R24).
+//
+// The top level only, and reapplied at every alloc start. Both halves of that
+// are deliberate: it is O(1) in the alloc start path and idempotent, where a
+// recursive walk would be neither and would additionally overwrite ownership a
+// workload had set on purpose. A stock image writing into the directory
+// inherits the ownership anyway, which is the case this serves.
+//
+// A failure fails the alloc, like a mount failure (PRD §8). A workload started
+// against a directory it cannot write reports healthy and does the wrong thing
+// for as long as nobody looks.
+func applyOwnership(path string, v Volume) error {
+	if !v.Owned() {
+		return nil
+	}
+	// -1 leaves that half unchanged, which is chown(2)'s own convention and
+	// what an operator who set only one of the two is asking for.
+	uid, gid := -1, -1
+	if v.UID != nil {
+		uid = int(*v.UID)
+	}
+	if v.GID != nil {
+		gid = int(*v.GID)
+	}
+	if uid >= 0 || gid >= 0 {
+		if err := os.Chown(path, uid, gid); err != nil {
+			return fmt.Errorf("chown %s to %d:%d: %w", path, uid, gid, err)
+		}
+	}
+	if v.Mode != nil {
+		if err := os.Chmod(path, os.FileMode(*v.Mode)); err != nil {
+			return fmt.Errorf("chmod %s to %04o: %w", path, *v.Mode, err)
 		}
 	}
 	return nil

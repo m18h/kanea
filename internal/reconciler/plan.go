@@ -218,6 +218,12 @@ func SpecHash(d Desired) string {
 		Command      []string          `json:"command,omitempty"`
 		Capabilities []string          `json:"capabilities,omitempty"`
 		Env          map[string]string `json:"env,omitempty"`
+		// The uid a process runs as is fixed when the container is created, so
+		// changing it has to roll the allocs. It is a pointer with omitempty
+		// for the same reason Volume's ownership fields are: a service that
+		// never declared a user must hash exactly as it did before R23
+		// existed, or upgrading kanead would redeploy the whole node.
+		User           *runtime.User     `json:"user,omitempty"`
 		Resources      runtime.Resources `json:"resources"`
 		Volumes        []Volume          `json:"volumes,omitempty"`
 		Ports          []Port            `json:"ports,omitempty"`
@@ -235,7 +241,7 @@ func SpecHash(d Desired) string {
 	}{
 		Image: d.Image, PinnedImage: d.PinnedImage,
 		Command: d.Command, Capabilities: d.Capabilities,
-		Env: d.Env, Resources: d.Resources, Volumes: d.Volumes,
+		Env: d.Env, User: d.User, Resources: d.Resources, Volumes: d.Volumes,
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
 		Devices: d.Devices, Sockets: d.Sockets,
 		Generation: d.Generation,
@@ -439,6 +445,7 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 		Command:        d.Command,
 		Capabilities:   d.Capabilities,
 		Env:            d.Env,
+		User:           d.User,
 		Resources:      d.Resources,
 		ReadOnlyRootfs: d.ReadOnlyRootfs,
 		CgroupPath:     runtime.CgroupPath(runtime.WorkloadSlice, id),

@@ -36,6 +36,10 @@ func world(d reconciler.Desired, hash string) reconciler.World {
 
 func TestSpecHashIgnoresWhatDoesNotNeedANewContainer(t *testing.T) {
 	base := desired(3)
+	// A volume so that the ownership mutator below changes ownership and
+	// nothing else. Adding a volume is its own change, and asserting on a
+	// mutator that does both would pass without R24 being hashed at all.
+	base.Volumes = []reconciler.Volume{{Name: "data", MountPath: "/data"}}
 
 	// Things that are applied to a running alloc, or to something other than
 	// the alloc, must not roll it. A service that changes its replica bounds is
@@ -58,6 +62,29 @@ func TestSpecHashIgnoresWhatDoesNotNeedANewContainer(t *testing.T) {
 		"command":   func(d *reconciler.Desired) { d.Command = []string{"/bin/sh", "-c", "sleep 1"} },
 		"ports":     func(d *reconciler.Desired) { d.Ports = []reconciler.Port{{Name: "http", Container: 8080}} },
 		"rootfs":    func(d *reconciler.Desired) { d.ReadOnlyRootfs = true },
+		// A device or socket is wired in when the container is created, so
+		// granting or withdrawing one has to produce new containers.
+		"devices": func(d *reconciler.Desired) {
+			d.Devices = []reconciler.DeviceRequest{{Name: "dri", Grant: "gpu"}}
+		},
+		"sockets": func(d *reconciler.Desired) {
+			d.Sockets = []reconciler.SocketRequest{
+				{Name: "rt", Grant: "containerd", MountPath: "/var/run/docker.sock"},
+			}
+		},
+		// The uid a process runs as is fixed when the container is created
+		// (R23), and so is the ownership its volumes are mounted with (R24).
+		"user": func(d *reconciler.Desired) {
+			d.User = &runtime.User{UID: 999, GID: 999}
+		},
+		"volume owner": func(d *reconciler.Desired) {
+			uid := uint32(999)
+			d.Volumes = []reconciler.Volume{{Name: "data", MountPath: "/data", UID: &uid}}
+		},
+		"volume mode": func(d *reconciler.Desired) {
+			mode := uint32(0o700)
+			d.Volumes = []reconciler.Volume{{Name: "data", MountPath: "/data", Mode: &mode}}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := base
@@ -275,5 +302,50 @@ func TestBackoffIsNotWaitedOutAfterADeploy(t *testing.T) {
 
 	if got := reconciler.Plan(w); len(got) != 1 || got[0].Kind != reconciler.ActionCreate {
 		t.Fatalf("the new spec waited out the old one's backoff: %s", kinds(got))
+	}
+}
+
+// A service that names no user and no volume ownership must hash to exactly
+// what it hashed before R23/R24 existed.
+//
+// This is the upgrade-safety property, and it is not a detail. SpecHash decides
+// whether an alloc is replaced, so a field that serialised as a zero value
+// instead of being omitted would change the hash of every service on the node —
+// and upgrading kanead would silently roll every container on it. The literal
+// below is the pre-feature digest of this exact Desired; if a change here moves
+// it, that is the question being asked, and the answer is almost always no.
+func TestSpecHashIsUnchangedForASpecWithNoUserOrOwnership(t *testing.T) {
+	d := desired(3)
+	d.Volumes = []reconciler.Volume{{Name: "data", MountPath: "/data"}}
+
+	// Verified against the pre-R23 material struct, whose JSON was:
+	//   {"image":"nginx:1.27-alpine","resources":{...},"volumes":[{"Name":"data",
+	//    "Storage":"","Resource":{...},"MountPath":"/data","ReadOnly":false}]}
+	// The new fields are pointers with omitempty, so nil drops them from that
+	// object entirely and the bytes are unchanged.
+	const beforeR23 = "df0877104f33e69e9cebc6f3d05a5975"
+	if got := reconciler.SpecHash(d); got != beforeR23 {
+		t.Errorf("spec hash = %s, want %s\n"+
+			"A spec that declares no user and no volume ownership must hash as it did "+
+			"before those fields existed. If it does not, upgrading kanead rolls every "+
+			"alloc on the node.", got, beforeR23)
+	}
+}
+
+// The two halves of an ownership pair are independent: setting only a gid must
+// not read as "uid 0". chown(2) takes -1 for the half you are not changing, and
+// the spec's nil means the same thing.
+func TestVolumeOwnershipHalvesAreIndependent(t *testing.T) {
+	uid, gid := uint32(999), uint32(999)
+	onlyUID := desired(1)
+	onlyUID.Volumes = []reconciler.Volume{{Name: "d", MountPath: "/d", UID: &uid}}
+	onlyGID := desired(1)
+	onlyGID.Volumes = []reconciler.Volume{{Name: "d", MountPath: "/d", GID: &gid}}
+
+	if reconciler.SpecHash(onlyUID) == reconciler.SpecHash(onlyGID) {
+		t.Error("a volume owned by uid 999 hashes the same as one owned by gid 999")
+	}
+	if !onlyUID.Volumes[0].Owned() || !onlyGID.Volumes[0].Owned() {
+		t.Error("a volume with one half of an ownership pair does not report as owned")
 	}
 }

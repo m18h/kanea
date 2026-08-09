@@ -1825,3 +1825,336 @@ service "web" {
 		t.Errorf("update = %+v, want the declared values", *up)
 	}
 }
+
+// R23/R24: who a container runs as, and who owns its data.
+
+func TestUserAndVolumeOwnershipValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		user    string
+		storage string
+		volume  string
+		wantErr string
+	}{
+		{
+			name: "a uid and gid",
+			user: "user {\n  uid = 999\n  gid = 999\n}",
+		},
+		{
+			name: "supplementary groups",
+			user: "user {\n  uid = 999\n  gid = 999\n  groups = [1000, 2000]\n}",
+		},
+		{
+			name: "root asked for explicitly",
+			user: "user {\n  uid = 0\n  gid = 0\n}",
+		},
+		{
+			name:    "a negative uid",
+			user:    "user {\n  uid = -1\n}",
+			wantErr: "must not be negative",
+		},
+		{
+			name:    "a uid past the end of uid_t",
+			user:    "user {\n  uid = 4294967296\n}",
+			wantErr: "largest allowed",
+		},
+		// (uid_t)-1 is chown(2)'s "leave unchanged" sentinel, so a workload
+		// asking to run as it is asking for something that is not a user.
+		{
+			name:    "the unchanged sentinel",
+			user:    "user {\n  gid = 4294967295\n}",
+			wantErr: "largest allowed",
+		},
+		{
+			name:    "a duplicated supplementary group",
+			user:    "user {\n  uid = 999\n  groups = [1000, 1000]\n}",
+			wantErr: "Duplicate supplementary group",
+		},
+		{
+			name:    "a negative supplementary group",
+			user:    "user {\n  uid = 999\n  groups = [-5]\n}",
+			wantErr: "must not be negative",
+		},
+		// There is no field for a username. This is the property R23 rests on.
+		{
+			name:    "a username",
+			user:    "user {\n  name = \"postgres\"\n}",
+			wantErr: "name",
+		},
+		{
+			name:   "an explicit volume mode",
+			volume: "volume \"d\" {\n  storage = \"local-ssd\"\n  mount_path = \"/d\"\n  mode = \"0770\"\n}",
+		},
+		{
+			name:   "a mode without its leading zero",
+			volume: "volume \"d\" {\n  storage = \"local-ssd\"\n  mount_path = \"/d\"\n  mode = \"770\"\n}",
+		},
+		{
+			name:    "a mode that is not octal",
+			volume:  "volume \"d\" {\n  storage = \"local-ssd\"\n  mount_path = \"/d\"\n  mode = \"0778\"\n}",
+			wantErr: "Invalid volume mode",
+		},
+		{
+			name:    "a mode setting the setuid bit",
+			volume:  "volume \"d\" {\n  storage = \"local-ssd\"\n  mount_path = \"/d\"\n  mode = \"4755\"\n}",
+			wantErr: "above 0777",
+		},
+		{
+			name:    "a volume uid past the end of uid_t",
+			volume:  "volume \"d\" {\n  storage = \"local-ssd\"\n  mount_path = \"/d\"\n  uid = 4294967296\n}",
+			wantErr: "Invalid volume uid",
+		},
+		// A host directory is the operator's: R15 says Kanea never creates it
+		// and never deletes it, and chowning it is the same trespass.
+		{
+			name:    "ownership on a host volume",
+			storage: "storage \"h\" {\n  type = \"host\"\n  path = \"/srv/data\"\n}",
+			volume:  "volume \"d\" {\n  storage = \"h\"\n  mount_path = \"/d\"\n  uid = 999\n}",
+			wantErr: "cannot own a volume",
+		},
+		// The kernel NFS client has no uid= at all; ownership is the server's.
+		{
+			name:    "ownership on an nfs volume",
+			storage: "storage \"n\" {\n  type = \"nfs\"\n  server = \"10.0.0.5\"\n  export = \"/e\"\n}",
+			volume:  "volume \"d\" {\n  storage = \"n\"\n  mount_path = \"/d\"\n  gid = 999\n}",
+			wantErr: "no uid= or gid= mount option",
+		},
+		// Inheritance stops at a driver that cannot carry ownership. Adding a
+		// user block to a task must not break the NFS volume it happens to
+		// have — there would be no way to say "not that one" — and the task's
+		// user is a statement about the process, not about the NFS server.
+		{
+			name:    "an nfs volume in a service whose task names a user",
+			user:    "user {\n  uid = 999\n  gid = 999\n}",
+			storage: "storage \"n\" {\n  type = \"nfs\"\n  server = \"10.0.0.5\"\n  export = \"/e\"\n}",
+			volume:  "volume \"d\" {\n  storage = \"n\"\n  mount_path = \"/d\"\n}",
+		},
+		{
+			name:    "a host volume in a service whose task names a user",
+			user:    "user {\n  uid = 999\n  gid = 999\n}",
+			storage: "storage \"h\" {\n  type = \"host\"\n  path = \"/srv/data\"\n}",
+			volume:  "volume \"d\" {\n  storage = \"h\"\n  mount_path = \"/d\"\n}",
+		},
+		// smb and s3 take ownership at mount time, so they are accepted.
+		{
+			name:    "ownership on an smb volume",
+			storage: "storage \"s\" {\n  type = \"smb\"\n  server = \"10.0.0.5\"\n  share = \"x\"\n}",
+			volume:  "volume \"d\" {\n  storage = \"s\"\n  mount_path = \"/d\"\n  uid = 999\n}",
+		},
+		{
+			name:    "ownership on an s3 volume",
+			storage: "storage \"b\" {\n  type = \"s3\"\n  bucket = \"x\"\n}",
+			volume:  "volume \"d\" {\n  storage = \"b\"\n  mount_path = \"/d\"\n  uid = 999\n}",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+spec_version = 1
+project "shop" {}
+storage "local-ssd" {
+  type = "local"
+}
+` + tc.storage + `
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    ` + tc.user + `
+  }
+  ` + tc.volume + `
+}
+`
+			if tc.wantErr == "" {
+				parse(t, src)
+				return
+			}
+			if out := parseErr(t, src); !strings.Contains(out, tc.wantErr) {
+				t.Errorf("diagnostics = %q, want %q", out, tc.wantErr)
+			}
+		})
+	}
+}
+
+// A volume with no ownership of its own takes the task's. Without this the
+// common spec carries the same two numbers twice, and forgetting the second
+// copy fails at alloc start rather than at plan — the exact failure R23/R24
+// exist to remove.
+func TestVolumeOwnershipInheritsTheTaskUser(t *testing.T) {
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+storage "local-ssd" { type = "local" }
+service "db" {
+  project = "shop"
+  task "pg" {
+    image = "postgres:17"
+    user {
+      uid = 999
+      gid = 999
+    }
+  }
+  volume "data" {
+    storage    = "local-ssd"
+    mount_path = "/var/lib/postgresql/data"
+  }
+  volume "shared" {
+    storage    = "local-ssd"
+    mount_path = "/shared"
+    uid        = 0
+    gid        = 999
+    mode       = "0770"
+  }
+}
+`)
+	svc := spec.Services[0]
+	if u := svc.Task.User; u == nil || u.UID != 999 || u.GID != 999 {
+		t.Fatalf("task user = %+v, want 999:999", svc.Task.User)
+	}
+
+	data := svc.Volumes[0]
+	if data.UID == nil || *data.UID != 999 || data.GID == nil || *data.GID != 999 {
+		t.Errorf("inherited owner = %v:%v, want 999:999", deref(data.UID), deref(data.GID))
+	}
+	// 0700 rather than the 0750 an unowned volume is created with, and it is
+	// also the only mode postgres will start on.
+	if data.Mode == nil || *data.Mode != "0700" {
+		t.Errorf("inherited mode = %v, want 0700", data.Mode)
+	}
+
+	// An explicit uid of 0 is a request for root, not an absent field.
+	shared := svc.Volumes[1]
+	if shared.UID == nil || *shared.UID != 0 {
+		t.Errorf("explicit uid = %v, want 0", deref(shared.UID))
+	}
+	if shared.GID == nil || *shared.GID != 999 || shared.Mode == nil || *shared.Mode != "0770" {
+		t.Errorf("explicit gid/mode = %v/%v, want 999/0770", deref(shared.GID), shared.Mode)
+	}
+}
+
+// Inheritance stops at a driver that cannot carry ownership, and the volume is
+// left unowned rather than refused.
+//
+// This is what keeps R24 additive. If inheritance applied and then failed
+// validation, adding a `user` block to a task would break every host and NFS
+// volume that service happened to have, with no field to opt out of a default
+// nobody typed. A volume that declares ownership on one of these is still an
+// error — that is a claim the spec made.
+func TestOwnershipDoesNotInheritIntoADriverThatCannotCarryIt(t *testing.T) {
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+storage "local-ssd" { type = "local" }
+storage "shared-nfs" {
+  type   = "nfs"
+  server = "10.0.0.5"
+  export = "/exports/shop"
+}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    user {
+      uid = 999
+      gid = 999
+    }
+  }
+  volume "local" {
+    storage    = "local-ssd"
+    mount_path = "/local"
+  }
+  volume "remote" {
+    storage    = "shared-nfs"
+    mount_path = "/remote"
+  }
+}
+`)
+	svc := spec.Services[0]
+	if v := svc.Volumes[0]; v.UID == nil || *v.UID != 999 {
+		t.Errorf("local volume uid = %v, want the inherited 999", deref(v.UID))
+	}
+	if v := svc.Volumes[1]; v.Owned() {
+		t.Errorf("nfs volume owned = %v:%v mode %v, want none — inheritance must stop here",
+			deref(v.UID), deref(v.GID), v.Mode)
+	}
+}
+
+// A task with no user block leaves its volumes exactly as every spec written
+// before R24 leaves them. This is what makes the feature additive: nothing
+// about an existing spec changes when the binary gains it.
+func TestNoUserBlockLeavesVolumesUnowned(t *testing.T) {
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+storage "local-ssd" { type = "local" }
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+  volume "data" {
+    storage    = "local-ssd"
+    mount_path = "/data"
+  }
+}
+`)
+	svc := spec.Services[0]
+	if svc.Task.User != nil {
+		t.Errorf("task user = %+v, want nil", svc.Task.User)
+	}
+	if v := svc.Volumes[0]; v.Owned() {
+		t.Errorf("volume owned = %v:%v mode %v, want none",
+			deref(v.UID), deref(v.GID), v.Mode)
+	}
+}
+
+// A volume may name an owner without the task naming one — a directory owned
+// by a uid the image itself drops to. It still gets the default mode.
+func TestVolumeMayDeclareOwnershipWithoutATaskUser(t *testing.T) {
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+storage "local-ssd" { type = "local" }
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+  volume "data" {
+    storage    = "local-ssd"
+    mount_path = "/data"
+    uid        = 101
+  }
+}
+`)
+	v := spec.Services[0].Volumes[0]
+	if v.UID == nil || *v.UID != 101 {
+		t.Fatalf("uid = %v, want 101", deref(v.UID))
+	}
+	if v.GID != nil {
+		t.Errorf("gid = %v, want nil: an undeclared half is left unchanged", deref(v.GID))
+	}
+	if v.Mode == nil || *v.Mode != "0700" {
+		t.Errorf("mode = %v, want the 0700 default", v.Mode)
+	}
+}
+
+func TestParseMode(t *testing.T) {
+	ok := map[string]uint32{"0700": 0o700, "700": 0o700, "0": 0, "0777": 0o777, "755": 0o755}
+	for in, want := range ok {
+		if got, err := jobspec.ParseMode(in); err != nil || got != want {
+			t.Errorf("ParseMode(%q) = %04o, %v; want %04o", in, got, err, want)
+		}
+	}
+	// "0778" is not octal; "1777" and "4755" set bits above 0777, which are
+	// not permissions on a data directory. "00700" is longer than four digits.
+	for _, in := range []string{"", "0778", "abc", "1777", "4755", "00700", "-1"} {
+		if _, err := jobspec.ParseMode(in); err == nil {
+			t.Errorf("ParseMode(%q) succeeded; want an error", in)
+		}
+	}
+}
+
+func deref(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}

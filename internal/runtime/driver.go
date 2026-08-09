@@ -64,6 +64,10 @@ type AllocSpec struct {
 	// Env is the resolved environment. Secret values are already materialised
 	// by the caller; this package never resolves secret: references.
 	Env map[string]string
+	// User is the numeric identity the workload runs as (PRD §6.2 R23). Nil
+	// leaves the image's own USER directive in force, which is what every spec
+	// written before R23 means — so a nil here must never be read as root.
+	User *User
 	// Resources are mandatory limits (R11).
 	Resources Resources
 	// CgroupPath places the alloc under the workload parent, e.g.
@@ -84,6 +88,21 @@ type AllocSpec struct {
 	ReadOnlyRootfs bool
 	// LogPath receives the task's stdout and stderr.
 	LogPath string
+}
+
+// User is the uid/gid an alloc's process runs as (PRD §6.2 R23).
+//
+// Numeric, and resolved by the caller. This package will not look a name up:
+// doing so means reading /etc/passwd out of the container's rootfs, which lets
+// a container-controlled file decide which uid the control plane runs a process
+// as. It is also why oci.WithUser and oci.WithUserID are not used to apply this
+// — both consult the rootfs even when handed a number.
+type User struct {
+	UID uint32
+	GID uint32
+	// AdditionalGIDs are supplementary groups, for a workload that has to reach
+	// a volume owned by a group it is not the primary member of.
+	AdditionalGIDs []uint32
 }
 
 // Resources are the per-alloc limits. Every field must be positive: PRD §6.2

@@ -1534,3 +1534,139 @@ func TestDeployGivesTheNewSpecItsOwnRestartBudget(t *testing.T) {
 		t.Errorf("the new spec inherited %d restarts; it should start with a clean budget", rec.Restarts)
 	}
 }
+
+// PRD §6.2 R24: a local volume's directory is chowned and chmodded before the
+// alloc that needs it starts.
+
+// TestLocalVolumeOwnershipIsApplied chowns to the caller's own ids, which is
+// the one chown an unprivileged test process is allowed to make. It still
+// exercises the syscall — the interesting failure is not calling it at all.
+func TestLocalVolumeOwnershipIsApplied(t *testing.T) {
+	volumeDir := t.TempDir()
+	h := newHarness(t, func(c *reconciler.Config) { c.VolumeDir = volumeDir })
+
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid()) // #nosec G115 — real ids
+	mode := uint32(0o700)
+	d := desired(1)
+	d.Volumes = []reconciler.Volume{{
+		Name: "data", Storage: "local-ssd", MountPath: "/var/lib/data",
+		UID: &uid, GID: &gid, Mode: &mode,
+	}}
+	h.setDesired(t, d)
+
+	res, err := h.r.Reconcile(context.Background())
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res.Applied != 1 {
+		t.Fatalf("applied = %d failed = %d, want the alloc to start", res.Applied, res.Failed)
+	}
+
+	path := reconciler.VolumePath(volumeDir, d, 0, d.Volumes[0])
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat volume: %v", err)
+	}
+	// 0700 rather than the 0750 MkdirAll creates, and it must survive umask —
+	// MkdirAll honours it, so a mode that was only ever passed to MkdirAll
+	// would come out masked.
+	if got := info.Mode().Perm(); got != os.FileMode(mode) {
+		t.Errorf("volume mode = %04o, want %04o", got, mode)
+	}
+}
+
+// A volume that declares no ownership is left exactly as it was before R24:
+// created by MkdirAll and not touched again.
+func TestUnownedLocalVolumeIsNotChmodded(t *testing.T) {
+	volumeDir := t.TempDir()
+	h := newHarness(t, func(c *reconciler.Config) { c.VolumeDir = volumeDir })
+
+	d := desired(1)
+	d.Volumes = []reconciler.Volume{{Name: "data", Storage: "local-ssd", MountPath: "/var/lib/data"}}
+	h.setDesired(t, d)
+
+	if _, err := h.r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	path := reconciler.VolumePath(volumeDir, d, 0, d.Volumes[0])
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat volume: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o750 {
+		t.Errorf("volume mode = %04o, want the 0750 MkdirAll creates", got)
+	}
+}
+
+// A chown that fails fails the alloc, like a mount that fails (PRD §8). A
+// workload started against a directory it cannot write reports healthy and
+// does the wrong thing for as long as nobody looks.
+func TestVolumeOwnershipFailureFailsTheAlloc(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: chown to an arbitrary uid succeeds")
+	}
+	volumeDir := t.TempDir()
+	h := newHarness(t, func(c *reconciler.Config) { c.VolumeDir = volumeDir })
+
+	// A uid this process cannot chown to. Changing a file's owner needs
+	// CAP_CHOWN; an unprivileged process may not give its files away.
+	other := uint32(os.Getuid() + 1)
+	d := desired(1)
+	d.Volumes = []reconciler.Volume{{
+		Name: "data", Storage: "local-ssd", MountPath: "/var/lib/data", UID: &other,
+	}}
+	h.setDesired(t, d)
+
+	res, err := h.r.Reconcile(context.Background())
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res.Failed != 1 || res.Applied != 0 {
+		t.Fatalf("applied = %d failed = %d, want the alloc to fail", res.Applied, res.Failed)
+	}
+	if _, ok := h.driver.specs[reconciler.AllocID("shop", "web", 0)]; ok {
+		t.Error("the alloc was created despite its volume not being ownable")
+	}
+}
+
+// A host volume is the operator's directory. R15 says Kanea never creates it
+// and never deletes it, and R24 says it never chowns it either — the refusal
+// is at `plan`, and this is the structural half of it.
+func TestHostVolumeIsNeverChowned(t *testing.T) {
+	hostDir := t.TempDir()
+	if err := os.Chmod(hostDir, 0o755); err != nil {
+		t.Fatalf("seed host dir: %v", err)
+	}
+	h := newHarness(t)
+	mounter := &fakeMounter{hostPath: hostDir}
+	r, err := reconciler.New(reconciler.Config{
+		Store: h.store, Driver: h.driver, Network: h.network, Mounts: mounter,
+		Now: func() time.Time { return h.now }, LogDir: t.TempDir(), VolumeDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("new reconciler: %v", err)
+	}
+
+	// Ownership on a host volume cannot be declared — validation refuses it —
+	// so this asserts that a record carrying it anyway still does not touch
+	// the directory.
+	uid, mode := uint32(os.Getuid()), uint32(0o700) // #nosec G115 — real id
+	d := desired(1)
+	d.Volumes = []reconciler.Volume{{
+		Name: "config", Storage: "app-config", MountPath: "/etc/app",
+		Resource: storage.Resource{Name: "app-config", Type: storage.TypeHost, Path: hostDir},
+		UID:      &uid, Mode: &mode,
+	}}
+	h.setDesired(t, d)
+
+	if _, err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	info, err := os.Stat(hostDir)
+	if err != nil {
+		t.Fatalf("stat host dir: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Errorf("host directory mode = %04o, want the operator's 0755 untouched", got)
+	}
+}

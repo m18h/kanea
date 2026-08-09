@@ -200,10 +200,17 @@ service "postgres" {
   task "db" {
     image = "postgres:17@sha256:…"            # digest pinning recommended
 
-    # Stock images routinely chown their data dir and drop to their own user at
-    # startup. Workloads run with ALL capabilities dropped (§14, A05), so those
-    # few must be requested explicitly — and only from the permitted set (R13).
-    capabilities = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID", "CAP_DAC_OVERRIDE"]
+    # Numeric only (R23): a username would be read from the image's own
+    # /etc/passwd, and it would mean a different uid after a rebuild.
+    #
+    # No `capabilities` line. Stock images ask for CAP_CHOWN, CAP_SETUID and
+    # CAP_SETGID so they can chown a root-owned data directory and drop to
+    # their own user at startup — this says both facts up front instead, so
+    # there is nothing left to do at startup and nothing to grant.
+    user {
+      uid = 999
+      gid = 999
+    }
 
     resources {
       cpu    = 1000
@@ -221,6 +228,9 @@ service "postgres" {
   volume "data" {
     storage    = "local-ssd"                  # named storage resource (§8)
     mount_path = "/var/lib/postgresql/data"
+    # uid/gid inherit task.user, and the mode defaults to 0700 (R24) — which is
+    # also the only mode postgres will start on. Declare `uid`, `gid` or `mode`
+    # here to override; `uid = 0` is how you ask for root explicitly.
   }
 }
 

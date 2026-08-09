@@ -637,3 +637,138 @@ func TestProbeDoesNotEraseTheMountFailure(t *testing.T) {
 		t.Errorf("error %v does not carry the original mount failure", err)
 	}
 }
+
+// PRD §6.2 R24: ownership reaches the drivers that can carry it, and the two
+// that cannot refuse rather than mount something that ignores it.
+
+func ptr[T any](v T) *T { return &v }
+
+func TestOwnershipReachesTheMountCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		resource Resource
+		binary   string
+		want     []string
+		absent   []string
+	}{
+		{
+			name:     "cifs takes uid, gid and both modes",
+			resource: Resource{Name: "s", Type: TypeSMB, Server: "10.0.0.9", Share: "media"},
+			binary:   "mount",
+			// cifs has no umask, so the two modes go separately — and a data
+			// file is not executable just because its directory has to be
+			// traversable.
+			want: []string{"uid=999", "gid=998", "dir_mode=0750", "file_mode=0640"},
+		},
+		{
+			name: "s3fs takes uid, gid and an inverted umask",
+			resource: Resource{
+				Name: "b", Type: TypeS3, Bucket: "shop-media", Mode: ModeReadWrite,
+			},
+			binary: "s3fs",
+			// s3fs masks bits off rather than setting them: 0750 is umask 0027.
+			want: []string{"uid=999", "gid=998", "umask=027"},
+		},
+		{
+			name:     "mountpoint-s3 takes flags, not options",
+			resource: Resource{Name: "b", Type: TypeS3, Bucket: "shop-media"},
+			binary:   "mount-s3",
+			want:     []string{"--uid 999", "--gid 998", "--dir-mode 0750", "--file-mode 0640"},
+			// It parses flags, so an -o option string would be a hard error.
+			absent: []string{"-o "},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := newFakeRunner()
+			m := testManager(t, runner, &fakeSecrets{value: "key:secret"})
+
+			err := m.Ensure(t.Context(), Request{
+				Resource: tc.resource,
+				Target:   filepath.Join(t.TempDir(), "vol"),
+				UID:      ptr(uint32(999)),
+				GID:      ptr(uint32(998)),
+				Mode:     ptr(uint32(0o750)),
+			})
+			if err != nil {
+				t.Fatalf("Ensure: %v", err)
+			}
+			joined := strings.Join(runner.lastCommand(tc.binary), " ")
+			for _, want := range tc.want {
+				if !strings.Contains(joined, want) {
+					t.Errorf("%s command %q missing %q", tc.binary, joined, want)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(joined, absent) {
+					t.Errorf("%s command %q unexpectedly contains %q", tc.binary, joined, absent)
+				}
+			}
+		})
+	}
+}
+
+// jobspec refuses these at `plan`, which is where an operator should meet
+// them. This is the backstop for a record that reached the Store another way —
+// GitOps and the API both write desired state, and a mount that silently
+// ignored the ownership it was handed is the outcome R24 exists to prevent.
+func TestMountRefusesOwnershipItCannotEnforce(t *testing.T) {
+	tests := []struct {
+		name     string
+		resource Resource
+		wantErr  string
+	}{
+		{
+			name:     "nfs",
+			resource: Resource{Name: "n", Type: TypeNFS, Server: "10.0.0.5", Export: "/e"},
+			wantErr:  "no uid= or gid= mount option",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := newFakeRunner()
+			m := testManager(t, runner, nil)
+
+			err := m.Ensure(t.Context(), Request{
+				Resource: tc.resource,
+				Target:   filepath.Join(t.TempDir(), "vol"),
+				UID:      ptr(uint32(999)),
+			})
+			if err == nil {
+				t.Fatal("Ensure succeeded; want a refusal")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error = %v, want %q", err, tc.wantErr)
+			}
+			if cmds := runner.commands(); len(cmds) != 0 {
+				t.Errorf("refused and still ran %v", cmds)
+			}
+		})
+	}
+}
+
+// A request with no ownership must produce exactly the command it produced
+// before R24 existed. The feature is additive or it is a change to every mount
+// on the node.
+func TestNoOwnershipLeavesTheMountCommandAlone(t *testing.T) {
+	runner := newFakeRunner()
+	m := testManager(t, runner, &fakeSecrets{value: "alice:hunter2"})
+
+	err := m.Ensure(t.Context(), Request{
+		Resource: Resource{
+			Name: "s", Type: TypeSMB, Server: "10.0.0.9", Share: "media",
+			AuthRef: "secret:storage/smb",
+		},
+		Target: filepath.Join(t.TempDir(), "media"),
+	})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	joined := strings.Join(runner.lastCommand("mount"), " ")
+	for _, absent := range []string{"uid=", "gid=", "dir_mode=", "file_mode="} {
+		if strings.Contains(joined, absent) {
+			t.Errorf("command %q carries %q for a request that declared no ownership", joined, absent)
+		}
+	}
+}

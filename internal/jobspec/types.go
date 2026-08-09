@@ -15,7 +15,9 @@
 package jobspec
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -224,6 +226,10 @@ type Task struct {
 	// (R13). Only PermittedCapabilities may be requested.
 	Capabilities []string
 	Env          map[string]string
+	// User is the numeric identity the workload runs as (R23). Nil means the
+	// image's own USER directive stands, which is what every spec written
+	// before R23 meant — so adding the field changes no running service.
+	User *User
 	// Resources are always enforced; an omitted block yields defaults (R11).
 	Resources Resources
 	// ResourcesDeclared records whether the spec declared the block, so
@@ -271,6 +277,36 @@ type Socket struct {
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }
+
+// User is the uid/gid a task runs as (R23).
+//
+// Numeric only, and there is no field here for a username: see hclUser for why
+// resolving one is a thing this deliberately does not do. Setting a user is not
+// a substitute for R13 — capabilities are still dropped to nothing — but it is
+// what makes most capability grants unnecessary, because the CHOWN/SETUID/SETGID
+// trio exists so an image can do at startup what this states up front.
+// The fields are `int` rather than `uint32` so that validateUser sees the value
+// as it was written and can say so. Narrowing happens at the toDesired boundary,
+// where Resources is narrowed too — after validation has refused the values that
+// would not survive it.
+type User struct {
+	UID int
+	GID int
+	// Groups are supplementary GIDs.
+	Groups []int
+	// DefRange is where this block was declared, for diagnostics.
+	DefRange hcl.Range
+}
+
+// MaxID is the largest uid or gid a spec may name. 2^32-1 is (uid_t)-1, which
+// the kernel reserves to mean "unchanged" in chown(2) — a workload asking to
+// run as it is asking for something that is not a user.
+const MaxID = 1<<32 - 2
+
+// MaxGroups bounds the supplementary group list. NGROUPS_MAX is 65536 on Linux,
+// but a spec naming thousands of groups is a mistake being expressed at length,
+// and every one of them is copied into every alloc's OCI spec.
+const MaxGroups = 64
 
 // Resources are the per-alloc limits. Never unlimited (R11, PRD §5.2.11).
 type Resources struct {
@@ -502,9 +538,61 @@ type Volume struct {
 	Storage   string
 	MountPath string
 	ReadOnly  bool
+	// UID, GID and Mode are the volume's ownership (R24), filled in by
+	// conversion: an undeclared uid/gid inherits task.user, and a volume that
+	// ends up owned takes DefaultVolumeMode if it declared no mode.
+	//
+	// All three stay nil for a task with no user block and no explicit fields,
+	// and nil means "leave it exactly as it is" — which is what every spec
+	// written before R24 means, and is why they are pointers rather than a
+	// zero value that would read as "chown to root".
+	//
+	// Mode stays the string it was written as, for the same reason User holds
+	// ints: a value that does not parse has to reach the validator intact.
+	UID  *int
+	GID  *int
+	Mode *string
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }
+
+// Owned reports whether ownership is to be applied to this volume.
+func (v Volume) Owned() bool { return v.UID != nil || v.GID != nil || v.Mode != nil }
+
+// ParseMode reads a volume's `mode` as octal.
+//
+// Octal always, with or without the leading zero, and never decimal: "700"
+// means 0o700 here because that is what every operator writing it means, and
+// silently reading it as decimal 700 would yield 0o1274.
+func ParseMode(s string) (uint32, error) {
+	if s == "" {
+		return 0, errors.New("mode is empty")
+	}
+	if len(s) > 4 {
+		return 0, fmt.Errorf("mode %q is longer than four octal digits", s)
+	}
+	v, err := strconv.ParseUint(s, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("mode %q is not octal", s)
+	}
+	if uint32(v) > MaxMode {
+		return 0, fmt.Errorf("mode %q sets a bit above 0777", s)
+	}
+	return uint32(v), nil
+}
+
+// DefaultVolumeMode is the mode an owned volume takes when it declares none.
+//
+// 0700 rather than the 0750 an unowned volume is created with: once a volume
+// has an owner it is that workload's own data, and the group and other bits
+// grant reach to nothing that exists. It is also the only mode postgres will
+// start on, which is a useful reminder that this is the common case.
+const DefaultVolumeMode uint32 = 0o700
+
+// MaxMode is the largest permission bit set a volume may declare. Deliberately
+// no setuid, setgid or sticky bit: those are not permissions on a data
+// directory, and a spec that could set them could set them on a bind mount.
+const MaxMode uint32 = 0o777
 
 // Scaling configures the autoscaler (PRD §9).
 type Scaling struct {
