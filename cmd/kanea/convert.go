@@ -77,6 +77,18 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 					Name: p.Name, Container: p.Container,
 				})
 			}
+			for _, p := range svc.Network.Publish {
+				// The middleware travels verbatim, as the expose block's does.
+				// It is validated at plan time (R21) and again when the edge
+				// compiles it, so there is nothing to interpret in between.
+				desired.Publish = append(desired.Publish, reconciler.PublishedPort{
+					Port: p.Port, Host: p.Host, Mode: p.ResolvedMode(),
+					MaxConns:      p.MaxConns,
+					IPRestriction: convertIPRestriction(p.IPRestriction),
+					RateLimit:     convertRateLimit(p.RateLimit),
+					Headers:       convertHeaders(p.Headers),
+				})
+			}
 			for _, peer := range svc.Network.Policy.Peers() {
 				desired.AllowFrom = append(desired.AllowFrom, reconciler.PeerRef{
 					Project: peer.Project, Service: peer.Service,

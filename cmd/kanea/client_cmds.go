@@ -110,6 +110,9 @@ func runRun(args []string) error {
 
 	ctx := context.Background()
 	client := api.NewClient(*socket)
+	if err := checkPublishedPorts(ctx, client, desired); err != nil {
+		return err
+	}
 	resp, err := client.Apply(ctx, desired, pipelines)
 	if err != nil {
 		return err
@@ -202,6 +205,9 @@ func runPlan(args []string) error {
 	client := api.NewClient(*socket)
 	current, err := client.Services(ctx)
 	if err != nil {
+		return err
+	}
+	if err := checkPublishedPorts(ctx, client, desired); err != nil {
 		return err
 	}
 
@@ -656,4 +662,45 @@ func blockedOn(svc reconciler.Desired, services []reconciler.Desired, counts map
 	}
 	sort.Strings(blocked)
 	return blocked
+}
+
+// checkPublishedPorts asks the node which ports a spec may bind (R22).
+//
+// A courtesy, not the boundary: handleApply re-checks, because a GitOps sync
+// never comes through the CLI. What it buys is the refusal landing in front of
+// the person who typed the port, at plan, rather than at apply.
+//
+// A node that cannot answer is not a failure. An older daemon has no such route
+// and a spec with no published ports has nothing to ask about, so silence here
+// costs only the better error location.
+func checkPublishedPorts(ctx context.Context, client *api.Client, desired []reconciler.Desired) error {
+	var publishes bool
+	for _, d := range desired {
+		if len(d.Publish) > 0 {
+			publishes = true
+			break
+		}
+	}
+	if !publishes {
+		return nil
+	}
+	policy, err := client.EdgePolicy(ctx)
+	if err != nil {
+		return nil //nolint:nilerr // an older daemon still enforces this at apply
+	}
+	for _, d := range desired {
+		name := d.Project + "/" + d.Service
+		for _, p := range d.Publish {
+			if !policy.Enabled {
+				return fmt.Errorf("%s publishes node port %d, and this node has published "+
+					"ports turned off (--publish-ports off)", name, p.Host)
+			}
+			if !policy.Allows(p.Host) {
+				return fmt.Errorf("%s publishes node port %d, which this node does not allow "+
+					"(--publish-ports %s). Which ports may be claimed belongs to whoever owns "+
+					"the machine, not to a spec", name, p.Host, policy.Spec)
+			}
+		}
+	}
+	return nil
 }

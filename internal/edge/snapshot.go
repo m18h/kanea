@@ -48,6 +48,81 @@ type Snapshot struct {
 	// delta: rebuilding from desired state is how every other derived thing in
 	// Kanea works (constraint #9), and it means a missed update self-corrects.
 	Routes []Route `json:"routes"`
+	// Listeners are the node ports services publish (PRD §7.2.2, R21).
+	//
+	// omitempty is load-bearing: a node with no published ports writes a file
+	// byte-identical to what it wrote before this field existed, so an older
+	// edge parses it unchanged and no golden test moves.
+	//
+	// One file, not two. Two projections describing one service would raise an
+	// ordering question — which one does the edge apply first, and what does it
+	// serve in between — for no gain over one rename.
+	Listeners []Listener `json:"listeners,omitempty"`
+}
+
+// Listener kinds (PRD §7.2.2).
+const (
+	// ListenerHTTP is an alternate-port HTTP listener. The edge reads requests
+	// on it, so the whole §7.2.1 middleware chain applies.
+	ListenerHTTP = "http"
+	// ListenerTCP relays bytes. Only IPRestriction survives — there is nothing
+	// else in a stream to apply a rule to.
+	ListenerTCP = "tcp"
+)
+
+// Listener is one node port the edge binds on a service's behalf.
+//
+// It is reached by address rather than by name, which is why the route is fixed
+// at bind time and never looked up per request: the Host header on a connection
+// to 192.168.1.10:8096 is an IP literal that would match no domain.
+//
+// On a tcp listener the upstream sees the edge's address, not the client's.
+// pg_hba.conf host rules and application-level IP bans stop meaning anything
+// behind one, and IPRestriction — checked at accept time, before the upstream
+// is dialled — is the whole mitigation.
+type Listener struct {
+	Project string `json:"project"`
+	Service string `json:"service"`
+	// Port is the node port to bind.
+	Port int `json:"port"`
+	// Mode is ListenerHTTP or ListenerTCP.
+	Mode string `json:"mode"`
+	// Upstream and UpstreamPort are the service frontend, exactly as a Route's
+	// are: the eBPF LB balances, so a scale event changes nothing here.
+	Upstream     string `json:"upstream"`
+	UpstreamPort int    `json:"upstream_port"`
+	// MaxConns bounds live connections. TCP only; zero means the edge's own
+	// default.
+	MaxConns int `json:"max_conns,omitempty"`
+
+	IPRestriction *IPRestriction `json:"ip_restriction,omitempty"`
+	// RateLimit and Headers are http only. A tcp listener carrying either is an
+	// invalid snapshot, not a dropped control.
+	RateLimit *RateLimit `json:"rate_limit,omitempty"`
+	Headers   *Headers   `json:"headers,omitempty"`
+}
+
+// Name identifies a listener in logs and rate-limit keys.
+func (l Listener) Name() string { return l.Project + "/" + l.Service }
+
+// Address is the upstream host:port.
+func (l Listener) Address() string { return fmt.Sprintf("%s:%d", l.Upstream, l.UpstreamPort) }
+
+// Bind is the local address the listener binds.
+//
+// Every interface, deliberately: there is no `bind` field in the spec. A bound
+// address is useful and costs a DHCP-renew failure mode plus a second dimension
+// of collision detection, and ip_restriction already covers the intent.
+func (l Listener) Bind() string { return fmt.Sprintf(":%d", l.Port) }
+
+// asRoute is the listener seen as a routing decision, so the HTTP path can
+// reuse the one middleware chain rather than growing a second.
+func (l Listener) asRoute() Route {
+	return Route{
+		Project: l.Project, Service: l.Service,
+		Upstream: l.Upstream, Port: l.UpstreamPort,
+		IPRestriction: l.IPRestriction, RateLimit: l.RateLimit, Headers: l.Headers,
+	}
 }
 
 // Route sends one or more hostnames to one service.
@@ -152,6 +227,71 @@ func (s Snapshot) Validate() error {
 		// the edge would freeze routing at the last good table while kanead
 		// reports success — the worst of both.
 		if _, err := compile(r); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
+		}
+	}
+	return s.validateListeners()
+}
+
+// validateListeners checks the published ports.
+//
+// byPort is deliberately separate from the routes' `seen`: a domain and a port
+// are different namespaces, and a service can legitimately be reachable as
+// shop.example.com and on :8096 at once.
+func (s Snapshot) validateListeners() error {
+	byPort := map[int]string{}
+	for i, l := range s.Listeners {
+		where := fmt.Sprintf("listener %d (%s)", i, l.Name())
+		if l.Project == "" || l.Service == "" {
+			return fmt.Errorf("%w: %s has no project or service", ErrInvalidSnapshot, where)
+		}
+		if l.Mode != ListenerHTTP && l.Mode != ListenerTCP {
+			return fmt.Errorf("%w: %s has mode %q, which is neither %q nor %q",
+				ErrInvalidSnapshot, where, l.Mode, ListenerHTTP, ListenerTCP)
+		}
+		if _, err := netip.ParseAddr(l.Upstream); err != nil {
+			return fmt.Errorf("%w: %s upstream %q is not an address",
+				ErrInvalidSnapshot, where, l.Upstream)
+		}
+		for _, p := range []struct {
+			field string
+			value int
+		}{{"port", l.Port}, {"upstream port", l.UpstreamPort}} {
+			if p.value < 1 || p.value > 65535 {
+				return fmt.Errorf("%w: %s %s %d is out of range",
+					ErrInvalidSnapshot, where, p.field, p.value)
+			}
+		}
+		if l.MaxConns < 0 {
+			return fmt.Errorf("%w: %s has a negative connection limit %d",
+				ErrInvalidSnapshot, where, l.MaxConns)
+		}
+		// Refused, not dropped. A snapshot that carried a rate limit onto a
+		// listener that cannot count requests would leave the spec claiming a
+		// control nothing is applying — R16's rule, in the reader.
+		if l.Mode == ListenerTCP {
+			if l.RateLimit != nil {
+				return fmt.Errorf("%w: %s is a tcp listener carrying a rate limit, which it cannot apply",
+					ErrInvalidSnapshot, where)
+			}
+			if l.Headers != nil {
+				return fmt.Errorf("%w: %s is a tcp listener carrying header rules, which it cannot apply",
+					ErrInvalidSnapshot, where)
+			}
+		}
+		if first, dup := byPort[l.Port]; dup {
+			// Caught at plan time too, and caught again here for the reason
+			// duplicate domains are: a snapshot assembled from several applies
+			// can still collide, and which of two listeners binds a port would
+			// otherwise be decided by whichever goroutine got there first.
+			return fmt.Errorf("%w: node port %d is claimed by both %s and %s",
+				ErrInvalidSnapshot, l.Port, first, l.Name())
+		}
+		byPort[l.Port] = l.Name()
+
+		// Compiled here for the same reason a route's middleware is: the writer
+		// must not be able to publish a rule the reader will refuse.
+		if _, err := compile(l.asRoute()); err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
 		}
 	}

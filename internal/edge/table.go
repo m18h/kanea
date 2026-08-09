@@ -15,7 +15,11 @@ import (
 // another is a class of bug not worth having.
 type Table struct {
 	byHost map[string]compiled
-	index  uint64
+	// listeners travel with the table because they arrive in the same file. The
+	// edge applies them separately — a bind failure must not reject a snapshot
+	// — but they are one atomic swap as far as the watcher is concerned.
+	listeners []Listener
+	index     uint64
 }
 
 // NewTable indexes a snapshot for lookup and compiles its middleware.
@@ -27,7 +31,11 @@ func NewTable(snap Snapshot) (*Table, error) {
 	if err := snap.Validate(); err != nil {
 		return nil, err
 	}
-	t := &Table{byHost: make(map[string]compiled, len(snap.Routes)), index: snap.Index}
+	t := &Table{
+		byHost:    make(map[string]compiled, len(snap.Routes)),
+		listeners: snap.Listeners,
+		index:     snap.Index,
+	}
 	for _, r := range snap.Routes {
 		c, err := compile(r)
 		if err != nil {
@@ -44,6 +52,9 @@ func NewTable(snap Snapshot) (*Table, error) {
 // when no snapshot exists yet — every request 404s, which is the correct answer
 // to "which service is this host?" when the answer is none.
 func EmptyTable() *Table { return &Table{byHost: map[string]compiled{}} }
+
+// Listeners are the published node ports this table carries (PRD §7.2.2).
+func (t *Table) Listeners() []Listener { return t.listeners }
 
 // Lookup finds the route for a Host header value.
 func (t *Table) Lookup(host string) (Route, bool) {

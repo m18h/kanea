@@ -61,6 +61,13 @@ type Config struct {
 	IdleTimeout       time.Duration
 	MaxHeaderBytes    int
 	DrainTimeout      time.Duration
+	// MaxPublishedConns bounds live connections across every published tcp
+	// port (PRD §7.2.2). Zero means DefaultMaxPublishedConns.
+	MaxPublishedConns int
+	// PublishDrain is how long a published tcp listener's live connections get
+	// to finish. Zero means DrainTimeout. Separate because a game session is
+	// not an HTTP request: an operator may want 60 s here and 15 s on :443.
+	PublishDrain time.Duration
 
 	Proxy   ProxyConfig
 	Version string
@@ -69,17 +76,18 @@ type Config struct {
 
 // Server is the kanea-edge process.
 type Server struct {
-	cfg      Config
-	log      *slog.Logger
-	proxy    *Proxy
-	certs    *certStore
-	watchers []*Watcher
-	http     *http.Server
-	https    *http.Server
-	status   *http.Server
-	listener net.Listener
-	httpsLn  net.Listener
-	statusLn net.Listener
+	cfg       Config
+	log       *slog.Logger
+	proxy     *Proxy
+	certs     *certStore
+	watchers  []*Watcher
+	published *listenerSet
+	http      *http.Server
+	https     *http.Server
+	status    *http.Server
+	listener  net.Listener
+	httpsLn   net.Listener
+	statusLn  net.Listener
 }
 
 // New builds the edge server. It does not bind: call Listen.
@@ -110,6 +118,7 @@ func New(cfg Config) (*Server, error) {
 	proxy := NewProxy(cfg.Proxy)
 
 	s := &Server{cfg: cfg, log: cfg.Logger, proxy: proxy, certs: newCertStore()}
+	s.published = newListenerSet(proxy, cfg)
 
 	routes, err := NewWatcher(WatcherConfig{
 		Name:     "routes",
@@ -122,7 +131,12 @@ func New(cfg Config) (*Server, error) {
 				return err
 			}
 			proxy.SetTable(table)
-			cfg.Logger.Info("route table in force", "index", table.Index(), "hosts", table.Len())
+			// Applied after the table, and never able to reject the file: a
+			// port held by something else on the node must not freeze routing.
+			s.published.Apply(table.Listeners())
+			cfg.Logger.Info("route table in force",
+				"index", table.Index(), "hosts", table.Len(),
+				"published_ports", len(table.Listeners()))
 			return nil
 		},
 	})
@@ -282,6 +296,16 @@ func (s *Server) Run(ctx context.Context) error {
 	drainCtx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
 	defer cancel()
 
+	// Published ports drain on their own clock. A relay connection has no
+	// natural completion point, so there is nothing to wait for except a
+	// deadline, and the right deadline for a game session is not the right one
+	// for an HTTP request.
+	publishDrain := s.cfg.PublishDrain
+	if publishDrain <= 0 {
+		publishDrain = s.cfg.DrainTimeout
+	}
+	s.published.Shutdown(publishDrain)
+
 	err := s.http.Shutdown(drainCtx)
 	if s.https != nil {
 		err = errors.Join(err, s.https.Shutdown(drainCtx))
@@ -420,13 +444,30 @@ func (s *Server) statusMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		table := s.proxy.Table()
+		listeners := s.published.States()
+		bound := 0
+		for _, l := range listeners {
+			if l.Bound {
+				bound++
+			}
+		}
 		s.writeJSON(w, map[string]any{
-			"status":       "ok",
-			"version":      s.cfg.Version,
-			"index":        table.Index(),
-			"hosts":        table.Len(),
-			"certificates": s.certs.get().len(),
+			"status":          "ok",
+			"version":         s.cfg.Version,
+			"index":           table.Index(),
+			"hosts":           table.Len(),
+			"certificates":    s.certs.get().len(),
+			"published_ports": len(listeners),
+			"published_bound": bound,
+			"published_conns": s.published.InFlight(),
 		})
+	})
+	// The bind state of every published port, and how many connections each is
+	// holding. A port something else on the node already owns appears here with
+	// its error rather than not appearing at all — "it is not in the list" and
+	// "it could not bind" need different fixes.
+	mux.HandleFunc("GET /listeners", func(w http.ResponseWriter, _ *http.Request) {
+		s.writeJSON(w, map[string]any{"listeners": s.published.States()})
 	})
 	// The L7 signal §9.1 makes primary for exposed services. It lives on the
 	// loopback status listener, not on :80 or :443: request rates and latency

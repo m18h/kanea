@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"flag"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -112,6 +115,112 @@ func TestUnitsHaveNoLeadingTabs(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestUnitExecStartFlagsAreDefined checks every flag the generated units pass
+// against the flag set the subcommand actually builds.
+//
+// The units are strings and the flags are code, and nothing else connects them.
+// That is how kanea-edge.service shipped passing --data-dir to a command that
+// has never defined it: `flag.ContinueOnError` made fs.Parse return an error,
+// runEdge returned it, and the unit restart-looped under Restart=always without
+// ever having served a request.
+//
+// The flag names come from the subcommand's own usage output rather than from a
+// list kept here, because a list kept here is a third thing to drift.
+func TestUnitExecStartFlagsAreDefined(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeUnits(newOut(), unitOptions{
+		dir: dir, dataDir: "/var/lib/kanea", logDir: "/var/log/kanea",
+		reserve: "1G", binary: "/usr/local/bin/kanea",
+	}); err != nil {
+		t.Fatalf("write units: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	for _, entry := range entries {
+		body, err := os.ReadFile(filepath.Join(dir, entry.Name())) // #nosec G304 — a test path
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			exec, ok := strings.CutPrefix(line, "ExecStart=")
+			if !ok {
+				continue
+			}
+			fields := strings.Fields(exec)
+			if len(fields) < 2 {
+				continue // a bare binary invocation passes no flags
+			}
+			sub := fields[1]
+			defined := definedFlags(t, sub)
+			for _, field := range fields[2:] {
+				name, ok := strings.CutPrefix(field, "--")
+				if !ok {
+					continue // a flag value, or a positional argument
+				}
+				name, _, _ = strings.Cut(name, "=")
+				if !defined[name] {
+					t.Errorf("%s: ExecStart passes --%s to `kanea %s`, which defines no such flag; "+
+						"the unit fails at every start", entry.Name(), name, sub)
+				}
+			}
+		}
+	}
+}
+
+// definedFlags asks a subcommand for its usage and reads back the flag names it
+// declares. `-h` returns flag.ErrHelp straight out of Parse, so nothing the
+// subcommand would otherwise do — open a database, bind a port — happens here.
+func definedFlags(t *testing.T, sub string) map[string]bool {
+	t.Helper()
+
+	run, ok := map[string]func([]string) error{
+		"agent": runAgent,
+		"edge":  runEdge,
+	}[sub]
+	if !ok {
+		t.Fatalf("no subcommand %q to check flags against; add it here", sub)
+	}
+
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	saved := os.Stderr
+	os.Stderr = write
+	usage := make(chan string, 1)
+	go func() {
+		body, _ := io.ReadAll(read)
+		usage <- string(body)
+	}()
+	runErr := run([]string{"-h"})
+	os.Stderr = saved
+	if err := write.Close(); err != nil {
+		t.Fatalf("close pipe: %v", err)
+	}
+	if !errors.Is(runErr, flag.ErrHelp) {
+		t.Fatalf("kanea %s -h returned %v, not flag.ErrHelp; it may have started doing work", sub, runErr)
+	}
+
+	defined := map[string]bool{}
+	for _, line := range strings.Split(<-usage, "\n") {
+		// The flag package writes "  -name value" for each flag, and indents
+		// the description by a tab on the following line.
+		rest, ok := strings.CutPrefix(line, "  -")
+		if !ok {
+			continue
+		}
+		name, _, _ := strings.Cut(rest, " ")
+		defined[name] = true
+	}
+	if len(defined) == 0 {
+		t.Fatalf("kanea %s -h printed no flags; the usage format has changed", sub)
+	}
+	return defined
 }
 
 func TestKernelComparison(t *testing.T) {

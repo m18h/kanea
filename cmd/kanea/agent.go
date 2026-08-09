@@ -115,6 +115,8 @@ func runAgent(args []string) error {
 		"how this node's self-signed CA is named in a device's trust list (default: --base-domain, else the hostname)")
 	tlsCertsConfig := fs.String("tls-certs-config", "",
 		"HCL file granting operator-provided certificates to named projects (default: no grants)")
+	publishPorts := fs.String("publish-ports", api.DefaultPublishRange,
+		"node ports a spec may publish, e.g. \"1024-65535\" or \"8000-9000,25565\" (\"off\" disables)")
 	acmeEmail := fs.String("acme-email", "",
 		"ACME account contact; without it no certificates are obtained from a CA")
 	acmeDirectory := fs.String("acme-directory", DirectoryProduction,
@@ -500,6 +502,16 @@ func runAgent(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Parsed before the server is built, so a typo in the range is a refusal at
+	// startup rather than a service that publishes nothing and says why once
+	// per apply.
+	portPolicy, err := api.ParsePortPolicy(*publishPorts)
+	if err != nil {
+		return err
+	}
+	if !portPolicy.Enabled() {
+		logger.Info("published ports are disabled on this node", "detail", "--publish-ports off")
+	}
 	certs, err := buildCertificates(certConfig{
 		Email:       *acmeEmail,
 		Directory:   *acmeDirectory,
@@ -526,8 +538,9 @@ func runAgent(args []string) error {
 		Secrets: secretStore, Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
 		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
-		OIDC:    provider, Sessions: users,
 		Backups: backups, CA: certificateAuthority(certs),
+		PublishPorts: portPolicy,
+		OIDC:         provider, Sessions: users,
 		Metrics: metrics, Breaker: breaker, Node: scaling.NewNodeReader(""),
 		Exec:   driver,
 		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,

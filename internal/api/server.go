@@ -85,6 +85,10 @@ type ServerConfig struct {
 	// in an interface field is a non-nil interface, and the check above would
 	// pass and then panic.
 	CA CertificateAuthority
+	// PublishPorts is which node ports a spec may claim (R22). The zero value
+	// has no ranges, which means publishing is off — so a server built without
+	// it refuses rather than permitting everything.
+	PublishPorts PortPolicy
 	// MCP is the Model Context Protocol transport (§16.3), mounted at PathMCP
 	// behind the same authentication every other route gets.
 	//
@@ -183,6 +187,7 @@ type Server struct {
 	notifier     Notifier
 	backups      Backups
 	ca           CertificateAuthority
+	publishPorts PortPolicy
 	publish      func(notify.Event)
 
 	auth            Authenticator
@@ -239,8 +244,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
-		auth: cfg.Auth, audit: cfg.Audit,
 		notifier: cfg.Notifier, backups: cfg.Backups, ca: cfg.CA,
+		publishPorts: cfg.PublishPorts,
+		auth:         cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		metrics: cfg.Metrics, breaker: cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
 		insecureCookies: cfg.InsecureCookies,
@@ -339,6 +345,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// at the next start — and is admin-only and audited like every other.
 	// The CA certificate (§7.3). A read, and not an admin one: it is presented
 	// in every handshake to every client that trusts it.
+	mux.Handle("GET "+PathEdgePolicy,
+		s.route(policy{action: "edge.policy"}, s.handleEdgePolicy))
 	mux.Handle("GET "+PathCerts+"/ca",
 		s.route(policy{action: "cert.ca"}, s.handleCACertificate))
 
@@ -631,6 +639,14 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 				svc.ImageCheckedAt = current.ImageCheckedAt
 				svc.ImageUpdatedAt = current.ImageUpdatedAt
 			}
+		}
+		// R22, and this is the boundary rather than a second opinion. `kanea
+		// plan` pre-checks the same policy over PathEdgePolicy so the refusal
+		// lands in front of whoever typed it, but a GitOps sync reaches the
+		// Store through here and never through the CLI.
+		if err := s.publishPorts.Check(svc); err != nil {
+			writeError(w, http.StatusForbidden, err)
+			return
 		}
 		mut, err := store.PutMutation(store.KindService, key, svc)
 		if err != nil {

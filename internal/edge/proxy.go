@@ -211,17 +211,36 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Host-routed traffic scopes its rate-limit buckets under the empty string,
+	// which is what keeps every existing key byte-identical.
+	p.serveRoute(w, r, route, "")
+}
 
+// serveRoute is the chain from IP restriction onward, in the order PRD §7.2.1
+// specifies. It is separate from ServeHTTP because a published HTTP listener
+// has already decided which service it serves: a published port is reached by
+// address, so the Host header on it is an IP literal that would match no
+// domain, and the route is therefore fixed at bind time rather than looked up.
+//
+// What a published listener loses by not going through the lookup is the
+// unknown-Host 404, which was a DNS-rebinding defence. On a port that maps to
+// exactly one service, a rebinding attacker reaches the service they could have
+// reached by connecting to the address directly.
+//
+// scope namespaces the rate-limit buckets. Without it a client throttled on
+// shop.example.com would get a fresh allowance by connecting to the same
+// service on :8096.
+func (p *Proxy) serveRoute(w http.ResponseWriter, r *http.Request, route compiled, scope string) {
 	addr := peerAddr(r)
 	if !route.allowsAddress(addr) {
 		p.log.Debug("address refused by ip_restriction",
-			"service", route.Name(), "host", host, "remote", addr.String())
+			"service", route.Name(), "host", r.Host, "remote", addr.String())
 		p.metrics.Refused(route.Name())
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
-	if !p.withinRateLimit(w, r, route, addr) {
+	if !p.withinRateLimit(w, r, route, addr, scope) {
 		p.metrics.Refused(route.Name())
 		return
 	}
@@ -277,7 +296,9 @@ func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter 
 
 // withinRateLimit spends a token, answering 429 if there is none. It reports
 // whether the request may continue.
-func (p *Proxy) withinRateLimit(w http.ResponseWriter, r *http.Request, route compiled, addr netip.Addr) bool {
+func (p *Proxy) withinRateLimit(w http.ResponseWriter, r *http.Request, route compiled,
+	addr netip.Addr, scope string,
+) bool {
 	if route.limit == nil {
 		return true
 	}
@@ -288,7 +309,14 @@ func (p *Proxy) withinRateLimit(w http.ResponseWriter, r *http.Request, route co
 		return true
 	}
 
-	ok, retry := p.limits.Allow(route.Name()+"\x00"+key, *route.limit)
+	// The scope is inserted only when there is one, so every host-routed
+	// bucket key stays byte-identical to what it was before published ports
+	// existed — a rename here would reset every live limiter on upgrade.
+	bucket := route.Name() + "\x00" + key
+	if scope != "" {
+		bucket = route.Name() + "\x00" + scope + "\x00" + key
+	}
+	ok, retry := p.limits.Allow(bucket, *route.limit)
 	if ok {
 		return true
 	}

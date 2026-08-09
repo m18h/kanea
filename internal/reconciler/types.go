@@ -83,6 +83,15 @@ type Desired struct {
 	// Expose is the north-south route this service publishes, or nil for a
 	// service that is only reachable east-west (PRD §7.2).
 	Expose *Expose
+	// Publish are the node ports the edge binds for this service (PRD §7.2.2,
+	// R21). A service can be published and not exposed: Jellyfin on :8096 with
+	// no domain and no certificate is the case the feature exists for.
+	//
+	// Deliberately *not* in SpecHash's material, like Expose. Nothing about a
+	// node port is baked into a container at creation — the container ports
+	// already are — so hashing it would roll every alloc of a service to fix a
+	// typo in a CIDR.
+	Publish []PublishedPort
 	// DependsOn names the services that must be healthy before this one starts
 	// (jobspec R10). It already includes the implicit edges from ${service.*}
 	// references, and is same-project in v1.
@@ -288,6 +297,37 @@ type Expose struct {
 type Port struct {
 	Name      string
 	Container int
+}
+
+// PublishedPort is one node port bound on this service's behalf (R21).
+//
+// Port names a declared container port rather than giving a number, so a
+// published port can never reach somewhere the service did not say it listens.
+type PublishedPort struct {
+	// Port is the name of the `network { port }` this forwards to.
+	Port string
+	// Host is the node port to bind.
+	Host int
+	// Mode is "http" or "tcp"; empty means http.
+	Mode string
+	// MaxConns bounds live connections. TCP only.
+	MaxConns int
+
+	IPRestriction *edge.IPRestriction
+	// RateLimit and Headers are http only — a tcp listener refuses what it
+	// cannot enforce rather than dropping it.
+	RateLimit *edge.RateLimit
+	Headers   *edge.Headers
+}
+
+// portNumber resolves a declared port name to its container port, or 0.
+func (d Desired) portNumber(name string) int {
+	for _, p := range d.Ports {
+		if p.Name == name {
+			return p.Container
+		}
+	}
+	return 0
 }
 
 // RestartPolicy bounds how often a crashed alloc is restarted (PRD §6.1

@@ -302,3 +302,149 @@ func TestSpecHashIgnoresTLSMode(t *testing.T) {
 		t.Error("changing the certificate source rolled the allocs")
 	}
 }
+
+// publishedService is a service with a node port.
+func publishedService(host int, mode string) reconciler.Desired {
+	d := desiredWithPort(1)
+	d.Publish = []reconciler.PublishedPort{{Port: "http", Host: host, Mode: mode}}
+	return d
+}
+
+func TestReconcilePublishesListeners(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+	h.setDesired(t, publishedService(8096, "http"))
+	h.reconcile(t)
+
+	snap := loadRoutes(t, path)
+	if len(snap.Listeners) != 1 {
+		t.Fatalf("listeners = %+v, want 1", snap.Listeners)
+	}
+	l := snap.Listeners[0]
+	if l.Port != 8096 || l.Mode != "http" {
+		t.Errorf("listener = %+v", l)
+	}
+	// The upstream is the service VIP, exactly as a route's is: the eBPF LB
+	// balances, so scaling must not change the listener.
+	if l.Upstream != h.network.vipOf("shop", "web") || l.UpstreamPort != 8080 {
+		t.Errorf("upstream = %s:%d, want the service frontend", l.Upstream, l.UpstreamPort)
+	}
+	// A published service is not automatically routed by name.
+	if len(snap.Routes) != 0 {
+		t.Errorf("routes = %+v, want none for a service with no expose block", snap.Routes)
+	}
+}
+
+// The trap this whole change is most likely to fall into. snapshotIsPublished
+// used to compare only routes, so a listener-only edit would be published once
+// and never again — a steady-state pass finds the routes equal and returns
+// early, and the edit sits in memory forever.
+func TestPublishChangeIsRepublished(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+	h.setDesired(t, publishedService(8096, "http"))
+	h.reconcile(t)
+
+	before := statOf(t, path)
+	h.reconcile(t)
+	if after := statOf(t, path); after != before {
+		t.Fatalf("a steady-state pass rewrote the snapshot (%v -> %v)", before, after)
+	}
+
+	// Only the CIDR changes: no route, no port, no upstream.
+	changed := publishedService(8096, "http")
+	changed.Publish[0].IPRestriction = &edge.IPRestriction{Allow: []string{"192.168.0.0/16"}}
+	h.setDesired(t, changed)
+	h.reconcile(t)
+
+	snap := loadRoutes(t, path)
+	if len(snap.Listeners) != 1 || snap.Listeners[0].IPRestriction == nil {
+		t.Fatalf("listeners = %+v, want the ip_restriction published", snap.Listeners)
+	}
+
+	// And it must stay published: a second pass must not decide the file is
+	// stale and flip it back.
+	settled := statOf(t, path)
+	h.reconcile(t)
+	if after := statOf(t, path); after != settled {
+		t.Error("the listener edit never settled; the snapshot is rewritten every pass")
+	}
+}
+
+// Two services cannot hold one node port. The survivor is the same one every
+// time rather than whichever map iteration reached first.
+func TestReconcileResolvesAPortCollisionDeterministically(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+
+	first := publishedService(8096, "http")
+	second := publishedService(8096, "http")
+	second.Project = "blog"
+	second.Service = "www"
+
+	h.setDesired(t, first)
+	h.setDesired(t, second)
+	h.reconcile(t)
+
+	snap := loadRoutes(t, path)
+	if len(snap.Listeners) != 1 {
+		t.Fatalf("listeners = %+v, want exactly one surviving claim", snap.Listeners)
+	}
+	if snap.Listeners[0].Name() != "blog/www" {
+		t.Errorf("winner = %s, want the first in sort order", snap.Listeners[0].Name())
+	}
+}
+
+// A tcp listener carries only what it can enforce. A record written by hand
+// with a rate limit on one must not produce a snapshot the edge refuses —
+// which would freeze routing at the last good table.
+func TestBuildListenersDropsMiddlewareATCPListenerCannotApply(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+
+	d := publishedService(5432, "tcp")
+	d.Publish[0].RateLimit = &edge.RateLimit{Requests: 10, Window: "1m"}
+	d.Publish[0].Headers = &edge.Headers{RequestSet: map[string]string{"X-Real-IP": "1"}}
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	snap := loadRoutes(t, path)
+	if len(snap.Listeners) != 1 {
+		t.Fatalf("listeners = %+v, want 1", snap.Listeners)
+	}
+	if snap.Listeners[0].RateLimit != nil || snap.Listeners[0].Headers != nil {
+		t.Error("a tcp listener was published carrying middleware it cannot apply")
+	}
+	if err := snap.Validate(); err != nil {
+		t.Fatalf("the published snapshot is invalid: %v", err)
+	}
+}
+
+// A published port that names a port the service never declared would be a
+// listening socket in front of nothing.
+func TestBuildListenersNeverDialsAnUndeclaredPort(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+
+	d := desiredWithPort(1)
+	d.Publish = []reconciler.PublishedPort{{Port: "grpc", Host: 9000, Mode: "tcp"}}
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	if got := loadRoutes(t, path).Listeners; len(got) != 0 {
+		t.Errorf("listeners = %+v, want none for a port the service does not declare", got)
+	}
+}
+
+// Publishing a port changes nothing baked into a container. If it were in the
+// spec hash, fixing a typo in a CIDR would roll every alloc of the service.
+func TestSpecHashIgnoresPublish(t *testing.T) {
+	base := reconciler.Desired{
+		Project: "media", Service: "jellyfin", Count: 1, Image: "jellyfin:10.9",
+		Ports: []reconciler.Port{{Name: "http", Container: 8096}},
+	}
+	changed := base
+	changed.Publish = []reconciler.PublishedPort{{
+		Port: "http", Host: 8096, Mode: "http",
+		IPRestriction: &edge.IPRestriction{Allow: []string{"192.168.0.0/16"}},
+	}}
+
+	if reconciler.SpecHash(base) != reconciler.SpecHash(changed) {
+		t.Error("publishing a node port rolled the allocs")
+	}
+}

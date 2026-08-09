@@ -287,10 +287,59 @@ const (
 	DefaultCount  = 1
 )
 
-// Network declares container ports by name and the service's ingress policy.
+// Network declares container ports by name, the node ports the edge publishes
+// on this service's behalf, and the service's ingress policy.
 type Network struct {
-	Ports  []*Port
-	Policy *NetworkPolicy
+	Ports   []*Port
+	Publish []*Publish
+	Policy  *NetworkPolicy
+}
+
+// PublishMode names what a published listener speaks (R21).
+const (
+	// PublishHTTP is an alternate-port HTTP listener. It keeps the whole
+	// §7.2.1 middleware chain, because the edge is still reading requests.
+	PublishHTTP = "http"
+	// PublishTCP relays bytes. Only ip_restriction survives, because there is
+	// nothing else in a byte stream to apply a rule to.
+	PublishTCP = "tcp"
+)
+
+// Publish is one node port the edge binds and forwards to this service (R21).
+//
+// It is a sibling of expose, not a field inside it, and that is deliberate.
+// An expose block generates an auto-FQDN, requests a certificate *for those
+// domains* and requires one unambiguous upstream port; a service on three node
+// ports has no such thing. Nesting would make every expose field conditionally
+// meaningful — the same reason R17's device grants are a separate kind rather
+// than a relaxation of the host volume driver.
+type Publish struct {
+	// Port names the `network { port }` this listener forwards to. There is no
+	// field for a container port number: a published port cannot name a port
+	// the service did not declare.
+	Port string
+	// Host is the node port the edge binds. Whether it is *allowed* to is the
+	// node's decision, not this spec's (R22).
+	Host int
+	// Mode is PublishHTTP (the default) or PublishTCP.
+	Mode string
+	// MaxConns bounds live connections on this listener. TCP only: an HTTP
+	// listener is bounded by the edge's own server limits.
+	MaxConns int
+
+	IPRestriction *IPRestriction
+	RateLimit     *RateLimit
+	Headers       *Headers
+
+	DefRange hcl.Range
+}
+
+// ResolvedMode is the mode with the default applied.
+func (p *Publish) ResolvedMode() string {
+	if p == nil || p.Mode == "" {
+		return PublishHTTP
+	}
+	return p.Mode
 }
 
 // NetworkPolicy is the per-service ingress allowlist (R14).

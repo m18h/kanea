@@ -37,6 +37,10 @@ func runEdge(args []string) error {
 		"loopback health/diagnostics address (\"off\" disables)")
 	poll := fs.Duration("poll", edge.DefaultPollInterval, "how often to re-read the route table")
 	drain := fs.Duration("drain", edge.DefaultDrainTimeout, "how long in-flight requests get on shutdown")
+	publishDrain := fs.Duration("publish-drain", 0,
+		"how long connections on published tcp ports get on shutdown (default: --drain)")
+	maxPublishedConns := fs.Int("max-published-conns", edge.DefaultMaxPublishedConns,
+		"node-wide ceiling on live connections across every published tcp port")
 	bodyTimeout := fs.Duration("body-timeout", edge.DefaultBodyTimeout,
 		"bound on reading a request body (0 disables)")
 	upstreamTimeout := fs.Duration("upstream-timeout", edge.DefaultResponseHeaderTimeout,
@@ -97,8 +101,13 @@ func runEdge(args []string) error {
 		SnapshotPath: *snapshot,
 		PollInterval: *poll,
 		DrainTimeout: *drain,
-		Version:      version,
-		Logger:       logger,
+		// Separate from --drain on purpose: a game session or a psql
+		// connection is not an HTTP request, and an operator may well want 60 s
+		// here and 15 s on :443.
+		PublishDrain:      *publishDrain,
+		MaxPublishedConns: *maxPublishedConns,
+		Version:           version,
+		Logger:            logger,
 		Proxy: edge.ProxyConfig{
 			BodyTimeout:           *bodyTimeout,
 			ResponseHeaderTimeout: *upstreamTimeout,

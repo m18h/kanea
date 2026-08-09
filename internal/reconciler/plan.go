@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -581,12 +582,36 @@ func Diff(current, desired []Desired) []string {
 		if !sameEnv(have.Env, want.Env) {
 			changes = append(changes, "env changed")
 		}
+		// Published ports are what people iterate on, and they do not change
+		// the spec hash — so without this line `kanea plan` would print "No
+		// changes" for the edit somebody just made and is about to apply.
+		if !reflect.DeepEqual(have.Publish, want.Publish) {
+			changes = append(changes, fmt.Sprintf("published ports %s -> %s",
+				describePublish(have.Publish), describePublish(want.Publish)))
+		}
 		if len(changes) > 0 {
 			out = append(out, fmt.Sprintf("~ update %s (%s)", key, strings.Join(changes, ", ")))
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// describePublish renders a service's node ports for a plan line.
+func describePublish(ports []PublishedPort) string {
+	if len(ports) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(ports))
+	for _, p := range ports {
+		mode := p.Mode
+		if mode == "" {
+			mode = "http"
+		}
+		parts = append(parts, fmt.Sprintf("%d/%s->%s", p.Host, mode, p.Port))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " ")
 }
 
 func sameEnv(a, b map[string]string) bool {

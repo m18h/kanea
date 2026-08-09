@@ -456,3 +456,40 @@ func (c *Client) CACertificate(ctx context.Context) (body []byte, err error) {
 	// misrouted response cannot be read into memory without limit.
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 }
+
+// EdgePolicy is what a node lets a spec publish (R22).
+type EdgePolicy struct {
+	Enabled  bool   `json:"publish_enabled"`
+	Spec     string `json:"publish_ports"`
+	Reserved []int  `json:"reserved"`
+	Ranges   []struct {
+		From int `json:"from"`
+		To   int `json:"to"`
+	} `json:"ranges"`
+}
+
+// Allows reports whether this node permits a spec to bind a node port.
+//
+// The same rule the server enforces, asked in advance. It is a courtesy, not
+// the boundary: the node re-checks at apply, because a GitOps sync never comes
+// through here.
+func (p EdgePolicy) Allows(port int) bool {
+	for _, reserved := range p.Reserved {
+		if port == reserved {
+			return false
+		}
+	}
+	for _, r := range p.Ranges {
+		if port >= r.From && port <= r.To {
+			return true
+		}
+	}
+	return false
+}
+
+// EdgePolicy reads the node's publishing policy.
+func (c *Client) EdgePolicy(ctx context.Context) (EdgePolicy, error) {
+	var out EdgePolicy
+	err := c.do(ctx, http.MethodGet, PathEdgePolicy, nil, &out)
+	return out, err
+}

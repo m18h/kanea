@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/m18h/kanea/internal/edge"
 )
 
 // systemd units (PRD §5.2.11, §20 M10).
@@ -156,6 +158,12 @@ func kaneadService(opts unitOptions) string {
 
 // edgeService is the ingress proxy.
 //
+// The two projection paths are written out rather than left to the defaults,
+// because they are the whole interface between this process and kanead and an
+// operator has to be able to see and change them. They are spelled with the
+// same constants the daemon publishes to and the edge reads from, so the unit
+// cannot come to disagree with the code about where the files live.
+//
 // A separate unit because it is a separate process, from day one (§18 rule 8):
 // north-south traffic survives a control-plane restart, an upgrade, or a crash.
 // Nothing here depends on kanead being up.
@@ -173,20 +181,28 @@ func edgeService(opts unitOptions) string {
 		[Service]
 		# See kanead.service: no sd_notify, so no Type=notify.
 		Type=exec
-		ExecStart=` + opts.binary + ` edge --data-dir ` + opts.dataDir + `
+		ExecStart=` + opts.binary + ` edge --routes ` + edge.DefaultSnapshotPath +
+		` --certs ` + edge.DefaultBundlePath + `
 		Restart=always
 		RestartSec=2s
 		Slice=kanea.slice
 		OOMScoreAdjust=-800
 
-		# Binding 80 and 443 is all the privilege it needs, and it drops the rest.
+		# Binding privileged ports is all the privilege it needs, and it drops
+		# the rest. The ambient capability lives in the effective set for the
+		# process's lifetime, so a bind on a published port below 1024 (§7.2.2)
+		# an hour after startup is exactly as permitted as :443 at t=0 — there is
+		# nothing to add here when a spec asks for one.
 		AmbientCapabilities=CAP_NET_BIND_SERVICE
 		CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+		RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 		NoNewPrivileges=yes
 		ProtectSystem=strict
 		ProtectHome=yes
 		PrivateTmp=yes
-		ReadWritePaths=` + opts.dataDir + `
+		# No ReadWritePaths: the edge writes nothing. ProtectSystem=strict makes
+		# the filesystem read-only, not invisible, so the two projections above
+		# are still readable.
 
 		[Install]
 		WantedBy=multi-user.target

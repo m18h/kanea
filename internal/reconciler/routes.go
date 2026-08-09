@@ -24,14 +24,15 @@ func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[strin
 	}
 
 	routes := r.buildRoutes(w, vips)
-	if r.routesArePublished(routes) {
+	listeners := r.buildListeners(w, vips)
+	if r.snapshotIsPublished(routes, listeners) {
 		// A steady-state pass must not rewrite the file. The edge polls it, and
 		// republishing identical content every interval would turn every
 		// reconcile into a log line about a reload that changed nothing.
 		return
 	}
 
-	snap := edge.Snapshot{Routes: routes}
+	snap := edge.Snapshot{Routes: routes, Listeners: listeners}
 	if index, err := r.store.Index(ctx); err != nil {
 		// The index is diagnostic, not load-bearing: publish without it rather
 		// than leave the edge on a stale table because a read failed.
@@ -48,10 +49,18 @@ func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[strin
 		return
 	}
 	r.log.Info("edge routes published",
-		"path", r.edgeSnapshot, "routes", len(routes), "index", snap.Index)
+		"path", r.edgeSnapshot, "routes", len(routes),
+		"listeners", len(listeners), "index", snap.Index)
 }
 
-// routesArePublished reports whether the file already holds this table.
+// snapshotIsPublished reports whether the file already holds this projection.
+//
+// It compares *both* halves, and that is the whole reason it is not called
+// routesArePublished any more. Adding listeners to the snapshot and not to this
+// comparison would publish a listener edit exactly once and never again: a
+// steady-state pass would find the routes equal, return early, and the edited
+// listener would sit in memory forever. It is the easiest way to ship this
+// feature broken, so the signature makes it impossible to forget.
 //
 // The comparison is against the *file*, not against what this process last
 // wrote. Remembering would make kanead unable to repair its own output: a
@@ -60,14 +69,15 @@ func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[strin
 // changed — and the edge would come back to an empty table and 404 the whole
 // node. The snapshot is derived state, so it is rebuilt rather than remembered
 // (constraint #9), at the cost of one small read per pass.
-func (r *Reconciler) routesArePublished(routes []edge.Route) bool {
+func (r *Reconciler) snapshotIsPublished(routes []edge.Route, listeners []edge.Listener) bool {
 	published, err := edge.Load(r.edgeSnapshot)
 	if err != nil {
 		// Missing, unreadable or invalid all mean the same thing here: whatever
 		// is on disk is not what the edge should be serving.
 		return false
 	}
-	return routesEqual(routes, published.Routes)
+	return routesEqual(routes, published.Routes) &&
+		listenersEqual(listeners, published.Listeners)
 }
 
 // buildRoutes turns desired state into the edge's view of it.
@@ -130,6 +140,80 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 	return routes
 }
 
+// buildListeners turns the published ports of desired state into the edge's
+// view of them (PRD §7.2.2, R21).
+//
+// It mirrors buildRoutes: stable order, a service with no VIP is skipped, and a
+// collision on a node port is first-writer-wins with the loser named. The
+// upstream is the service frontend, so a rolling deploy never flaps a listener
+// — a VIP is durable state, and only deleting the service removes it.
+func (r *Reconciler) buildListeners(w World, vips map[string]string) []edge.Listener {
+	var listeners []edge.Listener
+	claimed := map[int]string{}
+
+	for _, d := range sortedDesired(w.Desired) {
+		if len(d.Publish) == 0 {
+			continue
+		}
+		name := d.Project + "/" + d.Service
+		vip := vips[name]
+		if vip == "" {
+			r.log.Debug("service publishes a port but has no frontend yet", "service", name)
+			continue
+		}
+		for _, p := range d.Publish {
+			upstream := d.portNumber(p.Port)
+			if upstream == 0 {
+				// The spec validator rejects this, so reaching it means a
+				// record written by hand or by an older CLI. Binding a node
+				// port that forwards nowhere would be a 502 generator with a
+				// listening socket in front of it.
+				r.log.Error("published port names a port the service does not declare",
+					"service", name, "port", p.Port, "host", p.Host)
+				continue
+			}
+			if owner, taken := claimed[p.Host]; taken {
+				r.log.Error("node port claimed by two services; ignoring the second",
+					"port", p.Host, "owner", owner, "ignored", name)
+				continue
+			}
+			claimed[p.Host] = name
+
+			mode := p.Mode
+			if mode == "" {
+				mode = edge.ListenerHTTP
+			}
+			listener := edge.Listener{
+				Project: d.Project, Service: d.Service,
+				Port: p.Host, Mode: mode,
+				Upstream: vip, UpstreamPort: upstream,
+				MaxConns:      p.MaxConns,
+				IPRestriction: p.IPRestriction,
+			}
+			// A tcp listener carries only what it can enforce. The spec refuses
+			// the rest at plan time; dropping it here as well keeps a
+			// hand-written record from producing an invalid snapshot.
+			if mode == edge.ListenerHTTP {
+				listener.RateLimit, listener.Headers = p.RateLimit, p.Headers
+			}
+			listeners = append(listeners, listener)
+		}
+	}
+	return listeners
+}
+
+// listenersEqual is the listener half of snapshotIsPublished.
+func listenersEqual(a, b []edge.Listener) bool {
+	return slices.EqualFunc(a, b, func(x, y edge.Listener) bool {
+		return x.Project == y.Project && x.Service == y.Service &&
+			x.Port == y.Port && x.Mode == y.Mode &&
+			x.Upstream == y.Upstream && x.UpstreamPort == y.UpstreamPort &&
+			x.MaxConns == y.MaxConns &&
+			reflect.DeepEqual(x.IPRestriction, y.IPRestriction) &&
+			reflect.DeepEqual(x.RateLimit, y.RateLimit) &&
+			reflect.DeepEqual(x.Headers, y.Headers)
+	})
+}
 
 // domainsFor resolves a service's hostnames against this agent's base domain.
 func (r *Reconciler) domainsFor(d Desired) []string {
@@ -161,6 +245,7 @@ func (e *Expose) ResolveTLSMode(nodeDefault string) string {
 		return nodeDefault
 	}
 }
+
 // EdgeDomains resolves the hostnames a service answers on, generating the
 // auto-FQDN when the spec declared none (PRD §7.2).
 //

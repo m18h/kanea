@@ -46,6 +46,7 @@ func Validate(spec *Spec) hcl.Diagnostics {
 	diags = append(diags, validateStorages(spec)...)
 	diags = append(diags, validateServices(spec)...)
 	diags = append(diags, validateExposedDomains(spec)...)
+	diags = append(diags, validatePublishedPorts(spec)...)
 	diags = append(diags, validateDependencies(spec)...)
 	return diags
 }
@@ -467,6 +468,7 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		diags = append(diags, validateScaling(svc)...)
 		diags = append(diags, validateUpdate(svc)...)
 		diags = append(diags, validateExpose(svc)...)
+		diags = append(diags, validatePublish(svc)...)
 	}
 	return diags
 }

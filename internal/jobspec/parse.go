@@ -191,8 +191,25 @@ type hclSocket struct {
 }
 
 type hclNetwork struct {
-	Ports  []hclPort         `hcl:"port,block"`
-	Policy *hclNetworkPolicy `hcl:"policy,block"`
+	Ports   []hclPort         `hcl:"port,block"`
+	Publish []hclPublish      `hcl:"publish,block"`
+	Policy  *hclNetworkPolicy `hcl:"policy,block"`
+}
+
+// hclPublish is a node port the edge binds on this service's behalf (R21).
+//
+// The label is the `network { port }` it forwards to. There is deliberately no
+// field for a container port number: a published port cannot name a port the
+// service did not declare.
+type hclPublish struct {
+	Port          string            `hcl:"port,label"`
+	Host          int               `hcl:"host"`
+	Mode          string            `hcl:"mode,optional"`
+	MaxConns      int               `hcl:"max_conns,optional"`
+	IPRestriction *hclIPRestriction `hcl:"ip_restriction,block"`
+	RateLimit     *hclRateLimit     `hcl:"rate_limit,block"`
+	Headers       *hclHeaders       `hcl:"headers,block"`
+	DefRange      hcl.Range         `hcl:",def_range"`
 }
 
 type hclNetworkPolicy struct {
@@ -512,6 +529,9 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 			p := &s.Network.Ports[i]
 			out.Network.Ports = append(out.Network.Ports, &Port{Name: p.Name, Container: p.Container, DefRange: p.DefRange})
 		}
+		for i := range s.Network.Publish {
+			out.Network.Publish = append(out.Network.Publish, convertPublish(&s.Network.Publish[i]))
+		}
 		if s.Network.Policy != nil {
 			out.Network.Policy = &NetworkPolicy{
 				AllowFrom: s.Network.Policy.AllowFrom,
@@ -587,6 +607,37 @@ func convertTask(t *hclTask) *Task {
 			Name: s.Name, Grant: s.Grant, MountPath: s.MountPath,
 			ReadOnly: s.ReadOnly, DefRange: s.DefRange,
 		})
+	}
+	return out
+}
+
+// convertPublish carries one published port across, middleware and all. The
+// middleware types are the expose block's own, unchanged: two kinds of
+// ip_restriction would be two implementations of one rule.
+func convertPublish(p *hclPublish) *Publish {
+	out := &Publish{
+		Port: p.Port, Host: p.Host, Mode: p.Mode,
+		MaxConns: p.MaxConns, DefRange: p.DefRange,
+	}
+	if p.IPRestriction != nil {
+		out.IPRestriction = &IPRestriction{
+			Allow: p.IPRestriction.Allow, Deny: p.IPRestriction.Deny,
+			DefRange: p.IPRestriction.DefRange,
+		}
+	}
+	if p.RateLimit != nil {
+		out.RateLimit = &RateLimit{
+			Requests: p.RateLimit.Requests, Window: p.RateLimit.Window,
+			Per: p.RateLimit.Per, Burst: p.RateLimit.Burst,
+			DefRange: p.RateLimit.DefRange,
+		}
+	}
+	if p.Headers != nil {
+		out.Headers = &Headers{
+			RequestSet: p.Headers.RequestSet, RequestRemove: p.Headers.RequestRemove,
+			ResponseSet: p.Headers.ResponseSet, ResponseRemove: p.Headers.ResponseRemove,
+			DefRange: p.Headers.DefRange,
+		}
 	}
 	return out
 }

@@ -72,6 +72,15 @@ service "web" {
   network {
     port "http" { container = 3000 }
 
+    # Also reachable at <node address>:8080, with or without a domain (R21,
+    # §7.2.2). The label names the port above — there is no field here for a
+    # container port number, so this cannot forward somewhere undeclared.
+    publish "http" {
+      host = 8080
+      mode = "http"                              # "http" (default) | "tcp"
+      ip_restriction { allow = ["192.168.0.0/16"] }
+    }
+
     # Ingress beyond the default (§7.1): the project boundary is default-deny,
     # so a peer in another project is only reachable through an explicit edge.
     policy {
