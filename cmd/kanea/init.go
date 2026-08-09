@@ -12,7 +12,10 @@ import (
 	"path/filepath"
 
 	"github.com/m18h/kanea/internal/backup"
+	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/network"
+	"github.com/m18h/kanea/internal/provision"
+	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/secrets"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -32,6 +35,16 @@ func runInit(args []string) error {
 		"memory reserved for the control plane (PRD §5.2.11)")
 	skipChecks := fs.Bool("skip-checks", false, "run the ceremony without the preflight checks")
 	skipUnits := fs.Bool("skip-units", false, "do not write systemd units")
+	noInstall := fs.Bool("no-install", false,
+		"do not install the host components (PRD §5.2.12) — assume they are already there")
+	bundlePath := fs.String("bundle", "", "install the host components from an offline bundle")
+	prefix := fs.String("prefix", provision.DefaultPrefix, "where component binaries are installed")
+	nodeCIDR := fs.String("node-cidr", provision.DefaultNodeCIDR,
+		"this node's container subnet; also moves the internal DNS address, which lives on cilium_host")
+	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
+		"the native routing CIDR; it must contain --node-cidr")
+	buildkitSocket := fs.String("buildkit", gitops.DefaultBuildkitSocket,
+		"rootless buildkitd address (\"off\" skips the build daemon)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -39,19 +52,60 @@ func runInit(args []string) error {
 	o := newOut()
 	o.printf("kanea init — %s\n\n", version)
 
+	// `--containerd external` adopts the daemon already on the node instead of
+	// installing one. Resolved here so the checks below and the install below
+	// agree about which socket this node's runtime lives on.
+	adoptContainerd := *containerdSocket == "external"
+	effectiveSocket := *containerdSocket
+	if adoptContainerd {
+		effectiveSocket = provision.DistroContainerdSocket
+	}
+
+	opts := preflightOptions{
+		dataDir: *dataDir, containerdSocket: effectiveSocket,
+		ciliumSocket: *ciliumSocket, networkMode: *networkMode,
+		buildkitSocket: *buildkitSocket,
+		layout:         componentLayout(*prefix, *nodeCIDR, *clusterCIDR),
+		serviceCIDR:    reconciler.DefaultServiceCIDR,
+	}
+
+	// The platform checks gate, and only they do. They are the things no
+	// installer can supply — a kernel, cgroups v2, a clock — so failing one
+	// means this node cannot run Kanea however much software is placed on it.
+	// The component checks come after the install, where they verify rather
+	// than admit: running them first would fail every fresh node on the
+	// absence of exactly the software the next step exists to install.
 	if !*skipChecks {
 		o.println("Checking this node:")
-		results := preflight(preflightOptions{
-			dataDir: *dataDir, containerdSocket: *containerdSocket,
-			ciliumSocket: *ciliumSocket, networkMode: *networkMode,
-		})
-		if !renderChecks(o, results) {
+		if !renderChecks(o, platformChecks(opts)) {
 			o.println()
 			// Refused rather than warned about. An init that continues past a
 			// failed check produces a node that looks configured and is not,
 			// and the operator finds out at the first deploy.
 			return errors.New("this node is not ready; fix the failures above " +
 				"(or re-run with --skip-checks if you know better)")
+		}
+		o.println()
+	}
+
+	if !*noInstall {
+		o.println("Installing the host components:")
+		installArgs := []string{
+			"--prefix", *prefix, "--unit-dir", *unitDir,
+			"--node-cidr", *nodeCIDR, "--cluster-cidr", *clusterCIDR,
+		}
+		if *bundlePath != "" {
+			installArgs = append(installArgs, "--bundle", *bundlePath)
+		}
+		if adoptContainerd {
+			installArgs = append(installArgs, "--containerd", "external")
+		}
+		if *networkMode == "none" {
+			// No dataplane means no cilium and no kvstore for it to use.
+			installArgs = append(installArgs, "--only", "containerd,runc,cni-plugins,buildkit")
+		}
+		if err := runInstall(installArgs); err != nil {
+			return err
 		}
 		o.println()
 	}
@@ -221,6 +275,23 @@ func executablePath() string {
 	return resolved
 }
 
+// componentLayout locates what `kanea install` placed, given a prefix.
+//
+// The other three directories are not configurable per command: a node whose
+// components live in one prefix but whose configuration lives somewhere
+// unrelated is a node nobody can support, and the flag exists for packaging
+// rather than for taste.
+func componentLayout(prefix string, cidrs ...string) provision.Layout {
+	layout := provision.DefaultLayout()
+	if prefix != "" {
+		layout.Prefix = prefix
+	}
+	if len(cidrs) == 2 {
+		layout.NodeCIDR, layout.ClusterCIDR = cidrs[0], cidrs[1]
+	}
+	return layout
+}
+
 // runDoctor is `kanea doctor`: the preflight checks on their own.
 func runDoctor(args []string) error {
 	fset := flag.NewFlagSet("doctor", flag.ContinueOnError)
@@ -228,6 +299,21 @@ func runDoctor(args []string) error {
 	networkMode := fset.String("network", "cilium", "network mode: cilium or none")
 	containerdSocket := fset.String("containerd", runtime.DefaultSocket, "containerd socket")
 	ciliumSocket := fset.String("cilium-socket", network.DefaultSocketPath, "cilium-agent socket")
+	buildkitSocket := fset.String("buildkit", gitops.DefaultBuildkitSocket, "buildkitd address")
+	prefix := fset.String("prefix", provision.DefaultPrefix, "component install prefix")
+	// Exactly one check reaches the network — whether component artefacts are
+	// fetchable, which is what tells an operator if an upgrade needs a bundle
+	// carried in. On an air-gapped node the answer is known and the probe is
+	// just a five-second wait, and a `doctor` that pauses on every run is a
+	// `doctor` that stops being run.
+	offline := fset.Bool("offline", false, "skip the upstream reachability probe (air-gapped nodes)")
+	// The two halves of the overlap check. They live on different commands in
+	// real life — one at install, one on kanead — so doctor has to be told
+	// both to notice a collision neither side can see alone.
+	docNodeCIDR := fset.String("node-cidr", provision.DefaultNodeCIDR, "this node's container subnet")
+	docClusterCIDR := fset.String("cluster-cidr", provision.DefaultClusterCIDR, "the native routing CIDR")
+	docServiceCIDR := fset.String("service-cidr", reconciler.DefaultServiceCIDR,
+		"kanead's service frontend pool, checked for overlap with the container subnet")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
@@ -237,6 +323,10 @@ func runDoctor(args []string) error {
 	ok := renderChecks(o, preflight(preflightOptions{
 		dataDir: *dataDir, containerdSocket: *containerdSocket,
 		ciliumSocket: *ciliumSocket, networkMode: *networkMode,
+		buildkitSocket: *buildkitSocket,
+		layout:         componentLayout(*prefix, *docNodeCIDR, *docClusterCIDR),
+		serviceCIDR:    *docServiceCIDR,
+		offline:        *offline,
 	}))
 	if err := o.Err(); err != nil {
 		return err

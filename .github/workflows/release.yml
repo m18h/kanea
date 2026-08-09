@@ -71,11 +71,39 @@ jobs:
             rm dist/kanea
           done
 
+      # Offline bundles (PRD §5.2.12). An air-gapped node is a supported
+      # installation, so the artefacts it needs are published rather than left
+      # for an operator to assemble from a wiki page.
+      #
+      # containerd has to be running to export the image components, so the
+      # binary built above installs it — which also means every release
+      # exercises `kanea install` end to end before the binary is published.
+      - name: Build the offline bundles
+        run: |
+          set -euo pipefail
+          tar -C dist -xzf "dist/kanea_${VERSION#v}_linux_amd64.tar.gz"
+          sudo ./dist/kanea install --only containerd,runc,cni-plugins
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now kanea-containerd.service
+          for arch in amd64 arm64; do
+            sudo ./dist/kanea bundle create --arch "$arch" \
+              -o "dist/kanea_${VERSION#v}_linux_${arch}_bundle.tar.gz"
+          done
+          sudo chown "$(id -u):$(id -g)" dist/*_bundle.tar.gz
+          rm dist/kanea
+          ls -lh dist/
+        env:
+          VERSION: ${{ github.ref_name }}
+
       - name: Checksums
         run: |
           cd dist
           # No leading "./" on the names: scripts/install.sh selects its line
           # with `grep " <archive>$"`, and "  ./kanea_…" would not match.
+          #
+          # The bundles are covered here too, so the existing cosign signature
+          # over this file extends to them with no second signing step — one
+          # signature over a manifest of hashes, as the header says.
           sha256sum kanea_*.tar.gz > checksums.txt
           cat checksums.txt
 

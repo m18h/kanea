@@ -34,8 +34,14 @@ type Config struct {
 	DefaultGrace time.Duration
 }
 
-// DefaultSocket is containerd's usual gRPC socket.
-const DefaultSocket = "/run/containerd/containerd.sock"
+// DefaultSocket is the containerd `kanea install` provisions (PRD §5.2.12).
+//
+// Deliberately not /run/containerd/containerd.sock, which belongs to whatever
+// else on the node is using containerd. Kanea installs its own daemon at a
+// pinned version on its own socket, so a node that ran Docker yesterday runs
+// it tomorrow; `--containerd /run/containerd/containerd.sock` adopts an
+// existing one for an operator who wants a single runtime on the box.
+const DefaultSocket = "/run/kanea/containerd.sock"
 
 type containerdDriver struct {
 	client *containerd.Client

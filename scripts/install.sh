@@ -2,10 +2,14 @@
 # Kanea installer (PRD §20 M10).
 #
 # It does three things and stops: fetch the binary, verify it, and hand over to
-# `kanea init`. It deliberately does not install containerd or Cilium, does not
-# generate keys, and does not start anything — those are decisions with
-# consequences, and a script that made them for you would be making them at the
-# moment you understand the node least.
+# `kanea init`. It generates no keys and starts nothing — those are decisions
+# with consequences, and a script that made them for you would be making them at
+# the moment you understand the node least.
+#
+# The runtime is not among them. `kanea init` installs containerd, Cilium, etcd
+# and buildkitd at versions the binary pins (PRD §5.2.12), because Kanea had
+# already chosen those versions — it dictates Cilium's flag set and enforces a
+# version matrix — and the prerequisite list was only making you type them out.
 #
 # Run it with bash, not sh: `set -o pipefail` is not POSIX, and the checksum
 # check below is a pipeline whose *first* command is the one that can fail.
@@ -109,23 +113,33 @@ cat <<'NEXT'
 
 Next:
 
-  1. Install containerd and cilium-agent (>= 1.18, pin 1.19.x). Kanea does not
-     install them: they are the node's runtime, and choosing versions for you
-     is how a platform ends up owning a dependency it cannot support.
-
-  2. Run:
+  1. Run:
 
          sudo kanea init
 
-     It checks the node, runs the master-key ceremony and writes the systemd
-     units. Have somewhere to record the key before you start — it is shown
-     once, and without it every backup is unreadable.
+     It checks the node, installs the runtime (containerd, runc, the CNI
+     plugins, etcd, cilium-agent and rootless buildkitd, at pinned versions),
+     runs the master-key ceremony and writes the systemd units.
 
-  3. Then:
+     Have somewhere to record the key before you start — it is shown once,
+     and without it every backup is unreadable.
+
+     Nothing already on the node is touched: Kanea's containerd installs under
+     its own prefix on its own socket, so a box that ran Docker yesterday runs
+     it tomorrow. `kanea install --list` shows the pinned versions first, and
+     `--dry-run` verifies every download without writing anything.
+
+  2. Then:
 
          sudo systemctl daemon-reload
          sudo systemctl enable --now kanead
          kanea user add <name> --role admin
+
+No egress on that node? Build a bundle on a machine that has some, carry it
+across, and install from it — the same verification either way:
+
+    kanea bundle create --arch amd64 -o kanea-bundle.tar.gz   # connected
+    sudo kanea init --bundle kanea-bundle.tar.gz              # air-gapped
 
 Read the disaster-recovery runbook before you need it:
 

@@ -60,6 +60,8 @@ var implemented = map[string]bool{
 	// M10 hardening & packaging:
 	"backup": true, "restore": true, "init": true, "doctor": true,
 	"upgrade": true, "ui": true, "exec": true,
+	// M10, host components (PRD §5.2.12, v1.30):
+	"install": true, "supervise": true, "bundle": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {

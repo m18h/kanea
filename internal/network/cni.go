@@ -13,10 +13,18 @@ import (
 
 // CNI defaults (PRD §5.2.5).
 const (
-	// DefaultCNIConfPath is where kanea init installs the Cilium conflist.
-	DefaultCNIConfPath = "/etc/cni/net.d/05-cilium.conflist"
-	// DefaultCNIBinDir holds the cilium-cni plugin binary.
-	DefaultCNIBinDir = "/opt/cni/bin"
+	// DefaultCNIConfPath is where `kanea install` writes the Cilium conflist
+	// (internal/provision.Layout.Files).
+	//
+	// Under /etc/kanea rather than /etc/cni/net.d: that directory is shared
+	// with whatever else on the node uses CNI, and every plugin there is
+	// consulted in name order by anything reading it. Kanea's containerd is
+	// pointed at its own directory instead, so installing Kanea cannot change
+	// how another runtime networks its containers (PRD §5.2.12).
+	DefaultCNIConfPath = "/etc/kanea/cni/net.d/05-cilium.conflist"
+	// DefaultCNIBinDir holds the cilium-cni plugin binary. Kanea's own, for
+	// the same reason.
+	DefaultCNIBinDir = "/usr/local/lib/kanea/cni/bin"
 	// interfaceName is the alloc-side interface every plugin creates.
 	interfaceName = "eth0"
 )

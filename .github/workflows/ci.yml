@@ -71,6 +71,128 @@ jobs:
         if: always()
         run: docker rm -f minio
 
+  manifest-verify:
+    # The component manifest pins every host component by SHA-256 (PRD §5.2.12),
+    # and those hashes are compiled into a binary that runs as root. This job
+    # asks the only question the unit tests cannot: do the artefacts upstream
+    # still hash to what we pinned?
+    #
+    # A failure here is not a broken build — it means an upstream project
+    # re-tagged a release, which is exactly the event the pinning exists to
+    # catch and exactly the one nobody would otherwise notice.
+    name: Component manifest — upstream hashes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go build -o ./bin/kanea ./cmd/kanea
+      # --dry-run downloads and verifies every artefact and writes nothing.
+      # Both architectures, because a hash is per-arch and half a matrix
+      # verified is a matrix that fails on somebody else's node.
+      - name: Verify every pinned artefact
+        run: |
+          set -euo pipefail
+          ./bin/kanea install --list
+          for arch in amd64 arm64; do
+            echo "== $arch"
+            ./bin/kanea install --dry-run --arch "$arch"
+          done
+
+  install-smoke:
+    # `kanea install` places binaries, writes units and starts daemons. None of
+    # that can be tested off a real Linux host, and the S3 `Put` defect in
+    # AGENTS.md is the standing reminder of what a fake server does not catch.
+    name: Install smoke — real node
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go build -o ./bin/kanea ./cmd/kanea
+      # Cilium is left out deliberately: it needs BPF features a hosted runner
+      # does not reliably have, and a flaky required job teaches people to
+      # ignore CI. The dataplane is exercised on a real node instead (§20 M10).
+      - name: Install the host components
+        run: sudo ./bin/kanea install --only containerd,runc,cni-plugins,etcd,buildkit
+      - name: The sockets answer
+        run: |
+          set -euo pipefail
+          sudo systemctl is-active --quiet kanea-containerd.service
+          sudo systemctl is-active --quiet kanea-etcd.service
+          test -S /run/kanea/containerd.sock
+          sudo /usr/local/lib/kanea/bin/ctr --address /run/kanea/containerd.sock version
+      # The coexistence promise, tested rather than asserted: the runner's own
+      # containerd (Docker's) must be untouched and still on its own socket.
+      - name: A pre-existing containerd is untouched
+        run: |
+          set -euo pipefail
+          test -S /run/containerd/containerd.sock
+          docker run --rm hello-world >/dev/null
+          echo "the distribution's containerd still serves Docker"
+      - name: Constraint #11 — every unit joined kanea.slice
+        run: |
+          set -euo pipefail
+          for unit in kanea-containerd kanea-etcd; do
+            slice=$(systemctl show -p Slice --value "$unit.service")
+            [ "$slice" = "kanea.slice" ] || { echo "$unit is in $slice"; exit 1; }
+          done
+      - name: Journal on failure
+        if: failure()
+        run: sudo journalctl -u kanea-containerd -u kanea-etcd --no-pager -n 200
+
+  install-smoke-airgapped:
+    # The job that matters for the offline path. `unshare -rn` gives the
+    # install a network namespace with no interface but loopback, so a code
+    # path that reaches for the network *fails* rather than quietly succeeding
+    # through a fallback. A mocked "offline" would pass while the real thing
+    # dialled out.
+    name: Install smoke — air-gapped
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: go build -o ./bin/kanea ./cmd/kanea
+      # Authored with a network, as an operator would on a connected machine.
+      # --no-images keeps this job to the artefact path; the image half needs a
+      # containerd to export from and is covered by the release workflow.
+      - name: Author a bundle
+        run: ./bin/kanea bundle create --arch amd64 --no-images -o bundle.tar.gz
+      - name: Install from it with no network at all
+        run: |
+          set -euo pipefail
+          sudo unshare -rn -- \
+            ./bin/kanea install --bundle bundle.tar.gz \
+              --only containerd,runc,cni-plugins,etcd \
+              --skip-units
+          test -x /usr/local/lib/kanea/bin/containerd
+          test -x /usr/local/lib/kanea/bin/runc
+          test -x /usr/local/lib/kanea/bin/etcd
+      # A bundle is not trusted more than the network: its contents are checked
+      # against the hashes in the binary. Corrupting one must be caught.
+      - name: A tampered bundle is refused
+        run: |
+          set -euo pipefail
+          mkdir -p tampered && tar -C tampered -xzf bundle.tar.gz
+          echo "not containerd" > tampered/artefacts/containerd
+          sudo rm -rf /usr/local/lib/kanea
+          if sudo unshare -rn -- ./bin/kanea install --bundle tampered \
+               --only containerd --skip-units; then
+            echo "a tampered bundle installed without complaint"; exit 1
+          fi
+          test ! -e /usr/local/lib/kanea/bin/containerd
+          echo "refused, and nothing was written"
+
   lint:
     name: Lint — golangci-lint
     runs-on: ubuntu-latest
