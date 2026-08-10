@@ -336,3 +336,27 @@ function "fn" {
 		t.Errorf("an invalid CIDR on an http trigger was not refused:\n%s", got)
 	}
 }
+
+// R28's function half is structural: `trigger "http"` has no `protocol` field
+// and must not gain one — wasi-http is HTTP/1.1, and the absent field is the
+// refusal (R25's pattern). This pins the absence, because "the schema has no
+// field" is a property someone could quietly change.
+func TestFunctionTriggerHasNoProtocolField(t *testing.T) {
+	msg := parseErr(t, `
+spec_version = 1
+
+project "shop" {}
+
+function "resize-avatar" {
+  project = "shop"
+  module  = "registry.example.com/shop/resize:v3"
+
+  trigger "http" {
+    protocol = "grpc"
+  }
+}
+`)
+	if !strings.Contains(msg, "protocol") {
+		t.Errorf("the diagnostic does not name the unsupported argument:\n%s", msg)
+	}
+}

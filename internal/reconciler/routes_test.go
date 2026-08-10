@@ -375,6 +375,24 @@ func TestSpecHashIgnoresTLSMode(t *testing.T) {
 	}
 }
 
+// R28 (v1.41): the upstream-protocol marker is not baked into a container, so
+// flipping it republishes routes and must never roll an alloc.
+func TestSpecHashIgnoresExposeProtocol(t *testing.T) {
+	base := reconciler.Desired{
+		Project: "shop", Service: "api", Count: 1,
+		Image:  "grpc-api:v3",
+		Expose: &reconciler.Expose{Domains: []string{"api.shop.example.com"}, Port: 50051},
+	}
+	changed := base
+	expose := *base.Expose
+	expose.Protocol = "grpc"
+	changed.Expose = &expose
+
+	if reconciler.SpecHash(base) != reconciler.SpecHash(changed) {
+		t.Error("changing the upstream protocol rolled the allocs")
+	}
+}
+
 // publishedService is a service with a node port.
 func publishedService(host int, mode string) reconciler.Desired {
 	d := desiredWithPort(1)

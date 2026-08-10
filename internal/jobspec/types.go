@@ -467,9 +467,23 @@ type Expose struct {
 	Headers       *Headers
 	// Auth is R27's request authentication (v1.40), or nil for an open route.
 	Auth *Auth
+	// Protocol selects how the edge dials the upstream (R28, v1.41): empty for
+	// HTTP/1.1, ExposeProtocolGRPC for plaintext HTTP/2 (h2c). The spelling
+	// "http" is accepted and normalized away at conversion.
+	Protocol string
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }
+
+// Expose protocols (§6.2 R28, v1.41). The marker names the operator's intent —
+// "this upstream speaks gRPC" — and what it selects is the upstream transport:
+// grpc means the edge dials the VIP over plaintext HTTP/2.
+const (
+	// ExposeProtocolHTTP is the default and is normalized to "" at conversion.
+	ExposeProtocolHTTP = "http"
+	// ExposeProtocolGRPC dials the upstream over h2c.
+	ExposeProtocolGRPC = "grpc"
+)
 
 // TLS names where this service's certificate comes from (R20).
 //

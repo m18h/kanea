@@ -330,3 +330,60 @@ func TestRenderReportsDiagnosticsWithPositions(t *testing.T) {
 		t.Errorf("diagnostic is not positioned: %+v", first)
 	}
 }
+
+// R28 (v1.41): a grpc-marked service round-trips — the protocol attribute is
+// regenerated and the port named "grpc" is re-selected by the same rule.
+func TestGeneratedGRPCServiceRoundTripsToTheSameDesired(t *testing.T) {
+	const grpcSpec = `
+spec_version = 1
+
+project "shop" {}
+
+service "api" {
+  project = "shop"
+
+  task "app" {
+    image = "registry.example.com/shop/grpc-api:2.1.0"
+
+    resources {
+      cpu    = 250
+      memory = 256
+    }
+  }
+
+  network {
+    port "grpc" { container = 50051 }
+    port "metrics" { container = 9090 }
+  }
+
+  expose {
+    domains  = ["api.shop.example.com"]
+    protocol = "grpc"
+    tls { mode = "acme" }
+  }
+}
+`
+	original, pipelines := renderText(t, grpcSpec)
+	if len(original) != 1 {
+		t.Fatalf("services = %d, want 1", len(original))
+	}
+	if original[0].Expose.Protocol != "grpc" {
+		t.Fatalf("Protocol = %q, want grpc", original[0].Expose.Protocol)
+	}
+	if original[0].Expose.Port != 50051 {
+		t.Fatalf("Port = %d, want the grpc-named port 50051", original[0].Expose.Port)
+	}
+
+	text, err := toHCL(original, pipelines)
+	if err != nil {
+		t.Fatalf("toHCL: %v", err)
+	}
+	regenerated, _ := renderText(t, text)
+	if len(regenerated) != 1 {
+		t.Fatalf("regenerated services = %d, want 1\n%s", len(regenerated), text)
+	}
+	if !reflect.DeepEqual(original[0], regenerated[0]) {
+		t.Errorf("grpc service did not round-trip.\nwant: %+v\ngot:  %+v\ngenerated:\n%s",
+			original[0], regenerated[0], text)
+	}
+}

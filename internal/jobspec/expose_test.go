@@ -376,3 +376,102 @@ func TestExposeWarnsOnTheDeprecatedTLSSpelling(t *testing.T) {
 		})
 	}
 }
+
+// R28 (v1.41): `protocol` names how the edge dials the upstream, refused where
+// it cannot work.
+
+func TestExposeProtocolGRPCIsAcceptedAndNormalized(t *testing.T) {
+	spec := parse(t, exposeSpec(httpPort, `protocol = "grpc"`))
+	svc := spec.ServiceByName("shop", "web")
+	if svc.Expose.Protocol != jobspec.ExposeProtocolGRPC {
+		t.Errorf("Protocol = %q, want %q", svc.Expose.Protocol, jobspec.ExposeProtocolGRPC)
+	}
+
+	// "http" is the default made explicit and is normalized away, so every
+	// consumer sees one spelling of "no marker".
+	spec = parse(t, exposeSpec(httpPort, `protocol = "http"`))
+	if got := spec.ServiceByName("shop", "web").Expose.Protocol; got != "" {
+		t.Errorf(`protocol = "http" normalized to %q, want ""`, got)
+	}
+}
+
+func TestExposeProtocolRefusesAnUnknownValue(t *testing.T) {
+	msg := parseErr(t, exposeSpec(httpPort, `protocol = "quic"`))
+	if !strings.Contains(msg, "Unknown expose protocol") {
+		t.Errorf("diagnostics do not name the rule:\n%s", msg)
+	}
+}
+
+// gRPC needs TLS+HTTP/2; the declared-plaintext path is HTTP/1.1 cleartext.
+// A declared contradiction is a plan error — the node-default case is the
+// agent's warning, because R20 resolves the mode node-side.
+func TestExposeProtocolGRPCRefusesDeclaredPlaintext(t *testing.T) {
+	msg := parseErr(t, exposeSpec(httpPort, `
+    protocol = "grpc"
+    tls { mode = "plaintext" }
+  `))
+	if !strings.Contains(msg, "gRPC over declared plaintext") {
+		t.Errorf("diagnostics do not name the rule:\n%s", msg)
+	}
+}
+
+// Publishing the gRPC port in http mode would stand up an HTTP/1.1 listener
+// for a service the spec says speaks gRPC — R21's silently dropped control.
+// The default mode is http, so the defaulted spelling is refused too.
+func TestExposeProtocolGRPCRefusesAnHTTPModePublish(t *testing.T) {
+	for name, publish := range map[string]string{
+		"explicit": `publish "http" {
+      host = 8443
+      mode = "http"
+    }`,
+		"defaulted": `publish "http" { host = 8443 }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			msg := parseErr(t, exposeSpec(`network {
+    port "http" { container = 50051 }
+    `+publish+`
+  }`, `protocol = "grpc"`))
+			if !strings.Contains(msg, "gRPC port published as http") {
+				t.Errorf("diagnostics do not name the rule:\n%s", msg)
+			}
+		})
+	}
+
+	// mode = "tcp" relays bytes and is the correct spelling for LAN gRPC.
+	parse(t, exposeSpec(`network {
+    port "http" { container = 50051 }
+    publish "http" {
+      host = 8443
+      mode = "tcp"
+    }
+  }`, `protocol = "grpc"`))
+}
+
+// A grpc route prefers a port named "grpc", then falls back to the R16 rule;
+// with both declared, "grpc" wins because the spec said protocol = "grpc".
+func TestExposeProtocolGRPCPrefersThePortNamedGRPC(t *testing.T) {
+	spec := parse(t, exposeSpec(`network {
+    port "grpc" { container = 50051 }
+    port "http" { container = 8080 }
+  }`, `protocol = "grpc"`))
+	if port := spec.ServiceByName("shop", "web").EdgePort(); port == nil || port.Container != 50051 {
+		t.Fatalf("EdgePort = %+v, want the grpc port", port)
+	}
+
+	// Without the marker, the same two ports select "http" — the preference
+	// belongs to the protocol, not to the name.
+	spec = parse(t, exposeSpec(`network {
+    port "grpc" { container = 50051 }
+    port "http" { container = 8080 }
+  }`, ``))
+	if port := spec.ServiceByName("shop", "web").EdgePort(); port == nil || port.Container != 8080 {
+		t.Fatalf("EdgePort = %+v, want the http port", port)
+	}
+
+	// A grpc service whose only port is named "http" still works: the
+	// preference is a preference, not a second naming requirement.
+	spec = parse(t, exposeSpec(httpPort, `protocol = "grpc"`))
+	if port := spec.ServiceByName("shop", "web").EdgePort(); port == nil || port.Container != 8080 {
+		t.Fatalf("EdgePort = %+v, want the sole http port", port)
+	}
+}

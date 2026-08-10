@@ -239,7 +239,11 @@ func convertExpose(svc *jobspec.Service) *reconciler.Expose {
 		// spec got here. A route with no upstream port is worse than no route.
 		return nil
 	}
-	out := &reconciler.Expose{Domains: svc.Expose.Domains, Port: port.Container}
+	out := &reconciler.Expose{
+		Domains: svc.Expose.Domains, Port: port.Container,
+		// Already normalized at parse: "" or "grpc" (R28).
+		Protocol: svc.Expose.Protocol,
+	}
 	if t := svc.Expose.TLS; t != nil {
 		out.TLSMode, out.TLSName = t.Mode, t.Name
 		// The pre-v1.33 spelling, translated at the boundary rather than

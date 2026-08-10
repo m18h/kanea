@@ -66,9 +66,21 @@ func (s *Service) EdgeDomains(baseDomain string) []string {
 // EdgePort returns the port the edge proxies to, or nil if the service does not
 // declare a usable one (R16 rejects that at plan time, so a nil here in the
 // agent means validation was skipped).
+//
+// A grpc route (R28) prefers a port named "grpc" — the spec already said what
+// the traffic is, so a service may name the port for it — then falls back to
+// the R16 rule. Deterministic when both exist: "grpc" wins, because
+// `protocol = "grpc"` is the spec choosing.
 func (s *Service) EdgePort() *Port {
 	if s.Network == nil || len(s.Network.Ports) == 0 {
 		return nil
+	}
+	if s.Expose != nil && s.Expose.Protocol == ExposeProtocolGRPC {
+		for _, p := range s.Network.Ports {
+			if p.Name == ExposeProtocolGRPC {
+				return p
+			}
+		}
 	}
 	for _, p := range s.Network.Ports {
 		if p.Name == EdgePortName {
@@ -103,6 +115,7 @@ func validateExpose(svc *Service) hcl.Diagnostics {
 	diags = append(diags, validateExposePort(svc)...)
 	diags = append(diags, validateExposeDomains(svc)...)
 	diags = append(diags, validateExposeTLS(svc)...)
+	diags = append(diags, validateExposeProtocol(svc)...)
 	where := fmt.Sprintf("Service %q", svc.Name)
 	diags = append(diags, validateIPRestriction(where, e.IPRestriction)...)
 	diags = append(diags, validateRateLimit(where, e.RateLimit)...)
@@ -598,4 +611,71 @@ func quoteAll(in []string) []string {
 		out[i] = fmt.Sprintf("%q", s)
 	}
 	return out
+}
+
+// validateExposeProtocol enforces R28 (v1.41): `protocol` names how the edge
+// dials the upstream, and it is refused where it cannot work. Fail-closed at
+// plan, per R16's doctrine — a gRPC route that silently served HTTP/1.1 is a
+// control the spec claimed and nothing applied.
+func validateExposeProtocol(svc *Service) hcl.Diagnostics {
+	e := svc.Expose
+	if e.Protocol == "" {
+		return nil
+	}
+	rng := e.DefRange
+
+	if e.Protocol != ExposeProtocolGRPC {
+		// "http" was normalized away at conversion, so anything still here that
+		// is not "grpc" is a typo or a protocol v1 does not speak.
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Unknown expose protocol",
+			Detail: fmt.Sprintf("Service %q declares protocol %q. The edge can dial an upstream "+
+				"over HTTP/1.1 (the default, %q) or plaintext HTTP/2 (%q, for gRPC); nothing "+
+				"else is spoken in v1.",
+				svc.Name, e.Protocol, ExposeProtocolHTTP, ExposeProtocolGRPC),
+			Subject: rng.Ptr(),
+		}}
+	}
+
+	var diags hcl.Diagnostics
+
+	// gRPC needs HTTP/2 end to end, and the plaintext path is HTTP/1.1
+	// cleartext on :80 — the edge serves no inbound h2c — so a route declared
+	// both ways could never carry a real gRPC client. A declared contradiction
+	// is a plan error; an *undeclared* mode resolving to plaintext on a
+	// --tls-default plaintext node is the agent's warning at resolution time,
+	// because R20 makes that resolution node-side and plan cannot see it.
+	if e.TLS != nil && e.TLS.Mode == string(certsource.ModePlaintext) {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "gRPC over declared plaintext",
+			Detail: fmt.Sprintf("Service %q declares protocol %q beside tls { mode = %q }. "+
+				"gRPC needs TLS+HTTP/2 on :443; the plaintext path is HTTP/1.1 and cannot "+
+				"carry it. Drop the tls block or the protocol.",
+				svc.Name, ExposeProtocolGRPC, certsource.ModePlaintext),
+			Subject: rng.Ptr(),
+		})
+	}
+
+	// Publishing the same port in http mode would stand up an HTTP/1.1
+	// listener on the LAN for a service the spec just said speaks gRPC —
+	// R21's silently dropped control. `mode = "tcp"` relays the bytes and is
+	// the correct spelling for LAN gRPC.
+	if edgePort := svc.EdgePort(); edgePort != nil && svc.Network != nil {
+		for _, p := range svc.Network.Publish {
+			if p.Port == edgePort.Name && p.ResolvedMode() == PublishHTTP {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "gRPC port published as http",
+					Detail: fmt.Sprintf("Service %q declares protocol %q and publishes port %q in "+
+						"http mode (the default). That listener would speak HTTP/1.1 to a gRPC "+
+						"service; write mode = %q to relay the bytes instead.",
+						svc.Name, ExposeProtocolGRPC, p.Port, PublishTCP),
+					Subject: p.DefRange.Ptr(),
+				})
+			}
+		}
+	}
+	return diags
 }

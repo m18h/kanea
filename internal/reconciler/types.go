@@ -370,6 +370,11 @@ type Expose struct {
 	IPRestriction *edge.IPRestriction
 	RateLimit     *edge.RateLimit
 	Headers       *edge.Headers
+	// Protocol is R28's upstream-transport marker (v1.41): "" for HTTP/1.1,
+	// "grpc" for h2c. Like everything else on Expose it is NOT SpecHash
+	// material — nothing about the upstream dial is baked into a container,
+	// so changing it republishes routes and never rolls an alloc.
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // Port is a named container port. The service frontend listens on the same
