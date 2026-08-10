@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strings"
 
 	"github.com/m18h/kanea/internal/store"
 )
@@ -18,8 +19,16 @@ const DefaultServiceCIDR = "10.201.0.0/16"
 // vipKeyPrefix namespaces VIP assignments in the KV bucket.
 const vipKeyPrefix = "lb/vip/"
 
+// vip6KeyPrefix namespaces the v6 twins (v1.41). A separate key space, so
+// the lb/vip/ records stay byte-identical — a rollback, or a replicated
+// Store read by a v4-only node, parses unchanged.
+const vip6KeyPrefix = "lb/vip6/"
+
 // VIPKey is where one service's frontend address is remembered.
 func VIPKey(project, service string) string { return vipKeyPrefix + project + "/" + service }
+
+// VIP6Key is where one service's v6 frontend twin is remembered (v1.41).
+func VIP6Key(project, service string) string { return vip6KeyPrefix + project + "/" + service }
 
 // vipAllocator hands out service frontend addresses and remembers them.
 //
@@ -32,9 +41,14 @@ func VIPKey(project, service string) string { return vipKeyPrefix + project + "/
 type vipAllocator struct {
 	store  Store
 	prefix netip.Prefix
+	// prefix6 is the v6 twin pool (v1.41); invalid means v4-only. With v6
+	// off, the lb/vip6/ key space is left exactly as it is — stale twins
+	// from a formerly-enabled node are released only when v6 is enabled
+	// again, never silently deleted.
+	prefix6 netip.Prefix
 }
 
-func newVIPAllocator(st Store, cidr string) (*vipAllocator, error) {
+func newVIPAllocator(st Store, cidr, cidr6 string) (*vipAllocator, error) {
 	if cidr == "" {
 		cidr = DefaultServiceCIDR
 	}
@@ -43,19 +57,38 @@ func newVIPAllocator(st Store, cidr string) (*vipAllocator, error) {
 		return nil, fmt.Errorf("service CIDR %q: %w", cidr, err)
 	}
 	if !prefix.Addr().Is4() {
-		return nil, fmt.Errorf("service CIDR %q: only IPv4 is supported in v1", cidr)
+		return nil, fmt.Errorf("service CIDR %q: v4 frontends come from a v4 pool; --service-cidr6 is the v6 half", cidr)
 	}
-	return &vipAllocator{store: st, prefix: prefix.Masked()}, nil
+	a := &vipAllocator{store: st, prefix: prefix.Masked()}
+	if cidr6 != "" {
+		prefix6, err := netip.ParsePrefix(cidr6)
+		if err != nil {
+			return nil, fmt.Errorf("service CIDR6 %q: %w", cidr6, err)
+		}
+		if !prefix6.Addr().Is6() || prefix6.Addr().Is4In6() {
+			return nil, fmt.Errorf("service CIDR6 %q is not an IPv6 prefix", cidr6)
+		}
+		a.prefix6 = prefix6.Masked()
+	}
+	return a, nil
 }
 
 // Sync makes the set of VIP assignments match the given services: every service
-// gets one, and assignments for services that no longer exist are released.
+// gets one (a v4 address always, plus a v6 twin when the allocator has a v6
+// pool), and assignments for services that no longer exist are released.
 //
-// It returns the full mapping, keyed by "project/service".
-func (a *vipAllocator) Sync(ctx context.Context, services []serviceRef) (map[string]string, error) {
-	assigned, err := a.load(ctx)
+// It returns the full mappings, keyed by "project/service"; the second map is
+// nil when v6 is off. Both families move in one Apply batch.
+func (a *vipAllocator) Sync(ctx context.Context, services []serviceRef) (map[string]string, map[string]string, error) {
+	assigned, err := a.load(ctx, vipKeyPrefix)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	var assigned6 map[string]string
+	if a.prefix6.IsValid() {
+		if assigned6, err = a.load(ctx, vip6KeyPrefix); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	wanted := make(map[string]struct{}, len(services))
@@ -76,34 +109,59 @@ func (a *vipAllocator) Sync(ctx context.Context, services []serviceRef) (map[str
 		}
 		inUse[ip] = struct{}{}
 	}
+	inUse6 := make(map[string]struct{}, len(assigned6))
+	for key, ip := range assigned6 {
+		if _, keep := wanted[key]; !keep {
+			muts = append(muts, store.DeleteMutation(store.KindKV, vip6KeyPrefix+key))
+			delete(assigned6, key)
+			continue
+		}
+		inUse6[ip] = struct{}{}
+	}
 
 	// Allocate in a stable order so the same set of new services always lands
 	// on the same addresses — a test, and a rebuild, should be reproducible.
 	for _, svc := range sortedRefs(services) {
 		key := svc.key()
-		if _, ok := assigned[key]; ok {
+		if _, ok := assigned[key]; !ok {
+			ip, err := nextFree(a.prefix, inUse)
+			if err != nil {
+				return nil, nil, fmt.Errorf("allocate frontend for %s: %w", key, err)
+			}
+			assigned[key] = ip
+			inUse[ip] = struct{}{}
+
+			mut, err := store.PutMutation(store.KindKV, vipKeyPrefix+key, ip)
+			if err != nil {
+				return nil, nil, err
+			}
+			muts = append(muts, mut)
+		}
+		if !a.prefix6.IsValid() {
 			continue
 		}
-		ip, err := a.nextFree(inUse)
-		if err != nil {
-			return nil, fmt.Errorf("allocate frontend for %s: %w", key, err)
-		}
-		assigned[key] = ip
-		inUse[ip] = struct{}{}
+		if _, ok := assigned6[key]; !ok {
+			ip6, err := nextFree(a.prefix6, inUse6)
+			if err != nil {
+				return nil, nil, fmt.Errorf("allocate v6 frontend for %s: %w", key, err)
+			}
+			assigned6[key] = ip6
+			inUse6[ip6] = struct{}{}
 
-		mut, err := store.PutMutation(store.KindKV, vipKeyPrefix+key, ip)
-		if err != nil {
-			return nil, err
+			mut, err := store.PutMutation(store.KindKV, vip6KeyPrefix+key, ip6)
+			if err != nil {
+				return nil, nil, err
+			}
+			muts = append(muts, mut)
 		}
-		muts = append(muts, mut)
 	}
 
 	if len(muts) > 0 {
 		if _, err := a.store.Apply(ctx, muts...); err != nil {
-			return nil, fmt.Errorf("persist frontend addresses: %w", err)
+			return nil, nil, fmt.Errorf("persist frontend addresses: %w", err)
 		}
 	}
-	return assigned, nil
+	return assigned, assigned6, nil
 }
 
 // nextFree returns the lowest unused address in the pool.
@@ -111,23 +169,23 @@ func (a *vipAllocator) Sync(ctx context.Context, services []serviceRef) (map[str
 // Lowest-free rather than random or sequential-from-a-cursor: it is
 // deterministic, it reuses released addresses, and it keeps assignments dense
 // enough that an operator reading `kanea status` sees something comprehensible.
-func (a *vipAllocator) nextFree(inUse map[string]struct{}) (string, error) {
+func nextFree(prefix netip.Prefix, inUse map[string]struct{}) (string, error) {
 	// Skip the network address itself; the first usable frontend is .1.
-	addr := a.prefix.Addr().Next()
-	for a.prefix.Contains(addr) {
+	addr := prefix.Addr().Next()
+	for prefix.Contains(addr) {
 		s := addr.String()
 		if _, taken := inUse[s]; !taken {
 			return s, nil
 		}
 		addr = addr.Next()
 	}
-	return "", fmt.Errorf("service CIDR %s is exhausted (%d assigned)", a.prefix, len(inUse))
+	return "", fmt.Errorf("service CIDR %s is exhausted (%d assigned)", prefix, len(inUse))
 }
 
-// load reads every existing assignment.
-func (a *vipAllocator) load(ctx context.Context) (map[string]string, error) {
+// load reads every existing assignment under one key prefix.
+func (a *vipAllocator) load(ctx context.Context, prefix string) (map[string]string, error) {
 	out := map[string]string{}
-	opts := store.ListOptions{Prefix: vipKeyPrefix}
+	opts := store.ListOptions{Prefix: prefix}
 	for {
 		page, err := a.store.List(ctx, store.KindKV, opts)
 		if err != nil {
@@ -140,20 +198,13 @@ func (a *vipAllocator) load(ctx context.Context) (map[string]string, error) {
 			if err := json.Unmarshal(rec.Value, &ip); err != nil {
 				return nil, fmt.Errorf("decode frontend address %s: %w", rec.Key, err)
 			}
-			out[trimVIPKey(rec.Key)] = ip
+			out[strings.TrimPrefix(rec.Key, prefix)] = ip
 		}
 		if !page.More {
 			return out, nil
 		}
 		opts.After = page.NextAfter
 	}
-}
-
-func trimVIPKey(key string) string {
-	if len(key) > len(vipKeyPrefix) && key[:len(vipKeyPrefix)] == vipKeyPrefix {
-		return key[len(vipKeyPrefix):]
-	}
-	return key
 }
 
 // serviceRef names one service.
