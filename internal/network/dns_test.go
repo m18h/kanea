@@ -95,8 +95,8 @@ func parseReply(t *testing.T, buf []byte) reply {
 		if offset+rdlen > len(buf) {
 			t.Fatalf("answer rdata truncated")
 		}
-		if rrType == typeA && rdlen == 4 {
-			addr, _ := netip.AddrFromSlice(buf[offset : offset+4])
+		if (rrType == typeA && rdlen == 4) || (rrType == typeAAAA && rdlen == 16) {
+			addr, _ := netip.AddrFromSlice(buf[offset : offset+rdlen])
 			r.Answers = append(r.Answers, addr)
 		}
 		offset += rdlen
@@ -398,4 +398,70 @@ func TestDNSServeAndQueryOverUDP(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+// dualStackDNS is testDNS with v6 twins on the service and one backend —
+// the other backend is a pre-v1.41 attachment with no v6 half.
+func dualStackDNS(t *testing.T) *DNS {
+	t.Helper()
+	d, err := NewDNS(DNSConfig{
+		Listen:         "127.0.0.1:0",
+		ForwardTimeout: 300 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewDNS: %v", err)
+	}
+	d.SetZone([]Service{{
+		Project: "shop", Service: "web", VIP: "10.201.0.1", VIP6: "fd10:245::1",
+		Backends: []Backend{
+			{AllocID: "shop-web-0", IPv4: "10.200.1.5", IPv6: "fd10:244::5"},
+			{AllocID: "shop-web-1", IPv4: "10.200.1.6"}, // v4-only, adopted across the upgrade
+		},
+	}})
+	return d
+}
+
+// The per-type answer matrix (v1.41): A sees v4, AAAA sees v6, ANY both —
+// and the deliberate NODATA survives for the halves a name does not have.
+func TestDNSAnswersPerQueryType(t *testing.T) {
+	d := dualStackDNS(t)
+
+	t.Run("A stays v4", func(t *testing.T) {
+		r := parseReply(t, d.respond(t.Context(), buildQuery(t, 1, "web.shop.kanea", typeA, true)))
+		if len(r.Answers) != 1 || r.Answers[0].String() != "10.201.0.1" {
+			t.Fatalf("A answers = %v, want only the v4 VIP", r.Answers)
+		}
+	})
+	t.Run("AAAA answers the v6 twin", func(t *testing.T) {
+		r := parseReply(t, d.respond(t.Context(), buildQuery(t, 2, "web.shop.kanea", typeAAAA, true)))
+		if r.RCode != rcodeNoError || !r.AA {
+			t.Fatalf("rcode = %d, authoritative = %v", r.RCode, r.AA)
+		}
+		if len(r.Answers) != 1 || r.Answers[0].String() != "fd10:245::1" {
+			t.Fatalf("AAAA answers = %v, want the v6 VIP", r.Answers)
+		}
+	})
+	t.Run("ANY answers both", func(t *testing.T) {
+		r := parseReply(t, d.respond(t.Context(), buildQuery(t, 3, "web.shop.kanea", typeANY, true)))
+		if len(r.Answers) != 2 {
+			t.Fatalf("ANY answers = %v, want both families", r.Answers)
+		}
+	})
+	t.Run("AAAA on a v6-less name stays NODATA", func(t *testing.T) {
+		// shop-web-1 predates dual-stack: its alloc name has no v6 address,
+		// and the deliberate NODATA is still the answer — never NXDOMAIN, and
+		// never someone else's address.
+		r := parseReply(t, d.respond(t.Context(),
+			buildQuery(t, 4, "alloc-shop-web-1.web.shop.kanea", typeAAAA, true)))
+		if r.RCode != rcodeNoError || r.NumAnswr != 0 || !r.AA {
+			t.Fatalf("rcode = %d, answers = %d, AA = %v; want authoritative NODATA", r.RCode, r.NumAnswr, r.AA)
+		}
+	})
+	t.Run("AAAA on a dual-stack alloc name", func(t *testing.T) {
+		r := parseReply(t, d.respond(t.Context(),
+			buildQuery(t, 5, "alloc-shop-web-0.web.shop.kanea", typeAAAA, true)))
+		if len(r.Answers) != 1 || r.Answers[0].String() != "fd10:244::5" {
+			t.Fatalf("answers = %v, want fd10:244::5", r.Answers)
+		}
+	})
 }

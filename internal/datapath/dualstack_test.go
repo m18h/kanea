@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/m18h/kanea/internal/datapath/dpmap"
+	"github.com/m18h/kanea/internal/network"
 )
 
 // Dual-stack (PRD v1.41): the v6 half rides inside the existing attach steps,
@@ -281,5 +282,59 @@ func TestAppliedCacheKeepsFamiliesApart(t *testing.T) {
 	}
 	if services[v4].SvcID != 7 || services[v6].SvcID != 7 {
 		t.Errorf("the twins should share one frontend id: %+v", services)
+	}
+}
+
+// SyncServices with a VIP6 twin programs both families: same frontend id,
+// family-split backend sets — and a backend with no v6 half (a pre-v1.41
+// attachment) is omitted from the v6 set instead of failing the service.
+func TestSyncServicesProgramsBothFamilies(t *testing.T) {
+	f := newDualStackFixture(t)
+	svc := network.Service{
+		Project: "shop", Service: "web",
+		VIP: "10.201.0.1", VIP6: "fd10:245::1",
+		Ports: []network.ServicePort{{Name: "http", Port: 80, TargetPort: 8080}},
+		Backends: []network.Backend{
+			{AllocID: "shop-web-0", IPv4: "10.200.0.2", IPv6: "fd10:244::2"},
+			{AllocID: "shop-web-1", IPv4: "10.200.0.3"}, // adopted, no v6 yet
+		},
+	}
+	if err := f.d.SyncServices(t.Context(), []network.Service{svc}); err != nil {
+		t.Fatalf("SyncServices: %v", err)
+	}
+
+	v4Key := dpmap.SvcAddr{IP: netip.MustParseAddr("10.201.0.1"), Port: 80, Proto: protoTCP}
+	v6Key := dpmap.SvcAddr{IP: netip.MustParseAddr("fd10:245::1"), Port: 80, Proto: protoTCP}
+
+	v4, ok := f.maps.services[v4Key]
+	if !ok {
+		t.Fatalf("no v4 entry; have %v", f.maps.services)
+	}
+	v6, ok := f.maps.services[v6Key]
+	if !ok {
+		t.Fatalf("no v6 entry; have %v", f.maps.services)
+	}
+	if v4.SvcID != v6.SvcID {
+		t.Errorf("frontend ids differ (%d vs %d); stats_svc folds both families into one counter",
+			v4.SvcID, v6.SvcID)
+	}
+	if v4.Count != 2 {
+		t.Errorf("v4 count = %d, want both backends", v4.Count)
+	}
+	if v6.Count != 1 {
+		t.Errorf("v6 count = %d, want only the dual-stack backend", v6.Count)
+	}
+	b6, ok := f.maps.backends[dpmap.BackendKey{SvcID: v6.SvcID, Index: 0, Gen: v6.Gen}]
+	if !ok || b6.IP.String() != "fd10:244::2" || b6.Port != 8080 {
+		t.Errorf("v6 backend = %+v (ok=%v), want fd10:244::2:8080", b6, ok)
+	}
+
+	// An unchanged pass costs no writes, per family.
+	f.log.reset()
+	if err := f.d.SyncServices(t.Context(), []network.Service{svc}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.log.taken(); len(got) != 0 {
+		t.Errorf("an unchanged dual-stack set cost writes: %v", got)
 	}
 }

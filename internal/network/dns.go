@@ -188,13 +188,20 @@ func (d *DNS) SetZone(services []Service) {
 		if vip, err := netip.ParseAddr(svc.VIP); err == nil && vip.Is4() {
 			records[base] = []netip.Addr{vip}
 		}
+		// The v6 twin joins the same name (v1.41); answerInternal filters per
+		// query type, so an A query never sees it and an AAAA never sees v4.
+		if vip6, err := netip.ParseAddr(svc.VIP6); err == nil && vip6.Is6() && !vip6.Is4In6() {
+			records[base] = append(records[base], vip6)
+		}
 
 		for _, backend := range svc.Backends {
-			ip, err := netip.ParseAddr(backend.IPv4)
-			if err != nil || !ip.Is4() {
-				continue
+			name := AllocName(svc.Project, svc.Service, backend.AllocID)
+			if ip, err := netip.ParseAddr(backend.IPv4); err == nil && ip.Is4() {
+				records[name] = append(records[name], ip)
 			}
-			records[AllocName(svc.Project, svc.Service, backend.AllocID)] = []netip.Addr{ip}
+			if ip6, err := netip.ParseAddr(backend.IPv6); err == nil && ip6.Is6() && !ip6.Is4In6() {
+				records[name] = append(records[name], ip6)
+			}
 		}
 	}
 	d.zone.Store(&zone{records: records})
@@ -316,19 +323,46 @@ func (d *DNS) answerInternal(request []byte, q query) []byte {
 		return newResponse(request, q, rcodeNXDomain, true).finish()
 	}
 
-	// The name exists. For a type we do not hold — AAAA being the one that
-	// matters, since Kanea is IPv4-only in v1 — the answer is NODATA: NOERROR
-	// with no records. NXDOMAIN here would be a lie about the name itself, and
-	// a dual-stack client that believes it may never try the A query at all.
-	if q.Type != typeA && q.Type != typeANY {
-		return newResponse(request, q, rcodeNoError, true).finish()
+	// The name exists; the answer set is filtered per query type (v1.41):
+	// A sees the v4 addresses, AAAA the v6 ones, ANY both. For a type we do
+	// not hold — AAAA on a v4-only node being the one that matters — the
+	// answer stays NODATA: NOERROR with no records. NXDOMAIN here would be a
+	// lie about the name itself, and a dual-stack client that believes it may
+	// never try the A query at all.
+	matches := func(addr netip.Addr) bool {
+		switch q.Type {
+		case typeA:
+			return addr.Is4()
+		case typeAAAA:
+			return addr.Is6() && !addr.Is4In6()
+		case typeANY:
+			return true
+		default:
+			return false
+		}
 	}
 
 	b := newResponse(request, q, rcodeNoError, true)
+	answered := false
 	for _, addr := range addrs {
-		if err := b.addA(q.Name, addr, uint32(d.ttl.Seconds())); err != nil {
+		if !matches(addr) {
+			continue
+		}
+		var err error
+		if addr.Is4() {
+			err = b.addA(q.Name, addr, uint32(d.ttl.Seconds()))
+		} else {
+			err = b.addAAAA(q.Name, addr, uint32(d.ttl.Seconds()))
+		}
+		if err != nil {
 			return newResponse(request, q, rcodeServFail, true).finish()
 		}
+		answered = true
+	}
+	if !answered {
+		// NODATA, the deliberate answer since v1 — now per type instead of
+		// blanket for everything that is not A.
+		return newResponse(request, q, rcodeNoError, true).finish()
 	}
 	return b.finish()
 }

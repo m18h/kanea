@@ -232,6 +232,29 @@ func (b *answerBuilder) addA(name string, ip netip.Addr, ttl uint32) error {
 	return nil
 }
 
+// addAAAA appends an AAAA record for the question name (v1.41): addA with a
+// sixteen-byte RDATA. Worth noting for the truncation path in finish: a v6
+// answer set reaches the 512-byte TC threshold sooner than the same set of A
+// records would.
+func (b *answerBuilder) addAAAA(name string, ip netip.Addr, ttl uint32) error {
+	if b.answers == maxAnswers {
+		return fmt.Errorf("dns: cannot add more than %d answers", maxAnswers)
+	}
+	v6 := ip.As16()
+	encoded, err := encodeName(name)
+	if err != nil {
+		return err
+	}
+	b.buf = append(b.buf, encoded...)
+	b.buf = binary.BigEndian.AppendUint16(b.buf, typeAAAA)
+	b.buf = binary.BigEndian.AppendUint16(b.buf, classIN)
+	b.buf = binary.BigEndian.AppendUint32(b.buf, ttl)
+	b.buf = binary.BigEndian.AppendUint16(b.buf, 16)
+	b.buf = append(b.buf, v6[:]...)
+	b.answers++
+	return nil
+}
+
 // finish patches the answer count and applies UDP truncation semantics.
 //
 // A response that does not fit is returned empty with TC set rather than
