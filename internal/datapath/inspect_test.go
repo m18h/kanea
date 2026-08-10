@@ -54,7 +54,7 @@ func TestAttachmentsWithoutIdentityIsNotReady(t *testing.T) {
 	// tc program fails closed), so the attachment is reported — the reaper
 	// must see it to reclaim it — but never as fit for traffic.
 	f := newFixture(t)
-	f.nl.addLink(hostDevName("shop-web-0"), aliasFor("shop-web-0", netip.MustParseAddr("10.200.0.2")))
+	f.nl.addLink(hostDevName("shop-web-0"), aliasFor("shop-web-0", netip.MustParseAddr("10.200.0.2"), netip.Addr{}))
 
 	got, err := f.d.Attachments(t.Context())
 	if err != nil {
@@ -75,7 +75,7 @@ func TestAttachmentsNeverReportsTheHostIdentityAsAnAlloc(t *testing.T) {
 	// host identity is not an alloc identity.
 	hostIP := netip.MustParseAddr("10.200.0.1")
 	f.maps.idents[hostIP] = dpmap.Identity{Flags: dpmap.IdentityFlagHost}
-	f.nl.addLink(hostDevName("weird-000"), aliasFor("weird-000", hostIP))
+	f.nl.addLink(hostDevName("weird-000"), aliasFor("weird-000", hostIP, netip.Addr{}))
 
 	got, err := f.d.Attachments(t.Context())
 	if err != nil {

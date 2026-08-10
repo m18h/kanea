@@ -336,9 +336,16 @@ func (f datapathFlows) Drops(ctx context.Context) (map[string]uint64, error) {
 		if addr, err := netip.ParseAddr(att.IPv4); err == nil {
 			byAddr[addr] = att.Service.String()
 		}
+		// The v6 twin attributes to the same service: a drop is a drop,
+		// whichever header version carried the refused packet (v1.41).
+		if att.IPv6 != "" {
+			if addr, err := netip.ParseAddr(att.IPv6); err == nil {
+				byAddr[addr] = att.Service.String()
+			}
+		}
 	}
 	for key, count := range raw {
-		subject, ok := byAddr[netip.AddrFrom4(key.DstIP)]
+		subject, ok := byAddr[key.Addr]
 		if !ok {
 			subject = scaling.NodeSubject
 		}

@@ -95,7 +95,7 @@ func TestAttachRedoesAHalfFinishedAttach(t *testing.T) {
 	// an interrupted attach, and leaving it standing would look attached and
 	// pass nothing. It must be torn down and redone in full.
 	f := newFixture(t)
-	f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, netip.MustParseAddr("10.200.0.2")))
+	f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, netip.MustParseAddr("10.200.0.2"), netip.Addr{}))
 
 	attach(t, f)
 	got := f.log.taken()
@@ -190,14 +190,14 @@ func TestDetachToleratesPartialState(t *testing.T) {
 			f.maps.idents[ip] = identityFor(t, f, testSpec)
 		}, true},
 		{"veth only", func(f *fixture) {
-			f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, ip))
+			f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, ip, netip.Addr{}))
 		}, false},
 		{"veth and identity", func(f *fixture) {
-			f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, ip))
+			f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, ip, netip.Addr{}))
 			f.maps.idents[ip] = identityFor(t, f, testSpec)
 		}, false},
 		{"everything but the route", func(f *fixture) {
-			f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, ip))
+			f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, ip, netip.Addr{}))
 			f.maps.idents[ip] = identityFor(t, f, testSpec)
 			if _, err := f.netns.Create(testSpec.ID); err != nil {
 				t.Fatal(err)
@@ -226,7 +226,7 @@ func TestDetachFindsTheAddressFromTheAliasAfterARestart(t *testing.T) {
 	// durable copy, and the identity must still be removed.
 	f := newFixture(t)
 	ip := netip.MustParseAddr("10.200.0.5")
-	f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, ip))
+	f.nl.addLink(hostDevName(testSpec.ID), aliasFor(testSpec.ID, ip, netip.Addr{}))
 	f.maps.idents[ip] = identityFor(t, f, testSpec)
 
 	if err := f.d.Detach(t.Context(), testSpec); err != nil {

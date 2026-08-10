@@ -27,42 +27,86 @@ func (k *kernelMaps) mp(name string) (*ebpf.Map, error) {
 	return m, nil
 }
 
+// identityMapFor picks the identity map by the address's family — the one
+// place the PutIdentity/DeleteIdentity dispatch lives.
+func (k *kernelMaps) identityMapFor(ip netip.Addr) (*ebpf.Map, []byte, error) {
+	if ip.Is4() {
+		m, err := k.mp(dpmap.MapIdentityV4)
+		return m, dpmap.IPKey(ip.As4()), err
+	}
+	m, err := k.mp(dpmap.MapIdentityV6)
+	return m, dpmap.IP6Key(ip.As16()), err
+}
+
 func (k *kernelMaps) PutIdentity(ip netip.Addr, id dpmap.Identity) error {
-	m, err := k.mp(dpmap.MapIdentityV4)
+	m, key, err := k.identityMapFor(ip)
 	if err != nil {
 		return err
 	}
-	return m.Update(dpmap.IPKey(ip.As4()), id.Marshal(), ebpf.UpdateAny)
+	return m.Update(key, id.Marshal(), ebpf.UpdateAny)
 }
 
 func (k *kernelMaps) DeleteIdentity(ip netip.Addr) error {
-	m, err := k.mp(dpmap.MapIdentityV4)
+	m, key, err := k.identityMapFor(ip)
 	if err != nil {
 		return err
 	}
-	if err := m.Delete(dpmap.IPKey(ip.As4())); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+	if err := m.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 		return err
 	}
 	return nil
 }
 
-func (k *kernelMaps) ApplyFlip(key dpmap.SvcKey, ops []dpmap.Op) error {
-	svc, err := k.mp(dpmap.MapSvcV4)
+// svcMapsFor picks the service and backend maps by the key's family, and
+// renders the key bytes once.
+func (k *kernelMaps) svcMapsFor(key dpmap.SvcAddr) (svc, backends *ebpf.Map, keyBytes []byte, v6 bool, err error) {
+	if key.IP.Is4() {
+		if svc, err = k.mp(dpmap.MapSvcV4); err != nil {
+			return nil, nil, nil, false, err
+		}
+		if backends, err = k.mp(dpmap.MapSvcBackends); err != nil {
+			return nil, nil, nil, false, err
+		}
+		return svc, backends, key.Key4().Marshal(), false, nil
+	}
+	if svc, err = k.mp(dpmap.MapSvcV6); err != nil {
+		return nil, nil, nil, false, err
+	}
+	if backends, err = k.mp(dpmap.MapSvcBackends6); err != nil {
+		return nil, nil, nil, false, err
+	}
+	return svc, backends, key.Key6().Marshal(), true, nil
+}
+
+func (k *kernelMaps) ApplyFlip(key dpmap.SvcAddr, ops []dpmap.Op) error {
+	svc, backends, keyBytes, v6, err := k.svcMapsFor(key)
 	if err != nil {
 		return err
 	}
-	backends, err := k.mp(dpmap.MapSvcBackends)
-	if err != nil {
-		return err
+	// The value's family follows the key's: a v6 frontend's backends are v6
+	// addresses, marshalled for svc_backends6, and mixing families in one
+	// flip is a bug worth failing loudly on.
+	marshalVal := func(b dpmap.Backend) ([]byte, error) {
+		if b.IP.Is4() != !v6 {
+			return nil, fmt.Errorf("backend %s does not match the frontend's family", b.IP)
+		}
+		if v6 {
+			return dpmap.BackendVal6{IP: b.IP.As16(), Port: b.Port}.Marshal(), nil
+		}
+		return dpmap.BackendVal{IP: b.IP.As4(), Port: b.Port}.Marshal(), nil
 	}
 	for _, op := range ops {
 		switch op.Kind {
 		case dpmap.OpPutBackend:
-			if err := backends.Update(op.Key.Marshal(), op.Val.Marshal(), ebpf.UpdateAny); err != nil {
+			val, err := marshalVal(op.Val)
+			if err != nil {
+				return err
+			}
+			if err := backends.Update(op.Key.Marshal(), val, ebpf.UpdateAny); err != nil {
 				return fmt.Errorf("put backend %d/%d gen %d: %w", op.Key.SvcID, op.Key.Index, op.Key.Gen, err)
 			}
 		case dpmap.OpCommitService:
-			if err := svc.Update(key.Marshal(), op.Svc.Marshal(), ebpf.UpdateAny); err != nil {
+			if err := svc.Update(keyBytes, op.Svc.Marshal(), ebpf.UpdateAny); err != nil {
 				return fmt.Errorf("commit service %d gen %d: %w", op.Svc.SvcID, op.Svc.Gen, err)
 			}
 		case dpmap.OpDeleteBackend:
@@ -76,12 +120,12 @@ func (k *kernelMaps) ApplyFlip(key dpmap.SvcKey, ops []dpmap.Op) error {
 	return nil
 }
 
-func (k *kernelMaps) DeleteService(key dpmap.SvcKey) error {
-	m, err := k.mp(dpmap.MapSvcV4)
+func (k *kernelMaps) DeleteService(key dpmap.SvcAddr) error {
+	m, _, keyBytes, _, err := k.svcMapsFor(key)
 	if err != nil {
 		return err
 	}
-	if err := m.Delete(key.Marshal()); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+	if err := m.Delete(keyBytes); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 		return err
 	}
 	return nil
@@ -128,14 +172,15 @@ func (k *kernelMaps) Allows() (map[dpmap.AllowKey]struct{}, error) {
 }
 
 func (k *kernelMaps) Identities() (map[netip.Addr]dpmap.Identity, error) {
-	m, err := k.mp(dpmap.MapIdentityV4)
+	out := map[netip.Addr]dpmap.Identity{}
+
+	m4, err := k.mp(dpmap.MapIdentityV4)
 	if err != nil {
 		return nil, err
 	}
-	out := map[netip.Addr]dpmap.Identity{}
 	var kb [4]byte
 	var vb [dpmap.IdentitySize]byte
-	it := m.Iterate()
+	it := m4.Iterate()
 	for it.Next(&kb, &vb) {
 		var id dpmap.Identity
 		if err := id.Unmarshal(vb[:]); err != nil {
@@ -143,18 +188,36 @@ func (k *kernelMaps) Identities() (map[netip.Addr]dpmap.Identity, error) {
 		}
 		out[netip.AddrFrom4(kb)] = id
 	}
-	return out, it.Err()
-}
+	if err := it.Err(); err != nil {
+		return nil, err
+	}
 
-func (k *kernelMaps) Services() (map[dpmap.SvcKey]dpmap.SvcVal, error) {
-	m, err := k.mp(dpmap.MapSvcV4)
+	m6, err := k.mp(dpmap.MapIdentityV6)
 	if err != nil {
 		return nil, err
 	}
-	out := map[dpmap.SvcKey]dpmap.SvcVal{}
+	var kb6 [16]byte
+	it = m6.Iterate()
+	for it.Next(&kb6, &vb) {
+		var id dpmap.Identity
+		if err := id.Unmarshal(vb[:]); err != nil {
+			return nil, err
+		}
+		out[netip.AddrFrom16(kb6)] = id
+	}
+	return out, it.Err()
+}
+
+func (k *kernelMaps) Services() (map[dpmap.SvcAddr]dpmap.SvcVal, error) {
+	out := map[dpmap.SvcAddr]dpmap.SvcVal{}
+
+	m4, err := k.mp(dpmap.MapSvcV4)
+	if err != nil {
+		return nil, err
+	}
 	var kb [dpmap.SvcKeySize]byte
 	var vb [dpmap.SvcValSize]byte
-	it := m.Iterate()
+	it := m4.Iterate()
 	for it.Next(&kb, &vb) {
 		var key dpmap.SvcKey
 		var val dpmap.SvcVal
@@ -164,13 +227,42 @@ func (k *kernelMaps) Services() (map[dpmap.SvcKey]dpmap.SvcVal, error) {
 		if err := val.Unmarshal(vb[:]); err != nil {
 			return nil, err
 		}
-		out[key] = val
+		out[dpmap.SvcAddr{IP: netip.AddrFrom4(key.VIP), Port: key.Port, Proto: key.Proto}] = val
+	}
+	if err := it.Err(); err != nil {
+		return nil, err
+	}
+
+	m6, err := k.mp(dpmap.MapSvcV6)
+	if err != nil {
+		return nil, err
+	}
+	var kb6 [dpmap.SvcKey6Size]byte
+	it = m6.Iterate()
+	for it.Next(&kb6, &vb) {
+		var key dpmap.SvcKey6
+		var val dpmap.SvcVal
+		if err := key.Unmarshal(kb6[:]); err != nil {
+			return nil, err
+		}
+		if err := val.Unmarshal(vb[:]); err != nil {
+			return nil, err
+		}
+		out[dpmap.SvcAddr{IP: netip.AddrFrom16(key.VIP), Port: key.Port, Proto: key.Proto}] = val
 	}
 	return out, it.Err()
 }
 
 func (k *kernelMaps) SetConfig(cfg dpmap.Config) error {
 	m, err := k.mp(dpmap.MapConfig)
+	if err != nil {
+		return err
+	}
+	return m.Update(uint32(0), cfg.Marshal(), ebpf.UpdateAny)
+}
+
+func (k *kernelMaps) SetConfig6(cfg dpmap.Config6) error {
+	m, err := k.mp(dpmap.MapConfig6)
 	if err != nil {
 		return err
 	}
@@ -198,15 +290,16 @@ func (k *kernelMaps) ServiceConnects() (map[uint16]uint64, error) {
 	return out, it.Err()
 }
 
-func (k *kernelMaps) Drops() (map[dpmap.DropKey]uint64, error) {
-	m, err := k.mp(dpmap.MapStatsDrops)
+func (k *kernelMaps) Drops() (map[dpmap.DropEntry]uint64, error) {
+	out := map[dpmap.DropEntry]uint64{}
+
+	m4, err := k.mp(dpmap.MapStatsDrops)
 	if err != nil {
 		return nil, err
 	}
-	out := map[dpmap.DropKey]uint64{}
 	var kb [dpmap.DropKeySize]byte
 	var perCPU []uint64
-	it := m.Iterate()
+	it := m4.Iterate()
 	for it.Next(&kb, &perCPU) {
 		var key dpmap.DropKey
 		if err := key.Unmarshal(kb[:]); err != nil {
@@ -216,29 +309,68 @@ func (k *kernelMaps) Drops() (map[dpmap.DropKey]uint64, error) {
 		for _, v := range perCPU {
 			sum += v
 		}
-		out[key] = sum
+		out[dpmap.DropEntry{Addr: netip.AddrFrom4(key.DstIP), Reason: key.Reason}] = sum
+	}
+	if err := it.Err(); err != nil {
+		return nil, err
+	}
+
+	m6, err := k.mp(dpmap.MapStatsDrops6)
+	if err != nil {
+		return nil, err
+	}
+	var kb6 [dpmap.DropKey6Size]byte
+	it = m6.Iterate()
+	for it.Next(&kb6, &perCPU) {
+		var key dpmap.DropKey6
+		if err := key.Unmarshal(kb6[:]); err != nil {
+			return nil, err
+		}
+		var sum uint64
+		for _, v := range perCPU {
+			sum += v
+		}
+		out[dpmap.DropEntry{Addr: netip.AddrFrom16(key.DstIP), Reason: key.Reason}] = sum
 	}
 	return out, it.Err()
 }
 
 func (k *kernelMaps) EndpointStats() (map[netip.Addr]dpmap.EpStats, error) {
-	m, err := k.mp(dpmap.MapStatsEp)
+	out := map[netip.Addr]dpmap.EpStats{}
+
+	sum := func(perCPU []dpmap.EpStats) dpmap.EpStats {
+		var s dpmap.EpStats
+		for _, v := range perCPU {
+			s.RxBytes += v.RxBytes
+			s.RxPkts += v.RxPkts
+			s.TxBytes += v.TxBytes
+			s.TxPkts += v.TxPkts
+		}
+		return s
+	}
+
+	m4, err := k.mp(dpmap.MapStatsEp)
 	if err != nil {
 		return nil, err
 	}
-	out := map[netip.Addr]dpmap.EpStats{}
 	var kb [4]byte
 	var perCPU []dpmap.EpStats
-	it := m.Iterate()
+	it := m4.Iterate()
 	for it.Next(&kb, &perCPU) {
-		var sum dpmap.EpStats
-		for _, v := range perCPU {
-			sum.RxBytes += v.RxBytes
-			sum.RxPkts += v.RxPkts
-			sum.TxBytes += v.TxBytes
-			sum.TxPkts += v.TxPkts
-		}
-		out[netip.AddrFrom4(kb)] = sum
+		out[netip.AddrFrom4(kb)] = sum(perCPU)
+	}
+	if err := it.Err(); err != nil {
+		return nil, err
+	}
+
+	m6, err := k.mp(dpmap.MapStatsEp6)
+	if err != nil {
+		return nil, err
+	}
+	var kb6 [16]byte
+	it = m6.Iterate()
+	for it.Next(&kb6, &perCPU) {
+		out[netip.AddrFrom16(kb6)] = sum(perCPU)
 	}
 	return out, it.Err()
 }

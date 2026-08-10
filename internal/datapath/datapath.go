@@ -29,6 +29,14 @@ type Config struct {
 	// egress program can refuse service-CIDR traffic that escaped
 	// connect-time rewrite, and blackholed on the host for the same reason.
 	ServiceCIDR netip.Prefix
+	// NodeCIDR6, ClusterCIDR6 and ServiceCIDR6 are the opt-in dual-stack trio
+	// (PRD v1.41): all three set, or none — parseAgentCIDRs refuses anything
+	// else by name, and newDatapath re-checks. Invalid (zero) prefixes mean
+	// v4-only, which is the default and today's behavior — except that the tc
+	// programs then drop IPv6 instead of passing it unpoliced.
+	NodeCIDR6    netip.Prefix
+	ClusterCIDR6 netip.Prefix
+	ServiceCIDR6 netip.Prefix
 	// BPFDir is the bpffs pin root. Empty means dpmap.PinRoot.
 	BPFDir string
 	// Store allocates the numeric project/service ids behind the maps. They
@@ -51,6 +59,8 @@ type zoneSetter interface {
 
 // appliedService is what SyncServices remembers having programmed for one
 // frontend, so an unchanged service costs no map writes on the next pass.
+// The applied cache is keyed by dpmap.SvcAddr, so one entry per family per
+// port — a v6 twin is its own frontend programming.
 type appliedService struct {
 	id       uint16
 	backends []dpmap.Backend
@@ -76,6 +86,13 @@ type Datapath struct {
 	serviceCIDR netip.Prefix
 	hostIP      netip.Addr
 
+	// The dual-stack trio (v1.41); invalid prefixes and a zero hostIP6 mean
+	// v4-only.
+	nodeCIDR6    netip.Prefix
+	clusterCIDR6 netip.Prefix
+	serviceCIDR6 netip.Prefix
+	hostIP6      netip.Addr
+
 	nl       Nl
 	maps     Maps
 	fw       Firewall
@@ -86,10 +103,17 @@ type Datapath struct {
 	dns zoneSetter
 	log *slog.Logger
 
-	mu      sync.Mutex
-	ipam    *ipam
-	applied map[dpmap.SvcKey]appliedService
+	mu   sync.Mutex
+	ipam *ipam
+	// ipam6 is nil when v6 is disabled. Reservations move in lockstep with
+	// ipam's under the Datapath mutex; the dual alias is the one durable
+	// record for both.
+	ipam6   *ipam
+	applied map[dpmap.SvcAddr]appliedService
 }
+
+// v6Enabled reports whether the dual-stack trio was configured.
+func (d *Datapath) v6Enabled() bool { return d.ipam6 != nil }
 
 // seams bundles the platform implementations a Datapath runs on. The real set
 // is built by New (linux); tests build recorders.
@@ -123,6 +147,32 @@ func newDatapath(cfg Config, s seams) (*Datapath, error) {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 
+	// The v6 trio is all-or-nothing (PRD v1.41): a v6 alloc address without a
+	// v6 VIP pool is a half-configured stack whose failures are silent.
+	v6Count := 0
+	for _, p := range []netip.Prefix{cfg.NodeCIDR6, cfg.ClusterCIDR6, cfg.ServiceCIDR6} {
+		if p.IsValid() {
+			v6Count++
+		}
+	}
+	if v6Count != 0 && v6Count != 3 {
+		return nil, fmt.Errorf("datapath: --node-cidr6, --cluster-cidr6 and --service-cidr6 come as a trio: all three or none")
+	}
+	if v6Count == 3 {
+		for _, p := range []struct {
+			name   string
+			prefix netip.Prefix
+		}{
+			{"node CIDR6", cfg.NodeCIDR6},
+			{"cluster CIDR6", cfg.ClusterCIDR6},
+			{"service CIDR6", cfg.ServiceCIDR6},
+		} {
+			if !p.prefix.Addr().Is6() || p.prefix.Addr().Is4In6() {
+				return nil, fmt.Errorf("datapath: %s %q is not a valid IPv6 prefix", p.name, p.prefix)
+			}
+		}
+	}
+
 	node := cfg.NodeCIDR.Masked()
 	d := &Datapath{
 		nodeCIDR:    node,
@@ -137,7 +187,15 @@ func newDatapath(cfg Config, s seams) (*Datapath, error) {
 		ids:         newIDAllocator(cfg.Store),
 		log:         cfg.Logger,
 		ipam:        newIPAM(node),
-		applied:     map[dpmap.SvcKey]appliedService{},
+		applied:     map[dpmap.SvcAddr]appliedService{},
+	}
+	if v6Count == 3 {
+		node6 := cfg.NodeCIDR6.Masked()
+		d.nodeCIDR6 = node6
+		d.clusterCIDR6 = cfg.ClusterCIDR6.Masked()
+		d.serviceCIDR6 = cfg.ServiceCIDR6.Masked()
+		d.hostIP6 = node6.Addr().Next()
+		d.ipam6 = newIPAM(node6)
 	}
 	if cfg.DNS != nil {
 		d.dns = cfg.DNS
@@ -157,14 +215,25 @@ func (d *Datapath) Init(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := d.nl.EnsureHost(d.hostIP); err != nil {
+	if err := d.nl.EnsureHost(d.hostIP, d.hostIP6); err != nil {
 		return fmt.Errorf("datapath: host interface: %w", err)
 	}
 	if err := d.maps.PutIdentity(d.hostIP, dpmap.Identity{Flags: dpmap.IdentityFlagHost}); err != nil {
 		return fmt.Errorf("datapath: host identity: %w", err)
 	}
+	if d.v6Enabled() {
+		if err := d.maps.PutIdentity(d.hostIP6, dpmap.Identity{Flags: dpmap.IdentityFlagHost}); err != nil {
+			return fmt.Errorf("datapath: host v6 identity: %w", err)
+		}
+	}
 	if err := d.maps.SetConfig(configFor(d.serviceCIDR)); err != nil {
 		return fmt.Errorf("datapath: config map: %w", err)
+	}
+	// config6 is written unconditionally: its all-zero mask is the v6 enable
+	// switch, and a node whose v6 was turned off must overwrite whatever an
+	// earlier process left in the pinned map.
+	if err := d.maps.SetConfig6(configFor6(d.serviceCIDR6)); err != nil {
+		return fmt.Errorf("datapath: config6 map: %w", err)
 	}
 	if err := d.fw.EnsureMasquerade(d.clusterCIDR, HostInterface); err != nil {
 		return fmt.Errorf("datapath: masquerade: %w", err)
@@ -176,11 +245,14 @@ func (d *Datapath) Init(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.ipam.Rebuild(links)
+	if d.ipam6 != nil {
+		d.ipam6.Rebuild(links)
+	}
 	reserved := d.ipam.Len()
 	d.mu.Unlock()
 	d.log.Info("datapath initialised",
 		"host_ip", d.hostIP, "node_cidr", d.nodeCIDR, "service_cidr", d.serviceCIDR,
-		"reserved", reserved)
+		"node_cidr6", d.nodeCIDR6, "reserved", reserved)
 	return nil
 }
 
@@ -207,6 +279,38 @@ func maskFor(p netip.Prefix) [4]byte {
 	var m [4]byte
 	bits := p.Bits()
 	for i := 0; i < 4; i++ {
+		if bits >= 8 {
+			m[i] = 0xFF
+			bits -= 8
+			continue
+		}
+		if bits > 0 {
+			m[i] = byte(0xFF << (8 - bits))
+			bits = 0
+		}
+	}
+	return m
+}
+
+// configFor6 renders the v6 service CIDR into config6's value. An invalid
+// prefix renders all-zero, which the programs read as "v6 disabled" — the
+// deliberate coupling that makes writing it unconditionally correct.
+func configFor6(p netip.Prefix) dpmap.Config6 {
+	var cfg dpmap.Config6
+	if !p.IsValid() {
+		return cfg
+	}
+	cfg.ServiceCIDRNet = p.Masked().Addr().As16()
+	cfg.ServiceCIDRMask = maskFor16(p)
+	return cfg
+}
+
+// maskFor16 renders a v6 prefix length as the sixteen network-order mask
+// bytes.
+func maskFor16(p netip.Prefix) [16]byte {
+	var m [16]byte
+	bits := p.Bits()
+	for i := 0; i < 16; i++ {
 		if bits >= 8 {
 			m[i] = 0xFF
 			bits -= 8

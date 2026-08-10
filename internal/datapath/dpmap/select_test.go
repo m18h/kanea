@@ -3,6 +3,7 @@ package dpmap
 import (
 	"fmt"
 	"math/rand/v2"
+	"net/netip"
 	"testing"
 )
 
@@ -59,7 +60,7 @@ func TestPickIsLooselyUniform(t *testing.T) {
 func backendsOf(ips ...byte) []Backend {
 	out := make([]Backend, len(ips))
 	for i, ip := range ips {
-		out[i] = Backend{IP: [4]byte{10, 0, 0, ip}, Port: 8080}
+		out[i] = Backend{IP: netip.AddrFrom4([4]byte{10, 0, 0, ip}), Port: 8080}
 	}
 	return out
 }
@@ -116,7 +117,7 @@ func TestFlipPlanOrdering(t *testing.T) {
 // and svc_backends, the way the linux writer will against the kernel maps.
 type flipModel struct {
 	svc      SvcVal
-	backends map[BackendKey]BackendVal
+	backends map[BackendKey]Backend
 }
 
 func (m *flipModel) apply(op Op) {
@@ -133,8 +134,8 @@ func (m *flipModel) apply(op Op) {
 // read is the datapath's view: resolve the committed generation, then look
 // up every index the committed count names — exactly what kanea_connect4
 // does for the one index it draws.
-func (m *flipModel) read() ([]BackendVal, error) {
-	out := make([]BackendVal, 0, m.svc.Count)
+func (m *flipModel) read() ([]Backend, error) {
+	out := make([]Backend, 0, m.svc.Count)
 	for i := uint16(0); i < m.svc.Count; i++ {
 		v, ok := m.backends[BackendKey{SvcID: m.svc.SvcID, Index: i, Gen: m.svc.Gen}]
 		if !ok {
@@ -145,15 +146,11 @@ func (m *flipModel) read() ([]BackendVal, error) {
 	return out, nil
 }
 
-func valsOf(bs []Backend) []BackendVal {
-	out := make([]BackendVal, len(bs))
-	for i, b := range bs {
-		out[i] = BackendVal(b)
-	}
-	return out
+func valsOf(bs []Backend) []Backend {
+	return bs
 }
 
-func sameSet(got, want []BackendVal) bool {
+func sameSet(got, want []Backend) bool {
 	if len(got) != len(want) {
 		return false
 	}
@@ -192,10 +189,10 @@ func TestFlipPlanIsAtomicAtEveryBoundary(t *testing.T) {
 
 			model := &flipModel{
 				svc:      SvcVal{SvcID: svcID, Count: uint16(len(tc.current)), Gen: oldGen},
-				backends: make(map[BackendKey]BackendVal),
+				backends: make(map[BackendKey]Backend),
 			}
 			for i, b := range tc.current {
-				model.backends[BackendKey{SvcID: svcID, Index: uint16(i), Gen: oldGen}] = BackendVal(b)
+				model.backends[BackendKey{SvcID: svcID, Index: uint16(i), Gen: oldGen}] = b
 			}
 
 			oldSet := valsOf(tc.current)

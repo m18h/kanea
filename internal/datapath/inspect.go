@@ -39,11 +39,17 @@ func (d *Datapath) Attachments(ctx context.Context) (map[string]network.Attachme
 		if !strings.HasPrefix(l.Name, devPrefix) {
 			continue // not ours, whatever the alias claims
 		}
-		allocID, ip, ok := parseAlias(l.Alias)
+		allocID, ip, ip6, ok := parseAlias(l.Alias)
 		if !ok {
 			continue // marked name without our alias: not provably ours
 		}
 		att := network.Attachment{AllocID: allocID, IPv4: ip.String()}
+		if ip6.IsValid() {
+			att.IPv6 = ip6.String()
+		}
+		// Ready gates on the v4 identity alone: v4 is the required family,
+		// and a v4-only attachment adopted across the dual-stack upgrade is
+		// complete as it stands (PRD v1.41).
 		if id, present := idents[ip]; present && id.Flags&dpmap.IdentityFlagHost == 0 {
 			att.Ready = true
 			if ref, found, err := d.ids.ServiceName(ctx, id.ServiceID); err != nil {

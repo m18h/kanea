@@ -84,8 +84,12 @@ func (f *fakeNl) failure(step string) error {
 	return f.fail[step]
 }
 
-func (f *fakeNl) EnsureHost(hostIP netip.Addr) error {
-	f.log.rec("ensure-host %s", hostIP)
+func (f *fakeNl) EnsureHost(hostIP, hostIP6 netip.Addr) error {
+	if hostIP6.IsValid() {
+		f.log.rec("ensure-host %s %s", hostIP, hostIP6)
+	} else {
+		f.log.rec("ensure-host %s", hostIP)
+	}
 	return f.failure("ensure-host")
 }
 
@@ -113,15 +117,22 @@ func (f *fakeNl) MovePeer(peer, netnsPath string) error {
 	return f.failure("move-peer")
 }
 
-func (f *fakeNl) ConfigurePeer(_ string, ip, _ netip.Addr, hostMAC string) error {
-	f.log.rec("configure-peer %s", ip)
+func (f *fakeNl) ConfigurePeer(_ string, ip, _, ip6, gw6 netip.Addr, hostMAC string) error {
+	if ip6.IsValid() {
+		f.log.rec("configure-peer %s %s", ip, ip6)
+		if !gw6.IsValid() {
+			return fmt.Errorf("configure-peer with a v6 address but no v6 gateway")
+		}
+	} else {
+		f.log.rec("configure-peer %s", ip)
+	}
 	if hostMAC == "" {
 		return fmt.Errorf("configure-peer without the host mac")
 	}
 	return f.failure("configure-peer")
 }
 
-func (f *fakeNl) SetHostUp(hostDev string, _ netip.Addr, podMAC string) error {
+func (f *fakeNl) SetHostUp(hostDev string, _, _ netip.Addr, podMAC string) error {
 	f.log.rec("set-host-up %s", hostDev)
 	if podMAC == "" {
 		return fmt.Errorf("set-host-up without the pod mac")
@@ -171,10 +182,11 @@ type fakeMaps struct {
 	log      *oplog
 	mu       sync.Mutex
 	idents   map[netip.Addr]dpmap.Identity
-	services map[dpmap.SvcKey]dpmap.SvcVal
-	backends map[dpmap.BackendKey]dpmap.BackendVal
+	services map[dpmap.SvcAddr]dpmap.SvcVal
+	backends map[dpmap.BackendKey]dpmap.Backend
 	allows   map[dpmap.AllowKey]struct{}
 	cfg      dpmap.Config
+	cfg6     dpmap.Config6
 	flips    [][]dpmap.Op
 	fail     map[string]error
 }
@@ -183,8 +195,8 @@ func newFakeMaps(log *oplog) *fakeMaps {
 	return &fakeMaps{
 		log:      log,
 		idents:   map[netip.Addr]dpmap.Identity{},
-		services: map[dpmap.SvcKey]dpmap.SvcVal{},
-		backends: map[dpmap.BackendKey]dpmap.BackendVal{},
+		services: map[dpmap.SvcAddr]dpmap.SvcVal{},
+		backends: map[dpmap.BackendKey]dpmap.Backend{},
 		allows:   map[dpmap.AllowKey]struct{}{},
 		fail:     map[string]error{},
 	}
@@ -218,8 +230,8 @@ func (f *fakeMaps) DeleteIdentity(ip netip.Addr) error {
 	return nil
 }
 
-func (f *fakeMaps) ApplyFlip(key dpmap.SvcKey, ops []dpmap.Op) error {
-	f.log.rec("apply-flip %s:%d", netip.AddrFrom4(key.VIP), key.Port)
+func (f *fakeMaps) ApplyFlip(key dpmap.SvcAddr, ops []dpmap.Op) error {
+	f.log.rec("apply-flip %s:%d", key.IP, key.Port)
 	if err := f.failure("apply-flip"); err != nil {
 		return err
 	}
@@ -239,8 +251,8 @@ func (f *fakeMaps) ApplyFlip(key dpmap.SvcKey, ops []dpmap.Op) error {
 	return nil
 }
 
-func (f *fakeMaps) DeleteService(key dpmap.SvcKey) error {
-	f.log.rec("delete-service %s:%d", netip.AddrFrom4(key.VIP), key.Port)
+func (f *fakeMaps) DeleteService(key dpmap.SvcAddr) error {
+	f.log.rec("delete-service %s:%d", key.IP, key.Port)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.services, key)
@@ -278,7 +290,7 @@ func (f *fakeMaps) Identities() (map[netip.Addr]dpmap.Identity, error) {
 	return cloneMap(f.idents), nil
 }
 
-func (f *fakeMaps) Services() (map[dpmap.SvcKey]dpmap.SvcVal, error) {
+func (f *fakeMaps) Services() (map[dpmap.SvcAddr]dpmap.SvcVal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return cloneMap(f.services), nil
@@ -289,6 +301,14 @@ func (f *fakeMaps) SetConfig(cfg dpmap.Config) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cfg = cfg
+	return nil
+}
+
+func (f *fakeMaps) SetConfig6(cfg dpmap.Config6) error {
+	f.log.rec("set-config6")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cfg6 = cfg
 	return nil
 }
 
@@ -345,12 +365,12 @@ func (f *fakeNetns) Delete(allocID string) error {
 // fakeCounters is a Counters with fixed contents.
 type fakeCounters struct {
 	connects map[uint16]uint64
-	drops    map[dpmap.DropKey]uint64
+	drops    map[dpmap.DropEntry]uint64
 	ep       map[netip.Addr]dpmap.EpStats
 }
 
 func (f fakeCounters) ServiceConnects() (map[uint16]uint64, error)          { return f.connects, nil }
-func (f fakeCounters) Drops() (map[dpmap.DropKey]uint64, error)             { return f.drops, nil }
+func (f fakeCounters) Drops() (map[dpmap.DropEntry]uint64, error)           { return f.drops, nil }
 func (f fakeCounters) EndpointStats() (map[netip.Addr]dpmap.EpStats, error) { return f.ep, nil }
 
 // fakeStore is an in-memory IDStore.
@@ -468,6 +488,10 @@ func TestInitBringsUpTheHostBeforeAnythingElse(t *testing.T) {
 		"ensure-host 10.200.0.1",
 		"put-identity 10.200.0.1",
 		"set-config",
+		// config6 is written even on a v4-only node: its all-zero mask is the
+		// v6 enable switch, and it must overwrite whatever an earlier
+		// dual-stack process left pinned.
+		"set-config6",
 		"masquerade 10.200.0.0/16 via " + HostInterface,
 	}
 	if got := f.log.taken(); !slices.Equal(got, want) {
@@ -482,7 +506,7 @@ func TestInitBringsUpTheHostBeforeAnythingElse(t *testing.T) {
 func TestInitRebuildsIPAMFromMarkedVeths(t *testing.T) {
 	f := newFixture(t)
 	// A surviving attachment holds 10.200.0.2; a foreign link must not count.
-	f.nl.addLink(hostDevName("shop-web-0"), aliasFor("shop-web-0", netip.MustParseAddr("10.200.0.2")))
+	f.nl.addLink(hostDevName("shop-web-0"), aliasFor("shop-web-0", netip.MustParseAddr("10.200.0.2"), netip.Addr{}))
 	f.nl.addLink("eth0", "not ours")
 	if err := f.d.Init(t.Context()); err != nil {
 		t.Fatalf("Init: %v", err)

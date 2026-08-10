@@ -135,6 +135,9 @@ type Attachment struct {
 	EndpointID int64
 	// IPv4 is the address the datapath assigned.
 	IPv4 string
+	// IPv6 is the dual-stack twin (v1.41), or empty on a v4-only node — and
+	// on a v4-only attachment adopted across the dual-stack upgrade.
+	IPv6 string
 	// Service is the project/service the attachment's identity says it serves.
 	Service ServiceRef
 	// Ready reports a resolved identity fit to receive traffic.
