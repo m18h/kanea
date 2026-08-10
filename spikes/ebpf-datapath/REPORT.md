@@ -213,6 +213,43 @@ not the production form.
 
 ---
 
+## Q12 — dual-stack (PRD v1.41): **PENDING**
+
+The v6 half rides this spike rather than getting its own (the datapath's
+gate is the datapath's gate). On both kernels, with the shipping object from
+`internal/datapath/bpf`:
+
+- **connect6 at the root cgroup**: a native v6 VIP dial from the host and
+  from a netns/systemd cgroup rewrites to a v6 backend; a **v4-mapped dial**
+  (`::ffff:a.b.c.d` through an `AF_INET6` socket) rewrites word 3 against the
+  v4 service table and connects. Both under `BPF_F_ALLOW_MULTI` beside
+  connect4, each behind its own pinned link.
+- **verifier acceptance at the floor**: the v6 branches (fixed-offset
+  `ipv6hdr` parse, the four-word compares) and the 20-byte-key maps
+  (`svc_v6`, `backend_val6`, `drop_key6`, 32-byte `dp_config6`) load on 5.10.
+- **tc v6 policy**: cross-project v6 SYN dropped, same-project and
+  host-flagged v6 passes, non-SYN v6 TCP passes (the stateless gate),
+  a nexthdr that is not plain TCP is denied cross-project (no
+  extension-header walk — deny-closed by design).
+- **the disabled-mode drop**: with `config6` all-zero, `ETH_P_IPV6` is
+  dropped at both tc hooks and **v4 traffic is undisturbed** — this is the
+  one default-behavior change v1.41 makes on v4-only nodes.
+- **NODAD / addr_gen_mode=1 plumbing**: eth0 comes up with the static /128
+  only (no fe80, no DAD delay), the AF_INET6 PERMANENT neighbors resolve
+  both directions, and the cluster-CIDR6 route (deliberately not a default
+  route) carries alloc↔alloc v6; external v6 fails ENETUNREACH immediately.
+- **stats**: a v6 VIP connect increments the same `stats_svc` entry as its
+  v4 twin (one invocation counter per frontend, §9.1); `stats_drops6`
+  reasons match the events above.
+
+```
+(paste 12a–12f (+ INFO) lines here)
+```
+
+**Findings:** _stub._
+
+---
+
 ## Go/No-Go summary
 
 | # | Question | Kernel A (5.10) | Kernel B (current) | Notes |
@@ -228,10 +265,14 @@ not the production form.
 | 9 | batch ops + generation-flip torn-free | PENDING | PENDING | |
 | 10 | getpeername after DNAT | PENDING | PENDING | |
 | 11 | PROG_TEST_RUN sched_cls + protocol field | PENDING | PENDING | |
+| 12 | dual-stack: connect6 (+v4-mapped), tc v6, disabled-mode drop, NODAD (v1.41) | PENDING | PENDING | |
 
 **Overall verdict: PENDING.** GO requires: Q1–Q9 green on both kernels; Q10
 recorded (drives whether a getpeername program is needed); Q11 recorded
-(drives the `type`-vs-`protocol` gate at the floor). A FAIL on Q6 or Q7 is
+(drives the `type`-vs-`protocol` gate at the floor); **Q12 green on both
+kernels for the dual-stack half of v1.41 — a Q12 failure gates only the v6
+feature, not the datapath** (the v4 programs are unchanged by v1.41 except
+the disabled-mode ETH_P_IPV6 drop, which Q12 covers). A FAIL on Q6 or Q7 is
 not necessarily a NO-GO but must produce a documented `kanea doctor` check
 and an operator note.
 
