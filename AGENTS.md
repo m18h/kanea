@@ -6,7 +6,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 **Kanea** is a lightweight, single-binary container orchestration platform written in Go — "container orchestration in one binary." It runs services on **containerd**, networks them with **its own eBPF datapath** (nothing from the Kubernetes stack underneath — and since PRD v1.36 no Cilium either), terminates TLS with **Let's Encrypt**, and ships a **React + shadcn/ui** dashboard, an **MCP server** for AI agents, GitOps pipelines (kaniko), eBPF-driven autoscaling, and S3-backed state replication.
 
-**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.40). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins — and the disagreement means one of them needs an amendment.
+**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.42). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins — and the disagreement means one of them needs an amendment.
 
 ## Current status
 
@@ -131,6 +131,8 @@ Things a future change is most likely to trip over:
 - **`expose.protocol` selects an upstream transport, not middleware** (PRD v1.41, §6.2 R28). `"grpc"` = dial the VIP over h2c. It is refused beside a declared `tls { mode = "plaintext" }` and beside an http-mode `publish` of the same port (R21's dropped-control rule); an undeclared mode resolving to plaintext node-side is a warning, because R20 resolution happens where plan cannot see. `trigger "http"` has no `protocol` field and must not gain one — the absence is the refusal (R25's pattern). `Expose.Protocol` is **not** SpecHash material: changing it republishes routes, never rolls allocs — and `routesEqual` must compare it, or the change publishes exactly once and never again (the `routesArePublished` lesson).
 - **One `ReverseProxy`, two shared transports, chosen by a context demux.** `Rewrite` cannot switch transports, so `rp.Transport` is a `transportSwitch` reading the matched route from the request context — one HTTP/1.1 pool, one h2c pool, both built once. The h2c path has **no response-header timeout** (x/net exposes one only through the wrapped h1 transport); liveness is the HTTP/2 ping, and the PRD states the limit.
 - **A hijacked connection is counted, never timed** (PRD v1.41, §9.1.1). A WebSocket's `ServeHTTP` duration is its session lifetime, and one long session poisons the `p95_latency_ms` the autoscaler reads — so hijacked observations keep counters and the `websocket` label but never enter the latency histograms. The `grpc` protocol label requires the route marker **and** the wire to agree; browser h2 traffic to a gRPC route stays `https`.
+
+- **GPU VRAM is read where procfs is read, and a miss is an absence** (PRD v1.42, §9.1/§17). `scaling.NewGPUReader` samples amdgpu from sysfs (`mem_info_vram_{used,total}`) and NVIDIA via a timeout-bounded `nvidia-smi` exec — NVML is cgo, which the static binary rules out — with readings cached briefly so a `/v1/stats` burst cannot become a process storm. Per-GPU readings ride `/v1/stats`; the aggregate is the third node series, `node_gpu_vram_percent`, exporter-invisible like the other two and served as `gpu_vram` in the history node view. No GPU, unreadable sysfs, a card without VRAM files, and `[N/A]` from `nvidia-smi` are all gaps, never zeros — and the dashboard renders its GPU panel only when a GPU is visible.
 
 **Deliberately not built** — decisions, not gaps, so they are not "fixed" by someone who mistakes them for oversights:
 
@@ -263,7 +265,7 @@ Each milestone's definition-of-done: OWASP §14 checks reviewed, `govulncheck` c
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.40) — the north star |
+| `PRD.md` | Full product requirements (v1.42) — the north star |
 | `AGENTS.md` | This file |
 | `README.md` | The public front door: install, quickstart, requirements |
 | `SECURITY.md` | How to report a vulnerability; what is in and out of scope |

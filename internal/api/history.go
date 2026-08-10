@@ -89,6 +89,8 @@ func (s *Server) handleStatsHistory(w http.ResponseWriter, r *http.Request) {
 			scaling.Key{Subject: scaling.NodeSubject, Metric: scaling.MetricNodeCPU}, from, to)
 		out.Series["memory"] = s.metrics.Range(
 			scaling.Key{Subject: scaling.NodeSubject, Metric: scaling.MetricNodeMemory}, from, to)
+		out.Series["gpu_vram"] = s.metrics.Range(
+			scaling.Key{Subject: scaling.NodeSubject, Metric: scaling.MetricNodeGPU}, from, to)
 		out.Series["rps"] = s.sumSeries(scaling.MetricRPS, from, to)
 		// An rps-weighted mean of per-service p95s, which is an approximation:
 		// percentiles do not aggregate. Stated here and in the PRD rather than

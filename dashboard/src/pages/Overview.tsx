@@ -270,11 +270,25 @@ function UtilisationCard({
   )
   const load = useSeries(machine?.load1, at)
   const runningSeries = useSeries(node?.running, node?.at ?? '')
+  const gpu = useSeries(
+    machine?.gpu_vram_percent,
+    at,
+    history ? seedFromHistory(history, 'gpu_vram') : undefined,
+  )
 
   const memoryText =
     machine?.memory_total_bytes !== undefined && machine.memory_available_bytes !== undefined
       ? `${formatBytes(machine.memory_total_bytes - machine.memory_available_bytes)} / ${formatBytes(machine.memory_total_bytes)}`
       : undefined
+
+  // The GPU panel exists only when a GPU is visible: a GPU-less node gets no
+  // panel, not an empty one — absence is not a 0% card.
+  const gpus = machine?.gpus ?? []
+  const hasGPU = gpus.length > 0 || gpu.some((v) => v !== undefined)
+  const vramUsed = gpus.reduce((sum, g) => sum + (g.vram_used_bytes ?? 0), 0)
+  const vramTotal = gpus.reduce((sum, g) => sum + (g.vram_total_bytes ?? 0), 0)
+  const gpuText =
+    vramTotal > 0 ? `${formatBytes(vramUsed)} / ${formatBytes(vramTotal)}` : undefined
 
   return (
     <Card className="lg:col-span-3">
@@ -301,6 +315,17 @@ function UtilisationCard({
           latest={node?.running}
           tone={4}
         />
+        {hasGPU ? (
+          <MetricPanel
+            label={gpus.length > 1 ? `GPU VRAM (${gpus.length} GPUs)` : 'GPU VRAM'}
+            unit="%"
+            points={gpu}
+            max={100}
+            latest={machine?.gpu_vram_percent}
+            {...(gpuText !== undefined ? { valueText: gpuText } : {})}
+            tone={2}
+          />
+        ) : null}
       </CardContent>
     </Card>
   )
