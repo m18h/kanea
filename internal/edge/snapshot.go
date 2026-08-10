@@ -160,7 +160,14 @@ type Route struct {
 	// material arrives in the restricted bundle. Fail closed: a marked route
 	// with no material answers 503, never open.
 	AuthRequired bool `json:"auth,omitempty"`
+	// Protocol selects the upstream transport (R28, v1.41): "" for HTTP/1.1,
+	// RouteProtocolGRPC for plaintext HTTP/2 (h2c). omitempty keeps a
+	// no-protocol snapshot byte-identical to what a pre-v1.41 edge parsed.
+	Protocol string `json:"protocol,omitempty"`
 }
+
+// RouteProtocolGRPC marks a route whose upstream is dialled over h2c (R28).
+const RouteProtocolGRPC = "grpc"
 
 // FunctionRoute is one function reachable on the functions port (§7.2.3).
 //
@@ -274,6 +281,13 @@ func (s Snapshot) Validate() error {
 					ErrInvalidSnapshot, d, first, r.Name())
 			}
 			seen[d] = r.Name()
+		}
+		if r.Protocol != "" && r.Protocol != RouteProtocolGRPC {
+			// R28's closed set, enforced on both sides like everything else
+			// here: an unknown transport must fail the publish, not reach an
+			// edge that would silently dial HTTP/1.1 under a different name.
+			return fmt.Errorf("%w: %s protocol %q is not %q",
+				ErrInvalidSnapshot, where, r.Protocol, RouteProtocolGRPC)
 		}
 		// Middleware is checked by compiling it, so the writer cannot publish a
 		// rule the reader will refuse. A snapshot that passes here and fails at

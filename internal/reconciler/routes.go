@@ -146,6 +146,8 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 			// Only the marker (R27): this file is world-readable, and the
 			// verifier material travels in the restricted bundle.
 			AuthRequired: d.Expose.Auth != nil,
+			// R28 (v1.41): how the edge dials this upstream.
+			Protocol: d.Expose.Protocol,
 		})
 	}
 	return routes
@@ -350,11 +352,16 @@ func sortedDesired(desired []Desired) []Desired {
 }
 
 // routesEqual reports whether two route tables are the same.
+//
+// Every field buildRoutes sets must be compared here, or an edit to it
+// publishes exactly once and never again — the routesArePublished lesson
+// (PRD v1.33).
 func routesEqual(a, b []edge.Route) bool {
 	return slices.EqualFunc(a, b, func(x, y edge.Route) bool {
 		return x.Project == y.Project && x.Service == y.Service &&
 			x.Upstream == y.Upstream && x.Port == y.Port &&
 			x.AuthRequired == y.AuthRequired &&
+			x.Protocol == y.Protocol &&
 			slices.Equal(x.Domains, y.Domains) &&
 			reflect.DeepEqual(x.IPRestriction, y.IPRestriction) &&
 			reflect.DeepEqual(x.RateLimit, y.RateLimit) &&
