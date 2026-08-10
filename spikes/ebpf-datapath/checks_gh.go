@@ -30,9 +30,12 @@ func check7(e *env) error {
 		check("7a pod<->pod routing under strict rp_filter", ok, "reachable="+boolText(ok))
 	}
 
-	// masqueraded egress still counts (return path passes rp_filter).
+	// masqueraded egress still counts (return path passes rp_filter). The
+	// target routes OUT the uplink (TEST-NET-3 via the default route), not the
+	// uplink's own IP, which is delivered locally and never traverses the SNAT
+	// hook — the same distinction check 4e draws.
 	p0, _, _ := masqCounter(e)
-	_, _, _, _, _ = podConnect(e, "p1", fmt.Sprintf("%s:%d", e.uplinkIP, 9), 1200*time.Millisecond, false)
+	_, _, _, _, _ = podConnect(e, "p1", "203.0.113.9:9", 1200*time.Millisecond, false)
 	time.Sleep(150 * time.Millisecond)
 	p1, _, _ := masqCounter(e)
 	check("7b masqueraded egress under strict rp_filter", p1 > p0,

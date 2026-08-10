@@ -307,28 +307,54 @@ func podConnect(e *env, podID, addr string, timeout time.Duration, viaSystemdSco
 
 func parseConnectLine(out string) (ok bool, banner string, elapsed time.Duration, errText string, err error) {
 	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		kv := map[string]string{}
-		for _, f := range fields[1:] {
-			if k, v, found := strings.Cut(f, "="); found {
-				kv[k] = v
-			}
-		}
-		ms, _ := strconv.Atoi(kv["elapsed_ms"])
-		elapsed = time.Duration(ms) * time.Millisecond
-		switch fields[0] {
+		verb, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+		switch verb {
 		case "OK":
-			b, _ := strconv.Unquote(kv["banner"])
-			return true, b, elapsed, "", nil
+			elapsed = time.Duration(parseIntField(line, "elapsed_ms")) * time.Millisecond
+			return true, parseQuotedField(line, "banner"), elapsed, "", nil
 		case "ERR":
-			t, _ := strconv.Unquote(kv["err"])
-			return false, "", elapsed, t, nil
+			elapsed = time.Duration(parseIntField(line, "elapsed_ms")) * time.Millisecond
+			return false, "", elapsed, parseQuotedField(line, "err"), nil
 		}
 	}
 	return false, "", 0, "", fmt.Errorf("no result line in %q", out)
+}
+
+// parseQuotedField extracts a `key="..."` field whose Go-quoted value may
+// contain spaces — which strings.Fields would have split, truncating every
+// banner ("KANEA <addr>") and every multi-word errno ("operation not
+// permitted") to empty. It finds `key="` and unquotes from that quote to its
+// matching close, honouring the backslash escapes fmt's %q emits.
+func parseQuotedField(line, key string) string {
+	i := strings.Index(line, key+"=\"")
+	if i < 0 {
+		return ""
+	}
+	start := i + len(key) + 1 // at the opening quote
+	for j := start + 1; j < len(line); j++ {
+		switch line[j] {
+		case '\\':
+			j++ // skip the escaped byte
+		case '"':
+			v, err := strconv.Unquote(line[start : j+1])
+			if err != nil {
+				return ""
+			}
+			return v
+		}
+	}
+	return ""
+}
+
+// parseIntField extracts a bare `key=<int>` field.
+func parseIntField(line, key string) int {
+	for _, f := range strings.Fields(line) {
+		if v, ok := strings.CutPrefix(f, key+"="); ok {
+			n, _ := strconv.Atoi(v)
+			return n
+		}
+	}
+	return 0
 }
 
 // podHammer runs __hammer inside a pod's netns and parses its tallies.
