@@ -12,13 +12,21 @@ import {
   type KaneaEvent,
 } from '@/lib/api'
 import { eventScope, eventSource, matchGlob } from '@/lib/events'
+import { matchesQuery } from '@/lib/search'
 import { formatClock } from '@/lib/state'
-import { cn } from '@/lib/utils'
 import { useSession } from '@/hooks/useSession'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
+import { FilterChips } from '@/components/FilterChips'
 
-type Filter = 'all' | 'info' | 'warning' | 'error' | 'audit'
+const filters = [
+  { value: 'all', label: 'all' },
+  { value: 'info', label: 'info' },
+  { value: 'warning', label: 'warning' },
+  { value: 'error', label: 'error' },
+  { value: 'audit', label: 'audit' },
+] as const
+type Filter = (typeof filters)[number]['value']
 
 const severityVariant: Record<KaneaEvent['severity'], 'info' | 'warn' | 'error'> = {
   info: 'info',
@@ -43,6 +51,7 @@ const severityVariant: Record<KaneaEvent['severity'], 'info' | 'warn' | 'error'>
 export function Events() {
   const [filter, setFilter] = useState<Filter>('all')
   const [glob, setGlob] = useState('')
+  const [query, setQuery] = useState('')
   const { session } = useSession()
 
   const feed = useQuery({
@@ -74,13 +83,16 @@ export function Events() {
   const events = (feed.data?.events ?? []).filter(
     (event) =>
       (filter === 'all' || event.severity === filter) &&
-      (glob.trim() === '' || matchGlob(glob, eventScope(event))),
+      (glob.trim() === '' || matchGlob(glob, eventScope(event))) &&
+      // The glob addresses the scope; the search reads the words. "db timeout"
+      // across every service and "payments/*" are different questions.
+      matchesQuery(query, event.message, event.detail, eventScope(event), eventSource(event)),
   )
   const dropped = feed.data?.dropped ?? 0
 
   // A changed filter resets to the first page: page 3 of "all" and page 3 of
   // "error" are unrelated places.
-  const pager = usePagination(events, { resetKey: `${glob} ${filter}` })
+  const pager = usePagination(events, { resetKey: `${glob} ${query} ${filter}` })
   const auditPager = usePagination(audit.data ?? [], { resetKey: filter })
 
   return (
@@ -88,34 +100,28 @@ export function Events() {
       <PageHeader title="Events" subtitle="notification feed · refreshes every 5s" />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1.5">
-          {(['all', 'info', 'warning', 'error', 'audit'] as const).map((level) => (
-            <button
-              key={level}
-              type="button"
-              onClick={() => setFilter(level)}
-              className={cn(
-                'rounded-md border px-3 py-1 text-xs transition-colors',
-                filter === level
-                  ? 'border-status-warn/60 font-medium text-primary'
-                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              {level}
-            </button>
-          ))}
-        </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          glob:
+        <FilterChips options={filters} value={filter} onChange={setFilter} />
+        <div className="flex flex-wrap items-center gap-2">
           <input
             type="search"
-            value={glob}
-            onChange={(e) => setGlob(e.target.value)}
-            placeholder="svc/*"
-            aria-label="Filter by project/service glob"
-            className="h-7 w-28 rounded-md border bg-background px-2 font-mono text-xs"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search messages…"
+            aria-label="Search event messages"
+            className="h-7 w-40 rounded-md border bg-background px-2 text-xs"
           />
-        </label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            glob:
+            <input
+              type="search"
+              value={glob}
+              onChange={(e) => setGlob(e.target.value)}
+              placeholder="svc/*"
+              aria-label="Filter by project/service glob"
+              className="h-7 w-28 rounded-md border bg-background px-2 font-mono text-xs"
+            />
+          </label>
+        </div>
       </div>
 
       {dropped > 0 && filter !== 'audit' ? (
@@ -142,7 +148,7 @@ export function Events() {
           ) : null}
           {feed.isSuccess && events.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              {filter === 'all' && !glob.trim()
+              {filter === 'all' && !glob.trim() && !query.trim()
                 ? 'Nothing has happened yet.'
                 : 'No events match that filter.'}
             </p>

@@ -1,22 +1,44 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
+import { FilterChips } from '@/components/FilterChips'
+import { SortHeader } from '@/components/SortHeader'
 import { StatTile } from '@/components/StatTile'
 import { StatusDot } from '@/components/StatusDot'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
+import { sortItems, useSort } from '@/hooks/useSort'
 import {
   Topic,
   fetchFunctions,
   statsSampleSchema,
   type FunctionView,
 } from '@/lib/api'
+import { matchesQuery } from '@/lib/search'
 import { formatBytes, formatMetric } from '@/lib/state'
+
+/** The statuses internal/api's functions route derives (active / idle /
+ * trapping / stopped), as chips. */
+const statusFilters = [
+  { value: 'all', label: 'all' },
+  { value: 'active', label: 'active' },
+  { value: 'idle', label: 'idle' },
+  { value: 'trapping', label: 'trapping' },
+  { value: 'stopped', label: 'stopped' },
+] as const
+type StatusFilter = (typeof statusFilters)[number]['value']
+
+/** Ascending status sort reads problems-first. */
+const statusRank: Record<string, number> = { trapping: 0, active: 1, idle: 2, stopped: 3 }
+
+type SortKey = 'function' | 'invocations' | 'memory' | 'status'
 
 /**
  * Functions (v1.39): wasm functions — services underneath, so detail, restart
@@ -32,9 +54,29 @@ export function Functions() {
     refetchInterval: 10_000,
   })
 
-  const list = functions.data?.functions ?? []
-  const pager = usePagination(list)
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState<StatusFilter>('all')
+  const sort = useSort<SortKey>()
 
+  const list = functions.data?.functions ?? []
+  const filtered = list.filter(
+    (fn) =>
+      (status === 'all' || fn.status === status) &&
+      matchesQuery(query, `${fn.project}/${fn.service}`, fn.module),
+  )
+  const sorted = sortItems(filtered, sort, {
+    function: (fn) => `${fn.project}/${fn.service}`,
+    // "No datapath sample" sorts after every measured rate, both ways.
+    invocations: (fn) => fn.invocations_per_minute,
+    memory: (fn) => fn.memory_bytes,
+    status: (fn) => statusRank[fn.status],
+  })
+  const pager = usePagination(sorted, {
+    resetKey: `${query} ${status} ${sort.key ?? ''} ${sort.dir}`,
+  })
+
+  // The tiles summarise everything declared, not the filtered view: "Active
+  // 3/9" must not become "3/3" because the reader is looking at a subset.
   const measured = list.filter((f) => f.invocations_per_minute !== undefined)
   const totalRate = measured.reduce((sum, f) => sum + (f.invocations_per_minute ?? 0), 0)
   const active = list.filter((f) => f.status === 'active').length
@@ -87,28 +129,58 @@ export function Functions() {
           declares one — a wasm module the platform runs for you.
         </Card>
       ) : (
-        <Card className="py-2">
-          <Table>
-            <THead>
-              <tr>
-                <TH className="pt-2">Function</TH>
-                <TH className="pt-2">Trigger</TH>
-                <TH className="pt-2">Inv/min</TH>
-                <TH className="pt-2">P95</TH>
-                <TH className="pt-2">Mem cap</TH>
-                <TH className="pt-2">Status</TH>
-              </tr>
-            </THead>
-            <TBody>
-              {pager.pageItems.map((fn) => (
-                <FunctionRow key={`${fn.project}/${fn.service}`} fn={fn} />
-              ))}
-            </TBody>
-          </Table>
-          <div className="px-3">
-            <PaginationControls state={pager} />
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <FilterChips options={statusFilters} value={status} onChange={setStatus} />
+            <Input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or module…"
+              aria-label="Search functions"
+              className="h-8 w-56 text-xs"
+            />
           </div>
-        </Card>
+
+          {sorted.length === 0 ? (
+            <Card className="p-4 text-sm text-muted-foreground">
+              No functions match that filter.
+            </Card>
+          ) : (
+            <Card className="py-2">
+              <Table>
+                <THead>
+                  <tr>
+                    <SortHeader sort={sort} sortKey="function" className="pt-2">
+                      Function
+                    </SortHeader>
+                    <TH className="pt-2">Trigger</TH>
+                    <SortHeader sort={sort} sortKey="invocations" className="pt-2">
+                      Inv/min
+                    </SortHeader>
+                    {/* P95 rides a per-row stats subscription; the page never
+                        holds it, so it cannot sort by it. */}
+                    <TH className="pt-2">P95</TH>
+                    <SortHeader sort={sort} sortKey="memory" className="pt-2">
+                      Mem cap
+                    </SortHeader>
+                    <SortHeader sort={sort} sortKey="status" className="pt-2">
+                      Status
+                    </SortHeader>
+                  </tr>
+                </THead>
+                <TBody>
+                  {pager.pageItems.map((fn) => (
+                    <FunctionRow key={`${fn.project}/${fn.service}`} fn={fn} />
+                  ))}
+                </TBody>
+              </Table>
+              <div className="px-3">
+                <PaginationControls state={pager} />
+              </div>
+            </Card>
+          )}
+        </>
       )}
 
       <p className="text-xs text-muted-foreground">
