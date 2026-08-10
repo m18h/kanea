@@ -19,6 +19,9 @@ type Table struct {
 	// edge applies them separately — a bind failure must not reject a snapshot
 	// — but they are one atomic swap as far as the watcher is concerned.
 	listeners []Listener
+	// functions is the functions-port dispatch table (§7.2.3), carried for the
+	// same reason listeners are.
+	functions []FunctionRoute
 	index     uint64
 }
 
@@ -34,6 +37,7 @@ func NewTable(snap Snapshot) (*Table, error) {
 	t := &Table{
 		byHost:    make(map[string]compiled, len(snap.Routes)),
 		listeners: snap.Listeners,
+		functions: snap.Functions,
 		index:     snap.Index,
 	}
 	for _, r := range snap.Routes {
@@ -55,6 +59,9 @@ func EmptyTable() *Table { return &Table{byHost: map[string]compiled{}} }
 
 // Listeners are the published node ports this table carries (PRD §7.2.2).
 func (t *Table) Listeners() []Listener { return t.listeners }
+
+// Functions is the functions-port dispatch table this table carries (§7.2.3).
+func (t *Table) Functions() []FunctionRoute { return t.functions }
 
 // Lookup finds the route for a Host header value.
 func (t *Table) Lookup(host string) (Route, bool) {

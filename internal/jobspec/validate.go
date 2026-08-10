@@ -469,6 +469,12 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		diags = append(diags, validateUpdate(svc)...)
 		diags = append(diags, validateExpose(svc)...)
 		diags = append(diags, validatePublish(svc)...)
+		if svc.Expose != nil && svc.Expose.Auth != nil {
+			diags = append(diags, validateAuth(svc, svc.Expose.Auth)...)
+		}
+		if svc.Function != nil {
+			diags = append(diags, validateFunction(svc)...)
+		}
 	}
 	return diags
 }
@@ -484,14 +490,25 @@ func validateTask(svc *Service) hcl.Diagnostics {
 
 	// R8 — the minimal service is image-only, but something must produce an
 	// image: `task.image`, a `build` block, or both (build wins at deploy).
+	// The rule applies to functions verbatim (R25); only the field names in
+	// the message change, because a function's spec has no task block to point
+	// at.
 	if task.Image == "" && svc.Build == nil {
+		summary, detail := "Service has no image",
+			fmt.Sprintf("Service %q must set task.image, declare a build block, or both. "+
+				"With both, the pipeline-built image wins and task.image is the pre-first-build value.",
+				svc.Name)
+		if svc.Function != nil {
+			summary, detail = "Function has no module",
+				fmt.Sprintf("Function %q must set module, declare a build block, or both. "+
+					"With both, the pipeline-built image wins and module is the pre-first-build value.",
+					svc.Name)
+		}
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  "Service has no image",
-			Detail: fmt.Sprintf("Service %q must set task.image, declare a build block, or both. "+
-				"With both, the pipeline-built image wins and task.image is the pre-first-build value.",
-				svc.Name),
-			Subject: task.DefRange.Ptr(),
+			Summary:  summary,
+			Detail:   detail,
+			Subject:  task.DefRange.Ptr(),
 		})
 	}
 

@@ -38,8 +38,11 @@ type hclRoot struct {
 	SpecVersion *int         `hcl:"spec_version,optional"`
 	Projects    []hclProject `hcl:"project,block"`
 	Services    []hclService `hcl:"service,block"`
-	Storages    []hclStorage `hcl:"storage,block"`
-	Remain      hcl.Body     `hcl:",remain"`
+	// Functions lower to services at parse time (R25); hclFunction and its
+	// lowering live in function.go.
+	Functions []hclFunction `hcl:"function,block"`
+	Storages  []hclStorage  `hcl:"storage,block"`
+	Remain    hcl.Body      `hcl:",remain"`
 }
 
 type hclStorage struct {
@@ -252,7 +255,9 @@ type hclExpose struct {
 	IPRestriction *hclIPRestriction `hcl:"ip_restriction,block"`
 	RateLimit     *hclRateLimit     `hcl:"rate_limit,block"`
 	Headers       *hclHeaders       `hcl:"headers,block"`
-	DefRange      hcl.Range         `hcl:",def_range"`
+	// Auth is R27 (v1.40): request authentication, every field a reference.
+	Auth     *hclAuth  `hcl:"auth,block"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclTLS struct {
@@ -424,6 +429,15 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 	for i := range root.Services {
 		svc, svcDiags := convertService(&root.Services[i])
 		diags = append(diags, svcDiags...)
+		if svc != nil {
+			spec.Services = append(spec.Services, svc)
+		}
+	}
+	// Functions lower to services here (R25), so everything downstream — the
+	// duplicate check, R8, R16, the dependency graph — sees one kind.
+	for i := range root.Functions {
+		svc, fnDiags := convertFunction(&root.Functions[i])
+		diags = append(diags, fnDiags...)
 		if svc != nil {
 			spec.Services = append(spec.Services, svc)
 		}
@@ -693,7 +707,7 @@ func convertPublish(p *hclPublish) *Publish {
 }
 
 func convertExpose(e *hclExpose) *Expose {
-	out := &Expose{Domains: e.Domains, DefRange: e.DefRange}
+	out := &Expose{Domains: e.Domains, Auth: convertAuth(e.Auth), DefRange: e.DefRange}
 	if e.TLS != nil {
 		out.TLS = &TLS{
 			Mode: e.TLS.Mode, Name: e.TLS.Name,

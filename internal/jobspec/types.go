@@ -193,6 +193,10 @@ type Service struct {
 	// Refs records every ${service.*} reference found in this service, for
 	// diagnostics and for the reconciler's dependency-ordered starts.
 	Refs []ServiceRef
+	// Function is set only on a service lowered from a `function` block
+	// (R25). It carries the triggers and the wasi-http port; nil for every
+	// ordinary service, and the marker everything downstream branches on.
+	Function *Function
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }
@@ -461,6 +465,8 @@ type Expose struct {
 	IPRestriction *IPRestriction
 	RateLimit     *RateLimit
 	Headers       *Headers
+	// Auth is R27's request authentication (v1.40), or nil for an open route.
+	Auth *Auth
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }

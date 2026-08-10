@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { Overview } from '@/pages/Overview'
 import { Services } from '@/pages/Services'
 import { ServiceDetail } from '@/pages/ServiceDetail'
+import { Functions } from '@/pages/Functions'
 import { Pipelines } from '@/pages/Pipelines'
 import { PipelineDetail } from '@/pages/PipelineDetail'
 import { Events } from '@/pages/Events'
@@ -68,6 +69,7 @@ function Page({ path }: { path: string }) {
     return <ServiceDetail project={detail.project} service={detail.service} />
   }
 
+  if (matchPath('/functions', path)) return <Functions />
   if (matchPath('/pipelines', path)) return <Pipelines />
 
   const run = matchPath('/pipelines/:project/:service/:id', path)

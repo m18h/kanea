@@ -184,6 +184,11 @@ func (c *Component) validateSource() error {
 		if !strings.HasPrefix(c.URL, "https://") {
 			return fmt.Errorf("component %q: url must be https, got %q", c.Name, c.URL)
 		}
+		for _, arch := range Arches {
+			if expanded := c.expand(c.URL, arch); strings.Contains(expanded, "{{") {
+				return fmt.Errorf("component %q: url %q holds a template variable expand does not know", c.Name, expanded)
+			}
+		}
 		if c.Digest != "" {
 			return fmt.Errorf("component %q is kind %s but carries an image digest", c.Name, c.Kind)
 		}
@@ -282,15 +287,26 @@ func (f File) FileMode() (uint32, error) {
 	return parsed, nil
 }
 
-// expand fills {{.Version}} and {{.Arch}}.
+// unameArch maps GOARCH to the `uname -m` spelling upstream release artefacts
+// use. runwasi names its tarballs x86_64/aarch64 where Go says amd64/arm64;
+// both spellings exist in the manifest because both exist upstream.
+var unameArch = map[string]string{
+	"amd64": "x86_64",
+	"arm64": "aarch64",
+}
+
+// expand fills {{.Version}}, {{.Arch}} and {{.UnameArch}}.
 //
-// Hand-rolled rather than text/template: the substitution set is two keys and
+// Hand-rolled rather than text/template: the substitution set is three keys and
 // the inputs are a file in this repository, so a template engine would add a
-// parse error path to something that cannot have one.
+// parse error path to something that cannot have one. A variable the replacer
+// does not know is left in place and caught by validate — an unknown template
+// variable must be a manifest error, not a URL with braces in it.
 func (c *Component) expand(s, arch string) string {
 	r := strings.NewReplacer(
 		"{{.Version}}", c.Version,
 		"{{.Arch}}", arch,
+		"{{.UnameArch}}", unameArch[arch],
 	)
 	return r.Replace(s)
 }

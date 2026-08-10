@@ -32,7 +32,9 @@ export function Services() {
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
 
-  const list = services.data?.services ?? []
+  // Functions are services underneath (v1.39) but have a page of their own —
+  // one record, shown as what it is, on exactly one list.
+  const list = (services.data?.services ?? []).filter((s) => s.function == null)
   const byService = groupAllocs(allocs.data?.allocs ?? [])
   const pager = usePagination(list)
 

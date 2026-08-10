@@ -33,35 +33,53 @@ func resolveEnv(spec *Spec, root *hclRoot, opts Options) hcl.Diagnostics {
 		if svc == nil || svc.Task == nil || len(raw.Tasks) == 0 {
 			continue // structural errors already reported
 		}
-		envExpr := raw.Tasks[0].Env
-		if envExpr == nil {
+		diags = append(diags, resolveServiceEnv(spec, svc, raw.Tasks[0].Env, opts)...)
+	}
+	// A lowered function's env resolves under the same rules: it can reference
+	// its project's services (${service.db.host} in a webhook fanout is the
+	// obvious use), and each reference is a dependency edge like any other.
+	for i := range root.Functions {
+		raw := &root.Functions[i]
+		svc := spec.ServiceByName(raw.Project, raw.Name)
+		if svc == nil || svc.Task == nil {
 			continue
 		}
+		diags = append(diags, resolveServiceEnv(spec, svc, raw.Env, opts)...)
+	}
+	return diags
+}
 
-		// Collect and check references before evaluating: our diagnostics name
-		// the missing service and port, HCL's would say "unsupported attribute".
-		refs, refDiags := collectRefs(spec, svc, envExpr)
-		diags = append(diags, refDiags...)
-		svc.Refs = refs
+// resolveServiceEnv evaluates one service's env expression and records its
+// reference edges.
+func resolveServiceEnv(spec *Spec, svc *Service, envExpr hcl.Expression, opts Options) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if envExpr == nil {
+		return diags
+	}
 
-		edges := append([]string{}, svc.DependsOn...)
-		for _, ref := range refs {
-			edges = append(edges, ref.Service)
-		}
-		svc.Dependencies = sortUnique(edges)
+	// Collect and check references before evaluating: our diagnostics name
+	// the missing service and port, HCL's would say "unsupported attribute".
+	refs, refDiags := collectRefs(spec, svc, envExpr)
+	diags = append(diags, refDiags...)
+	svc.Refs = refs
 
-		if refDiags.HasErrors() {
-			continue // evaluating now would only add noise
-		}
+	edges := append([]string{}, svc.DependsOn...)
+	for _, ref := range refs {
+		edges = append(edges, ref.Service)
+	}
+	svc.Dependencies = sortUnique(edges)
 
-		ctx := varContext(opts.Vars)
-		ctx.Variables["service"] = serviceContext(spec, svc.Project)
+	if refDiags.HasErrors() {
+		return diags // evaluating now would only add noise
+	}
 
-		env, evalDiags := evalEnv(envExpr, ctx)
-		diags = append(diags, evalDiags...)
-		if !evalDiags.HasErrors() {
-			svc.Task.Env = env
-		}
+	ctx := varContext(opts.Vars)
+	ctx.Variables["service"] = serviceContext(spec, svc.Project)
+
+	env, evalDiags := evalEnv(envExpr, ctx)
+	diags = append(diags, evalDiags...)
+	if !evalDiags.HasErrors() {
+		svc.Task.Env = env
 	}
 	return diags
 }

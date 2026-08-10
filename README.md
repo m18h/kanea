@@ -117,6 +117,59 @@ else that is not HTTP. Which ports a spec may claim is the node's decision
 (`--publish-ports`, unprivileged by default), because a repository anyone can
 push to must not be able to take :22.
 
+### Functions
+
+A wasm module can run as a service — a **function** (PRD §6.2 R25): always-on,
+serving [wasi-http](https://github.com/WebAssembly/wasi-http), on the wasmtime
+shim `kanea init` installs beside the rest of the runtime. It deploys, rolls
+and scales like any service; what makes it a function is its triggers:
+
+```hcl
+function "resize-avatar" {
+  project = "shop"
+  module  = "registry.example.com/shop/resize-avatar:v3"  # FROM scratch + module
+
+  trigger "http" {}                                # its FQDN — or, with no base
+                                                   # domain, the edge's functions
+                                                   # port: /<project>/<function>/
+  trigger "event" { on = ["deploy.failed"] }       # POSTed matching events
+  trigger "cron"  { schedule = "0 3 * * *" }       # five fields, UTC
+
+  resources { memory = 64 }                        # a real cgroup cap
+}
+```
+
+No volumes, devices, sockets, capabilities or `user` block — the sandbox
+cannot honour them, so the spec cannot declare them. `kanea functions list`
+and the dashboard's Functions page show triggers, invocation rate (from the
+datapath's own counters, so service-to-function calls count too) and status.
+
+**Authenticating requests.** An `expose` block — or a function's `trigger
+"http"` — can require a credential, and the invoker can sign what it sends:
+
+```hcl
+expose {
+  domains = ["api.example.com"]
+  auth {
+    jwt {
+      algorithm      = "RS256"
+      public_key_ref = "secret:shop/jwt-pub"    # a reference, never a key
+      issuer         = "https://accounts.example.com"
+      audience       = "shop-api"
+    }
+  }
+}
+```
+
+`auth` takes `basic_ref` (bcrypt htpasswd), `bearer_ref` (tokens), or a `jwt`
+block (HS256/RS256/ES256). Every field is a `secret:` reference — the edge is
+handed hashes and public keys, never the tokens or passwords, and it fetches
+no JWKS: keys are static and the algorithm is configured, not read from the
+token. A `function` may also name a `signing_ref`, and every event/cron POST
+then carries an HMAC (`X-Kanea-Signature`) the function verifies, exactly as
+it would a Kanea webhook — so a function can trust that an invocation really
+came from Kanea.
+
 If your LAN already uses `10.244.0.0/16`, move Kanea's:
 
 ```bash
@@ -155,8 +208,9 @@ registry the node can reach.
 | Init system | systemd |
 | Clock | NTP-synchronised |
 
-That is the whole list. containerd, `runc` and rootless `buildkitd` are
-installed by `kanea init` at pinned versions — Kanea supplies them, not you.
+That is the whole list. containerd, `runc`, rootless `buildkitd` and the
+wasmtime shim are installed by `kanea init` at pinned versions — Kanea
+supplies them, not you.
 Already have a containerd you want to keep using? `kanea init --containerd
 external` adopts it instead.
 

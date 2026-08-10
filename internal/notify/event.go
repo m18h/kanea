@@ -49,6 +49,14 @@ const (
 
 	EventAuthLoginFailed = "auth.login_failed"
 
+	// EventFunctionInvokeFailed fires when the event/cron invoker exhausted its
+	// retries against a function's endpoint (PRD v1.39, §11). It is the ONLY
+	// function.* event, deliberately: a per-invocation info event would be a
+	// metric wearing an event's name, at invocation cardinality — the rate
+	// lives in §9.1's counters. R26 refuses function.* in a function's own
+	// trigger patterns, so this event can never invoke a function.
+	EventFunctionInvokeFailed = "function.invoke_failed"
+
 	// EventTest is the test action's payload (§11). It is in the vocabulary so
 	// that a test message renders like every other event rather than as a
 	// special case each channel has to know about — but the test action does not
@@ -158,7 +166,18 @@ var severities = map[string]Severity{
 	// is volume, which is what coalescing turns into a single useful message.
 	EventAuthLoginFailed: SeverityWarning,
 
+	// Error: the retries are already spent by the time this fires, so the
+	// event means invocations are being lost now.
+	EventFunctionInvokeFailed: SeverityError,
+
 	EventTest: SeverityInfo,
+}
+
+// IsFunctionEvent reports whether an event name is in the function.* space —
+// the events R26 refuses in a function's own trigger patterns, and the ones
+// the invoker skips at match time. One predicate, both layers.
+func IsFunctionEvent(name string) bool {
+	return strings.HasPrefix(name, "function.")
 }
 
 // SeverityOf returns an event name's severity.

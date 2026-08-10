@@ -3,6 +3,7 @@ import {
   Activity,
   Boxes,
   DatabaseBackup,
+  FunctionSquare,
   GitBranch,
   LayoutDashboard,
   LogOut,
@@ -35,6 +36,7 @@ export function Sidebar({ className }: { className?: string | undefined }) {
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
     { to: '/services', label: 'Services', icon: Boxes, exact: false, badge: counts.services },
     { to: '/pipelines', label: 'Pipelines', icon: GitBranch, exact: false, badge: counts.buildsRunning },
+    { to: '/functions', label: 'Functions', icon: FunctionSquare, exact: false, badge: counts.functions },
     { to: '/events', label: 'Events', icon: Activity, exact: false, badge: counts.alerts },
     { to: '/backups', label: 'Backups', icon: DatabaseBackup, exact: false },
   ]

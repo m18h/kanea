@@ -1,6 +1,7 @@
 package reconciler_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,13 @@ func TestSpecHashIgnoresWhatDoesNotNeedANewContainer(t *testing.T) {
 	unchanged.DependsOn = []string{"db"}
 	unchanged.Restart = reconciler.RestartPolicy{Attempts: 99}
 	unchanged.Update = reconciler.UpdatePolicy{MaxParallel: 4}
+	// Trigger config is read live by the invokers, like Publish is by the
+	// edge — editing a cron schedule must not roll the alloc (R26).
+	unchanged.Function = &reconciler.FunctionMeta{
+		HTTP:   true,
+		Events: []reconciler.EventTrigger{{On: []string{"deploy.failed"}}},
+		Crons:  []reconciler.CronTrigger{{Schedule: "0 3 * * *", Path: "/nightly"}},
+	}
 	if got, want := reconciler.SpecHash(unchanged), reconciler.SpecHash(base); got != want {
 		t.Errorf("spec hash changed for a field that does not need a new container:\n got %s\nwant %s", got, want)
 	}
@@ -85,6 +93,9 @@ func TestSpecHashIgnoresWhatDoesNotNeedANewContainer(t *testing.T) {
 			mode := uint32(0o700)
 			d.Volumes = []reconciler.Volume{{Name: "data", MountPath: "/data", Mode: &mode}}
 		},
+		// The runtime decides which shim runs the container (R25) — moving a
+		// service between runc and wasmtime cannot happen in place.
+		"runtime": func(d *reconciler.Desired) { d.Runtime = "io.containerd.wasmtime.v1" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := base
@@ -322,13 +333,29 @@ func TestSpecHashIsUnchangedForASpecWithNoUserOrOwnership(t *testing.T) {
 	//   {"image":"nginx:1.27-alpine","resources":{...},"volumes":[{"Name":"data",
 	//    "Storage":"","Resource":{...},"MountPath":"/data","ReadOnly":false}]}
 	// The new fields are pointers with omitempty, so nil drops them from that
-	// object entirely and the bytes are unchanged.
+	// object entirely and the bytes are unchanged. v1.39's Runtime holds the
+	// same line: an empty string with omitempty vanishes from the JSON, so a
+	// pre-v1.39 record and a post-v1.39 runc service produce these same bytes.
 	const beforeR23 = "df0877104f33e69e9cebc6f3d05a5975"
 	if got := reconciler.SpecHash(d); got != beforeR23 {
 		t.Errorf("spec hash = %s, want %s\n"+
 			"A spec that declares no user and no volume ownership must hash as it did "+
 			"before those fields existed. If it does not, upgrading kanead rolls every "+
 			"alloc on the node.", got, beforeR23)
+	}
+}
+
+// A runtime change rolls every alloc, so a plan that did not mention it would
+// show a redeploy with no visible cause.
+func TestDiffNamesARuntimeChange(t *testing.T) {
+	have := desired(1)
+	want := have
+	want.Runtime = "io.containerd.wasmtime.v1"
+
+	lines := reconciler.Diff([]reconciler.Desired{have}, []reconciler.Desired{want})
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "runtime default -> io.containerd.wasmtime.v1") {
+		t.Fatalf("plan lines %q do not name the runtime change", joined)
 	}
 }
 

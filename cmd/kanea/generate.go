@@ -82,13 +82,165 @@ func toHCL(services []reconciler.Desired, pipelines []gitops.Config) (string, er
 	}
 
 	for i := range services {
-		if err := writeService(body, &services[i], byProject[services[i].Project]); err != nil {
+		svc := &services[i]
+		var err error
+		if svc.Function != nil {
+			// A lowered function regenerates as the block that produced it
+			// (R25): a service block carrying runtime internals would apply as
+			// something the parser cannot produce.
+			err = writeFunction(body, svc, byProject[svc.Project])
+		} else {
+			err = writeService(body, svc, byProject[svc.Project])
+		}
+		if err != nil {
 			return "", err
 		}
 		body.AppendNewline()
 	}
 
 	return string(hclwrite.Format(file.Bytes())), nil
+}
+
+// writeFunction renders one function block — the inverse of convertFunction's
+// lowering.
+func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Config) error {
+	refuse := func(field string) error {
+		return fmt.Errorf("cannot generate a spec for function %s/%s: %s is not expressible by the "+
+			"generator; edit the original spec file", svc.Project, svc.Service, field)
+	}
+	// A function's spec has no field for any of these (R25), so a desired
+	// record carrying one did not come from the parser — refuse by name rather
+	// than emit a block that would apply as something else.
+	switch {
+	case len(svc.Volumes) > 0:
+		return refuse("its volume blocks")
+	case len(svc.Devices) > 0 || len(svc.Sockets) > 0:
+		return refuse("its passthrough grants")
+	case svc.User != nil:
+		return refuse("its user block")
+	case len(svc.Capabilities) > 0:
+		return refuse("its capability grants")
+	case len(svc.Command) > 0:
+		return refuse("its command override")
+	case svc.Scaling != nil:
+		return refuse("its scaling policy")
+	case svc.ReadOnlyRootfs:
+		return refuse("read_only_rootfs")
+	case svc.Resources.PidsLimit != 0 && svc.Resources.PidsLimit != DefaultPidsLimit:
+		return refuse("a non-default pids limit")
+	}
+	// The lowering declares exactly one port, named "http" — anything else
+	// cannot round-trip through `port = N`.
+	if len(svc.Ports) != 1 || svc.Ports[0].Name != jobspec.EdgePortName {
+		return refuse("its port set (a function has exactly one, named \"http\")")
+	}
+
+	block := body.AppendNewBlock("function", []string{svc.Service}).Body()
+	block.SetAttributeValue("project", cty.StringVal(svc.Project))
+	// The declared tag, never PinnedImage — same rule as writeTask.
+	setOptionalString(block, "module", svc.Image)
+	block.SetAttributeValue("port", cty.NumberIntVal(int64(svc.Ports[0].Container)))
+	block.SetAttributeValue("count", cty.NumberIntVal(int64(svc.Count)))
+	setOptionalString(block, "registry_auth_ref", svc.RegistryAuthRef)
+	setOptionalString(block, "signing_ref", svc.Function.SigningRef)
+	if len(svc.DependsOn) > 0 {
+		block.SetAttributeValue("depends_on", stringList(svc.DependsOn))
+	}
+	if len(svc.Env) > 0 {
+		keys := make([]string, 0, len(svc.Env))
+		for k := range svc.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		pairs := make(map[string]cty.Value, len(keys))
+		for _, k := range keys {
+			pairs[k] = cty.StringVal(svc.Env[k])
+		}
+		block.SetAttributeValue("env", cty.ObjectVal(pairs))
+	}
+	block.AppendNewline()
+
+	if build, ok := cfg.Builds[svc.Service]; ok {
+		b := block.AppendNewBlock("build", nil).Body()
+		b.SetAttributeValue("context", cty.StringVal(build.Context))
+		setOptionalString(b, "dockerfile", build.Dockerfile)
+		setOptionalString(b, "target", build.Target)
+		setOptionalString(b, "tag", build.Tag)
+		setOptionalString(b, "cache_repo", build.CacheRepo)
+		setOptionalString(b, "registry_auth_ref", build.RegistryAuthRef)
+		block.AppendNewline()
+	}
+
+	res := block.AppendNewBlock("resources", nil).Body()
+	res.SetAttributeValue("cpu", cty.NumberIntVal(int64(svc.Resources.CPUMillis)*NominalCoreMHz/1000))
+	res.SetAttributeValue("memory", cty.NumberIntVal(svc.Resources.MemoryBytes>>20))
+	block.AppendNewline()
+
+	if svc.Function.HTTP {
+		tr := block.AppendNewBlock("trigger", []string{jobspec.TriggerHTTP}).Body()
+		if e := svc.Expose; e != nil {
+			if len(e.Domains) > 0 {
+				tr.SetAttributeValue("domains", stringList(e.Domains))
+			}
+			if e.TLSMode != "" || e.TLSName != "" {
+				tls := tr.AppendNewBlock("tls", nil).Body()
+				setOptionalString(tls, "mode", e.TLSMode)
+				setOptionalString(tls, "name", e.TLSName)
+			}
+			writeMiddleware(tr, e.IPRestriction, e.RateLimit, e.Headers)
+			writeAuth(tr, e.Auth)
+		}
+		block.AppendNewline()
+	}
+	for _, ev := range svc.Function.Events {
+		tr := block.AppendNewBlock("trigger", []string{jobspec.TriggerEvent}).Body()
+		tr.SetAttributeValue("on", stringList(ev.On))
+		setOptionalString(tr, "path", ev.Path)
+		block.AppendNewline()
+	}
+	for _, cr := range svc.Function.Crons {
+		tr := block.AppendNewBlock("trigger", []string{jobspec.TriggerCron}).Body()
+		tr.SetAttributeValue("schedule", cty.StringVal(cr.Schedule))
+		setOptionalString(tr, "path", cr.Path)
+		block.AppendNewline()
+	}
+
+	if svc.Check != nil {
+		if err := writeHealthCheck(block, svc); err != nil {
+			return err
+		}
+	}
+
+	if u := svc.Update; u.Strategy != "" || u.MaxParallel != 0 || u.MinHealthy != 0 ||
+		u.Auto || u.Interval != 0 || u.Deadline != 0 {
+		update := block.AppendNewBlock("update", nil).Body()
+		setOptionalString(update, "strategy", u.Strategy)
+		if u.MaxParallel != 0 {
+			update.SetAttributeValue("max_parallel", cty.NumberIntVal(int64(u.MaxParallel)))
+		}
+		setOptionalDuration(update, "min_healthy", u.MinHealthy)
+		if u.Auto {
+			update.SetAttributeValue("auto", cty.True)
+		}
+		setOptionalDuration(update, "interval", u.Interval)
+		setOptionalDuration(update, "deadline", u.Deadline)
+		block.AppendNewline()
+	}
+
+	if svc.Restart.Attempts != 0 || len(svc.Restart.Backoff) > 0 {
+		restart := block.AppendNewBlock("restart", nil).Body()
+		if svc.Restart.Attempts != 0 {
+			restart.SetAttributeValue("attempts", cty.NumberIntVal(int64(svc.Restart.Attempts)))
+		}
+		if len(svc.Restart.Backoff) > 0 {
+			parts := make([]string, 0, len(svc.Restart.Backoff))
+			for _, d := range svc.Restart.Backoff {
+				parts = append(parts, d.String())
+			}
+			restart.SetAttributeValue("backoff", cty.StringVal(strings.Join(parts, ",")))
+		}
+	}
+	return nil
 }
 
 // writeService renders one service block.
@@ -310,8 +462,28 @@ func writeExpose(block *hclwrite.Body, svc *reconciler.Desired) error {
 		setOptionalString(tls, "name", svc.Expose.TLSName)
 	}
 	writeMiddleware(expose, svc.Expose.IPRestriction, svc.Expose.RateLimit, svc.Expose.Headers)
+	writeAuth(expose, svc.Expose.Auth)
 	block.AppendNewline()
 	return nil
+}
+
+// writeAuth renders an R27 auth block (v1.40) — references only, matching what
+// convertAuthPolicy stored.
+func writeAuth(body *hclwrite.Body, a *reconciler.AuthPolicy) {
+	if a == nil {
+		return
+	}
+	auth := body.AppendNewBlock("auth", nil).Body()
+	setOptionalString(auth, "basic_ref", a.BasicRef)
+	setOptionalString(auth, "bearer_ref", a.BearerRef)
+	if j := a.JWT; j != nil {
+		jwt := auth.AppendNewBlock("jwt", nil).Body()
+		jwt.SetAttributeValue("algorithm", cty.StringVal(j.Algorithm))
+		setOptionalString(jwt, "secret_ref", j.SecretRef)
+		setOptionalString(jwt, "public_key_ref", j.PublicKeyRef)
+		setOptionalString(jwt, "issuer", j.Issuer)
+		setOptionalString(jwt, "audience", j.Audience)
+	}
 }
 
 func writeHealthCheck(block *hclwrite.Body, svc *reconciler.Desired) error {

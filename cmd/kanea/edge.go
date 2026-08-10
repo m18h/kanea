@@ -41,6 +41,9 @@ func runEdge(args []string) error {
 		"how long connections on published tcp ports get on shutdown (default: --drain)")
 	maxPublishedConns := fs.Int("max-published-conns", edge.DefaultMaxPublishedConns,
 		"node-wide ceiling on live connections across every published tcp port")
+	functionsPort := fs.Int("functions-port", 0,
+		"node port dispatching /<project>/<function>/ to http-triggered functions "+
+			"on a node with no base domain (PRD §7.2.3); 0 disables")
 	bodyTimeout := fs.Duration("body-timeout", edge.DefaultBodyTimeout,
 		"bound on reading a request body (0 disables)")
 	upstreamTimeout := fs.Duration("upstream-timeout", edge.DefaultResponseHeaderTimeout,
@@ -106,6 +109,7 @@ func runEdge(args []string) error {
 		// here and 15 s on :443.
 		PublishDrain:      *publishDrain,
 		MaxPublishedConns: *maxPublishedConns,
+		FunctionsPort:     *functionsPort,
 		Version:           version,
 		Logger:            logger,
 		Proxy: edge.ProxyConfig{

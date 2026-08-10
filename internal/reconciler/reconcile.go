@@ -165,6 +165,10 @@ type Config struct {
 	// service that names one cannot start — which is the honest failure, since
 	// the alternative is pulling anonymously and reporting a confusing 401.
 	Secrets SecretResolver
+	// Auth receives the R27 verifier material for the restricted bundle
+	// (v1.40). Nil disables the projection; routes marked auth then answer
+	// 503, which is what fail-closed means for a daemon missing the wiring.
+	Auth AuthSink
 	// EdgeSnapshot is where the route table is published for kanea-edge
 	// (PRD §5.2.6). Empty disables publishing, which is what a node with no
 	// ingress wants.
@@ -202,6 +206,7 @@ type Reconciler struct {
 	volumeDir     string
 	resolvConfDir string
 	nameserver    string
+	authSink      AuthSink
 	edgeSnapshot  string
 	baseDomain    string
 }
@@ -247,6 +252,7 @@ func New(cfg Config) (*Reconciler, error) {
 		resolvConfDir: cfg.ResolvConfDir,
 		nameserver:    cfg.Nameserver,
 		edgeSnapshot:  cfg.EdgeSnapshot,
+		authSink:      cfg.Auth,
 		baseDomain:    strings.Trim(cfg.BaseDomain, "."),
 	}, nil
 }
@@ -411,6 +417,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	// Routes last: an edge route points at a frontend, so publishing one before
 	// the frontend is programmed would advertise a host that 502s.
 	r.syncEdgeRoutes(ctx, world, vips)
+	// Auth material after the routes for the same reason in reverse: a route
+	// marked auth answers 503 until its material lands, which is the fail-
+	// closed direction (R27) — never a window where it serves open.
+	r.syncEdgeAuth(ctx, world)
 	return result, nil
 }
 

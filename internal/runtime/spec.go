@@ -48,6 +48,11 @@ func (s AllocSpec) Validate() error {
 	case s.Resources.MemoryBytes <= 0:
 		return fmt.Errorf("%w: alloc %s has no memory limit; no alloc may run unlimited (PRD §6.2 R11)",
 			ErrInvalidSpec, s.ID)
+	case s.Runtime != "" && s.Runtime != RuntimeWasmtime:
+		// A runtime name resolves to a binary containerd executes as root, so
+		// the set is closed rather than passed through (PRD §6.2 R25).
+		return fmt.Errorf("%w: alloc %s names runtime %q; only %q is supported (or empty for the default)",
+			ErrInvalidSpec, s.ID, s.Runtime, RuntimeWasmtime)
 	}
 	if s.User != nil {
 		// (uid_t)-1 is the kernel's "leave this unchanged" sentinel in chown(2)

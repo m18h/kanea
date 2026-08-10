@@ -68,6 +68,11 @@ type Config struct {
 	// to finish. Zero means DrainTimeout. Separate because a game session is
 	// not an HTTP request: an operator may want 60 s here and 15 s on :443.
 	PublishDrain time.Duration
+	// FunctionsPort is the functions dispatch port (PRD §7.2.3):
+	// /<project>/<function>/… for http-triggered functions on a node with no
+	// base domain. Zero disables it; a snapshot carrying function routes then
+	// warns once rather than serving them.
+	FunctionsPort int
 
 	Proxy   ProxyConfig
 	Version string
@@ -82,6 +87,7 @@ type Server struct {
 	certs     *certStore
 	watchers  []*Watcher
 	published *listenerSet
+	functions *functionsSet
 	http      *http.Server
 	https     *http.Server
 	status    *http.Server
@@ -119,6 +125,7 @@ func New(cfg Config) (*Server, error) {
 
 	s := &Server{cfg: cfg, log: cfg.Logger, proxy: proxy, certs: newCertStore()}
 	s.published = newListenerSet(proxy, cfg)
+	s.functions = newFunctionsSet(proxy, cfg)
 
 	routes, err := NewWatcher(WatcherConfig{
 		Name:     "routes",
@@ -135,9 +142,11 @@ func New(cfg Config) (*Server, error) {
 			// Applied after the table, and never able to reject the file: a
 			// port held by something else on the node must not freeze routing.
 			s.published.Apply(table.Listeners())
+			s.functions.Apply(table.Functions())
 			cfg.Logger.Info("route table in force",
 				"index", table.Index(), "hosts", table.Len(),
-				"published_ports", len(table.Listeners()))
+				"published_ports", len(table.Listeners()),
+				"functions", len(table.Functions()))
 			return nil
 		},
 	})
@@ -163,6 +172,10 @@ func New(cfg Config) (*Server, error) {
 					return err
 				}
 				s.certs.set(ring)
+				// The R27 verifier material rides this bundle (v1.40): same
+				// restricted file, same poll, one atomic swap beside the
+				// keyring's.
+				proxy.SetAuth(bundle.Auth)
 				// Published from the bundle rather than from the keyring: the
 				// keyring is indexed by domain and a wildcard covering forty
 				// names would otherwise become forty identical expiry gauges
@@ -314,6 +327,7 @@ func (s *Server) Run(ctx context.Context) error {
 		publishDrain = s.cfg.DrainTimeout
 	}
 	s.published.Shutdown(publishDrain)
+	s.functions.Shutdown()
 
 	err := s.http.Shutdown(drainCtx)
 	if s.https != nil {

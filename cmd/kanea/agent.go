@@ -26,6 +26,7 @@ import (
 	"github.com/m18h/kanea/internal/datapath"
 	"github.com/m18h/kanea/internal/datapath/dpmap"
 	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/functions"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/logging"
@@ -383,7 +384,7 @@ func runAgent(args []string) error {
 	// One breaker, fed by the reconciler and read by the autoscaler (§4.3).
 	// Two of them would each see half the node's failures and neither would
 	// trip on a fault both were watching.
-	notifier, feed, err := buildNotifier(ctx, notifySettings{
+	notifier, feed, tee, err := buildNotifier(ctx, notifySettings{
 		store:        st,
 		secrets:      secretStore,
 		allowPrivate: *notifyAllowPrivate,
@@ -393,6 +394,25 @@ func runAgent(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// The function invoker (v1.39, §11): event triggers tee off the
+	// dispatcher's feed, cron triggers run on its own schedule, and both POST
+	// to VIPs the Store derived — never a URL a spec could hold (R26).
+	// Attached to the tee before notifier.Run starts; woken by the same
+	// store-change signal the reconciler gets, so `kanea apply` wires a new
+	// trigger with no restart.
+	invoker, err := functions.New(functions.Config{
+		Source: functionTargets{store: st},
+		Logger: logger,
+		// The signing secret is resolved per delivery, never stored on the
+		// target list (R26, v1.40).
+		Resolver: secretStore,
+		Publish:  notifier.Publish,
+	})
+	if err != nil {
+		return err
+	}
+	tee.secondary = invoker
 
 	breaker := reconciler.NewBreaker(reconciler.BreakerConfig{
 		Logger: logger,
@@ -576,6 +596,11 @@ func runAgent(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The R27 verifier material rides the same restricted bundle the
+	// publisher writes certificates into (v1.40). Wired here rather than in
+	// the reconciler's Config because the publisher is built after it, and
+	// before rec.Run so no pass runs without the sink.
+	rec.SetAuthSink(certs.publisher)
 
 	// One reader for the API's point-in-time stats and the history recorder
 	// alike: CPU percent is a delta between readings, and two readers would
@@ -593,6 +618,7 @@ func runAgent(args []string) error {
 		PublishPorts: portPolicy,
 		OIDC:         provider, Sessions: users,
 		Metrics: metrics, EdgeMetrics: edgeExposition,
+		Invoker: invoker,
 		Breaker: breaker, Node: nodeReader,
 		// The editor's renderer parses with the node's own base domain — the
 		// same options the GitOps sync uses, so a spec means the same thing
@@ -626,7 +652,9 @@ func runAgent(args []string) error {
 		tasks++
 	}
 	errs := make(chan error, tasks)
-	go fanOut(ctx, notify, reconcileNotify, certNotify)
+	invokerNotify := make(chan struct{}, 1)
+	go fanOut(ctx, notify, reconcileNotify, certNotify, invokerNotify)
+	go invokerWaker(ctx, invokerNotify, invoker)
 	go func() { errs <- server.Serve(ctx) }()
 	go func() { errs <- rec.Run(ctx, reconcileNotify) }()
 	if dns != nil {
@@ -647,6 +675,9 @@ func runAgent(args []string) error {
 	// anything that emits: Publish is non-blocking and everything slow happens
 	// behind it (AGENTS.md #8).
 	go notifier.Run(ctx)
+	// The invoker's own goroutine, for the reason the dispatcher has one: a
+	// slow function must never stall anything that emits (constraint #8).
+	go func() { _ = invoker.Run(ctx) }()
 	if replicator != nil {
 		// Its own goroutine, and it never touches the control plane's critical
 		// path: a bucket that is down means backups stop and say so, never that

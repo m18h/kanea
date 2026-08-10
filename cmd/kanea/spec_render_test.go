@@ -8,6 +8,7 @@ import (
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // renderText runs the real renderer over one file, as the API routes do.
@@ -80,6 +81,8 @@ service "web" {
       per      = "ip"
       burst    = 20
     }
+
+    auth { basic_ref = "secret:shop/web-users" }
   }
 
   health_check "http" {
@@ -157,6 +160,110 @@ func TestGeneratedSpecRoundTripsToTheSameDesired(t *testing.T) {
 			t.Errorf("service %s/%s did not round-trip.\nwant: %+v\ngot:  %+v\ngenerated:\n%s",
 				want.Project, want.Service, want, got, text)
 		}
+	}
+}
+
+const functionRoundTripSpec = `
+spec_version = 1
+
+project "shop" {}
+
+function "resize-avatar" {
+  project = "shop"
+  module  = "registry.example.com/shop/resize-avatar:v3"
+  port    = 9000
+  count   = 2
+
+  env = { LOG = "info" }
+
+  resources {
+    cpu    = 200
+    memory = 64
+  }
+
+  signing_ref = "secret:shop/resize-signing"
+
+  trigger "http" {
+    domains = ["fn.example.com"]
+    tls { mode = "acme" }
+    auth {
+      jwt {
+        algorithm      = "RS256"
+        public_key_ref = "secret:shop/jwt-pub"
+        issuer         = "https://issuer.example.com"
+        audience       = "resize-avatar"
+      }
+    }
+  }
+
+  trigger "event" {
+    on   = ["deploy.failed", "service.unhealthy"]
+    path = "/kanea/event"
+  }
+
+  trigger "cron" {
+    schedule = "0 3 * * *"
+    path     = "/nightly"
+  }
+
+  health_check "http" {
+    type = "http"
+    path = "/healthz"
+    port = "http"
+  }
+
+  restart {
+    attempts = 3
+    backoff  = "10s,30s"
+  }
+}
+`
+
+// A lowered function must regenerate as a `function` block that lowers back to
+// the identical Desired — runtime, triggers and all (R25). A service block
+// carrying runtime internals could not be re-parsed into what is running.
+func TestGeneratedFunctionRoundTripsToTheSameDesired(t *testing.T) {
+	original, pipelines := renderText(t, functionRoundTripSpec)
+	if len(original) != 1 {
+		t.Fatalf("services = %d, want 1", len(original))
+	}
+	if original[0].Runtime == "" || original[0].Function == nil {
+		t.Fatalf("the lowered function carries no runtime/function meta: %+v", original[0])
+	}
+
+	text, err := toHCL(original, pipelines)
+	if err != nil {
+		t.Fatalf("toHCL: %v", err)
+	}
+	if !strings.Contains(text, `function "resize-avatar"`) {
+		t.Fatalf("the generator emitted a function as something else:\n%s", text)
+	}
+
+	regenerated, _ := renderText(t, text)
+	if len(regenerated) != 1 {
+		t.Fatalf("regenerated services = %d, want 1\n%s", len(regenerated), text)
+	}
+	if !reflect.DeepEqual(original[0], regenerated[0]) {
+		t.Errorf("function did not round-trip.\nwant: %+v\ngot:  %+v\ngenerated:\n%s",
+			original[0], regenerated[0], text)
+	}
+}
+
+// A desired record marked as a function but carrying what a function block
+// cannot express (R25) did not come from the parser; generation must refuse by
+// name rather than emit a lie.
+func TestGenerateRefusesAMalformedFunctionRecord(t *testing.T) {
+	svc := reconciler.Desired{
+		Project: "shop", Service: "fn", Count: 1, Image: "example.com/fn:1",
+		Runtime:  "io.containerd.wasmtime.v1",
+		Function: &reconciler.FunctionMeta{HTTP: true},
+		Ports:    []reconciler.Port{{Name: "http", Container: 8080}},
+		User:     &runtime.User{UID: 999, GID: 999},
+	}
+	if _, err := toHCL([]reconciler.Desired{svc}, nil); err == nil {
+		t.Fatal("a function record with a user block generated instead of refusing")
+	} else if !strings.Contains(err.Error(), "user") {
+		t.Errorf("the refusal does not name the field: %v", err)
 	}
 }
 

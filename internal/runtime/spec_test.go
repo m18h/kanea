@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/containerd/containerd/v2/core/containers"
 	"github.com/containerd/containerd/v2/pkg/oci"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
@@ -418,6 +419,16 @@ func TestValidate(t *testing.T) {
 			func(a *AllocSpec) { a.Devices = []Device{{Path: "/dev/dri/renderD128"}} },
 			"no cgroup permissions",
 		},
+		// The runtime set is closed: a runtime name is a binary containerd
+		// executes as root, so it is validated against a list, never passed
+		// through (PRD §6.2 R25).
+		{"wasmtime runtime", func(a *AllocSpec) { a.Runtime = RuntimeWasmtime }, ""},
+		{"unknown runtime", func(a *AllocSpec) { a.Runtime = "io.containerd.kata.v2" }, "only"},
+		{
+			"runc spelled out",
+			func(a *AllocSpec) { a.Runtime = "io.containerd.runc.v2" },
+			"only",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -441,6 +452,35 @@ func TestValidate(t *testing.T) {
 				t.Errorf("error = %q, want mention of %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// The wasm runtime reaches containerd as a container-level runtime selection.
+// Applying the option the way the client does at NewContainer proves the name
+// lands on the container record without needing a daemon.
+func TestRuntimeOptsSelectTheWasmtimeShim(t *testing.T) {
+	alloc := validAlloc()
+	alloc.Runtime = RuntimeWasmtime
+
+	opts := runtimeOpts(alloc)
+	if len(opts) != 1 {
+		t.Fatalf("runtimeOpts returned %d options, want 1", len(opts))
+	}
+	var c containers.Container
+	if err := opts[0](context.Background(), nil, &c); err != nil {
+		t.Fatalf("apply runtime option: %v", err)
+	}
+	if c.Runtime.Name != RuntimeWasmtime {
+		t.Fatalf("container runtime = %q, want %q", c.Runtime.Name, RuntimeWasmtime)
+	}
+}
+
+// An empty Runtime must produce NO option at all — not the runc name spelled
+// out. The default is containerd's to own, and every pre-v1.39 alloc relies on
+// that meaning staying put.
+func TestNoRuntimeMeansContainerdsDefault(t *testing.T) {
+	if got := runtimeOpts(validAlloc()); len(got) != 0 {
+		t.Fatalf("an empty Runtime produced %d container options; the default must stay containerd's", len(got))
 	}
 }
 

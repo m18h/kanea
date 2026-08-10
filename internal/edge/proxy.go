@@ -28,8 +28,12 @@ import (
 // wholesale on every reload while requests are in flight (see Table).
 type Proxy struct {
 	table atomic.Pointer[Table]
-	rp    *httputil.ReverseProxy
-	log   *slog.Logger
+	// auth is the compiled R27 verifier table, swapped whole when the
+	// restricted bundle reloads — the route table's discipline, applied to
+	// the material that arrives on the other file.
+	auth atomic.Pointer[authTable]
+	rp   *httputil.ReverseProxy
+	log  *slog.Logger
 
 	// limits outlives the table on purpose. Buckets keyed by route name survive
 	// a reload, so deploying a service does not hand every client that was
@@ -260,6 +264,13 @@ func (p *Proxy) serveRoute(w http.ResponseWriter, r *http.Request, route compile
 		return
 	}
 
+	// Auth after the rate limit (R27): a credential brute force meets 429
+	// before it meets bcrypt.
+	if route.AuthRequired && !p.authorize(w, r, route) {
+		p.metrics.Refused(route.Name(), ReasonAuth)
+		return
+	}
+
 	p.applyDeadline(w, r)
 
 	// Body bytes are counted as they are read rather than taken from
@@ -293,6 +304,44 @@ func (p *Proxy) serveRoute(w http.ResponseWriter, r *http.Request, route compile
 		TLSVersion:    tlsVersionOf(r),
 		TLSCipher:     tlsCipherOf(r),
 	})
+}
+
+// SetAuth swaps the compiled verifier table in. Called by the bundle watcher
+// alongside the keyring swap; nil-safe (a bundle with no auth clears it).
+func (p *Proxy) SetAuth(entries []AuthEntry) {
+	p.auth.Store(newAuthTable(entries))
+}
+
+// authorize enforces a marked route. It writes the refusal itself so the
+// response and the reason stay in one place; the caller counts the metric.
+//
+// Fail closed, both ways: a marked route with no material — the bundle has
+// not arrived, the entry failed to compile, the reference stopped resolving —
+// answers 503, never open. That is the same rule a missing certificate gets,
+// and it is the difference between "misconfigured, fix me" and a spec that
+// claims a control nothing applies (R16).
+func (p *Proxy) authorize(w http.ResponseWriter, r *http.Request, route compiled) bool {
+	table := p.auth.Load()
+	var entry *compiledAuth
+	if table != nil {
+		entry = table.entries[route.Name()]
+	}
+	if entry == nil || entry.invalid != "" {
+		if entry != nil {
+			p.log.Warn("auth-marked route has invalid verifier material",
+				"service", route.Name(), "reason", entry.invalid)
+		} else {
+			p.log.Debug("auth-marked route has no verifier material yet", "service", route.Name())
+		}
+		http.Error(w, "authentication is configured but unavailable", http.StatusServiceUnavailable)
+		return false
+	}
+	if !entry.verify(r, p.now()) {
+		w.Header().Set("WWW-Authenticate", entry.challenge())
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 // protocolOf derives the `protocol` label (§9.1.1).
