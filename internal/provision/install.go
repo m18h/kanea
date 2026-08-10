@@ -45,6 +45,12 @@ type Layout struct {
 	// surfacing as a datapath that hands out unroutable addresses.
 	NodeCIDR    string
 	ClusterCIDR string
+	// NodeCIDR6 and ClusterCIDR6 are the opt-in dual-stack halves
+	// (PRD v1.41). Empty means v4-only — deliberately no defaults, and they
+	// come together or not at all. The kanead flag trio also needs
+	// --service-cidr6, which is validated on kanead's own argv.
+	NodeCIDR6    string
+	ClusterCIDR6 string
 }
 
 // Default CIDRs. Both are RFC 1918 space chosen not to collide with the
@@ -86,6 +92,37 @@ func (l Layout) ValidateNetworking() error {
 		return fmt.Errorf("--node-cidr %s is not inside --cluster-cidr %s; "+
 			"the native routing CIDR has to cover the range it allocates from",
 			node, cluster)
+	}
+
+	// The dual-stack pair (v1.41): both or neither, and the same containment
+	// rule. kanead's own argv re-checks with --service-cidr6 in the picture —
+	// this is the installer's earlier, friendlier refusal.
+	if (l.NodeCIDR6 == "") != (l.ClusterCIDR6 == "") {
+		return fmt.Errorf("--node-cidr6 and --cluster-cidr6 come together: set both or neither")
+	}
+	if l.NodeCIDR6 == "" {
+		return nil
+	}
+	parsed6 := map[string]netip.Prefix{}
+	for _, c := range []struct{ flag, value string }{
+		{"--node-cidr6", l.NodeCIDR6}, {"--cluster-cidr6", l.ClusterCIDR6},
+	} {
+		prefix, err := netip.ParsePrefix(c.value)
+		if err != nil {
+			return fmt.Errorf("%s %q: not a CIDR", c.flag, c.value)
+		}
+		if !prefix.Addr().Is6() || prefix.Addr().Is4In6() {
+			return fmt.Errorf("%s %q: not an IPv6 prefix", c.flag, c.value)
+		}
+		if prefix.Masked() != prefix {
+			return fmt.Errorf("%s %q: has host bits set; write %s", c.flag, c.value, prefix.Masked())
+		}
+		parsed6[c.flag] = prefix
+	}
+	if !parsed6["--cluster-cidr6"].Overlaps(parsed6["--node-cidr6"]) ||
+		parsed6["--cluster-cidr6"].Bits() > parsed6["--node-cidr6"].Bits() {
+		return fmt.Errorf("--node-cidr6 %s is not inside --cluster-cidr6 %s",
+			l.NodeCIDR6, l.ClusterCIDR6)
 	}
 	return nil
 }

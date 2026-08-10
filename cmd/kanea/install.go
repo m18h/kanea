@@ -40,6 +40,10 @@ func runInstall(args []string) error {
 		"this node's container subnet; its .1 is the datapath host address")
 	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
 		"the native routing CIDR; it must contain --node-cidr")
+	nodeCIDR6 := fs.String("node-cidr6", "",
+		"this node's IPv6 container subnet (PRD v1.41, opt-in); requires --cluster-cidr6")
+	clusterCIDR6 := fs.String("cluster-cidr6", "",
+		"the routed IPv6 range; must contain --node-cidr6")
 	arch := fs.String("arch", provision.HostArch(),
 		"target architecture; only meaningful with --dry-run, to verify another arch's artefacts")
 	if err := fs.Parse(args); err != nil {
@@ -98,6 +102,7 @@ func runInstall(args []string) error {
 		Prefix: *prefix, ConfDir: *confDir, DataDir: *dataDir,
 		RunDir: *runDir, UnitDir: *unitDir,
 		NodeCIDR: *nodeCIDR, ClusterCIDR: *clusterCIDR,
+		NodeCIDR6: *nodeCIDR6, ClusterCIDR6: *clusterCIDR6,
 	}
 	// Refused here rather than left to configure the datapath: a bad CIDR would
 	// otherwise surface on a live node as unroutable alloc addresses rather than

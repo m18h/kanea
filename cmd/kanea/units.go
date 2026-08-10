@@ -38,6 +38,11 @@ type unitOptions struct {
 	// rather than living only in the operator's shell history.
 	nodeCIDR    string
 	clusterCIDR string
+	// The dual-stack trio (v1.41), rendered only when set — there are no
+	// v6 defaults, and the unit for a v4-only node must stay byte-identical.
+	nodeCIDR6    string
+	clusterCIDR6 string
+	serviceCIDR6 string
 }
 
 // unitFile is one file to write.
@@ -133,6 +138,12 @@ func kaneadService(opts unitOptions) string {
 	if cluster == "" {
 		cluster = provision.DefaultClusterCIDR
 	}
+	v6Flags := ""
+	if opts.nodeCIDR6 != "" {
+		v6Flags = ` --node-cidr6 ` + opts.nodeCIDR6 +
+			` --cluster-cidr6 ` + opts.clusterCIDR6 +
+			` --service-cidr6 ` + opts.serviceCIDR6
+	}
 	return heredoc(`
 		[Unit]
 		Description=Kanea control plane (kanead)
@@ -154,7 +165,7 @@ func kaneadService(opts unitOptions) string {
 		# binary — which Type=simple would report as a successful start.
 		Type=exec
 		ExecStart=` + opts.binary + ` agent --data-dir ` + opts.dataDir + ` --log-dir ` + opts.logDir +
-		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + `
+		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + v6Flags + `
 		Restart=always
 		RestartSec=5s
 		Slice=kanea.slice

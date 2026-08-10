@@ -267,29 +267,76 @@ func definedFlags(t *testing.T, sub string) map[string]bool {
 // gates: GitOps and systemd reach kanead without ever passing through doctor.
 func TestParseAgentCIDRsRefusesWhatTheDatapathCannotRun(t *testing.T) {
 	cases := map[string]struct {
-		node, cluster, service string
-		ok                     bool
+		node, cluster, service    string
+		node6, cluster6, service6 string
+		ok                        bool
 	}{
-		"the defaults":            {"10.244.0.0/24", "10.244.0.0/16", "172.20.0.0/16", true},
-		"not a CIDR":              {"10.244.0.0", "10.244.0.0/16", "172.20.0.0/16", false},
-		"an IPv6 node":            {"fd00::/64", "10.244.0.0/16", "172.20.0.0/16", false},
-		"node outside cluster":    {"10.9.0.0/24", "10.244.0.0/16", "172.20.0.0/16", false},
-		"node wider than cluster": {"10.0.0.0/8", "10.244.0.0/16", "172.20.0.0/16", false},
+		"the defaults": {node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "172.20.0.0/16", ok: true},
+		"not a CIDR":   {node: "10.244.0.0", cluster: "10.244.0.0/16", service: "172.20.0.0/16"},
+		"an IPv6 node": {node: "fd00::/64", cluster: "10.244.0.0/16", service: "172.20.0.0/16"},
+		"node outside cluster": {
+			node: "10.9.0.0/24", cluster: "10.244.0.0/16", service: "172.20.0.0/16"},
+		"node wider than cluster": {
+			node: "10.0.0.0/8", cluster: "10.244.0.0/16", service: "172.20.0.0/16"},
 		"cluster overlaps services": {
-			"10.244.0.0/24", "10.244.0.0/16", "10.244.128.0/17", false},
+			node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "10.244.128.0/17"},
 		"node overlaps services": {
-			"10.244.0.0/24", "10.244.0.0/16", "10.244.0.0/24", false},
+			node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "10.244.0.0/24"},
+
+		// The dual-stack trio (PRD v1.41): all three or none, mirrored rules.
+		"a full v6 trio": {
+			node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "172.20.0.0/16",
+			node6: "fd10:244::/64", cluster6: "fd10:244::/56", service6: "fd10:245::/64", ok: true},
+		"one v6 flag alone": {
+			node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "172.20.0.0/16",
+			node6: "fd10:244::/64"},
+		"two v6 flags": {
+			node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "172.20.0.0/16",
+			node6: "fd10:244::/64", service6: "fd10:245::/64"},
+		"a v4 prefix in a *6 flag": {
+			node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "172.20.0.0/16",
+			node6: "10.9.0.0/24", cluster6: "fd10:244::/56", service6: "fd10:245::/64"},
+		"node6 outside cluster6": {
+			node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "172.20.0.0/16",
+			node6: "fd99::/64", cluster6: "fd10:244::/56", service6: "fd10:245::/64"},
+		"node6 overlaps services6": {
+			node: "10.244.0.0/24", cluster: "10.244.0.0/16", service: "172.20.0.0/16",
+			node6: "fd10:244::/64", cluster6: "fd10:244::/56", service6: "fd10:244::/64"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := parseAgentCIDRs(tc.node, tc.cluster, tc.service)
+			_, err := parseAgentCIDRs(tc.node, tc.cluster, tc.service, tc.node6, tc.cluster6, tc.service6)
 			if tc.ok && err != nil {
-				t.Fatalf("parseAgentCIDRs(%s, %s, %s): %v", tc.node, tc.cluster, tc.service, err)
+				t.Fatalf("parseAgentCIDRs(%s, %s, %s, %s, %s, %s): %v",
+					tc.node, tc.cluster, tc.service, tc.node6, tc.cluster6, tc.service6, err)
 			}
 			if !tc.ok && err == nil {
-				t.Fatalf("parseAgentCIDRs(%s, %s, %s) accepted a bad trio", tc.node, tc.cluster, tc.service)
+				t.Fatalf("parseAgentCIDRs accepted a bad set: %+v", tc)
 			}
 		})
+	}
+}
+
+// The kanead unit for a v4-only node must stay byte-identical: the v6 flags
+// are rendered only when set, and all three ride the argv together.
+func TestUnitRendersTheV6TrioOnlyWhenSet(t *testing.T) {
+	v4 := kaneadService(unitOptions{binary: "/usr/local/bin/kanea", dataDir: "/var/lib/kanea", logDir: "/var/log/kanea"})
+	if strings.Contains(v4, "cidr6") {
+		t.Errorf("a v4-only unit mentions a *6 flag:\n%s", v4)
+	}
+
+	dual := kaneadService(unitOptions{
+		binary: "/usr/local/bin/kanea", dataDir: "/var/lib/kanea", logDir: "/var/log/kanea",
+		nodeCIDR6: "fd10:244::/64", clusterCIDR6: "fd10:244::/56", serviceCIDR6: "fd10:245::/64",
+	})
+	for _, want := range []string{
+		"--node-cidr6 fd10:244::/64",
+		"--cluster-cidr6 fd10:244::/56",
+		"--service-cidr6 fd10:245::/64",
+	} {
+		if !strings.Contains(dual, want) {
+			t.Errorf("dual-stack unit is missing %q:\n%s", want, dual)
+		}
 	}
 }
 

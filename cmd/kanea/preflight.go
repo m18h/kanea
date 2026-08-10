@@ -68,6 +68,8 @@ type preflightOptions struct {
 	// here only so the subnet overlap can be checked: reconciler and provision
 	// never meet anywhere else, which is why nothing checked this before.
 	serviceCIDR string
+	// serviceCIDR6 is the v6 twin pool (PRD v1.41); empty means v4-only.
+	serviceCIDR6 string
 }
 
 // The check set is split in two, and the split is the point.
@@ -102,6 +104,9 @@ func componentChecks(opts preflightOptions) []checkResult {
 				"(PRD §5.2.12); or point --containerd at an existing one"),
 		checkVersionMatrix(opts.layout),
 		checkSubnets(opts.layout, opts.serviceCIDR),
+	}
+	if opts.layout.NodeCIDR6 != "" || opts.serviceCIDR6 != "" {
+		results = append(results, checkSubnets6(opts.layout, opts.serviceCIDR6), checkKernelIPv6())
 	}
 	if opts.networkMode != networkNetns {
 		results = append(results, checkBPF())
@@ -531,4 +536,73 @@ func confirm(in *bufio.Reader, want string) (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(line) == want, nil
+}
+
+// checkSubnets6 is checkSubnets' dual-stack half (PRD v1.41): the courtesy
+// pre-check of what parseAgentCIDRs will enforce on kanead's own argv.
+func checkSubnets6(layout provision.Layout, serviceCIDR6 string) checkResult {
+	const name = "container subnet (v6)"
+	if layout.NodeCIDR6 == "" || layout.ClusterCIDR6 == "" || serviceCIDR6 == "" {
+		return checkResult{Name: name,
+			Detail: "--node-cidr6, --cluster-cidr6 and --service-cidr6 come as a trio: all three or none",
+			Fix:    "set the missing *6 flags, or none of them"}
+	}
+	if err := layout.ValidateNetworking(); err != nil {
+		return checkResult{Name: name, Detail: err.Error(),
+			Fix: "pass --node-cidr6 and --cluster-cidr6 to `kanea install`"}
+	}
+	services6, err := netip.ParsePrefix(serviceCIDR6)
+	if err != nil || !services6.Addr().Is6() || services6.Addr().Is4In6() {
+		return checkResult{Name: name,
+			Detail: fmt.Sprintf("--service-cidr6 %q is not an IPv6 CIDR", serviceCIDR6),
+			Fix:    "pass an IPv6 prefix to kanead's --service-cidr6"}
+	}
+	for _, c := range []struct{ flag, value string }{
+		{"--node-cidr6", layout.NodeCIDR6}, {"--cluster-cidr6", layout.ClusterCIDR6},
+	} {
+		prefix, err := netip.ParsePrefix(c.value)
+		if err != nil {
+			continue // ValidateNetworking already reported it
+		}
+		if prefix.Overlaps(services6) {
+			return checkResult{
+				Name: name,
+				Detail: fmt.Sprintf("%s %s overlaps --service-cidr6 %s; a service frontend would be "+
+					"handed an address that is also a container address", c.flag, c.value, serviceCIDR6),
+				Fix: "move one of them",
+			}
+		}
+	}
+	detail := layout.NodeCIDR6 + " in " + layout.ClusterCIDR6 + ", services " + serviceCIDR6
+	// ULA is the recommendation, not a rule: these are internal-only
+	// addresses, and GUA would imply a routability nobody provides.
+	for _, v := range []string{layout.NodeCIDR6, layout.ClusterCIDR6, serviceCIDR6} {
+		if p, err := netip.ParsePrefix(v); err == nil && !isULA(p.Addr()) {
+			return checkResult{Name: name, OK: true, Warn: true,
+				Detail: detail,
+				Fix:    v + " is not ULA (fd00::/8); internal-only addressing is what these ranges carry"}
+		}
+	}
+	return checkResult{Name: name, OK: true, Detail: detail}
+}
+
+// isULA reports whether an address is in fc00::/7 (in practice fd00::/8).
+func isULA(a netip.Addr) bool {
+	return a.Is6() && !a.Is4In6() && (a.As16()[0]&0xFE) == 0xFC
+}
+
+// checkKernelIPv6 verifies the kernel has IPv6 at all when the flags ask for
+// it: a kernel booted with ipv6.disable=1 has no /proc/sys/net/ipv6, and the
+// datapath's v6 half would fail at the first sysctl instead of here.
+func checkKernelIPv6() checkResult {
+	const name = "kernel IPv6"
+	if goruntime.GOOS != "linux" {
+		return checkResult{Name: name, OK: true, Detail: "skipped off linux"}
+	}
+	if _, err := os.Stat("/proc/sys/net/ipv6"); err != nil {
+		return checkResult{Name: name,
+			Detail: "/proc/sys/net/ipv6 is missing; the kernel has IPv6 disabled",
+			Fix:    "remove ipv6.disable=1 from the kernel command line, or drop the *6 flags"}
+	}
+	return checkResult{Name: name, OK: true, Detail: "/proc/sys/net/ipv6 present"}
 }

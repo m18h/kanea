@@ -98,6 +98,12 @@ func runAgent(args []string) error {
 		"this node's container subnet; its .1 is the datapath host address")
 	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
 		"what the masquerade rule treats as internal; must contain --node-cidr")
+	nodeCIDR6 := fs.String("node-cidr6", "",
+		"this node's IPv6 container subnet (PRD v1.41); requires --cluster-cidr6 and --service-cidr6, ULA recommended")
+	clusterCIDR6 := fs.String("cluster-cidr6", "",
+		"the routed IPv6 range; must contain --node-cidr6")
+	serviceCIDR6 := fs.String("service-cidr6", "",
+		"IPv6 pool for service frontend twins; enables dual-stack with the other two *6 flags")
 	hostPaths := fs.String("allowed-host-paths", "",
 		"comma-separated directories that `host` volumes may mount from (default: none)")
 	passthroughConfig := fs.String("passthrough-config", "",
@@ -201,7 +207,8 @@ func runAgent(args []string) error {
 	// datapath that hands out unroutable addresses.
 	var cidrs agentCIDRs
 	if *networkMode == networkEBPF {
-		parsed, err := parseAgentCIDRs(*nodeCIDR, *clusterCIDR, *serviceCIDR)
+		parsed, err := parseAgentCIDRs(*nodeCIDR, *clusterCIDR, *serviceCIDR,
+			*nodeCIDR6, *clusterCIDR6, *serviceCIDR6)
 		if err != nil {
 			return err
 		}
@@ -329,13 +336,16 @@ func runAgent(args []string) error {
 	})
 
 	net, err := buildNetwork(ctx, *networkMode, datapath.Config{
-		NodeCIDR:    cidrs.node,
-		ClusterCIDR: cidrs.cluster,
-		ServiceCIDR: cidrs.service,
-		BPFDir:      *bpfDir,
-		Store:       st,
-		DNS:         dns,
-		Logger:      logger,
+		NodeCIDR:     cidrs.node,
+		ClusterCIDR:  cidrs.cluster,
+		ServiceCIDR:  cidrs.service,
+		NodeCIDR6:    cidrs.node6,
+		ClusterCIDR6: cidrs.cluster6,
+		ServiceCIDR6: cidrs.service6,
+		BPFDir:       *bpfDir,
+		Store:        st,
+		DNS:          dns,
+		Logger:       logger,
 	}, logger)
 	if err != nil {
 		return err
@@ -430,6 +440,7 @@ func runAgent(args []string) error {
 		LogDir:        *logDir,
 		VolumeDir:     volumes,
 		ServiceCIDR:   *serviceCIDR,
+		ServiceCIDR6:  *serviceCIDR6,
 		ResolvConfDir: filepath.Join(*dataDir, resolvSubdir),
 		Nameserver:    nameserverOf(dns),
 		Prober:        reconciler.NewProber(driver),
@@ -797,16 +808,21 @@ func validNetworkMode(mode string) error {
 	return nil
 }
 
-// agentCIDRs is the parsed subnet trio the ebpf mode runs on.
+// agentCIDRs is the parsed subnet trio the ebpf mode runs on — six with
+// dual-stack (PRD v1.41); the *6 prefixes are invalid when v6 is off.
 type agentCIDRs struct {
-	node, cluster, service netip.Prefix
+	node, cluster, service    netip.Prefix
+	node6, cluster6, service6 netip.Prefix
 }
 
 // parseAgentCIDRs validates the subnets against each other, mirroring the
 // shape of preflight's checkSubnets: `kanea doctor` can only warn in advance,
 // while this is the refusal that actually gates startup — GitOps and systemd
 // reach kanead without ever passing through doctor.
-func parseAgentCIDRs(node, cluster, service string) (agentCIDRs, error) {
+//
+// The v6 trio is all-or-nothing, refused by name: a v6 alloc address without
+// a v6 VIP pool is a half-configured stack whose failures are silent.
+func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string) (agentCIDRs, error) {
 	var out agentCIDRs
 	for _, p := range []struct {
 		flag  string
@@ -838,6 +854,51 @@ func parseAgentCIDRs(node, cluster, service string) (agentCIDRs, error) {
 		if c.prefix.Overlaps(out.service) {
 			return out, fmt.Errorf("%s %s overlaps --service-cidr %s; a service frontend would be "+
 				"handed an address that is also a container address", c.flag, c.prefix, service)
+		}
+	}
+
+	set := 0
+	for _, v := range []string{node6, cluster6, service6} {
+		if v != "" {
+			set++
+		}
+	}
+	if set == 0 {
+		return out, nil
+	}
+	if set != 3 {
+		return out, fmt.Errorf("--node-cidr6, --cluster-cidr6 and --service-cidr6 come as a trio: all three or none")
+	}
+	for _, p := range []struct {
+		flag  string
+		value string
+		into  *netip.Prefix
+	}{
+		{"--node-cidr6", node6, &out.node6},
+		{"--cluster-cidr6", cluster6, &out.cluster6},
+		{"--service-cidr6", service6, &out.service6},
+	} {
+		prefix, err := netip.ParsePrefix(p.value)
+		if err != nil {
+			return out, fmt.Errorf("%s %q is not a CIDR", p.flag, p.value)
+		}
+		if !prefix.Addr().Is6() || prefix.Addr().Is4In6() {
+			return out, fmt.Errorf("%s %q is not an IPv6 prefix", p.flag, p.value)
+		}
+		*p.into = prefix.Masked()
+	}
+	if !out.cluster6.Contains(out.node6.Addr()) || out.node6.Bits() < out.cluster6.Bits() {
+		return out, fmt.Errorf("--node-cidr6 %s is not within --cluster-cidr6 %s", node6, cluster6)
+	}
+	for _, c := range []struct {
+		flag   string
+		prefix netip.Prefix
+	}{
+		{"--node-cidr6", out.node6}, {"--cluster-cidr6", out.cluster6},
+	} {
+		if c.prefix.Overlaps(out.service6) {
+			return out, fmt.Errorf("%s %s overlaps --service-cidr6 %s; a service frontend would be "+
+				"handed an address that is also a container address", c.flag, c.prefix, service6)
 		}
 	}
 	return out, nil
