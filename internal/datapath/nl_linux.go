@@ -3,13 +3,16 @@
 package datapath
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	goruntime "runtime"
 	"strings"
+	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/vishvananda/netlink"
@@ -90,6 +93,18 @@ func (n *netlinkOps) CreateVeth(host, peer, alias string) (string, string, error
 	if err := netlink.LinkAdd(&netlink.Veth{LinkAttrs: la, PeerName: peer}); err != nil {
 		return "", "", fmt.Errorf("create veth %s: %w", host, err)
 	}
+	// Wait for udev to finish processing the new veth before its MAC is read.
+	// systemd's default 99-default.link carries MACAddressPolicy=persistent,
+	// which for a virtual device generates a MAC and applies it on the "add"
+	// uevent — asynchronously, after LinkAdd returns. A MAC read before that
+	// settles is the kernel's transient random one, stale by the time the
+	// interface carries traffic; the static neighbors ConfigurePeer and
+	// SetHostUp build from it would then point at an address nothing answers
+	// to, and every packet across the veth would be dropped at L2 with no
+	// counter to show for it. After settle the policy is applied and the MAC
+	// is final (spike ⑤ check 4 / the MAC finding). "up" does not re-trigger
+	// the policy, so the value read here holds through SetHostUp.
+	settleUdev()
 	hostLink, err := netlink.LinkByName(host)
 	if err != nil {
 		return "", "", fmt.Errorf("find %s: %w", host, err)
@@ -360,6 +375,17 @@ func (n *netlinkOps) List() ([]Link, error) {
 		out = append(out, Link{Name: attrs.Name, Alias: attrs.Alias})
 	}
 	return out, nil
+}
+
+// settleUdev blocks until udev's event queue drains, so its MACAddressPolicy
+// has finished applying to a freshly created veth before the MAC is read
+// (see CreateVeth). Best-effort and bounded: on a host without a running
+// udevd it returns immediately, which is correct there — nothing will change
+// the MAC. systemd (hence udevadm) is a hard platform requirement (§21).
+func settleUdev() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "udevadm", "settle", "--timeout=5").Run() //nolint:errcheck // best-effort: a settle failure is not fatal, the MAC read below still proceeds
 }
 
 // hostNet renders one address as a host route/address: /32 or /128 by family.
