@@ -1,14 +1,43 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ShieldCheck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
+import { FilterChips } from '@/components/FilterChips'
+import { SortHeader } from '@/components/SortHeader'
 import { Link } from '@/lib/router'
 import { fetchRuns, isRunFinished, type Run } from '@/lib/api'
-import { runStateLabel, runStateVariant, runDuration, shortSHA } from '@/lib/pipelines'
+import { runStateLabel, runStateVariant, runDuration, runDurationMs, shortSHA } from '@/lib/pipelines'
+import { matchesQuery } from '@/lib/search'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
+import { sortItems, useSort } from '@/hooks/useSort'
+
+/** The wire states as chips, labelled the way the status pills read
+ * (runStateLabel): a running run is "building", a succeeded one is "ok". */
+const stateFilters = [
+  { value: 'all', label: 'all' },
+  { value: 'running', label: 'building' },
+  { value: 'queued', label: 'queued' },
+  { value: 'succeeded', label: 'ok' },
+  { value: 'failed', label: 'failed' },
+  { value: 'cancelled', label: 'cancelled' },
+] as const
+type StateFilter = (typeof stateFilters)[number]['value']
+
+/** Ascending status sort reads live-first, then what needs attention. */
+const stateRank: Record<string, number> = {
+  running: 0,
+  queued: 1,
+  failed: 2,
+  succeeded: 3,
+  cancelled: 4,
+}
+
+type SortKey = 'repository' | 'status' | 'duration'
 
 /**
  * The pipeline list (PRD §10.2).
@@ -30,8 +59,31 @@ export function Pipelines() {
       (query.state.data ?? []).some((run) => !isRunFinished(run)) ? 2_000 : 15_000,
   })
 
+  const [query, setQuery] = useState('')
+  const [state, setState] = useState<StateFilter>('all')
+  const sort = useSort<SortKey>()
+
   const list = runs.data ?? []
-  const pager = usePagination(list)
+  const filtered = list.filter(
+    (run) =>
+      (state === 'all' || run.state === state) &&
+      matchesQuery(
+        query,
+        `${run.project}/${run.service}`,
+        run.ref,
+        run.commit,
+        run.trigger,
+        run.triggered_by,
+      ),
+  )
+  const sorted = sortItems(filtered, sort, {
+    repository: (run) => `${run.project}/${run.service}`,
+    status: (run) => stateRank[run.state],
+    duration: (run) => runDurationMs(run),
+  })
+  const pager = usePagination(sorted, {
+    resetKey: `${query} ${state} ${sort.key ?? ''} ${sort.dir}`,
+  })
   // The queue serialises builds and refuses when full (§10.2): one slot, in
   // use whenever a run is going.
   const building = list.some((run) => run.state === 'running')
@@ -56,27 +108,51 @@ export function Pipelines() {
           a push to its watched branch, or on <span className="font-mono">kanea build</span>.
         </Card>
       ) : (
-        <Card className="py-2">
-          <Table>
-            <THead>
-              <tr>
-                <TH className="pt-2">Repository</TH>
-                <TH className="pt-2">Trigger</TH>
-                <TH className="pt-2">Commit</TH>
-                <TH className="pt-2">Status</TH>
-                <TH className="pt-2">Duration</TH>
-              </tr>
-            </THead>
-            <TBody>
-              {pager.pageItems.map((run) => (
-                <RunRow key={`${run.project}/${run.service}/${run.id}`} run={run} />
-              ))}
-            </TBody>
-          </Table>
-          <div className="px-3">
-            <PaginationControls state={pager} />
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <FilterChips options={stateFilters} value={state} onChange={setState} />
+            <Input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search repo, ref or commit…"
+              aria-label="Search pipeline runs"
+              className="h-8 w-56 text-xs"
+            />
           </div>
-        </Card>
+
+          {sorted.length === 0 ? (
+            <Card className="p-4 text-sm text-muted-foreground">No runs match that filter.</Card>
+          ) : (
+            <Card className="py-2">
+              <Table>
+                <THead>
+                  <tr>
+                    <SortHeader sort={sort} sortKey="repository" className="pt-2">
+                      Repository
+                    </SortHeader>
+                    <TH className="pt-2">Trigger</TH>
+                    <TH className="pt-2">Commit</TH>
+                    <SortHeader sort={sort} sortKey="status" className="pt-2">
+                      Status
+                    </SortHeader>
+                    <SortHeader sort={sort} sortKey="duration" className="pt-2">
+                      Duration
+                    </SortHeader>
+                  </tr>
+                </THead>
+                <TBody>
+                  {pager.pageItems.map((run) => (
+                    <RunRow key={`${run.project}/${run.service}/${run.id}`} run={run} />
+                  ))}
+                </TBody>
+              </Table>
+              <div className="px-3">
+                <PaginationControls state={pager} />
+              </div>
+            </Card>
+          )}
+        </>
       )}
 
       <Card className="flex items-center gap-2.5 p-3 text-sm text-muted-foreground">

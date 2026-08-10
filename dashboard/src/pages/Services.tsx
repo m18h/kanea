@@ -1,10 +1,14 @@
+import { useState } from 'react'
 import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
 import { StatusDot } from '@/components/StatusDot'
+import { FilterChips } from '@/components/FilterChips'
+import { SortHeader } from '@/components/SortHeader'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import {
   Topic,
@@ -21,22 +25,64 @@ import {
   serviceHealth,
   serviceStatusTone,
 } from '@/lib/state'
+import { matchesQuery } from '@/lib/search'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
+import { sortItems, useSort } from '@/hooks/useSort'
 
 /** When a service declares no p95 target, red starts here. */
 const defaultP95AlarmMs = 500
+
+/** The status words serviceStatusTone can produce, as filter chips. */
+const statusFilters = [
+  { value: 'all', label: 'all' },
+  { value: 'running', label: 'running' },
+  { value: 'scaling', label: 'scaling' },
+  { value: 'degraded', label: 'degraded' },
+  { value: 'stopped', label: 'stopped' },
+] as const
+type StatusFilter = (typeof statusFilters)[number]['value']
+
+/** Ascending status sort reads problems-first: the reader clicking it is
+ * looking for what is wrong, not for the alphabet. */
+const statusRank: Record<string, number> = { degraded: 0, scaling: 1, running: 2, stopped: 3 }
+
+type SortKey = 'service' | 'status' | 'allocs'
 
 /** Services lists what is declared and how much of it is actually running. */
 export function Services() {
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState<StatusFilter>('all')
+  const sort = useSort<SortKey>()
 
   // Functions are services underneath (v1.39) but have a page of their own —
   // one record, shown as what it is, on exactly one list.
   const list = (services.data?.services ?? []).filter((s) => s.function == null)
   const byService = groupAllocs(allocs.data?.allocs ?? [])
-  const pager = usePagination(list)
+
+  // Status is computed once per service, up here, because filtering and
+  // sorting need it before any row renders. The stats columns (CPU, mem, RPS,
+  // P95) are deliberately not sortable: each row holds its own bounded stats
+  // subscription, so the page never has those numbers to sort by.
+  const rows = list.map((svc) => {
+    const svcAllocs = byService.get(`${svc.Project}/${svc.Service}`) ?? []
+    return { svc, allocs: svcAllocs, status: serviceStatusTone(serviceHealth(svc, svcAllocs)) }
+  })
+  const filtered = rows.filter(
+    (row) =>
+      (status === 'all' || row.status.word === status) &&
+      matchesQuery(query, `${row.svc.Project}/${row.svc.Service}`, row.svc.Image),
+  )
+  const sorted = sortItems(filtered, sort, {
+    service: (row) => `${row.svc.Project}/${row.svc.Service}`,
+    status: (row) => statusRank[row.status.word],
+    allocs: (row) => row.allocs.filter((a) => a.state === 'running').length,
+  })
+  const pager = usePagination(sorted, {
+    resetKey: `${query} ${status} ${sort.key ?? ''} ${sort.dir}`,
+  })
 
   const allocCount = allocs.data?.allocs?.length ?? 0
 
@@ -59,42 +105,78 @@ export function Services() {
       ) : list.length === 0 ? (
         <Card className="p-4 text-sm text-muted-foreground">Nothing deployed yet.</Card>
       ) : (
-        <Card className="py-2">
-          <Table>
-            <THead>
-              <tr>
-                <TH className="pt-2">Service</TH>
-                <TH className="pt-2">Status</TH>
-                <TH className="pt-2">Allocs</TH>
-                <TH className="pt-2">CPU</TH>
-                <TH className="pt-2">Mem</TH>
-                <TH className="pt-2">RPS</TH>
-                <TH className="pt-2">P95</TH>
-                <TH className="pt-2">Autoscale</TH>
-              </tr>
-            </THead>
-            <TBody>
-              {pager.pageItems.map((svc) => (
-                <ServiceRow
-                  key={`${svc.Project}/${svc.Service}`}
-                  service={svc}
-                  allocs={byService.get(`${svc.Project}/${svc.Service}`) ?? []}
-                />
-              ))}
-            </TBody>
-          </Table>
-          <div className="px-3">
-            <PaginationControls state={pager} />
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <FilterChips options={statusFilters} value={status} onChange={setStatus} />
+            <Input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or image…"
+              aria-label="Search services"
+              className="h-8 w-56 text-xs"
+            />
           </div>
-        </Card>
+
+          {sorted.length === 0 ? (
+            // Distinct from "nothing deployed": services exist, the filter
+            // hides all of them, and only one of those is fixed by deploying.
+            <Card className="p-4 text-sm text-muted-foreground">
+              No services match that filter.
+            </Card>
+          ) : (
+            <Card className="py-2">
+              <Table>
+                <THead>
+                  <tr>
+                    <SortHeader sort={sort} sortKey="service" className="pt-2">
+                      Service
+                    </SortHeader>
+                    <SortHeader sort={sort} sortKey="status" className="pt-2">
+                      Status
+                    </SortHeader>
+                    <SortHeader sort={sort} sortKey="allocs" className="pt-2">
+                      Allocs
+                    </SortHeader>
+                    <TH className="pt-2">CPU</TH>
+                    <TH className="pt-2">Mem</TH>
+                    <TH className="pt-2">RPS</TH>
+                    <TH className="pt-2">P95</TH>
+                    <TH className="pt-2">Autoscale</TH>
+                  </tr>
+                </THead>
+                <TBody>
+                  {pager.pageItems.map((row) => (
+                    <ServiceRow
+                      key={`${row.svc.Project}/${row.svc.Service}`}
+                      service={row.svc}
+                      allocs={row.allocs}
+                      status={row.status}
+                    />
+                  ))}
+                </TBody>
+              </Table>
+              <div className="px-3">
+                <PaginationControls state={pager} />
+              </div>
+            </Card>
+          )}
+        </>
       )}
     </div>
   )
 }
 
-function ServiceRow({ service, allocs }: { service: Service; allocs: Alloc[] }) {
+function ServiceRow({
+  service,
+  allocs,
+  status,
+}: {
+  service: Service
+  allocs: Alloc[]
+  status: ReturnType<typeof serviceStatusTone>
+}) {
   const running = allocs.filter((a) => a.state === 'running').length
-  const status = serviceStatusTone(serviceHealth(service, allocs))
   const metrics = service.Scaling?.metrics ?? []
 
   return (
