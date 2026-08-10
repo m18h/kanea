@@ -19,7 +19,7 @@ real-time **shadcn/ui dashboard**, an **MCP server** for AI agents, **GitOps
 pipelines** (rootless BuildKit), **eBPF-driven autoscaling**, and **encrypted
 S3-backed state replication** with backup and restore.
 
-📖 **[Website →](https://m18h.github.io/kanea/)** · [PRD](./PRD.md) · [Threat model](./docs/THREAT_MODEL.md) · [DR runbook](./docs/DR_RUNBOOK.md)
+**[Website](https://m18h.github.io/kanea/)** · [PRD](./PRD.md) · [Threat model](./docs/THREAT_MODEL.md) · [DR runbook](./docs/DR_RUNBOOK.md)
 
 ## Install
 
