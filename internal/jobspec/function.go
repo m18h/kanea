@@ -90,16 +90,16 @@ type hclFunction struct {
 	RegistryAuthRef string `hcl:"registry_auth_ref,optional"`
 	// SigningRef names the secret event/cron invocations are MACed with
 	// (R26, v1.40). The function holds the same reference to verify.
-	SigningRef string `hcl:"signing_ref,optional"`
-	DependsOn       []string       `hcl:"depends_on,optional"`
-	Env             hcl.Expression `hcl:"env,optional"`
-	Build           *hclBuild      `hcl:"build,block"`
-	Resources       *hclResources  `hcl:"resources,block"`
-	Triggers        []hclTrigger   `hcl:"trigger,block"`
-	HealthChecks    []hclHealthCheck `hcl:"health_check,block"`
-	Update          *hclUpdate     `hcl:"update,block"`
-	Restart         *hclRestart    `hcl:"restart,block"`
-	DefRange        hcl.Range      `hcl:",def_range"`
+	SigningRef   string           `hcl:"signing_ref,optional"`
+	DependsOn    []string         `hcl:"depends_on,optional"`
+	Env          hcl.Expression   `hcl:"env,optional"`
+	Build        *hclBuild        `hcl:"build,block"`
+	Resources    *hclResources    `hcl:"resources,block"`
+	Triggers     []hclTrigger     `hcl:"trigger,block"`
+	HealthChecks []hclHealthCheck `hcl:"health_check,block"`
+	Update       *hclUpdate       `hcl:"update,block"`
+	Restart      *hclRestart      `hcl:"restart,block"`
+	DefRange     hcl.Range        `hcl:",def_range"`
 }
 
 // hclTrigger is one way of reaching the function's endpoint. The label picks

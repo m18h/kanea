@@ -10,7 +10,7 @@ import (
 
 func TestAuthAcceptsEachMode(t *testing.T) {
 	specs := map[string]string{
-		"basic": `auth { basic_ref = "secret:shop/users" }`,
+		"basic":  `auth { basic_ref = "secret:shop/users" }`,
 		"bearer": `auth { bearer_ref = "secret:shop/tokens" }`,
 		"jwt-hs256": `auth {
 			jwt {

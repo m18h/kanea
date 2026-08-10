@@ -677,7 +677,7 @@ func runAgent(args []string) error {
 	go notifier.Run(ctx)
 	// The invoker's own goroutine, for the reason the dispatcher has one: a
 	// slow function must never stall anything that emits (constraint #8).
-	go func() { _ = invoker.Run(ctx) }()
+	go func() { _ = invoker.Run(ctx) }() //nolint:errcheck // Run only returns the context's error at shutdown
 	if replicator != nil {
 		// Its own goroutine, and it never touches the control plane's critical
 		// path: a bucket that is down means backups stop and say so, never that
