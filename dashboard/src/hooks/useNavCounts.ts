@@ -9,6 +9,9 @@ import { useLiveTopic } from '@/hooks/useLiveTopic'
 
 export interface NavCounts {
   services?: number | undefined
+  /** functions is derived from the same services topic (a function IS a
+   * service, marked) — no extra request or subscription. */
+  functions?: number | undefined
   buildsRunning?: number | undefined
   /** alerts is warnings + errors in the last 24 h, not a raw event total — an
    * unbounded count is noise where "something needs looking at" is the ask. */
@@ -42,8 +45,11 @@ export function useNavCounts(): NavCounts {
     },
   })
 
+  const all = services.data?.services ?? undefined
+  const fns = all?.filter((s) => s.function != null)
   return {
-    services: services.data?.services?.length,
+    services: all === undefined || fns === undefined ? undefined : all.length - fns.length,
+    functions: fns?.length,
     buildsRunning: runs.data?.filter((r) => r.state === 'running' || r.state === 'queued').length,
     alerts: alerts.data,
   }

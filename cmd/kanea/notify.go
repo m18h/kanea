@@ -134,13 +134,18 @@ type notifySettings struct {
 // channels are what is built on top of it.
 func buildNotifier(
 	ctx context.Context, cfg notifySettings, logger *slog.Logger,
-) (*notify.Dispatcher, *notify.Feed, error) {
+) (*notify.Dispatcher, *notify.Feed, *teeSink, error) {
 	feed, err := notify.NewFeed(notify.FeedConfig{
 		Store: cfg.store, Logger: logger, Retention: cfg.retention,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	// The dispatcher's Sink is a tee: the feed is the record and comes first,
+	// and the function invoker (v1.39, §11) attaches as the second consumer —
+	// after construction, before Run starts. Routes are startup-static; the
+	// Sink is the one place a live event trigger can see everything.
+	tee := &teeSink{primary: feed}
 
 	egress := notify.EgressPolicy{AllowPrivate: cfg.allowPrivate, AllowHTTP: cfg.allowHTTP}
 	if cfg.allowPrivate {
@@ -153,15 +158,15 @@ func buildNotifier(
 
 	routes, err := notifyRoutes(ctx, cfg, egress, logger)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	dispatcher, err := notify.New(notify.Config{
-		Routes: routes, Sink: feed, Logger: logger,
+		Routes: routes, Sink: tee, Logger: logger,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return dispatcher, feed, nil
+	return dispatcher, feed, tee, nil
 }
 
 // listProjectConfigs reads every project record.

@@ -38,6 +38,11 @@ type Bundle struct {
 	// HTTPChallenges answers /.well-known/acme-challenge/<token> during an
 	// HTTP-01 validation (PRD §7.3).
 	HTTPChallenges []HTTPChallenge `json:"http_challenges,omitempty"`
+	// Auth is the R27 verifier material (v1.40), one entry per authenticated
+	// service. It rides this bundle rather than routes.json because this is
+	// the restricted projection (0640): bcrypt lines, token hashes, and — the
+	// one genuinely secret field — a JWT HS256 key.
+	Auth []AuthEntry `json:"auth,omitempty"`
 }
 
 // Certificate is one issued certificate and its key.

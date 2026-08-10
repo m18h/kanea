@@ -109,11 +109,39 @@ func componentChecks(opts preflightOptions) []checkResult {
 	if opts.buildkitSocket != "off" {
 		results = append(results, checkBuildkit(opts.buildkitSocket, opts.layout))
 	}
-	results = append(results, checkFUSE())
+	results = append(results, checkFUSE(), checkWasmShim(opts.layout))
 	if !opts.offline {
 		results = append(results, checkUpstreamReachable())
 	}
 	return results
+}
+
+// checkWasmShim verifies the functions runtime is reachable (PRD v1.39,
+// §5.2.12, §6.2 R25). Always a warning, never a failure: a node running no
+// functions is a supported node, and this check exists so the first wasm alloc
+// fails here — in front of an operator — rather than at task create.
+func checkWasmShim(layout provision.Layout) checkResult {
+	const shim = "containerd-shim-wasmtime-v1"
+	if layout.ContainerdSocket == "" {
+		// Kanea's containerd: the unit puts BinDir on containerd's PATH, so
+		// presence in BinDir is resolvability. Drift is the matrix's job.
+		if _, err := os.Stat(filepath.Join(layout.BinDir(), shim)); err != nil {
+			return warn("wasm shim", shim+" is not installed",
+				"functions (PRD §6.2 R25) need it; run `kanea install --only wasmtime-shim`")
+		}
+		return pass("wasm shim", shim+" installed")
+	}
+	// An adopted containerd resolves shims on its own PATH, which Kanea does
+	// not control and must not edit — a missing shim there is a finding, not
+	// something to fix in a unit Kanea did not write (§5.2.11).
+	for _, dir := range []string{"/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"} {
+		if _, err := os.Stat(filepath.Join(dir, shim)); err == nil {
+			return pass("wasm shim", shim+" resolvable at "+dir)
+		}
+	}
+	return warn("wasm shim", shim+" is not on the adopted containerd's likely PATH",
+		"functions need "+shim+" resolvable by the containerd at "+layout.ContainerdSocket+
+			"; place it on that daemon's PATH (Kanea does not edit a unit it did not write)")
 }
 
 // checkUpstreamReachable reports whether component artefacts can be fetched.

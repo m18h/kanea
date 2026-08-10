@@ -55,6 +55,11 @@ export const serviceSchema = z.object({
   Publish: z.array(publishSchema).nullish(),
   DependsOn: z.array(z.string()).nullish(),
   Scaling: scalingPolicySchema.nullish(),
+  // v1.39: a service lowered from a `function` block. The marker is what the
+  // Functions page filters on and the Services page filters out — one record,
+  // shown on exactly one page. Both fields carry lowercase json tags.
+  runtime: z.string().optional(),
+  function: z.unknown().nullish(),
 })
 
 export const servicesResponseSchema = z.object({
@@ -89,6 +94,62 @@ export const logLineSchema = z.object({
   alloc_id: z.string(),
   line: z.string(),
 })
+
+// Functions (v1.39, GET /v1/functions): wasm functions with their triggers,
+// derived status and the invoker's counters.
+export const eventTriggerSchema = z.object({
+  on: z.array(z.string()),
+  path: z.string().optional(),
+})
+
+export const cronTriggerSchema = z.object({
+  schedule: z.string(),
+  path: z.string().optional(),
+})
+
+export const invokerStatsSchema = z.object({
+  invocations: z.number(),
+  failures: z.number(),
+  last_invoked: z.string().optional(),
+  latencies_ms: z.array(z.number()).nullish(),
+})
+
+export const functionViewSchema = z.object({
+  project: z.string(),
+  service: z.string(),
+  module: z.string(),
+  run_module: z.string().optional(),
+  count: z.number(),
+  runtime: z.string(),
+  memory_bytes: z.number(),
+  http: z.boolean().optional(),
+  domains: z.array(z.string()).nullish(),
+  events: z.array(eventTriggerSchema).nullish(),
+  crons: z.array(cronTriggerSchema).nullish(),
+  status: z.string(),
+  running: z.number(),
+  healthy: z.number(),
+  restarts: z.number(),
+  // Absent means "not measured", never zero — the datapath is not scraped
+  // under --network netns, and a dash is the honest render.
+  invocations_per_minute: z.number().optional(),
+  invoker: invokerStatsSchema.nullish(),
+})
+
+export const functionsResponseSchema = z.object({
+  functions: z.array(functionViewSchema).nullish(),
+  invoker_dropped: z.number().optional(),
+})
+
+export type FunctionView = z.infer<typeof functionViewSchema>
+export type FunctionsResponse = z.infer<typeof functionsResponseSchema>
+
+export async function fetchFunctions(signal?: AbortSignal): Promise<FunctionsResponse> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch('/v1/functions', init)
+  if (!resp.ok) throw new Error(`functions: ${resp.status}`)
+  return functionsResponseSchema.parse(await resp.json())
+}
 
 /**
  * What sign-in methods the daemon offers.

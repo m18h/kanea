@@ -40,7 +40,12 @@ type Publisher struct {
 	// two. That bug is the reason this map exists.
 	bySource   map[Mode][]Certificate
 	challenges map[string]string
-	index      uint64
+	// auth is the R27 verifier material (v1.40) — the fourth contribution to
+	// the restricted bundle, replaced wholesale by its one writer (the
+	// reconciler's projection) the way each certificate source replaces its
+	// own slice.
+	auth  []edge.AuthEntry
+	index uint64
 	// last is the bytes of the most recent bundle with its index zeroed, so an
 	// unchanged set can be recognised. See write.
 	last []byte
@@ -128,6 +133,20 @@ func (p *Publisher) SetCertificates(mode Mode, certs []Certificate) error {
 	return p.write()
 }
 
+// SetAuth replaces the R27 verifier material and republishes (v1.40).
+//
+// One writer, wholesale: unlike certificates there is no second source to
+// merge with — the reconciler's projection is the only thing that resolves
+// the spec's references — so the certificate sources' per-mode discipline
+// would be ceremony here. The index still bumps only on a byte change, which
+// is what keeps a steady-state reconcile pass from reloading the edge.
+func (p *Publisher) SetAuth(entries []edge.AuthEntry) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.auth = append([]edge.AuthEntry(nil), entries...)
+	return p.write()
+}
+
 // Present publishes an HTTP-01 response and waits for the edge to serve it.
 //
 // The wait is the point. Publishing is a file write the edge polls for, so
@@ -166,7 +185,7 @@ func (p *Publisher) CleanUp(_ context.Context, domain, token, _ string) error {
 
 // write publishes the current state. The caller holds the lock.
 func (p *Publisher) write() error {
-	bundle := edge.Bundle{Certificates: p.merged()}
+	bundle := edge.Bundle{Certificates: p.merged(), Auth: p.auth}
 
 	tokens := make([]string, 0, len(p.challenges))
 	for token := range p.challenges {

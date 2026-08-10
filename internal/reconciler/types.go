@@ -134,6 +134,76 @@ type Desired struct {
 	// handler. Otherwise every `kanea run` after a restart would be a second
 	// restart.
 	Generation int `json:"generation,omitempty"`
+	// Runtime selects the containerd runtime (PRD v1.39, §6.2 R25). Empty
+	// means the runc default — the meaning of every record already in a
+	// Store, which is why it is omitempty here AND in the SpecHash material:
+	// a field that serialised for existing services would change every hash
+	// on the node, and upgrading kanead would roll every container on it
+	// (the R23 lesson).
+	Runtime string `json:"runtime,omitempty"`
+	// Function marks a desired record lowered from a `function` block and
+	// carries its triggers (R25/R26). Nil for every ordinary service — it is
+	// the marker `GET /v1/functions` filters on and the Services list filters
+	// out.
+	//
+	// Deliberately NOT in the SpecHash material: nothing about a trigger is
+	// baked into a container at creation (the invokers read it live, like
+	// Publish's listeners), so hashing it would roll an alloc to change a
+	// cron schedule.
+	Function *FunctionMeta `json:"function,omitempty"`
+}
+
+// FunctionMeta is what makes a lowered function more than a service: its
+// triggers, read live by the invokers (internal/functions), and the http flag
+// the API uses to describe the route without re-deriving it from Expose.
+type FunctionMeta struct {
+	// HTTP records that a `trigger "http"` was declared; the detail lives on
+	// Expose, exactly as it does for a service.
+	HTTP bool `json:"http,omitempty"`
+	// Events are the event triggers, patterns already validated against the
+	// notification vocabulary (R26).
+	Events []EventTrigger `json:"events,omitempty"`
+	// Crons are the cron triggers, schedules already validated (R26).
+	Crons []CronTrigger `json:"crons,omitempty"`
+	// SigningRef names the secret the invoker MACs event/cron POSTs with
+	// (R26, v1.40). A reference, never a value; the invoker resolves it per
+	// delivery and a reference that stops resolving fails the invocation
+	// rather than sending unsigned.
+	SigningRef string `json:"signing_ref,omitempty"`
+}
+
+// AuthPolicy is R27's auth block as stored desired state: references and
+// claim requirements, never material.
+type AuthPolicy struct {
+	BasicRef  string         `json:"basic_ref,omitempty"`
+	BearerRef string         `json:"bearer_ref,omitempty"`
+	JWT       *JWTAuthPolicy `json:"jwt,omitempty"`
+}
+
+// JWTAuthPolicy mirrors the spec's jwt block.
+type JWTAuthPolicy struct {
+	Algorithm    string `json:"algorithm"`
+	SecretRef    string `json:"secret_ref,omitempty"`
+	PublicKeyRef string `json:"public_key_ref,omitempty"`
+	Issuer       string `json:"issuer,omitempty"`
+	Audience     string `json:"audience,omitempty"`
+}
+
+// EventTrigger fires a POST to the function when a matching event occurs.
+type EventTrigger struct {
+	// On are glob patterns over the notification vocabulary (R26). Never
+	// matches function.* — refused at parse and skipped at match time.
+	On []string `json:"on"`
+	// Path is the request path, normalized absolute; empty means "/".
+	Path string `json:"path,omitempty"`
+}
+
+// CronTrigger fires a POST to the function on a schedule.
+type CronTrigger struct {
+	// Schedule is a five-field cron expression, evaluated in UTC (R26).
+	Schedule string `json:"schedule"`
+	// Path is the request path, normalized absolute; empty means "/".
+	Path string `json:"path,omitempty"`
 }
 
 // UpdatePolicy is the rolling-deploy policy (PRD §4.3, §6.1 `update` block).
@@ -287,6 +357,12 @@ type Expose struct {
 	//
 	// Deprecated: use TLSMode.
 	LetsEncrypt bool
+	// Auth is R27's request authentication (v1.40), carried as the references
+	// the spec declared. The reconciler's projection resolves them into the
+	// verifier material the edge is handed; nothing here is a credential.
+	// Deliberately NOT in the SpecHash material, like the middleware: nothing
+	// about it is baked into a container.
+	Auth *AuthPolicy `json:"auth,omitempty"`
 	// IPRestriction, RateLimit and Headers are the edge middleware chain
 	// (PRD §7.2.1), carried verbatim from the spec. They are validated at plan
 	// time (R16) and again when the edge compiles them, so nothing here needs

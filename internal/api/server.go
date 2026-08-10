@@ -23,6 +23,7 @@ import (
 	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/ratelimit"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/secrets"
 	"github.com/m18h/kanea/internal/store"
 )
@@ -115,6 +116,10 @@ type ServerConfig struct {
 	// Metrics backs the Prometheus exporter and the live stats topic. Nil
 	// disables both.
 	Metrics MetricsSource
+	// Invoker reports the function invoker's counters (v1.39). Nil omits them
+	// from GET /v1/functions, which still serves the list — a node running
+	// no event or cron triggers has an invoker with nothing to say.
+	Invoker InvokerSource
 	// Breaker reports the circuit breaker's state to the exporter.
 	Breaker BreakerSource
 	// EdgeMetrics is the edge's labelled families, republished verbatim by the
@@ -205,6 +210,7 @@ type Server struct {
 	audit           AuditLog
 	accounts        Accounts
 	metrics         MetricsSource
+	invoker         InvokerSource
 	edgeMetrics     EdgeExpositionSource
 	breaker         BreakerSource
 	node            NodeSource
@@ -275,6 +281,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		spec:    cfg.Spec,
 		metrics: cfg.Metrics, edgeMetrics: cfg.EdgeMetrics,
+		invoker: cfg.Invoker,
 		breaker: cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
 		insecureCookies: cfg.InsecureCookies,
 	}
@@ -319,6 +326,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// like any other: it bumps a number and returns.
 	mux.Handle("POST "+PathServices+"/{project}/{service}/restart",
 		s.route(policy{action: "service.restart", mutates: true}, s.handleRestart))
+	// Functions (v1.39): a read-only view. Deploy and edit are the spec
+	// editor's routes; restart and scale are the service routes' — a function
+	// is a service underneath, and the mutation paths are inherited, never
+	// replicated.
+	mux.Handle("GET "+PathFunctions, s.route(policy{action: "functions.list"}, s.handleListFunctions))
 	mux.Handle("GET "+PathProjects, s.route(policy{action: "project.list"}, s.handleListProjects))
 	mux.Handle("GET "+PathProjects+"/{project}",
 		s.route(policy{action: "project.get"}, s.handleGetProject))
@@ -698,6 +710,21 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 		// Store through here and never through the CLI.
 		if err := s.publishPorts.Check(svc); err != nil {
 			return ApplyResponse{}, http.StatusForbidden, err
+		}
+		// R25's boundary half, same reasoning: the parser refuses these, and a
+		// record that reached the Store another way must be refused again here.
+		// A runtime name resolves to a binary containerd executes as root, so
+		// the set is closed; an exec probe on a wasm service is a check that
+		// can never pass, which reads as a service that is permanently down.
+		if svc.Runtime != "" && svc.Runtime != runtime.RuntimeWasmtime {
+			return ApplyResponse{}, http.StatusBadRequest,
+				fmt.Errorf("service %s names runtime %q; only %q is supported (PRD §6.2 R25)",
+					key, svc.Runtime, runtime.RuntimeWasmtime)
+		}
+		if svc.Runtime == runtime.RuntimeWasmtime && svc.Check != nil && svc.Check.Type == reconciler.HealthExec {
+			return ApplyResponse{}, http.StatusBadRequest,
+				fmt.Errorf("service %s is a wasm function with an exec health check; the wasm runtime "+
+					"has no exec primitive (PRD §6.2 R25) — probe it over http or tcp", key)
 		}
 		mut, err := store.PutMutation(store.KindService, key, svc)
 		if err != nil {

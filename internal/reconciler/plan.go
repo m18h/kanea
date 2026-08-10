@@ -238,6 +238,15 @@ func SpecHash(d Desired) string {
 		// asking for a restart produces a spec that differs, and therefore rolls
 		// through exactly the machinery a real deploy does.
 		Generation int `json:"generation,omitempty"`
+		// The runtime decides which shim runs the container, so changing it
+		// has to roll the allocs. omitempty is load-bearing exactly as it is
+		// for User: every pre-v1.39 record hashes with the field absent, and
+		// a hash that changed on upgrade would roll the whole node.
+		//
+		// Function's trigger config is deliberately NOT here — the invokers
+		// read it live, like the edge reads Publish, and hashing it would
+		// roll an alloc to change a cron schedule.
+		Runtime string `json:"runtime,omitempty"`
 	}{
 		Image: d.Image, PinnedImage: d.PinnedImage,
 		Command: d.Command, Capabilities: d.Capabilities,
@@ -245,6 +254,7 @@ func SpecHash(d Desired) string {
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
 		Devices: d.Devices, Sockets: d.Sockets,
 		Generation: d.Generation,
+		Runtime:    d.Runtime,
 	}
 
 	// encoding/json sorts map keys, so the environment hashes the same however
@@ -442,6 +452,7 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 		Project:        d.Project,
 		Service:        d.Service,
 		Image:          d.RunImage(),
+		Runtime:        d.Runtime,
 		Command:        d.Command,
 		Capabilities:   d.Capabilities,
 		Env:            d.Env,
@@ -580,6 +591,12 @@ func Diff(current, desired []Desired) []string {
 		if have.Image != want.Image {
 			changes = append(changes, fmt.Sprintf("image %s -> %s", have.Image, want.Image))
 		}
+		// A runtime change rolls every alloc (it is in the spec hash), so a
+		// plan that did not mention it would show a redeploy with no cause.
+		if have.Runtime != want.Runtime {
+			changes = append(changes, fmt.Sprintf("runtime %s -> %s",
+				describeRuntime(have.Runtime), describeRuntime(want.Runtime)))
+		}
 		if have.Count != want.Count {
 			changes = append(changes, fmt.Sprintf("count %d -> %d", have.Count, want.Count))
 		}
@@ -602,6 +619,15 @@ func Diff(current, desired []Desired) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// describeRuntime names a runtime for a plan line; the empty default reads as
+// what it is rather than as a blank.
+func describeRuntime(r string) string {
+	if r == "" {
+		return "default"
+	}
+	return r
 }
 
 // describePublish renders a service's node ports for a plan line.

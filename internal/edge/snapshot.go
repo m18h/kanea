@@ -58,6 +58,15 @@ type Snapshot struct {
 	// ordering question — which one does the edge apply first, and what does it
 	// serve in between — for no gain over one rename.
 	Listeners []Listener `json:"listeners,omitempty"`
+	// Functions is the functions-port dispatch table (PRD §7.2.3): functions
+	// with an http trigger on a node with no base domain, reached as
+	// /<project>/<function>/… on the port `kanea-edge --functions-port`
+	// binds. kanead decides which functions need path dispatch (the node-side
+	// mode resolution, R20's pattern); the edge decides the port.
+	//
+	// omitempty for the same reason Listeners is: a node with no functions
+	// writes the file it always wrote.
+	Functions []FunctionRoute `json:"functions,omitempty"`
 }
 
 // Listener kinds (PRD §7.2.2).
@@ -146,6 +155,50 @@ type Route struct {
 	IPRestriction *IPRestriction `json:"ip_restriction,omitempty"`
 	RateLimit     *RateLimit     `json:"rate_limit,omitempty"`
 	Headers       *Headers       `json:"headers,omitempty"`
+	// AuthRequired marks the route as authenticated (R27, v1.40). Only the
+	// marker travels here — this file is world-readable, and the verifier
+	// material arrives in the restricted bundle. Fail closed: a marked route
+	// with no material answers 503, never open.
+	AuthRequired bool `json:"auth,omitempty"`
+}
+
+// FunctionRoute is one function reachable on the functions port (§7.2.3).
+//
+// It is a Route whose "domain" is a path prefix: /<project>/<function>. The
+// middleware is the function's own http-trigger chain, applied by the same
+// code — the dispatcher converts to a Route and compiles it, so there is no
+// second middleware implementation to drift.
+type FunctionRoute struct {
+	Project  string `json:"project"`
+	Function string `json:"function"`
+	// Upstream and UpstreamPort are the function's VIP frontend, exactly as a
+	// Route's are.
+	Upstream     string `json:"upstream"`
+	UpstreamPort int    `json:"upstream_port"`
+
+	IPRestriction *IPRestriction `json:"ip_restriction,omitempty"`
+	RateLimit     *RateLimit     `json:"rate_limit,omitempty"`
+	Headers       *Headers       `json:"headers,omitempty"`
+	// AuthRequired: the function's http-trigger auth (R27) applies on the
+	// functions port exactly as it would on the FQDN route.
+	AuthRequired bool `json:"auth,omitempty"`
+}
+
+// Name identifies the function in logs and rate-limit keys.
+func (f FunctionRoute) Name() string { return f.Project + "/" + f.Function }
+
+// Prefix is the path prefix the dispatcher matches and strips.
+func (f FunctionRoute) Prefix() string { return "/" + f.Project + "/" + f.Function }
+
+// asRoute is the function seen as a routing decision, the same trick
+// Listener.asRoute plays: one middleware chain, everywhere.
+func (f FunctionRoute) asRoute() Route {
+	return Route{
+		Project: f.Project, Service: f.Function,
+		Upstream: f.Upstream, Port: f.UpstreamPort,
+		IPRestriction: f.IPRestriction, RateLimit: f.RateLimit, Headers: f.Headers,
+		AuthRequired: f.AuthRequired,
+	}
 }
 
 // IPRestriction is the first middleware: deny wins over allow, and an empty
@@ -292,6 +345,39 @@ func (s Snapshot) validateListeners() error {
 		// Compiled here for the same reason a route's middleware is: the writer
 		// must not be able to publish a rule the reader will refuse.
 		if _, err := compile(l.asRoute()); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
+		}
+	}
+	return s.validateFunctions()
+}
+
+// validateFunctions checks the functions dispatch table (§7.2.3).
+//
+// The namespace is (project, function): one prefix, one function, checked here
+// like duplicate domains and duplicate node ports are, because a snapshot
+// assembled from several applies can still collide.
+func (s Snapshot) validateFunctions() error {
+	byPrefix := map[string]string{}
+	for i, f := range s.Functions {
+		where := fmt.Sprintf("function %d (%s)", i, f.Name())
+		if f.Project == "" || f.Function == "" {
+			return fmt.Errorf("%w: %s has no project or function", ErrInvalidSnapshot, where)
+		}
+		if _, err := netip.ParseAddr(f.Upstream); err != nil {
+			return fmt.Errorf("%w: %s upstream %q is not an address",
+				ErrInvalidSnapshot, where, f.Upstream)
+		}
+		if f.UpstreamPort < 1 || f.UpstreamPort > 65535 {
+			return fmt.Errorf("%w: %s upstream port %d is out of range",
+				ErrInvalidSnapshot, where, f.UpstreamPort)
+		}
+		if first, dup := byPrefix[f.Prefix()]; dup {
+			return fmt.Errorf("%w: functions path %s is claimed by both %s and %s",
+				ErrInvalidSnapshot, f.Prefix(), first, f.Name())
+		}
+		byPrefix[f.Prefix()] = f.Name()
+
+		if _, err := compile(f.asRoute()); err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
 		}
 	}

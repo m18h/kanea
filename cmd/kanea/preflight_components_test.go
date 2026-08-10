@@ -35,7 +35,7 @@ func TestPlatformChecksDoNotDependOnComponents(t *testing.T) {
 
 	componentNames := map[string]bool{
 		"containerd": true, "buildkit": true, "bpf": true,
-		"version matrix": true, "upstream": true,
+		"version matrix": true, "upstream": true, "wasm shim": true,
 	}
 	for _, r := range results {
 		if componentNames[r.Name] {
@@ -71,6 +71,7 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 		"version matrix",   // §15.4, §22 R1
 		"container subnet", // --node-cidr/--cluster-cidr against --service-cidr
 		"fuse",             // §8
+		"wasm shim",        // §6.2 R25 (v1.39): functions need the wasmtime shim
 	} {
 		if !got[want] {
 			t.Errorf("component checks do not cover %q", want)

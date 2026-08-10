@@ -45,6 +45,7 @@ var commands = []command{
 	{"exec", "debug shell into an alloc (admin-only, audited)", runExec},
 	{"scale", "manually scale a service", runScale},
 	{"build", "trigger a build pipeline", runBuild},
+	{"functions", "wasm functions: list (triggers, invocation rate, status)", runFunctions},
 	{"project", "project operations: sync, builds", runProject},
 	{"backup", "backup create|list|verify", runBackup},
 	{"restore", "restore state from a snapshot", runRestore},

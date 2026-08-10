@@ -50,6 +50,26 @@
       ]
     },
     {
+      "name": "wasmtime-shim",
+      "version": "0.6.1",
+      "kind": "archive",
+      "summary": "wasmtime containerd shim — functions (PRD v1.39, §6.2 R25)",
+      "_url": [
+        "runwasi tags carry a slash (containerd-shim-wasmtime/vX.Y.Z), hence the",
+        "%2F. Release artefacts are named by uname arch (x86_64/aarch64), not",
+        "GOARCH — {{.UnameArch}} is that mapping. Hashes verified against the",
+        "release's SHA256SUMS and independently against the downloaded bytes."
+      ],
+      "url": "https://github.com/containerd/runwasi/releases/download/containerd-shim-wasmtime%2Fv{{.Version}}/containerd-shim-wasmtime-{{.UnameArch}}-linux-musl.tar.gz",
+      "hashes": {
+        "amd64": "a9b1215ee670f11414c8fd8e970b52679085929c8ec73a0fe6ed9cf215cf9ba1",
+        "arm64": "0ae922715dd484a923825fd4fa25052fe00f8769d29c236704f1f5638f735ae0"
+      },
+      "files": [
+        {"from": "containerd-shim-wasmtime-v1", "to": "bin/containerd-shim-wasmtime-v1", "mode": "0755"}
+      ]
+    },
+    {
       "name": "buildkit",
       "version": "0.32.0",
       "kind": "image",

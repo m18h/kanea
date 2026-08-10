@@ -603,6 +603,104 @@ request volume and error rates describe how a business is doing.
   client-chosen and unbounded, and it leaks URLs into a system that retains
   them far longer than a log does.
 
+### 3.17 The function invoker and the functions port (A10, A01; PRD v1.39, §6.2 R25–R26, §7.2.3, §11)
+
+Functions add two new paths a request can travel, and each is bounded by
+construction rather than by a check.
+
+**The event/cron invoker is a second outbound caller, and it is deliberately
+not behind §3.9's egress guard.** That guard exists because a notification
+channel's URL is attacker-influencable text in a spec. The invoker's target is
+the opposite: **the spec has no field for a URL anywhere** (R26) — a trigger
+declares *when*, never *where* — and `kanead` derives every destination from
+the function's own Store-allocated VIP. Reaching an address through the invoker
+therefore requires writing the VIP allocator, which is writing desired state,
+which is the game already being over. Consulting the guard would be theatre —
+its targets are private by construction — and *weakening* it to permit private
+ranges would open a hole in the channels that actually need it. What the
+invoker keeps from §3.9's discipline is everything that is not the address
+check: **redirects are refused** (a function answering `302` elsewhere is not
+followed there), responses are **drained under a size cap and discarded** (the
+invoker reads nothing a function says), every attempt carries a **short
+timeout**, and retries are **bounded** with `function.invoke_failed` emitted
+once they are spent — the only `function.*` event, which R26 refuses in a
+function's own trigger patterns *and* the invoker skips at match time, so a
+function cannot be invoked by its own failure. Delivery is a bounded queue with
+a drop counter and a warn-once (constraint #8): an event storm against a slow
+function queues, drops visibly, and never blocks the dispatcher.
+
+**The functions port (§7.2.3) is one more listener, with the published-port
+story.** It exists only on a node with no base domain, binds only while the
+dispatch table is non-empty, and serves plaintext HTTP by design — a client
+connecting by IP sends no SNI, the same fact that keeps `tls` off published
+ports. The §7.2.1 middleware chain applies through the same compiled-route
+code every other listener uses, so an `ip_restriction` on a function's http
+trigger is enforced here too. Path dispatch is exact on
+`/<project>/<function>` — both DNS-1123 labels, a namespace that cannot
+collide because (project, service) is unique in desired state — and the prefix
+is stripped, so a function never sees another function's paths.
+
+**What a function cannot do is R25's list, enforced three times.** The spec
+has no field for a volume, device, socket, capability grant or user (the
+parser refuses the blocks structurally); the apply path refuses a record that
+reached the Store another way (an unknown runtime name, an exec probe on a
+wasm service); and the driver validates the runtime against a closed set —
+a runtime name resolves to a binary containerd executes as root, so it is
+never a passthrough string.
+
+### 3.18 Request authentication (A01, A02, A07; PRD v1.40, §6.2 R27, §11)
+
+v1.39 authorized functions at the network layer; v1.40 authenticates the
+*request*. Two callers, each bounded by a boundary that already exists.
+
+**Edge auth (R27) is verifier material on the restricted side of §5.2.6.** The
+edge resolves no secrets and its route table is world-readable, so a
+credential can never travel in `routes.json` — the route carries only a
+fail-closed `auth` marker, and the verifier material rides the restricted
+bundle (0640) the edge already polls for certificates. What crosses is
+deliberately less than what the operator declared: **bcrypt lines pass
+through** as the verifier material they are, **bearer tokens are reduced to
+SHA-256 hashes before publication** so the file cannot authenticate anyone,
+and **only a JWT HS256 key crosses as a secret**, because a MAC cannot be
+verified with less — RS256/ES256 carry a public key. A `basic_ref` holding a
+plaintext line is refused when the projection is built, not published: a
+password pretending to be a hash is a credential the restricted file would
+otherwise make durable.
+
+- **A marked route with no material answers 503, never open.** The bundle
+  has not arrived, the entry failed to compile, the reference stopped
+  resolving — every one is the same 503, the same rule a missing certificate
+  gets. Middleware that fails open is R16's original sin, and authentication
+  is the middleware where it costs the most.
+- **The JWT algorithm is configuration, never the token's claim.** The
+  alg-confusion class — an HS256 token MACed with a public key against a
+  config that expects RS256 — is refused on the algorithm mismatch alone,
+  before any key is consulted; `alg: none` does not exist because the edge
+  never reads `alg` to decide what to do. **There is no JWKS URL**: the edge
+  makes no outbound calls, so keys are static references, and a key rotation
+  is a secret update like any other.
+- **Auth runs after the rate limit.** A credential brute force meets 429
+  before it meets bcrypt, and bcrypt's per-request cost is bounded by a small
+  success-only cache — a hit is a comparison, a miss always pays full price,
+  so the cache is not an oracle. The unknown-user path burns an equal bcrypt
+  cost against a dummy hash, so timing does not distinguish "no such user"
+  from "wrong password".
+- **Every field is a reference (R3/R5).** The spec holds no password, key or
+  path — R17's split, applied to authentication — so a GitOps push cannot
+  carry a credential and cannot name another project's.
+
+**Invoker signing (R26) closes the intra-project gap.** A function's VIP is
+reachable from every service in its project, so without a signature a function
+cannot tell a genuine `kanead` invocation from a POST by a neighbour. A
+`signing_ref` makes every event and cron delivery carry `X-Kanea-Timestamp`
+and `X-Kanea-Signature`, computed by the same `Sign` the outbound webhook
+channel uses — one MAC, one wire format. The timestamp is inside the MAC, so a
+captured body cannot be replayed under a new time. **A reference that stops
+resolving fails the invocation** — `function.invoke_failed`, counted — rather
+than sending unsigned: a signed channel that silently degrades to unsigned is
+the dropped control R16 refuses, and a function that verifies would reject the
+unsigned POST anyway.
+
 ---
 
 ## 4. Attack walkthroughs

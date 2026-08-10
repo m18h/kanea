@@ -36,7 +36,18 @@ var (
 	ErrAlreadyExists = errors.New("runtime: alloc already exists")
 	// ErrInvalidSpec marks a spec this driver refuses to run.
 	ErrInvalidSpec = errors.New("runtime: invalid alloc spec")
+	// ErrNoExec means the alloc's runtime has no exec primitive. The wasmtime
+	// shim is one: a wasm sandbox holds exactly one instance, so `kanea exec`
+	// against a function fails here with the reason rather than surfacing a
+	// shim error nobody can act on (PRD §6.2 R25).
+	ErrNoExec = errors.New("runtime: this alloc's runtime does not support exec")
 )
+
+// RuntimeWasmtime is the containerd runtime name for the wasmtime runwasi shim
+// (PRD v1.39, §6.2 R25). containerd resolves it to a binary named
+// containerd-shim-wasmtime-v1 on its own PATH — which is why the generated
+// containerd unit sets Environment=PATH (internal/provision/units.go).
+const RuntimeWasmtime = "io.containerd.wasmtime.v1"
 
 // AllocSpec is everything needed to run one alloc. The reconciler derives it
 // from a validated job spec; the driver does not consult the Store or the job
@@ -54,6 +65,12 @@ type AllocSpec struct {
 	Service string
 	// Image is a pullable reference, ideally digest-pinned.
 	Image string
+	// Runtime selects the containerd runtime. Empty means containerd's
+	// default (the runc shim) — the meaning every alloc had before v1.39, so
+	// empty must never be spelled out. The only other accepted value is
+	// RuntimeWasmtime: the set is closed here, not passed through, because a
+	// runtime name is a binary containerd will execute as root.
+	Runtime string
 	// Command overrides the image entrypoint when non-empty. Argument array,
 	// never a shell string (PRD §6.2 R12).
 	Command []string

@@ -65,6 +65,8 @@ var implemented = map[string]bool{
 	"install": true, "bundle": true,
 	// Certificate sources (PRD §7.3, v1.33):
 	"ca": true,
+	// M11 functions (PRD v1.39):
+	"functions": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {

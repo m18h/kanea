@@ -72,6 +72,24 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			desired.Check = check
 		}
 
+		// A lowered function carries the wasm runtime and its trigger set
+		// (R25/R26). The runtime is set here and nowhere else: the `function`
+		// block is the only way a spec obtains it.
+		if fn := svc.Function; fn != nil {
+			desired.Runtime = runtime.RuntimeWasmtime
+			desired.Function = &reconciler.FunctionMeta{HTTP: fn.HTTP, SigningRef: fn.SigningRef}
+			for _, ev := range fn.Events {
+				desired.Function.Events = append(desired.Function.Events, reconciler.EventTrigger{
+					On: ev.On, Path: ev.Path,
+				})
+			}
+			for _, cr := range fn.Crons {
+				desired.Function.Crons = append(desired.Function.Crons, reconciler.CronTrigger{
+					Schedule: cr.Schedule, Path: cr.Path,
+				})
+			}
+		}
+
 		if svc.Network != nil {
 			for _, p := range svc.Network.Ports {
 				desired.Ports = append(desired.Ports, reconciler.Port{
@@ -244,6 +262,24 @@ func convertExpose(svc *jobspec.Service) *reconciler.Expose {
 	out.IPRestriction = convertIPRestriction(svc.Expose.IPRestriction)
 	out.RateLimit = convertRateLimit(svc.Expose.RateLimit)
 	out.Headers = convertHeaders(svc.Expose.Headers)
+	out.Auth = convertAuthPolicy(svc.Expose.Auth)
+	return out
+}
+
+// convertAuthPolicy carries the R27 auth block into desired state as the
+// references it declares. Resolution to verifier material happens on the
+// node, in the reconciler's projection — never here, and never in the Store.
+func convertAuthPolicy(a *jobspec.Auth) *reconciler.AuthPolicy {
+	if a == nil {
+		return nil
+	}
+	out := &reconciler.AuthPolicy{BasicRef: a.BasicRef, BearerRef: a.BearerRef}
+	if j := a.JWT; j != nil {
+		out.JWT = &reconciler.JWTAuthPolicy{
+			Algorithm: j.Algorithm, SecretRef: j.SecretRef, PublicKeyRef: j.PublicKeyRef,
+			Issuer: j.Issuer, Audience: j.Audience,
+		}
+	}
 	return out
 }
 

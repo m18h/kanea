@@ -152,6 +152,13 @@ func (l Layout) containerdUnit() string {
 		[Service]
 		Type=notify
 		Delegate=yes
+		# containerd resolves a runtime name (io.containerd.wasmtime.v1) to a
+		# binary (containerd-shim-wasmtime-v1) on ITS OWN PATH, and systemd's
+		# default does not include Kanea's bin dir — without this line every
+		# non-runc runtime fails at task create with "shim not found"
+		# (PRD v1.39, §5.2.12). runc's shim never noticed: containerd launches
+		# it by the configured default, and it ships beside containerd anyway.
+		Environment=PATH=` + l.BinDir() + `:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 		ExecStart=` + l.BinDir() + `/containerd --config ` + filepath.Join(l.ConfDir, "containerd", "config.toml") + `
 		Restart=always
 		RestartSec=5s

@@ -157,12 +157,15 @@ func (d *containerdDriver) Create(ctx context.Context, spec AllocSpec) error {
 	// anything the image asks for.
 	opts := append([]oci.SpecOpts{oci.WithImageConfig(img)}, specOpts(spec)...)
 
-	container, err := d.client.NewContainer(ctx, spec.ID,
+	newOpts := []containerd.NewContainerOpts{
 		containerd.WithImage(img),
 		containerd.WithNewSnapshot(snapshotID(spec.ID), img),
 		containerd.WithNewSpec(opts...),
 		containerd.WithContainerLabels(labels(spec)),
-	)
+	}
+	newOpts = append(newOpts, runtimeOpts(spec)...)
+
+	container, err := d.client.NewContainer(ctx, spec.ID, newOpts...)
 	if err != nil {
 		if errdefs.IsAlreadyExists(err) {
 			return fmt.Errorf("%w: %s", ErrAlreadyExists, spec.ID)
@@ -179,6 +182,52 @@ func (d *containerdDriver) Create(ctx context.Context, spec AllocSpec) error {
 		)
 	}
 	return nil
+}
+
+// runtimeOpts selects the containerd runtime for a spec.
+//
+// Empty for an empty Runtime: containerd's client falls back to its compiled
+// default (the runc shim), and that default is containerd's to own — only a
+// departure from it is written down (PRD v1.39, §6.2 R25). Validate has
+// already closed the set, so what reaches here is the wasmtime shim's name.
+func runtimeOpts(spec AllocSpec) []containerd.NewContainerOpts {
+	if spec.Runtime == "" {
+		return nil
+	}
+	return []containerd.NewContainerOpts{containerd.WithRuntime(spec.Runtime, nil)}
+}
+
+// ImageInfo describes an image as this node's content store holds it.
+type ImageInfo struct {
+	// Digest is the image's manifest digest.
+	Digest string
+	// SizeBytes is the compressed content size — what the Functions page
+	// shows as the artifact size (PRD §12.2).
+	SizeBytes int64
+}
+
+// ImageInfo reports a locally present image; ErrNotFound if it was never
+// pulled. It is deliberately not part of the Driver interface: the reconciler
+// has no use for it, and the API consumer defines its own slice (interfaces at
+// the consumer).
+func (d *containerdDriver) ImageInfo(ctx context.Context, project, ref string) (ImageInfo, error) {
+	ctx = scope(ctx, project)
+	nref, err := NormalizeRef(ref)
+	if err != nil {
+		return ImageInfo{}, err
+	}
+	img, err := d.client.GetImage(ctx, nref)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return ImageInfo{}, fmt.Errorf("%w: image %s", ErrNotFound, nref)
+		}
+		return ImageInfo{}, fmt.Errorf("look up image %s: %w", nref, err)
+	}
+	size, err := img.Size(ctx)
+	if err != nil {
+		return ImageInfo{}, fmt.Errorf("size of %s: %w", nref, err)
+	}
+	return ImageInfo{Digest: img.Target().Digest.String(), SizeBytes: size}, nil
 }
 
 // io sends the task's stdout and stderr to the alloc's log file. The full
@@ -416,7 +465,7 @@ func (d *containerdDriver) Exec(ctx context.Context, project, id string, cmd []s
 	}
 	ctx = scope(ctx, project)
 
-	task, err := d.task(ctx, id)
+	task, err := d.execTask(ctx, id)
 	if err != nil {
 		return 0, err
 	}
@@ -498,6 +547,35 @@ func (d *containerdDriver) task(ctx context.Context, id string) (containerd.Task
 	return task, nil
 }
 
+// execTask is task() plus the exec refusal for runtimes that have none.
+//
+// The wasmtime shim implements no exec — a wasm sandbox holds exactly one
+// instance — so an exec against a function alloc must fail as ErrNoExec, with
+// the reason, rather than as whatever gRPC error the shim's stub produces.
+// jobspec already refuses `exec` health checks on functions (R25); this is the
+// runtime-level half of that refusal, for `kanea exec` and for anything that
+// reached the driver another way.
+func (d *containerdDriver) execTask(ctx context.Context, id string) (containerd.Task, error) {
+	container, err := d.client.LoadContainer(ctx, id)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, id)
+		}
+		return nil, fmt.Errorf("load %s: %w", id, err)
+	}
+	if info, err := container.Info(ctx); err == nil && info.Runtime.Name == RuntimeWasmtime {
+		return nil, fmt.Errorf("%w: %s is a wasm function (PRD §6.2 R25); use its http endpoint or logs", ErrNoExec, id)
+	}
+	task, err := container.Task(ctx, nil)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: task of %s", ErrNotFound, id)
+		}
+		return nil, fmt.Errorf("task of %s: %w", id, err)
+	}
+	return task, nil
+}
+
 func snapshotID(allocID string) string { return allocID + "-snap" }
 
 // labels make allocs attributable without consulting the Store — useful when
@@ -568,7 +646,7 @@ func (d *containerdDriver) ExecStream(
 	}
 	ctx = scope(ctx, project)
 
-	task, err := d.task(ctx, id)
+	task, err := d.execTask(ctx, id)
 	if err != nil {
 		return 0, err
 	}

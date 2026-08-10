@@ -25,14 +25,15 @@ func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[strin
 
 	routes := r.buildRoutes(w, vips)
 	listeners := r.buildListeners(w, vips)
-	if r.snapshotIsPublished(routes, listeners) {
+	functions := r.buildFunctionRoutes(w, vips)
+	if r.snapshotIsPublished(routes, listeners, functions) {
 		// A steady-state pass must not rewrite the file. The edge polls it, and
 		// republishing identical content every interval would turn every
 		// reconcile into a log line about a reload that changed nothing.
 		return
 	}
 
-	snap := edge.Snapshot{Routes: routes, Listeners: listeners}
+	snap := edge.Snapshot{Routes: routes, Listeners: listeners, Functions: functions}
 	if index, err := r.store.Index(ctx); err != nil {
 		// The index is diagnostic, not load-bearing: publish without it rather
 		// than leave the edge on a stale table because a read failed.
@@ -50,7 +51,7 @@ func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[strin
 	}
 	r.log.Info("edge routes published",
 		"path", r.edgeSnapshot, "routes", len(routes),
-		"listeners", len(listeners), "index", snap.Index)
+		"listeners", len(listeners), "functions", len(functions), "index", snap.Index)
 }
 
 // snapshotIsPublished reports whether the file already holds this projection.
@@ -69,7 +70,7 @@ func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[strin
 // changed — and the edge would come back to an empty table and 404 the whole
 // node. The snapshot is derived state, so it is rebuilt rather than remembered
 // (constraint #9), at the cost of one small read per pass.
-func (r *Reconciler) snapshotIsPublished(routes []edge.Route, listeners []edge.Listener) bool {
+func (r *Reconciler) snapshotIsPublished(routes []edge.Route, listeners []edge.Listener, functions []edge.FunctionRoute) bool {
 	published, err := edge.Load(r.edgeSnapshot)
 	if err != nil {
 		// Missing, unreadable or invalid all mean the same thing here: whatever
@@ -77,7 +78,8 @@ func (r *Reconciler) snapshotIsPublished(routes []edge.Route, listeners []edge.L
 		return false
 	}
 	return routesEqual(routes, published.Routes) &&
-		listenersEqual(listeners, published.Listeners)
+		listenersEqual(listeners, published.Listeners) &&
+		functionsEqual(functions, published.Functions)
 }
 
 // buildRoutes turns desired state into the edge's view of it.
@@ -101,6 +103,12 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 
 		domains := r.domainsFor(d)
 		if len(domains) == 0 {
+			if d.Function != nil {
+				// A function with no resolvable name is not stranded: it goes
+				// to the functions-port dispatch table instead (§7.2.3). The
+				// node-side mode resolution, R20's pattern.
+				continue
+			}
 			r.log.Warn("exposed service has no domain",
 				"service", d.Project+"/"+d.Service,
 				"detail", "declare expose.domains, or set the server's base domain")
@@ -135,6 +143,9 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 			IPRestriction: d.Expose.IPRestriction,
 			RateLimit:     d.Expose.RateLimit,
 			Headers:       d.Expose.Headers,
+			// Only the marker (R27): this file is world-readable, and the
+			// verifier material travels in the restricted bundle.
+			AuthRequired: d.Expose.Auth != nil,
 		})
 	}
 	return routes
@@ -200,6 +211,55 @@ func (r *Reconciler) buildListeners(w World, vips map[string]string) []edge.List
 		}
 	}
 	return listeners
+}
+
+// buildFunctionRoutes is the functions-port dispatch table (PRD §7.2.3):
+// http-triggered functions whose route resolved to no hostname — no declared
+// domains and no base domain — reached as /<project>/<function>/… instead.
+//
+// Which mode a function gets is decided here, on the node, exactly as
+// ResolveTLSMode decides a certificate source: the spec never encodes it, so
+// one spec means the same thing on every node.
+func (r *Reconciler) buildFunctionRoutes(w World, vips map[string]string) []edge.FunctionRoute {
+	var out []edge.FunctionRoute
+	for _, d := range sortedDesired(w.Desired) {
+		if d.Function == nil || !d.Function.HTTP || d.Expose == nil {
+			continue
+		}
+		if len(r.domainsFor(d)) > 0 {
+			continue // host-routed; the FQDN table owns it
+		}
+		name := d.Project + "/" + d.Service
+		vip := vips[name]
+		if vip == "" {
+			r.log.Debug("function has no frontend yet", "function", name)
+			continue
+		}
+		// (project, service) is unique in desired state, so unlike domains and
+		// node ports the prefix cannot collide — there is no claim map here
+		// because there is nothing to claim.
+		out = append(out, edge.FunctionRoute{
+			Project: d.Project, Function: d.Service,
+			Upstream: vip, UpstreamPort: d.Expose.Port,
+			IPRestriction: d.Expose.IPRestriction,
+			RateLimit:     d.Expose.RateLimit,
+			Headers:       d.Expose.Headers,
+			AuthRequired:  d.Expose.Auth != nil,
+		})
+	}
+	return out
+}
+
+// functionsEqual is the functions half of snapshotIsPublished.
+func functionsEqual(a, b []edge.FunctionRoute) bool {
+	return slices.EqualFunc(a, b, func(x, y edge.FunctionRoute) bool {
+		return x.Project == y.Project && x.Function == y.Function &&
+			x.Upstream == y.Upstream && x.UpstreamPort == y.UpstreamPort &&
+			x.AuthRequired == y.AuthRequired &&
+			reflect.DeepEqual(x.IPRestriction, y.IPRestriction) &&
+			reflect.DeepEqual(x.RateLimit, y.RateLimit) &&
+			reflect.DeepEqual(x.Headers, y.Headers)
+	})
 }
 
 // listenersEqual is the listener half of snapshotIsPublished.
@@ -294,6 +354,7 @@ func routesEqual(a, b []edge.Route) bool {
 	return slices.EqualFunc(a, b, func(x, y edge.Route) bool {
 		return x.Project == y.Project && x.Service == y.Service &&
 			x.Upstream == y.Upstream && x.Port == y.Port &&
+			x.AuthRequired == y.AuthRequired &&
 			slices.Equal(x.Domains, y.Domains) &&
 			reflect.DeepEqual(x.IPRestriction, y.IPRestriction) &&
 			reflect.DeepEqual(x.RateLimit, y.RateLimit) &&

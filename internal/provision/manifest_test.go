@@ -108,6 +108,48 @@ func TestContainerdIsInstalledFirst(t *testing.T) {
 	}
 }
 
+// The functions runtime (PRD v1.39, §6.2 R25) is one shim binary. Its release
+// artefacts are named by uname arch, which is what {{.UnameArch}} exists for —
+// and the shim must be on disk before containerd serves a wasm task create,
+// which the artefact/image install split already guarantees for any non-image
+// kind.
+func TestWasmtimeShimComponent(t *testing.T) {
+	c, err := MustLoad().Get("wasmtime-shim")
+	if err != nil {
+		t.Fatalf("the manifest has no wasmtime-shim component: %v", err)
+	}
+	if c.Kind != KindArchive {
+		t.Fatalf("wasmtime-shim is kind %q; the runwasi release is a tarball", c.Kind)
+	}
+	wantByArch := map[string]string{"amd64": "x86_64", "arm64": "aarch64"}
+	for arch, uname := range wantByArch {
+		url := c.ArtefactURL(arch)
+		if !strings.Contains(url, uname) {
+			t.Errorf("%s url %q does not carry the uname arch %q", arch, url, uname)
+		}
+	}
+	var installsShim bool
+	for _, f := range c.ResolveFiles("amd64") {
+		if f.To == "bin/containerd-shim-wasmtime-v1" {
+			installsShim = true
+		}
+	}
+	if !installsShim {
+		t.Error("wasmtime-shim does not install bin/containerd-shim-wasmtime-v1, which is the name containerd resolves io.containerd.wasmtime.v1 to")
+	}
+}
+
+// containerd's shim lookup uses containerd's own PATH, and systemd's default
+// does not include Kanea's bin dir — the unit must say so or every non-runc
+// runtime fails at task create (PRD v1.39).
+func TestContainerdUnitPutsBinDirOnPath(t *testing.T) {
+	l := Layout{Prefix: "/usr/local/lib/kanea", ConfDir: "/etc/kanea", DataDir: "/var/lib/kanea", RunDir: "/run/kanea", UnitDir: "/etc/systemd/system"}
+	unit := l.containerdUnit()
+	if !strings.Contains(unit, "Environment=PATH="+l.BinDir()) {
+		t.Fatalf("the containerd unit does not put %s on containerd's PATH; the wasmtime shim cannot be resolved without it:\n%s", l.BinDir(), unit)
+	}
+}
+
 func TestFileModeParsing(t *testing.T) {
 	tests := []struct {
 		mode    string
@@ -187,6 +229,16 @@ func TestValidateRejectsBadManifests(t *testing.T) {
 				Files:  []File{{From: "x", To: "bin/x", Mode: "0755"}},
 			}}},
 			want: "arm64",
+		},
+		{
+			name: "unknown template variable",
+			m: Manifest{Schema: schemaVersion, Components: []Component{{
+				Name: "x", Version: "1", Kind: KindArchive,
+				URL:    "https://example.invalid/x-{{.Triple}}.tar.gz",
+				Hashes: map[string]string{"amd64": strings.Repeat("a", 64), "arm64": strings.Repeat("b", 64)},
+				Files:  []File{{From: "x", To: "bin/x", Mode: "0755"}},
+			}}},
+			want: "template variable",
 		},
 		{
 			name: "installs nothing",

@@ -131,6 +131,78 @@ func TestReconcileRepublishesOnlyOnChange(t *testing.T) {
 }
 
 // Removing the expose block withdraws the route.
+// functionService is a lowered function with an http trigger and no declared
+// domains — the case the mode resolution decides (§7.2.3).
+func functionService() reconciler.Desired {
+	d := desiredWithPort(1)
+	d.Runtime = "io.containerd.wasmtime.v1"
+	d.Function = &reconciler.FunctionMeta{HTTP: true}
+	d.Expose = &reconciler.Expose{Port: 8080}
+	return d
+}
+
+// The node-side mode resolution (§7.2.3, R20's pattern): with a base domain a
+// function is host-routed like any service; with none it goes to the
+// functions-port dispatch table — and never to both.
+func TestFunctionRoutesResolveByBaseDomain(t *testing.T) {
+	t.Run("base domain present", func(t *testing.T) {
+		h, path := routeHarness(t, "apps.example.com")
+		h.setDesired(t, functionService())
+		h.reconcile(t)
+
+		snap := loadRoutes(t, path)
+		if len(snap.Routes) != 1 || len(snap.Functions) != 0 {
+			t.Fatalf("routes=%d functions=%d, want 1/0: with a base domain a function is host-routed",
+				len(snap.Routes), len(snap.Functions))
+		}
+		if got := snap.Routes[0].Domains[0]; got != "web.shop.apps.example.com" {
+			t.Errorf("function FQDN = %q, want the auto-FQDN", got)
+		}
+	})
+
+	t.Run("no base domain", func(t *testing.T) {
+		h, path := routeHarness(t, "")
+		h.setDesired(t, functionService())
+		h.reconcile(t)
+
+		snap := loadRoutes(t, path)
+		if len(snap.Routes) != 0 || len(snap.Functions) != 1 {
+			t.Fatalf("routes=%d functions=%d, want 0/1: with no base domain a function is path-dispatched",
+				len(snap.Routes), len(snap.Functions))
+		}
+		fr := snap.Functions[0]
+		if fr.Project != "shop" || fr.Function != "web" || fr.UpstreamPort != 8080 {
+			t.Errorf("function route = %+v", fr)
+		}
+	})
+}
+
+// The snapshotIsPublished comparison must cover the functions table — the
+// routesArePublished lesson: a half-compared snapshot publishes an edit
+// exactly once and never again.
+func TestFunctionTableEditsRepublish(t *testing.T) {
+	h, path := routeHarness(t, "")
+	d := functionService()
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	before := loadRoutes(t, path)
+	if len(before.Functions) != 1 || before.Functions[0].RateLimit != nil {
+		t.Fatalf("unexpected initial table: %+v", before.Functions)
+	}
+
+	// Edit only the function's middleware — nothing else in the snapshot
+	// changes, so a comparison that skipped functions would find it equal.
+	d.Expose.RateLimit = &edge.RateLimit{Requests: 10, Window: "1m", Per: "ip"}
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	after := loadRoutes(t, path)
+	if len(after.Functions) != 1 || after.Functions[0].RateLimit == nil {
+		t.Fatalf("the middleware edit was never republished: %+v", after.Functions)
+	}
+}
+
 func TestReconcileWithdrawsARoute(t *testing.T) {
 	h, path := routeHarness(t, "apps.example.com")
 	h.setDesired(t, exposedService("shop.example.com"))
