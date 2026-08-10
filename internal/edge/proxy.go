@@ -299,6 +299,7 @@ func (p *Proxy) serveRoute(w http.ResponseWriter, r *http.Request, route compile
 		Method:        r.Method,
 		Protocol:      protocolOf(r, recorder.hijacked),
 		Duration:      p.now().Sub(started),
+		Hijacked:      recorder.hijacked,
 		RequestBytes:  body.n.Load(),
 		ResponseBytes: recorder.bytes.Load(),
 		TLSVersion:    tlsVersionOf(r),

@@ -155,7 +155,10 @@ func (m *Metrics) writeAggregate(out *printer, s snapshot) {
 		out.printf("kanea_edge_request_duration_ms_bucket{%s,le=\"+Inf\"} %d\n",
 			l, svc.m.buckets[len(latencyBounds)].Load())
 		out.printf("kanea_edge_request_duration_ms_sum{%s} %d\n", l, svc.m.durationSum.Load())
-		out.printf("kanea_edge_request_duration_ms_count{%s} %d\n", l, svc.m.requests.Load())
+		// _count is the timed count, not requests: a hijacked connection is
+		// counted as a request but never timed (§9.1.1), and a histogram whose
+		// _count exceeds its +Inf bucket is malformed.
+		out.printf("kanea_edge_request_duration_ms_count{%s} %d\n", l, svc.m.timed.Load())
 	}
 
 	out.line("# HELP kanea_edge_errors_total Responses with a 5xx status.")
@@ -212,7 +215,9 @@ func (m *Metrics) writeLabelled(out *printer, s snapshot) {
 			out.printf("kanea_edge_service_request_duration_ms_bucket{%s,le=\"+Inf\"} %d\n",
 				l, series.buckets[len(latencyBounds)].Load())
 			out.printf("kanea_edge_service_request_duration_ms_sum{%s} %d\n", l, series.durationSum.Load())
-			out.printf("kanea_edge_service_request_duration_ms_count{%s} %d\n", l, series.requests.Load())
+			// Same rule as the aggregate family: _count == +Inf bucket, and a
+			// hijacked connection never enters either.
+			out.printf("kanea_edge_service_request_duration_ms_count{%s} %d\n", l, series.timed.Load())
 		}
 	}
 
