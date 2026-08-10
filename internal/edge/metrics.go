@@ -85,6 +85,10 @@ const (
 	ReasonListenerLimit = "listener_limit"
 	// ReasonNodeLimit is the node-wide --max-published-conns ceiling.
 	ReasonNodeLimit = "node_limit"
+	// ReasonNoBackends is a udp datagram with nowhere to go (v1.42): the
+	// service is starting or scaled to zero, and UDP has no way to tell the
+	// client, so the operator's counter is the only witness.
+	ReasonNoBackends = "no_backends"
 )
 
 // methodOther is where a method outside the RFC set folds.
@@ -140,7 +144,9 @@ type tlsKey struct {
 	cipher  string
 }
 
-// tcpKey identifies one published TCP listener (§7.2.2).
+// tcpKey identifies one published TCP or UDP listener (§7.2.2). The udp
+// family reuses it: the key is (service, entrypoint) either way, and the two
+// families live in separate maps.
 type tcpKey struct {
 	service    string
 	entrypoint string
@@ -330,6 +336,27 @@ func newTCPMetrics() *tcpMetrics {
 	return &tcpMetrics{refused: map[string]*atomic.Uint64{}}
 }
 
+// udpMetrics is one published UDP listener's counters (v1.42, §7.2.2).
+//
+// Sessions, not connections — a udp "connection" is an entry in the relay's
+// table — and expiries are counted separately from ordinary closes, because a
+// session cap or an aggressive expiry that nobody can see is indistinguishable
+// from packet loss.
+type udpMetrics struct {
+	sessions atomic.Uint64
+	active   atomic.Int64
+	expired  atomic.Uint64
+	bytesIn  atomic.Uint64
+	bytesOut atomic.Uint64
+
+	mu      sync.RWMutex
+	refused map[string]*atomic.Uint64
+}
+
+func newUDPMetrics() *udpMetrics {
+	return &udpMetrics{refused: map[string]*atomic.Uint64{}}
+}
+
 // CertExpiry is one certificate in the bundle the edge is serving (§7.3).
 //
 // Published as a gauge of the expiry instant rather than of a remaining
@@ -350,6 +377,7 @@ type Metrics struct {
 	services    map[string]*serviceMetrics
 	entrypoints map[string]*entrypointMetrics
 	tcp         map[tcpKey]*tcpMetrics
+	udp         map[tcpKey]*udpMetrics
 	certs       []CertExpiry
 
 	dropped        atomic.Uint64
@@ -364,6 +392,7 @@ func NewMetrics() *Metrics {
 		services:    map[string]*serviceMetrics{},
 		entrypoints: map[string]*entrypointMetrics{},
 		tcp:         map[tcpKey]*tcpMetrics{},
+		udp:         map[tcpKey]*udpMetrics{},
 	}
 }
 
@@ -516,6 +545,35 @@ func (m *Metrics) TCPRefused(service, entrypoint, reason string) {
 	counterIn(&t.mu, t.refused, reason).Add(1)
 }
 
+// UDPSessionOpened records a new session on a published UDP listener (v1.42).
+func (m *Metrics) UDPSessionOpened(service, entrypoint string) {
+	u := m.udpCounters(service, entrypoint)
+	u.sessions.Add(1)
+	u.active.Add(1)
+}
+
+// UDPSessionClosed records a finished session, the bytes it moved, and whether
+// the idle expiry (rather than an upstream error or a shutdown) ended it.
+func (m *Metrics) UDPSessionClosed(service, entrypoint string, bytesIn, bytesOut int64, expired bool) {
+	u := m.udpCounters(service, entrypoint)
+	u.active.Add(-1)
+	if expired {
+		u.expired.Add(1)
+	}
+	if bytesIn > 0 {
+		u.bytesIn.Add(uint64(bytesIn))
+	}
+	if bytesOut > 0 {
+		u.bytesOut.Add(uint64(bytesOut))
+	}
+}
+
+// UDPRefused records a datagram that was denied a session.
+func (m *Metrics) UDPRefused(service, entrypoint, reason string) {
+	u := m.udpCounters(service, entrypoint)
+	counterIn(&u.mu, u.refused, reason).Add(1)
+}
+
 // SetCertificates replaces the certificate expiry gauges.
 //
 // Wholesale, unlike certsource.Publisher's per-source merge: the edge reads one
@@ -552,6 +610,11 @@ func (m *Metrics) Forget(service string) {
 			delete(m.tcp, key)
 		}
 	}
+	for key := range m.udp {
+		if key.service == service {
+			delete(m.udp, key)
+		}
+	}
 }
 
 // Retain drops every service not in the given set, which is how the collector
@@ -574,6 +637,11 @@ func (m *Metrics) Retain(keep map[string]bool) int {
 	for key := range m.tcp {
 		if !keep[key.service] {
 			delete(m.tcp, key)
+		}
+	}
+	for key := range m.udp {
+		if !keep[key.service] {
+			delete(m.udp, key)
 		}
 	}
 	return dropped
@@ -647,6 +715,26 @@ func (m *Metrics) tcpCounters(service, entrypoint string) *tcpMetrics {
 	t = newTCPMetrics()
 	m.tcp[key] = t
 	return t
+}
+
+func (m *Metrics) udpCounters(service, entrypoint string) *udpMetrics {
+	key := tcpKey{service: service, entrypoint: entrypoint}
+
+	m.mu.RLock()
+	u, ok := m.udp[key]
+	m.mu.RUnlock()
+	if ok {
+		return u
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u, ok = m.udp[key]; ok {
+		return u
+	}
+	u = newUDPMetrics()
+	m.udp[key] = u
+	return u
 }
 
 // statusLabel renders a status code for the `code` label.

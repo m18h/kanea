@@ -131,6 +131,33 @@ service "api" {
     port "http" { container = 8080 }
   }
 }
+
+service "voice" {
+  project = "shop"
+  count   = 1
+
+  task "app" {
+    image = "registry.example.com/shop/voice:2.1.0"
+
+    resources {
+      cpu    = 500
+      memory = 512
+    }
+  }
+
+  network {
+    port "rtp" {
+      container = 10000
+      protocol  = "udp"
+    }
+
+    publish "rtp" {
+      host = 10000
+      mode = "udp"
+      ip_restriction { allow = ["192.168.0.0/16"] }
+    }
+  }
+}
 `
 
 // TestGeneratedSpecRoundTripsToTheSameDesired is the gate on "edit spec"
@@ -138,8 +165,8 @@ service "api" {
 // cannot survive the trip must refuse generation, never drift.
 func TestGeneratedSpecRoundTripsToTheSameDesired(t *testing.T) {
 	original, pipelines := renderText(t, roundTripSpec)
-	if len(original) != 2 {
-		t.Fatalf("services = %d, want 2", len(original))
+	if len(original) != 3 {
+		t.Fatalf("services = %d, want 3", len(original))
 	}
 
 	text, err := toHCL(original, pipelines)

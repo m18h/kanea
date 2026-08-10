@@ -606,6 +606,13 @@ func Diff(current, desired []Desired) []string {
 		if !sameEnv(have.Env, want.Env) {
 			changes = append(changes, "env changed")
 		}
+		// Container ports are spec-hash material — a changed number or a
+		// flipped protocol (v1.42) rolls every alloc, and a plan that did not
+		// mention it would show a redeploy with no visible cause.
+		if !reflect.DeepEqual(have.Ports, want.Ports) {
+			changes = append(changes, fmt.Sprintf("ports %s -> %s",
+				describeDeclaredPorts(have.Ports), describeDeclaredPorts(want.Ports)))
+		}
 		// Published ports are what people iterate on, and they do not change
 		// the spec hash — so without this line `kanea plan` would print "No
 		// changes" for the edit somebody just made and is about to apply.
@@ -628,6 +635,22 @@ func describeRuntime(r string) string {
 		return "default"
 	}
 	return r
+}
+
+// describeDeclaredPorts renders a service's container ports for a plan line.
+func describeDeclaredPorts(ports []Port) string {
+	if len(ports) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(ports))
+	for _, p := range ports {
+		part := fmt.Sprintf("%s:%d", p.Name, p.Container)
+		if p.IsUDP() {
+			part += "/udp"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, " ")
 }
 
 // describePublish renders a service's node ports for a plan line.

@@ -622,6 +622,28 @@ func validatePorts(svc *Service) hcl.Diagnostics {
 				Subject: p.DefRange.Ptr(),
 			})
 		}
+		if p.Protocol != "" && p.Protocol != PortTCP && p.Protocol != PortUDP {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Unknown port protocol",
+				Detail: fmt.Sprintf("Port %q of service %q declares protocol %q; it is %q (the default) or %q.",
+					p.Name, svc.Name, p.Protocol, PortTCP, PortUDP),
+				Subject: p.DefRange.Ptr(),
+			})
+		}
+		// A udp port has no VIP frontend (§5.2.5), so publishing is the only
+		// way anything reaches it. Unpublished it is legal — a spec staged
+		// before its publish block — but worth a warning, not silence.
+		if p.IsUDP() && !isPublished(svc, p.Name) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagWarning,
+				Summary:  "Unreachable udp port",
+				Detail: fmt.Sprintf("Port %q of service %q is udp and not published. A udp port "+
+					"gets no service frontend, so without a publish block nothing can reach it.",
+					p.Name, svc.Name),
+				Subject: p.DefRange.Ptr(),
+			})
+		}
 		if first, dup := seen[p.Name]; dup {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
@@ -634,6 +656,16 @@ func validatePorts(svc *Service) hcl.Diagnostics {
 		seen[p.Name] = p.DefRange
 	}
 	return diags
+}
+
+// isPublished reports whether any publish block names this port.
+func isPublished(svc *Service, portName string) bool {
+	for _, p := range svc.Network.Publish {
+		if p.Port == portName {
+			return true
+		}
+	}
+	return false
 }
 
 // validateHealthChecks enforces R7. `exec` takes an argument array — a shell
@@ -683,10 +715,18 @@ func requirePort(svc *Service, hc *HealthCheck) hcl.Diagnostics {
 		return hcl.Diagnostics{healthDiag(svc, hc,
 			fmt.Sprintf("A %s health check needs port = \"<port-name>\".", hc.Type))}
 	}
-	if !hasPort(svc, hc.Port) {
+	port := declaredPort(svc, hc.Port)
+	if port == nil {
 		return hcl.Diagnostics{healthDiag(svc, hc,
 			fmt.Sprintf("Health check %q targets port %q, which service %q does not declare. Declared ports: %s.",
 				hc.Name, hc.Port, svc.Name, describePorts(svc)))}
+	}
+	// An http or tcp probe opens a stream; a udp port has no listener for one,
+	// so the check would report the service down forever (v1.42).
+	if port.IsUDP() {
+		return hcl.Diagnostics{healthDiag(svc, hc,
+			fmt.Sprintf("Health check %q targets port %q, which is udp. A %s probe opens a TCP "+
+				"connection and cannot reach a datagram socket.", hc.Name, hc.Port, hc.Type))}
 	}
 	return nil
 }

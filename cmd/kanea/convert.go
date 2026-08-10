@@ -92,9 +92,14 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 
 		if svc.Network != nil {
 			for _, p := range svc.Network.Ports {
-				desired.Ports = append(desired.Ports, reconciler.Port{
-					Name: p.Name, Container: p.Container,
-				})
+				port := reconciler.Port{Name: p.Name, Container: p.Container}
+				// Stored as "" for tcp, "udp" for udp (v1.42): the field is
+				// SpecHash material with omitempty, so the default must vanish
+				// or every pre-v1.42 record would hash differently at upgrade.
+				if p.IsUDP() {
+					port.Protocol = reconciler.PortProtocolUDP
+				}
+				desired.Ports = append(desired.Ports, port)
 			}
 			for _, p := range svc.Network.Publish {
 				// The middleware travels verbatim, as the expose block's does.

@@ -72,23 +72,34 @@ func (s *Service) EdgeDomains(baseDomain string) []string {
 // the R16 rule. Deterministic when both exist: "grpc" wins, because
 // `protocol = "grpc"` is the spec choosing.
 func (s *Service) EdgePort() *Port {
-	if s.Network == nil || len(s.Network.Ports) == 0 {
+	// The edge dials a VIP, and udp ports have no frontend on it (v1.42) —
+	// they are invisible here, including as the sole-port fallback: a service
+	// whose only port is udp is not exposable, and R16 says so at plan.
+	var candidates []*Port
+	if s.Network != nil {
+		for _, p := range s.Network.Ports {
+			if !p.IsUDP() {
+				candidates = append(candidates, p)
+			}
+		}
+	}
+	if len(candidates) == 0 {
 		return nil
 	}
 	if s.Expose != nil && s.Expose.Protocol == ExposeProtocolGRPC {
-		for _, p := range s.Network.Ports {
+		for _, p := range candidates {
 			if p.Name == ExposeProtocolGRPC {
 				return p
 			}
 		}
 	}
-	for _, p := range s.Network.Ports {
+	for _, p := range candidates {
 		if p.Name == EdgePortName {
 			return p
 		}
 	}
-	if len(s.Network.Ports) == 1 {
-		return s.Network.Ports[0]
+	if len(candidates) == 1 {
+		return candidates[0]
 	}
 	return nil
 }
@@ -142,8 +153,24 @@ func validateExposePort(svc *Service) hcl.Diagnostics {
 	}
 
 	names := make([]string, 0, len(svc.Network.Ports))
+	streamPorts := 0
 	for _, p := range svc.Network.Ports {
 		names = append(names, p.Name)
+		if !p.IsUDP() {
+			streamPorts++
+		}
+	}
+	// Every declared port is udp: not an ambiguity but an impossibility — the
+	// edge proxies streams to a VIP, and udp ports have neither (v1.42).
+	if streamPorts == 0 {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Exposed service has only udp ports",
+			Detail: fmt.Sprintf("Service %q is exposed, but every port it declares is udp. "+
+				"The edge routes HTTP over a service frontend and udp ports have no frontend; "+
+				"publish the port instead (network { publish … mode = %q }).", svc.Name, PublishUDP),
+			Subject: rng.Ptr(),
+		}}
 	}
 	return hcl.Diagnostics{{
 		Severity: hcl.DiagError,

@@ -376,3 +376,26 @@ func TestVolumeOwnershipHalvesAreIndependent(t *testing.T) {
 		t.Error("a volume with one half of an ownership pair does not report as owned")
 	}
 }
+
+// A tcp port must hash to exactly what it hashed before v1.42's Protocol field
+// existed — the same upgrade-safety property the R23 test above pins. The
+// empty string with omitempty vanishes from the JSON, so a pre-v1.42 record
+// and a post-v1.42 tcp port produce the same bytes; a udp port is a different
+// spec and must not.
+func TestSpecHashIsUnchangedForATCPPort(t *testing.T) {
+	d := desired(1)
+	d.Ports = []reconciler.Port{{Name: "http", Container: 8080}}
+
+	const beforeV142 = "6bd5d8a584c64da2fded413bc03e3f03"
+	if got := reconciler.SpecHash(d); got != beforeV142 {
+		t.Errorf("spec hash = %s, want %s\n"+
+			"A tcp port must hash as it did before Protocol existed, or upgrading "+
+			"kanead rolls every service with a port on the node.", got, beforeV142)
+	}
+
+	udp := d
+	udp.Ports = []reconciler.Port{{Name: "http", Container: 8080, Protocol: reconciler.PortProtocolUDP}}
+	if reconciler.SpecHash(udp) == beforeV142 {
+		t.Error("flipping a port to udp did not change the spec hash; the alloc would never roll")
+	}
+}

@@ -4,9 +4,11 @@ import (
 	"context"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/network"
 )
 
 // syncEdgeRoutes publishes the route table kanea-edge serves from.
@@ -18,13 +20,13 @@ import (
 // Only services with a frontend appear. A route's upstream is the service VIP,
 // not an alloc address: the eBPF LB does the balancing, so scaling a service
 // from one alloc to ten changes nothing here.
-func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[string]string) {
+func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[string]string, attachments map[string]network.Attachment) {
 	if r.edgeSnapshot == "" {
 		return
 	}
 
 	routes := r.buildRoutes(w, vips)
-	listeners := r.buildListeners(w, vips)
+	listeners := r.buildListeners(w, vips, attachments)
 	functions := r.buildFunctionRoutes(w, vips)
 	if r.snapshotIsPublished(routes, listeners, functions) {
 		// A steady-state pass must not rewrite the file. The edge polls it, and
@@ -160,9 +162,19 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 // collision on a node port is first-writer-wins with the loser named. The
 // upstream is the service frontend, so a rolling deploy never flaps a listener
 // — a VIP is durable state, and only deleting the service removes it.
-func (r *Reconciler) buildListeners(w World, vips map[string]string) []edge.Listener {
+//
+// udp listeners are the exception on both counts (v1.42): a udp port has no
+// frontend to dial, so the listener carries the running backend addresses
+// directly, and a service whose only ports are udp legitimately has no VIP. A
+// scale event *does* change a udp listener — the projection republishes on
+// backend churn, which is why listenersEqual compares the backend list.
+func (r *Reconciler) buildListeners(w World, vips map[string]string, attachments map[string]network.Attachment) []edge.Listener {
 	var listeners []edge.Listener
-	claimed := map[int]string{}
+	type claimKey struct {
+		udp  bool
+		host int
+	}
+	claimed := map[claimKey]string{}
 
 	for _, d := range sortedDesired(w.Desired) {
 		if len(d.Publish) == 0 {
@@ -170,11 +182,15 @@ func (r *Reconciler) buildListeners(w World, vips map[string]string) []edge.List
 		}
 		name := d.Project + "/" + d.Service
 		vip := vips[name]
-		if vip == "" {
-			r.log.Debug("service publishes a port but has no frontend yet", "service", name)
-			continue
-		}
 		for _, p := range d.Publish {
+			mode := p.Mode
+			if mode == "" {
+				mode = edge.ListenerHTTP
+			}
+			if mode != edge.ListenerUDP && vip == "" {
+				r.log.Debug("service publishes a port but has no frontend yet", "service", name)
+				continue
+			}
 			upstream := d.portNumber(p.Port)
 			if upstream == 0 {
 				// The spec validator rejects this, so reaching it means a
@@ -185,26 +201,32 @@ func (r *Reconciler) buildListeners(w World, vips map[string]string) []edge.List
 					"service", name, "port", p.Port, "host", p.Host)
 				continue
 			}
-			if owner, taken := claimed[p.Host]; taken {
+			key := claimKey{udp: mode == edge.ListenerUDP, host: p.Host}
+			if owner, taken := claimed[key]; taken {
 				r.log.Error("node port claimed by two services; ignoring the second",
 					"port", p.Host, "owner", owner, "ignored", name)
 				continue
 			}
-			claimed[p.Host] = name
+			claimed[key] = name
 
-			mode := p.Mode
-			if mode == "" {
-				mode = edge.ListenerHTTP
-			}
 			listener := edge.Listener{
 				Project: d.Project, Service: d.Service,
 				Port: p.Host, Mode: mode,
-				Upstream: vip, UpstreamPort: upstream,
 				MaxConns:      p.MaxConns,
 				IPRestriction: p.IPRestriction,
 			}
-			// A tcp listener carries only what it can enforce. The spec refuses
-			// the rest at plan time; dropping it here as well keeps a
+			switch mode {
+			case edge.ListenerUDP:
+				// Backends, not the VIP. An empty set is published as-is: a
+				// listener that drops (and counts) is more honest than one
+				// that vanishes while the service restarts.
+				listener.UpstreamPort = upstream
+				listener.Backends = backendAddrs(backendsFor(w, d, attachments))
+			default:
+				listener.Upstream, listener.UpstreamPort = vip, upstream
+			}
+			// A tcp or udp listener carries only what it can enforce. The spec
+			// refuses the rest at plan time; dropping it here as well keeps a
 			// hand-written record from producing an invalid snapshot.
 			if mode == edge.ListenerHTTP {
 				listener.RateLimit, listener.Headers = p.RateLimit, p.Headers
@@ -213,6 +235,19 @@ func (r *Reconciler) buildListeners(w World, vips map[string]string) []edge.List
 		}
 	}
 	return listeners
+}
+
+// backendAddrs is the sorted v4 address list of a backend set, for the udp
+// listener projection.
+func backendAddrs(backends []network.Backend) []string {
+	out := make([]string, 0, len(backends))
+	for _, b := range backends {
+		if b.IPv4 != "" {
+			out = append(out, b.IPv4)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // buildFunctionRoutes is the functions-port dispatch table (PRD §7.2.3):
@@ -270,6 +305,10 @@ func listenersEqual(a, b []edge.Listener) bool {
 		return x.Project == y.Project && x.Service == y.Service &&
 			x.Port == y.Port && x.Mode == y.Mode &&
 			x.Upstream == y.Upstream && x.UpstreamPort == y.UpstreamPort &&
+			// Backends are how a udp listener reaches anything, so backend
+			// churn must republish — leaving them out is the exact mistake
+			// routesArePublished made with listeners (PRD v1.33).
+			slices.Equal(x.Backends, y.Backends) &&
 			x.MaxConns == y.MaxConns &&
 			reflect.DeepEqual(x.IPRestriction, y.IPRestriction) &&
 			reflect.DeepEqual(x.RateLimit, y.RateLimit) &&

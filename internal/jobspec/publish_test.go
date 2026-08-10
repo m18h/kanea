@@ -62,7 +62,7 @@ func TestPublishRejectsAnInvalidBlock(t *testing.T) {
 	}{
 		{"port zero", publishBlock("http", "host = 0"), "a TCP port is 1 to 65535"},
 		{"port too high", publishBlock("http", "host = 70000"), "a TCP port is 1 to 65535"},
-		{"unknown mode", publishBlock("http", "host = 9000", `mode = "udp"`), "Unknown publish mode"},
+		{"unknown mode", publishBlock("http", "host = 9000", `mode = "sctp"`), "Unknown publish mode"},
 		{
 			"max_conns on http",
 			publishBlock("http", "host = 9000", "max_conns = 10"),
@@ -199,4 +199,329 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// udpSpec builds a one-service spec with a udp game port and the given extra
+// network body.
+func udpSpec(body string) string {
+	return `
+spec_version = 1
+
+project "games" {}
+
+service "factorio" {
+  project = "games"
+  task "server" { image = "factoriotools/factorio:1.1.110" }
+  network {
+    port "game" {
+      container = 34197
+      protocol = "udp"
+    }
+    ` + body + `
+  }
+}
+`
+}
+
+// The v1.42 happy path: a udp port published as a udp listener.
+func TestPublishAcceptsAUDPListener(t *testing.T) {
+	spec := parse(t, udpSpec(publishBlock("game", "host = 34197", `mode = "udp"`)))
+	svc := spec.Services[0]
+	if got := svc.Network.Ports[0]; !got.IsUDP() {
+		t.Errorf("port protocol = %q, want udp", got.Protocol)
+	}
+	if got := svc.Network.Publish[0]; got.ResolvedMode() != jobspec.PublishUDP {
+		t.Errorf("mode = %q, want udp", got.ResolvedMode())
+	}
+}
+
+// Protocol casing is forgiven; a typo is not.
+func TestPortProtocolIsNormalizedAndValidated(t *testing.T) {
+	spec := parse(t, `
+spec_version = 1
+project "games" {}
+service "s" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "game" {
+      container = 34197
+      protocol = "UDP"
+    }
+    publish "game" {
+      host = 34197
+      mode = "udp"
+    }
+  }
+}
+`)
+	if got := spec.Services[0].Network.Ports[0]; !got.IsUDP() {
+		t.Errorf("protocol %q did not normalize to udp", got.Protocol)
+	}
+
+	got := parseErr(t, udpSpec(publishBlock("game", "host = 34197", `mode = "udp"`)+
+		"\n    port \"bad\" {\n      container = 1000\n      protocol = \"sctp\"\n    }"))
+	if !strings.Contains(got, "Unknown port protocol") {
+		t.Errorf("diagnostics = %q", got)
+	}
+}
+
+// A listener and its port must agree on the L4 family — either mismatch is a
+// listener that black-holes by construction (v1.42).
+func TestPublishRejectsAFamilyMismatch(t *testing.T) {
+	tests := []struct{ name, src, want string }{
+		{
+			"udp mode on tcp port",
+			publishSpec(publishBlock("http", "host = 9000", `mode = "udp"`)),
+			"udp listener on a tcp port",
+		},
+		{
+			"tcp mode on udp port",
+			udpSpec(publishBlock("game", "host = 34197", `mode = "tcp"`)),
+			"Stream listener on a udp port",
+		},
+		{
+			"default http mode on udp port",
+			udpSpec(publishBlock("game", "host = 34197")),
+			"Stream listener on a udp port",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseErr(t, tc.src); !strings.Contains(got, tc.want) {
+				t.Errorf("diagnostics = %q, want it to name %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The tcp middleware refusals apply verbatim to udp: no requests to count, no
+// headers to rewrite.
+func TestPublishRejectsMiddlewareAUDPListenerCannotHonour(t *testing.T) {
+	got := parseErr(t, udpSpec(publishBlock("game", "host = 34197", `mode = "udp"`,
+		"rate_limit {\n        requests = 10\n        window = \"1m\"\n      }")))
+	if !strings.Contains(got, "cannot honour") || !strings.Contains(got, "datagram flow") {
+		t.Errorf("diagnostics = %q", got)
+	}
+}
+
+// One host port may carry one stream listener and one udp listener (DNS's
+// shape); two udp listeners on one port still collide, within a service and
+// across the applied set.
+func TestPublishKeysHostCollisionsPerFamily(t *testing.T) {
+	twoFamilies := `
+spec_version = 1
+project "net" {}
+service "dns" {
+  project = "net"
+  task "t" { image = "dns:1" }
+  network {
+    port "tcp-dns" { container = 5353 }
+    port "udp-dns" {
+      container = 5353
+      protocol = "udp"
+    }
+    publish "tcp-dns" {
+      host = 5300
+      mode = "tcp"
+    }
+    publish "udp-dns" {
+      host = 5300
+      mode = "udp"
+    }
+  }
+}
+`
+	parse(t, twoFamilies)
+
+	sameFamily := udpSpec(
+		publishBlock("game", "host = 34197", `mode = "udp"`) + "\n    " +
+			publishBlock("game", "host = 34197", `mode = "udp"`))
+	if got := parseErr(t, sameFamily); !strings.Contains(got, "Port published twice") {
+		t.Errorf("diagnostics = %q", got)
+	}
+
+	crossService := `
+spec_version = 1
+project "games" {}
+service "a" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "game" {
+      container = 1000
+      protocol = "udp"
+    }
+    publish "game" {
+      host = 30000
+      mode = "udp"
+    }
+  }
+}
+service "b" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "game" {
+      container = 1000
+      protocol = "udp"
+    }
+    publish "game" {
+      host = 30000
+      mode = "udp"
+    }
+  }
+}
+`
+	if got := parseErr(t, crossService); !strings.Contains(got, "Node port claimed twice") {
+		t.Errorf("diagnostics = %q", got)
+	}
+
+	crossServiceCrossFamily := `
+spec_version = 1
+project "games" {}
+service "a" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "game" {
+      container = 1000
+      protocol = "udp"
+    }
+    publish "game" {
+      host = 30000
+      mode = "udp"
+    }
+  }
+}
+service "b" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "web" { container = 1000 }
+    publish "web" {
+      host = 30000
+      mode = "tcp"
+    }
+  }
+}
+`
+	parse(t, crossServiceCrossFamily)
+}
+
+// A udp port is reachable only through a publish block, and everything
+// frontend-shaped refuses it by name (v1.42).
+func TestUDPPortsAreRefusedEverywhereAFrontendIsAssumed(t *testing.T) {
+	t.Run("expose with only a udp port", func(t *testing.T) {
+		src := `
+spec_version = 1
+project "games" {}
+service "s" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "game" {
+      container = 1000
+      protocol = "udp"
+    }
+    publish "game" {
+      host = 30000
+      mode = "udp"
+    }
+  }
+  expose {}
+}
+`
+		if got := parseErr(t, src); !strings.Contains(got, "only udp ports") {
+			t.Errorf("diagnostics = %q", got)
+		}
+	})
+
+	t.Run("service reference to a udp port", func(t *testing.T) {
+		src := `
+spec_version = 1
+project "games" {}
+service "s" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "game" {
+      container = 1000
+      protocol = "udp"
+    }
+    publish "game" {
+      host = 30000
+      mode = "udp"
+    }
+  }
+}
+service "client" {
+  project = "games"
+  task "t" {
+    image = "img:1"
+    env = { TARGET = "${service.s.port.game}" }
+  }
+}
+`
+		got := parseErr(t, src)
+		if !strings.Contains(got, "udp ports have no service frontend") {
+			t.Errorf("diagnostics = %q", got)
+		}
+	})
+
+	t.Run("health check against a udp port", func(t *testing.T) {
+		src := `
+spec_version = 1
+project "games" {}
+service "s" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "game" {
+      container = 1000
+      protocol = "udp"
+    }
+    publish "game" {
+      host = 30000
+      mode = "udp"
+    }
+  }
+  health_check "alive" {
+    type = "tcp"
+    port = "game"
+  }
+}
+`
+		got := parseErr(t, src)
+		if !strings.Contains(got, "cannot reach a datagram socket") {
+			t.Errorf("diagnostics = %q", got)
+		}
+	})
+}
+
+// An unpublished udp port is legal — a spec staged before its publish block —
+// but nothing can reach it, and the spec author is told so.
+func TestUnpublishedUDPPortWarns(t *testing.T) {
+	src := `
+spec_version = 1
+project "games" {}
+service "s" {
+  project = "games"
+  task "t" { image = "img:1" }
+  network {
+    port "game" {
+      container = 1000
+      protocol = "udp"
+    }
+  }
+}
+`
+	_, diags := jobspec.ParseSource(jobspec.Options{}, "test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors:\n%s", jobspec.FormatDiagnostics(diags))
+	}
+	got := jobspec.FormatDiagnostics(diags)
+	if !strings.Contains(got, "Warning") || !strings.Contains(got, "Unreachable udp port") {
+		t.Errorf("diagnostics = %q, want the unreachable-port warning", got)
+	}
 }
