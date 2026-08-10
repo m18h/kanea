@@ -33,15 +33,35 @@ type kaneaBackendVal struct {
 	Pad  uint16
 }
 
+type kaneaBackendVal6 struct {
+	_    structs.HostLayout
+	Ip   [4]uint32
+	Port uint16
+	Pad  uint16
+}
+
 type kaneaDpConfig struct {
 	_               structs.HostLayout
 	ServiceCidrNet  uint32
 	ServiceCidrMask uint32
 }
 
+type kaneaDpConfig6 struct {
+	_    structs.HostLayout
+	Net  [4]uint32
+	Mask [4]uint32
+}
+
 type kaneaDropKey struct {
 	_      structs.HostLayout
 	DstIp  uint32
+	Reason uint8
+	Pad    [3]uint8
+}
+
+type kaneaDropKey6 struct {
+	_      structs.HostLayout
+	DstIp  [4]uint32
 	Reason uint8
 	Pad    [3]uint8
 }
@@ -61,9 +81,22 @@ type kaneaIdentity struct {
 	Flags     uint32
 }
 
+type kaneaIn6Addr struct {
+	_        structs.HostLayout
+	S6Addr32 [4]uint32
+}
+
 type kaneaSvcKey struct {
 	_     structs.HostLayout
 	Vip   uint32
+	Port  uint16
+	Proto uint8
+	Pad   uint8
+}
+
+type kaneaSvcKey6 struct {
+	_     structs.HostLayout
+	Vip   [4]uint32
 	Port  uint16
 	Proto uint8
 	Pad   uint8
@@ -82,13 +115,20 @@ type kaneaSvcVal struct {
 const (
 	kaneaMapAllowV4             = "allow_v4"
 	kaneaMapConfig              = "config"
+	kaneaMapConfig6             = "config6"
 	kaneaMapIdentityV4          = "identity_v4"
+	kaneaMapIdentityV6          = "identity_v6"
 	kaneaMapStatsDrops          = "stats_drops"
+	kaneaMapStatsDrops6         = "stats_drops6"
 	kaneaMapStatsEp             = "stats_ep"
+	kaneaMapStatsEp6            = "stats_ep6"
 	kaneaMapStatsSvc            = "stats_svc"
 	kaneaMapSvcBackends         = "svc_backends"
+	kaneaMapSvcBackends6        = "svc_backends6"
 	kaneaMapSvcV4               = "svc_v4"
+	kaneaMapSvcV6               = "svc_v6"
 	kaneaProgKaneaConnect4      = "kanea_connect4"
+	kaneaProgKaneaConnect6      = "kanea_connect6"
 	kaneaProgKaneaFromContainer = "kanea_from_container"
 	kaneaProgKaneaToContainer   = "kanea_to_container"
 )
@@ -136,6 +176,7 @@ type kaneaSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type kaneaProgramSpecs struct {
 	KaneaConnect4      *ebpf.ProgramSpec `ebpf:"kanea_connect4"`
+	KaneaConnect6      *ebpf.ProgramSpec `ebpf:"kanea_connect6"`
 	KaneaFromContainer *ebpf.ProgramSpec `ebpf:"kanea_from_container"`
 	KaneaToContainer   *ebpf.ProgramSpec `ebpf:"kanea_to_container"`
 }
@@ -144,14 +185,20 @@ type kaneaProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type kaneaMapSpecs struct {
-	AllowV4     *ebpf.MapSpec `ebpf:"allow_v4"`
-	Config      *ebpf.MapSpec `ebpf:"config"`
-	IdentityV4  *ebpf.MapSpec `ebpf:"identity_v4"`
-	StatsDrops  *ebpf.MapSpec `ebpf:"stats_drops"`
-	StatsEp     *ebpf.MapSpec `ebpf:"stats_ep"`
-	StatsSvc    *ebpf.MapSpec `ebpf:"stats_svc"`
-	SvcBackends *ebpf.MapSpec `ebpf:"svc_backends"`
-	SvcV4       *ebpf.MapSpec `ebpf:"svc_v4"`
+	AllowV4      *ebpf.MapSpec `ebpf:"allow_v4"`
+	Config       *ebpf.MapSpec `ebpf:"config"`
+	Config6      *ebpf.MapSpec `ebpf:"config6"`
+	IdentityV4   *ebpf.MapSpec `ebpf:"identity_v4"`
+	IdentityV6   *ebpf.MapSpec `ebpf:"identity_v6"`
+	StatsDrops   *ebpf.MapSpec `ebpf:"stats_drops"`
+	StatsDrops6  *ebpf.MapSpec `ebpf:"stats_drops6"`
+	StatsEp      *ebpf.MapSpec `ebpf:"stats_ep"`
+	StatsEp6     *ebpf.MapSpec `ebpf:"stats_ep6"`
+	StatsSvc     *ebpf.MapSpec `ebpf:"stats_svc"`
+	SvcBackends  *ebpf.MapSpec `ebpf:"svc_backends"`
+	SvcBackends6 *ebpf.MapSpec `ebpf:"svc_backends6"`
+	SvcV4        *ebpf.MapSpec `ebpf:"svc_v4"`
+	SvcV6        *ebpf.MapSpec `ebpf:"svc_v6"`
 }
 
 // kaneaVariableSpecs contains global variables before they are loaded into the kernel.
@@ -180,26 +227,38 @@ func (o *kaneaObjects) Close() error {
 //
 // It can be passed to loadKaneaObjects or ebpf.CollectionSpec.LoadAndAssign.
 type kaneaMaps struct {
-	AllowV4     *ebpf.Map `ebpf:"allow_v4"`
-	Config      *ebpf.Map `ebpf:"config"`
-	IdentityV4  *ebpf.Map `ebpf:"identity_v4"`
-	StatsDrops  *ebpf.Map `ebpf:"stats_drops"`
-	StatsEp     *ebpf.Map `ebpf:"stats_ep"`
-	StatsSvc    *ebpf.Map `ebpf:"stats_svc"`
-	SvcBackends *ebpf.Map `ebpf:"svc_backends"`
-	SvcV4       *ebpf.Map `ebpf:"svc_v4"`
+	AllowV4      *ebpf.Map `ebpf:"allow_v4"`
+	Config       *ebpf.Map `ebpf:"config"`
+	Config6      *ebpf.Map `ebpf:"config6"`
+	IdentityV4   *ebpf.Map `ebpf:"identity_v4"`
+	IdentityV6   *ebpf.Map `ebpf:"identity_v6"`
+	StatsDrops   *ebpf.Map `ebpf:"stats_drops"`
+	StatsDrops6  *ebpf.Map `ebpf:"stats_drops6"`
+	StatsEp      *ebpf.Map `ebpf:"stats_ep"`
+	StatsEp6     *ebpf.Map `ebpf:"stats_ep6"`
+	StatsSvc     *ebpf.Map `ebpf:"stats_svc"`
+	SvcBackends  *ebpf.Map `ebpf:"svc_backends"`
+	SvcBackends6 *ebpf.Map `ebpf:"svc_backends6"`
+	SvcV4        *ebpf.Map `ebpf:"svc_v4"`
+	SvcV6        *ebpf.Map `ebpf:"svc_v6"`
 }
 
 func (m *kaneaMaps) Close() error {
 	return _KaneaClose(
 		m.AllowV4,
 		m.Config,
+		m.Config6,
 		m.IdentityV4,
+		m.IdentityV6,
 		m.StatsDrops,
+		m.StatsDrops6,
 		m.StatsEp,
+		m.StatsEp6,
 		m.StatsSvc,
 		m.SvcBackends,
+		m.SvcBackends6,
 		m.SvcV4,
+		m.SvcV6,
 	)
 }
 
@@ -214,6 +273,7 @@ type kaneaVariables struct {
 // It can be passed to loadKaneaObjects or ebpf.CollectionSpec.LoadAndAssign.
 type kaneaPrograms struct {
 	KaneaConnect4      *ebpf.Program `ebpf:"kanea_connect4"`
+	KaneaConnect6      *ebpf.Program `ebpf:"kanea_connect6"`
 	KaneaFromContainer *ebpf.Program `ebpf:"kanea_from_container"`
 	KaneaToContainer   *ebpf.Program `ebpf:"kanea_to_container"`
 }
@@ -221,6 +281,7 @@ type kaneaPrograms struct {
 func (p *kaneaPrograms) Close() error {
 	return _KaneaClose(
 		p.KaneaConnect4,
+		p.KaneaConnect6,
 		p.KaneaFromContainer,
 		p.KaneaToContainer,
 	)

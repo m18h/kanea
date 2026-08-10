@@ -19,7 +19,12 @@ import "github.com/cilium/ebpf"
 // Program names in the object, as internal/datapath's loader looks them up.
 // The map names live in dpmap, which is the map contract's home.
 const (
-	ProgConnect4      = "kanea_connect4"
+	ProgConnect4 = "kanea_connect4"
+	// ProgConnect6 is the v6 LB twin (v1.41). It also rewrites v4-mapped
+	// destinations, so it is part of the v4 story on any node whose clients
+	// open AF_INET6 sockets — but its pinned link is created only when v6 is
+	// configured.
+	ProgConnect6      = "kanea_connect6"
 	ProgToContainer   = "kanea_to_container"
 	ProgFromContainer = "kanea_from_container"
 )
