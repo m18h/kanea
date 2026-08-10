@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/net/http2"
+
 	"github.com/m18h/kanea/internal/ratelimit"
 )
 
@@ -88,6 +90,13 @@ const (
 	// typical upstream's own idle timeout, so the edge closes first rather than
 	// racing a server that has already gone away.
 	idleConnTimeout = 60 * time.Second
+
+	// h2cReadIdleTimeout and h2cPingTimeout are the h2c path's liveness (R28).
+	// There is no response-header timeout on that path — x/net exposes one only
+	// through the wrapped h1 transport — so a dead upstream is detected by the
+	// HTTP/2 ping instead, and the PRD states the limit rather than hiding it.
+	h2cReadIdleTimeout = 30 * time.Second
+	h2cPingTimeout     = 15 * time.Second
 )
 
 // NewProxy builds the request path.
@@ -125,11 +134,12 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 	}
 	p.table.Store(EmptyTable())
 
+	dialer := &net.Dialer{
+		Timeout:   cfg.DialTimeout,
+		KeepAlive: 30 * time.Second,
+	}
 	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   cfg.DialTimeout,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		DialContext:           dialer.DialContext,
 		MaxIdleConns:          cfg.MaxIdleConnsPerHost * 8,
 		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
 		IdleConnTimeout:       idleConnTimeout,
@@ -141,9 +151,27 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 		DisableCompression: true,
 	}
 
+	// The h2c transport for grpc-marked routes (R28): plaintext HTTP/2 to the
+	// VIP. AllowHTTP with a TLS dialer that returns a plain connection is
+	// x/net's documented h2c spelling — no TLS is negotiated, and the "http"
+	// scheme the rewrite sets is accepted.
+	h2c := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, addr)
+		},
+		DisableCompression: true,
+		IdleConnTimeout:    idleConnTimeout,
+		ReadIdleTimeout:    h2cReadIdleTimeout,
+		PingTimeout:        h2cPingTimeout,
+	}
+
 	p.rp = &httputil.ReverseProxy{
-		Rewrite:        p.rewrite,
-		Transport:      transport,
+		Rewrite: p.rewrite,
+		// One shared transport per upstream protocol, selected per request:
+		// Rewrite cannot switch transports, and rebuilding one per route would
+		// throw its pool away on every deploy (the routeKey discipline).
+		Transport:      &transportSwitch{h1: transport, h2c: h2c},
 		FlushInterval:  cfg.FlushInterval,
 		ModifyResponse: p.modifyResponse,
 		ErrorHandler:   p.upstreamError,
@@ -176,6 +204,31 @@ func (p *Proxy) SetTable(t *Table) {
 
 // Table returns the table currently serving.
 func (p *Proxy) Table() *Table { return p.table.Load() }
+
+// transportSwitch picks the upstream transport by the matched route (R28).
+//
+// The outbound request is cloned from the inbound context, so the route
+// ServeHTTP stored there is visible here — which is what lets one
+// ReverseProxy carry two transports without a second pool per route.
+type transportSwitch struct {
+	h1, h2c http.RoundTripper
+}
+
+func (t *transportSwitch) RoundTrip(r *http.Request) (*http.Response, error) {
+	if route, ok := routeFrom(r.Context()); ok && route.Protocol == RouteProtocolGRPC {
+		return t.h2c.RoundTrip(r)
+	}
+	return t.h1.RoundTrip(r)
+}
+
+// isGRPCRequest reports whether the request is gRPC on the wire: negotiated
+// HTTP/2 and the gRPC content type. Both are connection facts — the protocol
+// version comes from ALPN, not the request line — and together they bound the
+// places a grpc-specific response or label can appear (§9.1.1).
+func isGRPCRequest(r *http.Request) bool {
+	return r.ProtoMajor == 2 &&
+		strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc")
+}
 
 // routeKey carries the matched route from ServeHTTP to the rewrite hook. A
 // context value rather than a per-route ReverseProxy: one proxy holds one
@@ -271,7 +324,7 @@ func (p *Proxy) serveRoute(w http.ResponseWriter, r *http.Request, route compile
 		return
 	}
 
-	p.applyDeadline(w, r)
+	p.applyDeadline(w, r, route)
 
 	// Body bytes are counted as they are read rather than taken from
 	// Content-Length: a chunked request declares none, and a client that
@@ -297,7 +350,7 @@ func (p *Proxy) serveRoute(w http.ResponseWriter, r *http.Request, route compile
 		Entrypoint:    entrypoint,
 		Status:        recorder.status,
 		Method:        r.Method,
-		Protocol:      protocolOf(r, recorder.hijacked),
+		Protocol:      protocolOf(r, recorder.hijacked, route),
 		Duration:      p.now().Sub(started),
 		Hijacked:      recorder.hijacked,
 		RequestBytes:  body.n.Load(),
@@ -352,10 +405,16 @@ func (p *Proxy) authorize(w http.ResponseWriter, r *http.Request, route compiled
 // connection is a successful upgrade — the only way the edge learns that a
 // request became a websocket, since a hijacked response never calls
 // WriteHeader and would otherwise be recorded as a plain 200.
-func protocolOf(r *http.Request, hijacked bool) string {
+//
+// grpc requires the route's R28 marker AND the wire to agree: the marker is
+// operator-chosen and the version/content-type are connection facts, so the
+// set stays closed. A browser's h2 GET to a grpc route stays https.
+func protocolOf(r *http.Request, hijacked bool, route compiled) string {
 	switch {
 	case hijacked:
 		return ProtocolWebsocket
+	case route.Protocol == RouteProtocolGRPC && isGRPCRequest(r):
+		return ProtocolGRPC
 	case r.TLS != nil:
 		return ProtocolHTTPS
 	default:
@@ -522,11 +581,17 @@ func peerAddr(r *http.Request) netip.Addr {
 // Upgraded connections are exempt for the same reason, with feeling: after the
 // hijack the deadline stays on the raw connection, so a WebSocket would be
 // killed mid-session.
-func (p *Proxy) applyDeadline(w http.ResponseWriter, r *http.Request) {
+//
+// gRPC on a marked route is exempt too (v1.41): a client- or bidi-stream is a
+// request body held open for as long as the call lives, and the slow-body
+// bound would kill it mid-call at the timeout — isUpgrade's reasoning, applied
+// to HTTP/2 streams.
+func (p *Proxy) applyDeadline(w http.ResponseWriter, r *http.Request, route compiled) {
 	rc := http.NewResponseController(w)
 
+	grpcStream := route.Protocol == RouteProtocolGRPC && isGRPCRequest(r)
 	deadline := time.Now().Add(p.bodyTimeout)
-	if isUpgrade(r) || r.ContentLength == 0 || p.bodyTimeout <= 0 {
+	if isUpgrade(r) || grpcStream || r.ContentLength == 0 || p.bodyTimeout <= 0 {
 		// The zero time clears it: whatever deadline the header read left
 		// behind must not leak into a long-lived connection.
 		deadline = time.Time{}
@@ -665,6 +730,20 @@ func (p *Proxy) upstreamError(w http.ResponseWriter, r *http.Request, err error)
 	p.log.Warn("upstream request failed",
 		"service", route.Name(), "upstream", route.Address(),
 		"host", r.Host, "method", r.Method, "error", err)
+
+	// A request that is gRPC on the wire gets the trailers-only refusal:
+	// HTTP 200 with grpc-status UNAVAILABLE in the header frame, which is the
+	// one shape a gRPC client renders as an error instead of as garbage. The
+	// same no-detail discipline as the 502 — status 14 and a generic message,
+	// nothing about the address or the reason.
+	if route.Protocol == RouteProtocolGRPC && isGRPCRequest(r) {
+		h := w.Header()
+		h.Set("Content-Type", "application/grpc")
+		h.Set("Grpc-Status", "14") // UNAVAILABLE
+		h.Set("Grpc-Message", "upstream unavailable")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	http.Error(w, "bad gateway", http.StatusBadGateway)
 }
 

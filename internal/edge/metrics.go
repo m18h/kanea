@@ -62,11 +62,17 @@ func EntrypointForPort(port int) string { return fmt.Sprintf("port-%d", port) }
 
 // Request protocols, derived from the connection rather than read from
 // r.Proto: the request line is the client's to write, and a label taken from it
-// is a label the client chooses.
+// is a label the client chooses. A closed four-value set (§9.1.1): with the
+// nine-method allowlist and lazily created codes, it sits far under
+// maxSeriesPerService, and grpc requires the route marker AND the wire to
+// agree, so no client can mint the fourth value on an unmarked route.
 const (
 	ProtocolHTTP      = "http"
 	ProtocolHTTPS     = "https"
 	ProtocolWebsocket = "websocket"
+	// ProtocolGRPC is a request on an R28-marked route that is gRPC on the
+	// wire: negotiated HTTP/2 + the application/grpc content type (v1.41).
+	ProtocolGRPC = "grpc"
 )
 
 // Refusal reasons. A closed set, so no cap is needed on this dimension —
