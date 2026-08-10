@@ -1,10 +1,46 @@
 package dpmap
 
+import "net/netip"
+
 // Backend is one member of a service's backend set, in the order the flip
 // writes it: index i of generation g lands at backend_key{svc, i, g}.
+//
+// The address is a netip.Addr rather than wire bytes (v1.41): the flip plan
+// is family-neutral — backend_key is shared between svc_backends and
+// svc_backends6 — and the executor marshals the value for whichever map the
+// service key's family selects.
 type Backend struct {
-	IP   [4]byte // network order
-	Port uint16  // host value; encoded big-endian on the wire
+	IP   netip.Addr
+	Port uint16 // host value; encoded big-endian on the wire
+}
+
+// SvcAddr is the Go-side, family-neutral identity of one service frontend
+// (v1.41). The executor renders it as a SvcKey or SvcKey6 by its family;
+// the applied-cache and the seam speak this type so one sync loop serves
+// both maps.
+type SvcAddr struct {
+	IP    netip.Addr
+	Port  uint16
+	Proto uint8
+}
+
+// Key4 renders the v4 map key. The caller has checked the family.
+func (a SvcAddr) Key4() SvcKey {
+	return SvcKey{VIP: a.IP.As4(), Port: a.Port, Proto: a.Proto}
+}
+
+// Key6 renders the v6 map key. The caller has checked the family.
+func (a SvcAddr) Key6() SvcKey6 {
+	return SvcKey6{VIP: a.IP.As16(), Port: a.Port, Proto: a.Proto}
+}
+
+// DropEntry is one drop counter's identity across both families (v1.41):
+// stats_drops and stats_drops6 merge into one view keyed by address and
+// reason, because a reader attributing drops to services does not care which
+// header version carried the refused packet.
+type DropEntry struct {
+	Addr   netip.Addr
+	Reason uint8
 }
 
 // Pick is the userspace reference of the datapath's backend selection:
@@ -41,11 +77,13 @@ const (
 
 // Op is one map operation of a generation flip, in a form neutral enough
 // for the linux writer to execute against the kernel maps and for tests to
-// execute against a model.
+// execute against a model. Val carries the family-neutral Backend; the
+// executor marshals it as backend_val or backend_val6 to match the service
+// key's family.
 type Op struct {
 	Kind OpKind
 	Key  BackendKey // put and delete
-	Val  BackendVal // put only
+	Val  Backend    // put only
 	Svc  SvcVal     // commit only
 }
 
@@ -73,7 +111,7 @@ func FlipPlan(svcID uint16, current, next []Backend, oldGen uint32) []Op {
 		ops = append(ops, Op{
 			Kind: OpPutBackend,
 			Key:  BackendKey{SvcID: svcID, Index: uint16(i), Gen: newGen}, // #nosec G115 — bounded as above
-			Val:  BackendVal(b),
+			Val:  b,
 		})
 	}
 

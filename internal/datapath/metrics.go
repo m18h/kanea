@@ -13,10 +13,16 @@ import (
 // Store (constraint #2).
 type Counters interface {
 	// ServiceConnects returns cumulative connect counts per frontend id.
+	// stats_svc is id-keyed and family-neutral, so a connect to a v6 VIP
+	// counts against the same frontend as its v4 twin — which is what keeps
+	// function invocation metrics whole under dual-stack (v1.41).
 	ServiceConnects() (map[uint16]uint64, error)
-	// Drops returns cumulative drop counts per destination and reason.
-	Drops() (map[dpmap.DropKey]uint64, error)
-	// EndpointStats returns cumulative per-alloc byte/packet counters.
+	// Drops returns cumulative drop counts per destination and reason,
+	// merged across stats_drops and stats_drops6 — the address carries the
+	// family.
+	Drops() (map[dpmap.DropEntry]uint64, error)
+	// EndpointStats returns cumulative per-alloc byte/packet counters,
+	// merged across stats_ep and stats_ep6.
 	EndpointStats() (map[netip.Addr]dpmap.EpStats, error)
 }
 
@@ -53,7 +59,7 @@ func (s *CounterSource) ServiceConnects(ctx context.Context) (map[string]uint64,
 
 // Drops returns cumulative drops per destination address and reason, exactly
 // as the datapath counted them.
-func (s *CounterSource) Drops() (map[dpmap.DropKey]uint64, error) {
+func (s *CounterSource) Drops() (map[dpmap.DropEntry]uint64, error) {
 	return s.counters.Drops()
 }
 

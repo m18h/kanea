@@ -256,7 +256,11 @@ type hclExpose struct {
 	RateLimit     *hclRateLimit     `hcl:"rate_limit,block"`
 	Headers       *hclHeaders       `hcl:"headers,block"`
 	// Auth is R27 (v1.40): request authentication, every field a reference.
-	Auth     *hclAuth  `hcl:"auth,block"`
+	Auth *hclAuth `hcl:"auth,block"`
+	// Protocol is R28 (v1.41): how the edge dials the upstream. Deliberately
+	// absent from hclTrigger — wasi-http is HTTP/1.1, and the missing field is
+	// the refusal (R25's pattern).
+	Protocol string    `hcl:"protocol,optional"`
 	DefRange hcl.Range `hcl:",def_range"`
 }
 
@@ -708,6 +712,12 @@ func convertPublish(p *hclPublish) *Publish {
 
 func convertExpose(e *hclExpose) *Expose {
 	out := &Expose{Domains: e.Domains, Auth: convertAuth(e.Auth), DefRange: e.DefRange}
+	// "http" is the default made explicit; normalizing it here keeps every
+	// consumer to one spelling of "no marker". Unknown values travel through
+	// so validation can refuse them with a diagnostic instead of a shrug.
+	if out.Protocol = e.Protocol; out.Protocol == ExposeProtocolHTTP {
+		out.Protocol = ""
+	}
 	if e.TLS != nil {
 		out.TLS = &TLS{
 			Mode: e.TLS.Mode, Name: e.TLS.Name,

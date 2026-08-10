@@ -27,7 +27,7 @@ func New(cfg Config) (*Datapath, error) {
 	if cfg.BPFDir == "" {
 		cfg.BPFDir = dpmap.PinRoot
 	}
-	coll, err := openObjects(cfg.BPFDir)
+	coll, err := openObjects(cfg.BPFDir, cfg.ServiceCIDR6.IsValid())
 	if err != nil {
 		return nil, err
 	}
@@ -36,6 +36,10 @@ func New(cfg Config) (*Datapath, error) {
 		serviceCIDR:   cfg.ServiceCIDR.Masked(),
 		toContainer:   coll.Programs[bpf.ProgToContainer],
 		fromContainer: coll.Programs[bpf.ProgFromContainer],
+	}
+	if cfg.ServiceCIDR6.IsValid() {
+		nl.serviceCIDR6 = cfg.ServiceCIDR6.Masked()
+		nl.clusterCIDR6 = cfg.ClusterCIDR6.Masked()
 	}
 	d, err := newDatapath(cfg, seams{nl: nl, maps: km, fw: nftFirewall{}, netns: hostNetns{}, counters: km})
 	if err != nil {
@@ -51,7 +55,7 @@ func New(cfg Config) (*Datapath, error) {
 // is deleted and recreated — safe because established flows bypass the maps
 // (PRD v1.36), and the first reconcile pass repopulates everything (the state
 // is derived; nothing under the pin root is ever backed up).
-func openObjects(dir string) (*ebpf.Collection, error) {
+func openObjects(dir string, v6 bool) (*ebpf.Collection, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("datapath: pin dir %s: %w", dir, err)
 	}
@@ -71,7 +75,8 @@ func openObjects(dir string) (*ebpf.Collection, error) {
 		return nil, fmt.Errorf("datapath: load bpf objects: %w", err)
 	}
 
-	for _, name := range []string{bpf.ProgConnect4, bpf.ProgToContainer, bpf.ProgFromContainer} {
+	progs := []string{bpf.ProgConnect4, bpf.ProgConnect6, bpf.ProgToContainer, bpf.ProgFromContainer}
+	for _, name := range progs {
 		prog := coll.Programs[name]
 		if prog == nil {
 			coll.Close()
@@ -90,11 +95,43 @@ func openObjects(dir string) (*ebpf.Collection, error) {
 		}
 	}
 
-	if err := ensureConnectLink(dir, coll.Programs[bpf.ProgConnect4]); err != nil {
+	if err := ensureConnectLink(dir, "link_connect4", ebpf.AttachCGroupInet4Connect,
+		coll.Programs[bpf.ProgConnect4]); err != nil {
+		coll.Close()
+		return nil, err
+	}
+	if v6 {
+		if err := ensureConnectLink(dir, "link_connect6", ebpf.AttachCGroupInet6Connect,
+			coll.Programs[bpf.ProgConnect6]); err != nil {
+			coll.Close()
+			return nil, err
+		}
+	} else if err := removeStaleLink(filepath.Join(dir, "link_connect6")); err != nil {
+		// A node whose v6 was turned off must not keep rewriting AF_INET6
+		// dials against maps nothing repopulates.
 		coll.Close()
 		return nil, err
 	}
 	return coll, nil
+}
+
+// removeStaleLink detaches a pinned link left behind by a configuration this
+// process no longer runs. Absent is success.
+func removeStaleLink(pin string) error {
+	l, err := link.LoadPinnedLink(pin, nil)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("datapath: open stale pin %s: %w", pin, err)
+	}
+	if err := l.Unpin(); err != nil {
+		return fmt.Errorf("datapath: unpin %s: %w", pin, err)
+	}
+	if err := l.Close(); err != nil {
+		return fmt.Errorf("datapath: close stale link %s: %w", pin, err)
+	}
+	return nil
 }
 
 // loadPinned loads the collection with PinByName under dir.
@@ -111,27 +148,28 @@ func loadPinned(dir string) (*ebpf.Collection, error) {
 	})
 }
 
-// ensureConnectLink holds kanea_connect4 at the root cgroup through a pinned
-// bpf_link: a surviving pin is updated in place (the attachment never lapses
-// across a kanead restart), a missing one is attached fresh and pinned.
-func ensureConnectLink(dir string, prog *ebpf.Program) error {
-	pin := filepath.Join(dir, "link_connect4")
+// ensureConnectLink holds a connect program at the root cgroup through a
+// pinned bpf_link: a surviving pin is updated in place (the attachment never
+// lapses across a kanead restart), a missing one is attached fresh and
+// pinned. Serves connect4 always and connect6 when dual-stack is configured.
+func ensureConnectLink(dir, pinName string, attach ebpf.AttachType, prog *ebpf.Program) error {
+	pin := filepath.Join(dir, pinName)
 	if l, err := link.LoadPinnedLink(pin, nil); err == nil {
 		if err := l.Update(prog); err != nil {
-			return fmt.Errorf("datapath: update connect4 link: %w", err)
+			return fmt.Errorf("datapath: update %s: %w", pinName, err)
 		}
 		return nil
 	}
 	l, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroupRoot,
-		Attach:  ebpf.AttachCGroupInet4Connect,
+		Attach:  attach,
 		Program: prog,
 	})
 	if err != nil {
-		return fmt.Errorf("datapath: attach connect4 at %s: %w", cgroupRoot, err)
+		return fmt.Errorf("datapath: attach %s at %s: %w", pinName, cgroupRoot, err)
 	}
 	if err := l.Pin(pin); err != nil {
-		wrapped := fmt.Errorf("datapath: pin connect4 link: %w", err)
+		wrapped := fmt.Errorf("datapath: pin %s: %w", pinName, err)
 		if closeErr := l.Close(); closeErr != nil {
 			return errors.Join(wrapped, closeErr)
 		}

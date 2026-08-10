@@ -255,6 +255,9 @@ jobs:
         uses: gitleaks/gitleaks-action@v3
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
+          # The action requires the token on pull_request events to resolve
+          # the commit range; the default workflow token is enough.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dashboard:
     name: Dashboard — lint, typecheck, test, build, audit

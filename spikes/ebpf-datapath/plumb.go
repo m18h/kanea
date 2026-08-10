@@ -21,6 +21,24 @@ func ipnet32(ip net.IP) *net.IPNet {
 	return &net.IPNet{IP: ip.To4(), Mask: net.CIDRMask(32, 32)}
 }
 
+// deterministicMAC builds a locally-administered unicast MAC from a lead byte
+// and the four bytes of a v4 address: lead:00:a:b:c:d. Locally-administered
+// (bit 1 of the first octet set — 0x02/0x06 both qualify) and unicast (bit 0
+// clear), unique per pod, and distinct for the two ends via the lead byte.
+// The point is that it is CHOSEN, not read: see createPod's MAC comment.
+func deterministicMAC(lead byte, ip net.IP) net.HardwareAddr {
+	v4 := ip.To4()
+	return net.HardwareAddr{lead, 0x00, v4[0], v4[1], v4[2], v4[3]}
+}
+
+// settleUdev waits for udev's event queue to drain so its MACAddressPolicy has
+// finished applying to a freshly created interface. Best-effort: on a host
+// without a running udevd it returns quickly, which is the correct behaviour
+// there (nothing will clobber the MAC).
+func settleUdev() {
+	_ = exec.Command("udevadm", "settle", "--timeout=5").Run()
+}
+
 func mustCIDR(s string) *net.IPNet {
 	_, n, err := net.ParseCIDR(s)
 	if err != nil {
@@ -70,10 +88,30 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 	if err := netlink.LinkAdd(veth); err != nil {
 		return nil, fmt.Errorf("veth add %s: %w", p.veth, err)
 	}
+	// Let udev finish processing the veth's "add" event before we touch its
+	// MAC: MACAddressPolicy is applied asynchronously on add, so a MAC we set
+	// (or read) before udev settles can be clobbered afterwards. After settle
+	// the queue is empty and our explicit address below is final. (`up` does
+	// not re-trigger the policy — only "add" does.)
+	settleUdev()
 	host, err := netlink.LinkByName(p.veth)
 	if err != nil {
 		return nil, err
 	}
+	// Deterministic, explicitly-set MACs — NOT the kernel's creation-time
+	// random ones. On a systemd host, 99-default.link's MACAddressPolicy
+	// generates and applies a fresh MAC to a virtual device *asynchronously*
+	// after it appears, so a MAC read at creation is stale by the time traffic
+	// flows and the PERMANENT neighbors built from it point at an address
+	// nothing answers to — every packet dropped silently at L2. Because we
+	// CHOOSE the addresses (deterministically from the pod IP) the neighbor
+	// entries can be programmed up front; the interfaces are made to carry
+	// them at the last moment (the host side right before it comes up, the
+	// peer inside its fresh netns) so udev's async policy cannot clobber the
+	// value between assignment and use. This is the datapath's bug too, not
+	// just the spike's — see REPORT.md check 4 / the MAC finding.
+	hostMAC := deterministicMAC(0x02, p.ip)
+	peerMAC := deterministicMAC(0x06, p.ip)
 	// Host side stays DOWN until the very end; the alias is the marker the
 	// real datapath uses to find its interfaces again after a restart.
 	if err := netlink.LinkSetAlias(host, fmt.Sprintf("kanea/%s/%s", id, p.ip)); err != nil {
@@ -89,7 +127,6 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 	if err != nil {
 		return nil, err
 	}
-	peerMAC := peer.Attrs().HardwareAddr
 	if err := netlink.LinkSetNsFd(peer, int(nsh)); err != nil {
 		return nil, fmt.Errorf("move %s into %s: %w", peerName, p.ns, err)
 	}
@@ -104,6 +141,11 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 	eth0, err := nl.LinkByName("eth0")
 	if err != nil {
 		return nil, err
+	}
+	// The peer's MAC is set inside the fresh netns, where no MACAddressPolicy
+	// runs — so the value we chose is the value it keeps.
+	if err := nl.LinkSetHardwareAddr(eth0, peerMAC); err != nil {
+		return nil, fmt.Errorf("set peer mac: %w", err)
 	}
 	lo, err := nl.LinkByName("lo")
 	if err == nil {
@@ -133,16 +175,30 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 		return nil, fmt.Errorf("default route: %w", err)
 	}
 
-	// Static PERMANENT neighbors both directions: no ARP on the pair, ever
-	// (and check 7 verifies that survives strict rp_filter).
+	// The in-ns gateway neighbor (eth0 is already up), from the host MAC we
+	// chose above — no ARP on this pair, ever.
 	if err := nl.NeighAdd(&netlink.Neigh{
 		LinkIndex:    eth0.Attrs().Index,
 		IP:           gw,
-		HardwareAddr: host.Attrs().HardwareAddr,
+		HardwareAddr: hostMAC,
 		State:        netlink.NUD_PERMANENT,
 	}); err != nil {
 		return nil, fmt.Errorf("in-ns neigh: %w", err)
 	}
+
+	// Set the host side's chosen MAC and bring it up in immediate succession —
+	// the narrowest possible window for udev's async policy to clobber it.
+	if err := netlink.LinkSetHardwareAddr(host, hostMAC); err != nil {
+		return nil, fmt.Errorf("set host mac: %w", err)
+	}
+	if err := netlink.LinkSetUp(host); err != nil {
+		return nil, err
+	}
+
+	// The host->pod PERMANENT neighbor goes in AFTER the host veth is up: a
+	// neighbor added to a down device does not reliably stay NUD_PERMANENT —
+	// the kernel re-resolves it via ARP once the link carries traffic, which
+	// defeats the point of a static entry (check 7c).
 	if err := netlink.NeighAdd(&netlink.Neigh{
 		LinkIndex:    host.Attrs().Index,
 		IP:           p.ip,
@@ -152,11 +208,8 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 		return nil, fmt.Errorf("host neigh: %w", err)
 	}
 
-	// LAST: host side up, then the /32 host route with the gateway address
-	// as preferred source (host->pod traffic must carry a HOST identity).
-	if err := netlink.LinkSetUp(host); err != nil {
-		return nil, err
-	}
+	// LAST: the /32 host route with the gateway address as preferred source
+	// (host->pod traffic must carry a HOST identity).
 	if err := netlink.RouteAdd(&netlink.Route{
 		LinkIndex: host.Attrs().Index,
 		Dst:       ipnet32(p.ip),
@@ -267,8 +320,15 @@ func findUplink(e *env) error {
 		return err
 	}
 	for _, r := range routes {
-		if r.Dst != nil || r.Gw == nil {
+		if r.Gw == nil {
 			continue
+		}
+		// A default route's Dst is nil on older netlink versions and the
+		// explicit 0.0.0.0/0 on newer ones; both spell "default".
+		if r.Dst != nil {
+			if ones, _ := r.Dst.Mask.Size(); ones != 0 {
+				continue
+			}
 		}
 		link, err := netlink.LinkByIndex(r.LinkIndex)
 		if err != nil {

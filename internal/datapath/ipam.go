@@ -11,30 +11,46 @@ import (
 // safe.
 const devPrefix = "kn"
 
-// aliasPrefix opens every ownership alias: "kanea/<allocID>/<ip>".
+// aliasPrefix opens every ownership alias: "kanea/<allocID>/<v4>" or, since
+// v1.41, "kanea/<allocID>/<v4>,<v6>". The v4-only form must stay parseable
+// forever — it is the durable record written by nodes that predate
+// dual-stack, and a live upgrade adopts it rather than re-plumbing.
 const aliasPrefix = "kanea/"
 
-// aliasFor renders the ownership alias for an attachment.
-func aliasFor(allocID string, ip netip.Addr) string {
-	return aliasPrefix + allocID + "/" + ip.String()
+// aliasFor renders the ownership alias for an attachment. A zero ip6 renders
+// the pre-v1.41 v4-only form, byte-identical.
+func aliasFor(allocID string, ip netip.Addr, ip6 netip.Addr) string {
+	if !ip6.IsValid() {
+		return aliasPrefix + allocID + "/" + ip.String()
+	}
+	return aliasPrefix + allocID + "/" + ip.String() + "," + ip6.String()
 }
 
 // parseAlias reads an ownership alias back. Anything that does not parse is
-// not ours, whatever the interface is called.
-func parseAlias(alias string) (allocID string, ip netip.Addr, ok bool) {
+// not ours, whatever the interface is called. A missing v6 half returns the
+// zero Addr — the v4-only aliases of pre-v1.41 nodes.
+func parseAlias(alias string) (allocID string, ip netip.Addr, ip6 netip.Addr, ok bool) {
 	rest, found := strings.CutPrefix(alias, aliasPrefix)
 	if !found {
-		return "", netip.Addr{}, false
+		return "", netip.Addr{}, netip.Addr{}, false
 	}
 	id, ipStr, found := strings.Cut(rest, "/")
 	if !found || id == "" {
-		return "", netip.Addr{}, false
+		return "", netip.Addr{}, netip.Addr{}, false
 	}
-	addr, err := netip.ParseAddr(ipStr)
+	v4Str, v6Str, hasV6 := strings.Cut(ipStr, ",")
+	addr, err := netip.ParseAddr(v4Str)
 	if err != nil || !addr.Is4() {
-		return "", netip.Addr{}, false
+		return "", netip.Addr{}, netip.Addr{}, false
 	}
-	return id, addr, true
+	if hasV6 {
+		addr6, err := netip.ParseAddr(v6Str)
+		if err != nil || !addr6.Is6() || addr6.Is4In6() {
+			return "", netip.Addr{}, netip.Addr{}, false
+		}
+		return id, addr, addr6, true
+	}
+	return id, addr, netip.Addr{}, true
 }
 
 // ipam hands out alloc addresses from the node CIDR. It is deliberately not
@@ -52,13 +68,19 @@ type ipam struct {
 
 func newIPAM(nodeCIDR netip.Prefix) *ipam {
 	masked := nodeCIDR.Masked()
-	return &ipam{
-		prefix:    masked,
-		host:      masked.Addr().Next(),
-		broadcast: broadcastOf(masked),
-		byIP:      map[netip.Addr]string{},
-		byAlloc:   map[string]netip.Addr{},
+	p := &ipam{
+		prefix:  masked,
+		host:    masked.Addr().Next(),
+		byIP:    map[netip.Addr]string{},
+		byAlloc: map[string]netip.Addr{},
 	}
+	// Only v4 has a broadcast address. For v6 the zero Addr never equals a
+	// valid address, so Reserve's skip is inert — and the network address
+	// (the subnet-router anycast) is already skipped by starting at Next().
+	if masked.Addr().Is4() {
+		p.broadcast = broadcastOf(masked)
+	}
+	return p
 }
 
 // Reserve returns the alloc's address, allocating the lowest free one if it
@@ -112,7 +134,9 @@ func (p *ipam) Len() int { return len(p.byAlloc) }
 
 // Rebuild replaces the reservation state with what the marked veths say.
 // Aliases that do not parse, or addresses outside the pool, are ignored: they
-// are not ours to account for.
+// are not ours to account for. One ipam instance adopts whichever half of a
+// dual alias falls inside its own prefix — per family, not fatally — so a
+// v4-only alias on a dual-stack node rebuilds its v4 half and nothing else.
 func (p *ipam) Rebuild(links []Link) {
 	p.byIP = map[netip.Addr]string{}
 	p.byAlloc = map[string]netip.Addr{}
@@ -120,12 +144,17 @@ func (p *ipam) Rebuild(links []Link) {
 		if !strings.HasPrefix(l.Name, devPrefix) {
 			continue
 		}
-		allocID, ip, ok := parseAlias(l.Alias)
-		if !ok || !p.prefix.Contains(ip) {
+		allocID, ip, ip6, ok := parseAlias(l.Alias)
+		if !ok {
 			continue
 		}
-		p.byIP[ip] = allocID
-		p.byAlloc[allocID] = ip
+		for _, addr := range []netip.Addr{ip, ip6} {
+			if !addr.IsValid() || !p.prefix.Contains(addr) {
+				continue
+			}
+			p.byIP[addr] = allocID
+			p.byAlloc[allocID] = addr
+		}
 	}
 }
 

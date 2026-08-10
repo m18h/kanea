@@ -103,7 +103,7 @@ func newTestInvoker(t *testing.T, src Source, publish func(notify.Event)) *Invok
 }
 
 func TestEventTriggerInvokesWithTheEventBody(t *testing.T) {
-	cap, url := newCapture(t)
+	captured, url := newCapture(t)
 	src := &fakeSource{}
 	src.set(Target{
 		Project: "shop", Service: "fanout", BaseURL: url,
@@ -118,7 +118,7 @@ func TestEventTriggerInvokesWithTheEventBody(t *testing.T) {
 	event := notify.NewEvent(notify.EventDeployFailed, "shop", "web", "deploy failed", time.Now())
 	inv.Record(ctx, event)
 
-	got := cap.wait(t)
+	got := captured.wait(t)
 	if got.path != "/kanea/event" || got.trigger != "event" {
 		t.Fatalf("invocation = %q trigger %q, want /kanea/event event", got.path, got.trigger)
 	}
@@ -148,7 +148,7 @@ func TestEventTriggerInvokesWithTheEventBody(t *testing.T) {
 // An event that matches no trigger invokes nothing — and a function.* event
 // invokes nothing whatever the filters say (R26's runtime half).
 func TestLoopGuardSkipsFunctionEvents(t *testing.T) {
-	cap, url := newCapture(t)
+	captured, url := newCapture(t)
 	src := &fakeSource{}
 	src.set(Target{
 		Project: "shop", Service: "fanout", BaseURL: url,
@@ -167,22 +167,22 @@ func TestLoopGuardSkipsFunctionEvents(t *testing.T) {
 	// first was skipped rather than still queued.
 	inv.Record(ctx, notify.NewEvent(notify.EventDeployFailed, "shop", "web", "x", time.Now()))
 
-	got := cap.wait(t)
+	got := captured.wait(t)
 	var delivered notify.Event
 	_ = json.Unmarshal(got.body, &delivered)
 	if delivered.Name != notify.EventDeployFailed {
 		t.Fatalf("delivered %q; the function.* event should have been skipped", delivered.Name)
 	}
-	if cap.count() != 1 {
-		t.Fatalf("hits = %d, want 1", cap.count())
+	if captured.count() != 1 {
+		t.Fatalf("hits = %d, want 1", captured.count())
 	}
 }
 
 // Retries are bounded, and exhausting them emits function.invoke_failed — the
 // error event, not one per attempt.
 func TestExhaustedRetriesEmitInvokeFailed(t *testing.T) {
-	cap, url := newCapture(t)
-	cap.status = http.StatusInternalServerError
+	captured, url := newCapture(t)
+	captured.status = http.StatusInternalServerError
 
 	var mu sync.Mutex
 	var published []notify.Event
@@ -220,8 +220,8 @@ func TestExhaustedRetriesEmitInvokeFailed(t *testing.T) {
 		}
 	}
 
-	if cap.count() != DefaultMaxAttempts {
-		t.Fatalf("attempts = %d, want %d", cap.count(), DefaultMaxAttempts)
+	if captured.count() != DefaultMaxAttempts {
+		t.Fatalf("attempts = %d, want %d", captured.count(), DefaultMaxAttempts)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -255,7 +255,7 @@ func TestRecordIsNonBlockingAndCountsDrops(t *testing.T) {
 // A cron whose time has come fires once and re-arms from now — a tick the
 // daemon slept through is skipped, never replayed.
 func TestCronFiresAndSkipsMissedTicks(t *testing.T) {
-	cap, url := newCapture(t)
+	captured, url := newCapture(t)
 	src := &fakeSource{}
 	src.set(Target{
 		Project: "shop", Service: "nightly", BaseURL: url,
@@ -284,7 +284,7 @@ func TestCronFiresAndSkipsMissedTicks(t *testing.T) {
 
 	// Nothing due yet.
 	inv.fireDueCrons(ctx)
-	if cap.count() != 0 {
+	if captured.count() != 0 {
 		t.Fatal("fired before the schedule")
 	}
 
@@ -294,22 +294,22 @@ func TestCronFiresAndSkipsMissedTicks(t *testing.T) {
 	clock.Unlock()
 	inv.fireDueCrons(ctx)
 
-	got := cap.wait(t)
+	got := captured.wait(t)
 	if got.path != "/nightly" || got.trigger != "cron" {
 		t.Fatalf("cron invocation = %+v", got)
 	}
 	// Wait out any stragglers, then confirm a single delivery.
 	time.Sleep(50 * time.Millisecond)
-	if cap.count() != 1 {
-		t.Fatalf("hits = %d, want 1 — missed ticks are skipped, not replayed", cap.count())
+	if captured.count() != 1 {
+		t.Fatalf("hits = %d, want 1 — missed ticks are skipped, not replayed", captured.count())
 	}
 
 	// The schedule re-armed against the new now, so an immediate re-check
 	// fires nothing.
 	inv.fireDueCrons(ctx)
 	time.Sleep(50 * time.Millisecond)
-	if cap.count() != 1 {
-		t.Fatalf("hits = %d after re-check, want 1", cap.count())
+	if captured.count() != 1 {
+		t.Fatalf("hits = %d after re-check, want 1", captured.count())
 	}
 }
 
@@ -363,7 +363,7 @@ func (f fakeResolver) Resolve(context.Context, string) ([]byte, error) {
 // verifies over the exact body sent — a function verifies it the same way it
 // verifies a Kanea webhook.
 func TestSignedInvocation(t *testing.T) {
-	cap, url := newCapture(t)
+	captured, url := newCapture(t)
 	secret := []byte("a-shared-signing-secret")
 	src := &fakeSource{}
 	src.set(Target{
@@ -383,7 +383,7 @@ func TestSignedInvocation(t *testing.T) {
 	go func() { _ = inv.Run(ctx) }()
 
 	inv.Record(ctx, notify.NewEvent(notify.EventDeployFailed, "shop", "web", "x", time.Now()))
-	got := cap.wait(t)
+	got := captured.wait(t)
 
 	ts := got.header(notify.TimestampHeader)
 	sig := got.header(notify.SignatureHeader)
@@ -398,7 +398,7 @@ func TestSignedInvocation(t *testing.T) {
 // A signing_ref that will not resolve fails the invocation rather than
 // sending unsigned (R26): a dropped control must not look like a delivery.
 func TestSigningFailureDropsRatherThanSendsUnsigned(t *testing.T) {
-	cap, url := newCapture(t)
+	captured, url := newCapture(t)
 	var published []notify.Event
 	var mu sync.Mutex
 
@@ -425,8 +425,8 @@ func TestSigningFailureDropsRatherThanSendsUnsigned(t *testing.T) {
 	inv.reload(ctx)
 	inv.invoke(ctx, src.targets[0], "/", "event", []byte("{}"))
 
-	if cap.count() != 0 {
-		t.Fatalf("an unsigned POST was sent %d times; it should have been dropped", cap.count())
+	if captured.count() != 0 {
+		t.Fatalf("an unsigned POST was sent %d times; it should have been dropped", captured.count())
 	}
 	mu.Lock()
 	defer mu.Unlock()

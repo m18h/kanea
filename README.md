@@ -19,7 +19,7 @@ real-time **shadcn/ui dashboard**, an **MCP server** for AI agents, **GitOps
 pipelines** (rootless BuildKit), **eBPF-driven autoscaling**, and **encrypted
 S3-backed state replication** with backup and restore.
 
-📖 **[Website →](https://m18h.github.io/kanea/)** · [PRD](./PRD.md) · [Threat model](./docs/THREAT_MODEL.md) · [DR runbook](./docs/DR_RUNBOOK.md)
+**[Website](https://m18h.github.io/kanea/)** · [PRD](./PRD.md) · [Threat model](./docs/THREAT_MODEL.md) · [DR runbook](./docs/DR_RUNBOOK.md)
 
 ## Install
 
@@ -175,6 +175,20 @@ If your LAN already uses `10.244.0.0/16`, move Kanea's:
 ```bash
 sudo kanea init --node-cidr 10.90.0.0/24 --cluster-cidr 10.90.0.0/16
 ```
+
+Internal IPv6 is opt-in dual-stack: pass all three `*6` flags (they come as a
+trio, ULA addressing recommended) and every alloc gets a v6 address beside its
+v4, every service VIP gets a v6 twin, and the internal DNS answers AAAA:
+
+```bash
+sudo kanea init --node-cidr6 fd10:244::/64 --cluster-cidr6 fd10:244::/56 \
+  --service-cidr6 fd10:245::/64
+```
+
+It is internal only — allocs get no v6 default route, so external IPv6 fails
+fast and clients fall back to v4. A gRPC service is exposed by marking its
+`expose` block with `protocol = "grpc"`; the edge then speaks HTTP/2 to it
+end-to-end (TLS on :443 in front, h2c behind). WebSockets need nothing at all.
 
 `kanea doctor` verifies the node at any time — components, versions against the
 pinned matrix, bpffs, disk and clock. `kanea install --list` prints what is

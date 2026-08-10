@@ -100,6 +100,13 @@ func TestPublishRefusesAnInvalidSnapshot(t *testing.T) {
 		{"no service", Snapshot{Routes: []Route{{
 			Domains: []string{"a.example.com"}, Upstream: "10.201.0.1", Port: 80,
 		}}}, "no project or service"},
+		// R28's closed set, both sides: an unknown transport fails the publish
+		// rather than reaching an edge that would dial HTTP/1.1 under a
+		// different name.
+		{"unknown protocol", Snapshot{Routes: []Route{{
+			Project: "shop", Service: "web", Domains: []string{"a.example.com"},
+			Upstream: "10.201.0.1", Port: 80, Protocol: "quic",
+		}}}, "protocol"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,5 +180,34 @@ func TestSnapshotPath(t *testing.T) {
 	}
 	if filepath.Dir(DefaultSnapshotPath) == "/var/lib/kanea" {
 		t.Error("the default snapshot path is inside the state directory")
+	}
+}
+
+// omitempty is load-bearing (v1.41, the R23 lesson applied to the snapshot):
+// a snapshot with no protocol markers must serialize byte-identically to what
+// a pre-v1.41 kanead wrote, so an older edge polling the file parses an
+// unchanged stream and a newer one reads old files without a migration.
+func TestSnapshotWithoutProtocolIsByteIdenticalToPreV141(t *testing.T) {
+	raw, err := json.Marshal(testRoute())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "protocol") {
+		t.Errorf("a route with no protocol serialized the field anyway: %s", raw)
+	}
+
+	// And a grpc marker round-trips.
+	r := testRoute()
+	r.Protocol = RouteProtocolGRPC
+	raw, err = json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Route
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Protocol != RouteProtocolGRPC {
+		t.Errorf("protocol did not round-trip: %+v", back)
 	}
 }

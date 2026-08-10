@@ -72,26 +72,42 @@ func (d *Datapath) Attach(ctx context.Context, spec runtime.AllocSpec) error {
 	if err != nil {
 		return err
 	}
+	var ip6 netip.Addr
+	if d.ipam6 != nil {
+		if ip6, err = d.ipam6.Reserve(spec.ID); err != nil {
+			d.ipam.Release(spec.ID)
+			return err
+		}
+	}
 
-	if err := d.plumb(spec, host, ip, identity); err != nil {
-		d.teardownPartial(spec.ID, host, ip)
+	if err := d.plumb(spec, host, ip, ip6, identity); err != nil {
+		d.teardownPartial(spec.ID, host, ip, ip6)
 		return err
 	}
 
 	d.log.Info("alloc attached",
 		"alloc", spec.ID, "project", spec.Project, "service", spec.Service,
-		"ip", ip, "dev", host)
+		"ip", ip, "ip6", ip6, "dev", host)
 	return nil
 }
 
-// plumb performs the attach steps in their load-bearing order.
-func (d *Datapath) plumb(spec runtime.AllocSpec, host string, ip netip.Addr, identity dpmap.Identity) error {
+// plumb performs the attach steps in their load-bearing order. The v6 half
+// (a zero ip6 means v4-only) rides inside the same steps rather than adding
+// new ones: identities for both families land before the veth exists, the
+// peer's addresses and neighbors for both are configured before the link
+// comes up, and the host routes stay last.
+func (d *Datapath) plumb(spec runtime.AllocSpec, host string, ip, ip6 netip.Addr, identity dpmap.Identity) error {
 	// Identity first: from the moment the veth exists, the tc program answers
 	// for it, and an identity miss is a drop.
 	if err := d.maps.PutIdentity(ip, identity); err != nil {
 		return fmt.Errorf("datapath: identity for %s: %w", spec.ID, err)
 	}
-	hostMAC, peerMAC, err := d.nl.CreateVeth(host, peerDevName(spec.ID), aliasFor(spec.ID, ip))
+	if ip6.IsValid() {
+		if err := d.maps.PutIdentity(ip6, identity); err != nil {
+			return fmt.Errorf("datapath: v6 identity for %s: %w", spec.ID, err)
+		}
+	}
+	hostMAC, peerMAC, err := d.nl.CreateVeth(host, peerDevName(spec.ID), aliasFor(spec.ID, ip, ip6))
 	if err != nil {
 		return fmt.Errorf("datapath: veth for %s: %w", spec.ID, err)
 	}
@@ -106,27 +122,38 @@ func (d *Datapath) plumb(spec runtime.AllocSpec, host string, ip netip.Addr, ide
 	if err := d.nl.MovePeer(peerDevName(spec.ID), netnsPath); err != nil {
 		return fmt.Errorf("datapath: move peer for %s: %w", spec.ID, err)
 	}
-	if err := d.nl.ConfigurePeer(netnsPath, ip, d.hostIP, hostMAC); err != nil {
+	if err := d.nl.ConfigurePeer(netnsPath, ip, d.hostIP, ip6, d.hostIP6, hostMAC); err != nil {
 		return fmt.Errorf("datapath: configure peer for %s: %w", spec.ID, err)
 	}
-	if err := d.nl.SetHostUp(host, ip, peerMAC); err != nil {
+	if err := d.nl.SetHostUp(host, ip, ip6, peerMAC); err != nil {
 		return fmt.Errorf("datapath: host side for %s: %w", spec.ID, err)
 	}
-	// The /32 route last: it is the step that makes the alloc reachable, so
-	// everything reachability implies is already true when it lands.
+	// The host routes last: they are the step that makes the alloc reachable,
+	// so everything reachability implies is already true when they land.
 	if err := d.nl.InstallRoute(ip, host, d.hostIP); err != nil {
 		return fmt.Errorf("datapath: route for %s: %w", spec.ID, err)
+	}
+	if ip6.IsValid() {
+		if err := d.nl.InstallRoute(ip6, host, d.hostIP6); err != nil {
+			return fmt.Errorf("datapath: v6 route for %s: %w", spec.ID, err)
+		}
 	}
 	return nil
 }
 
 // reuseExisting handles the retry case: a marked link that already exists. A
-// matching alias with the identity present means the attach completed —
+// matching alias with the v4 identity present means the attach completed —
 // InstallRoute is the last step, so an existing *complete* attach is exactly
 // "return nil". Anything else — foreign alias, missing identity — is stale
 // state from an interrupted attempt; it is torn down and the attach redone,
 // because a half-plumbed link that is left standing looks attached and passes
 // nothing.
+//
+// The adopt gate is deliberately the v4 identity alone (PRD v1.41): a
+// v4-only alias on a node whose v6 was just enabled is a COMPLETE pre-v1.41
+// attachment, and re-plumbing it would yank the veth under a running
+// workload. It is adopted as it stands; the alloc gains v6 at its next
+// replacement, and the v6 backend set simply omits it until then.
 func (d *Datapath) reuseExisting(allocID, host string, want dpmap.Identity) (bool, error) {
 	links, err := d.nl.List()
 	if err != nil {
@@ -143,13 +170,16 @@ func (d *Datapath) reuseExisting(allocID, host string, want dpmap.Identity) (boo
 		return false, nil
 	}
 
-	if id, ip, ok := parseAlias(existing.Alias); ok && id == allocID {
+	if id, ip, ip6, ok := parseAlias(existing.Alias); ok && id == allocID {
 		idents, err := d.maps.Identities()
 		if err != nil {
 			return false, fmt.Errorf("datapath: read identities: %w", err)
 		}
 		if got, present := idents[ip]; present && got == want {
 			d.ipam.Adopt(allocID, ip)
+			if ip6.IsValid() && d.ipam6 != nil {
+				d.ipam6.Adopt(allocID, ip6)
+			}
 			return true, nil
 		}
 	}
@@ -159,20 +189,31 @@ func (d *Datapath) reuseExisting(allocID, host string, want dpmap.Identity) (boo
 		return false, fmt.Errorf("datapath: remove stale link %s: %w", host, err)
 	}
 	d.ipam.Release(allocID)
+	if d.ipam6 != nil {
+		d.ipam6.Release(allocID)
+	}
 	return false, nil
 }
 
 // teardownPartial unwinds a failed attach, best effort: every step logs
 // instead of failing, because the attach error is the one worth reporting and
 // the reconciler will retry into an idempotent Attach anyway.
-func (d *Datapath) teardownPartial(allocID, host string, ip netip.Addr) {
+func (d *Datapath) teardownPartial(allocID, host string, ip, ip6 netip.Addr) {
 	if err := d.nl.DeleteVeth(host); err != nil {
 		d.log.Warn("partial teardown: delete veth", "alloc", allocID, "error", err)
 	}
 	if err := d.maps.DeleteIdentity(ip); err != nil {
 		d.log.Warn("partial teardown: delete identity", "alloc", allocID, "error", err)
 	}
+	if ip6.IsValid() {
+		if err := d.maps.DeleteIdentity(ip6); err != nil {
+			d.log.Warn("partial teardown: delete v6 identity", "alloc", allocID, "error", err)
+		}
+	}
 	d.ipam.Release(allocID)
+	if d.ipam6 != nil {
+		d.ipam6.Release(allocID)
+	}
 	if err := d.netns.Delete(allocID); err != nil {
 		d.log.Warn("partial teardown: delete netns", "alloc", allocID, "error", err)
 	}
@@ -195,18 +236,25 @@ func (d *Datapath) Detach(ctx context.Context, spec runtime.AllocSpec) error {
 
 	host := hostDevName(spec.ID)
 	ip, known := d.ipam.Lookup(spec.ID)
+	var ip6 netip.Addr
+	if d.ipam6 != nil {
+		ip6, _ = d.ipam6.Lookup(spec.ID)
+	}
 	if !known {
 		// A restart lost the in-memory reservation; the link's alias is the
-		// durable copy. List failing is not fatal — the identity delete is
-		// then skipped, and an identity without an interface denies traffic
-		// rather than passing it.
+		// durable copy — and it carries both families, so a dual-stack
+		// attachment's v6 identity is deleted even when v6 has since been
+		// turned off (ipam6 nil). List failing is not fatal — the identity
+		// delete is then skipped, and an identity without an interface denies
+		// traffic rather than passing it.
 		if links, err := d.nl.List(); err == nil {
 			for _, l := range links {
 				if l.Name != host {
 					continue
 				}
-				if id, addr, ok := parseAlias(l.Alias); ok && id == spec.ID {
+				if id, addr, addr6, ok := parseAlias(l.Alias); ok && id == spec.ID {
 					ip, known = addr, true
+					ip6 = addr6
 				}
 				break
 			}
@@ -223,7 +271,15 @@ func (d *Datapath) Detach(ctx context.Context, spec runtime.AllocSpec) error {
 			return fmt.Errorf("datapath: delete identity for %s: %w", spec.ID, err)
 		}
 	}
+	if ip6.IsValid() {
+		if err := d.maps.DeleteIdentity(ip6); err != nil {
+			return fmt.Errorf("datapath: delete v6 identity for %s: %w", spec.ID, err)
+		}
+	}
 	d.ipam.Release(spec.ID)
+	if d.ipam6 != nil {
+		d.ipam6.Release(spec.ID)
+	}
 	if err := d.netns.Delete(spec.ID); err != nil {
 		return fmt.Errorf("datapath: delete netns for %s: %w", spec.ID, err)
 	}

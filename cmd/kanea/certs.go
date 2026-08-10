@@ -310,6 +310,17 @@ func certRequests(ctx context.Context, st store.Store, baseDomain, nodeDefault s
 		if mode == "" || mode == certsource.ModePlaintext {
 			// Plaintext is a declaration, not a request. There is nothing to
 			// obtain, and the edge learns of it from the route table.
+			//
+			// R28's one warning: a grpc route that *resolved* here (an
+			// undeclared mode on a --tls-default plaintext node) can never
+			// serve a real gRPC client — the plaintext path is HTTP/1.1. The
+			// declared combination is a plan error; this half is a warning
+			// because R20 resolves node-side, where plan cannot see.
+			if d.Expose.Protocol == "grpc" {
+				logger.Warn("grpc route resolved to plaintext",
+					"service", d.Project+"/"+d.Service,
+					"detail", "gRPC clients need TLS+HTTP/2 on :443; declare tls { mode } or change --tls-default")
+			}
 			continue
 		}
 		if !mode.Valid() {

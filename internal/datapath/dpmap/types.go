@@ -25,9 +25,13 @@ import (
 // stats_drops together with the destination address.
 const (
 	DropReasonPolicy    uint8 = 1 // policy denied a connection attempt
-	DropReasonMetadata  uint8 = 2 // 169.254.0.0/16 egress (§14 A10)
+	DropReasonMetadata  uint8 = 2 // 169.254.0.0/16 / fd00:ec2::254 egress (§14 A10)
 	DropReasonNoBackend uint8 = 3 // a VIP with an empty backend set
 	DropReasonVIPLeak   uint8 = 4 // service-CIDR traffic that escaped rewrite
+	// DropReasonLinkLocal is v6-only (v1.41): fe80::/10 and ff00::/8 egress.
+	// With NODAD, static neighbors and no autoconf nothing legitimate sends
+	// either; the counter keeps the kernel's own MLD chatter visible.
+	DropReasonLinkLocal uint8 = 5
 )
 
 // IdentityFlagHost marks an address as the host's, not an alloc's
@@ -44,6 +48,17 @@ const (
 	MapStatsEp     = "stats_ep"
 	MapStatsDrops  = "stats_drops"
 	MapConfig      = "config"
+
+	// The v6 twins (v1.41): separate maps beside the v4 ones, never widened —
+	// widening a pinned map's key changes its ABI and would wipe every node's
+	// pins at upgrade. allow_v4 and stats_svc are id-keyed and shared; the
+	// v4 name of the former is historical, not a family restriction.
+	MapSvcV6        = "svc_v6"
+	MapSvcBackends6 = "svc_backends6"
+	MapIdentityV6   = "identity_v6"
+	MapStatsEp6     = "stats_ep6"
+	MapStatsDrops6  = "stats_drops6"
+	MapConfig6      = "config6"
 )
 
 // PinRoot is where the datapath pins its maps, programs and links.
@@ -68,6 +83,12 @@ const (
 	StatsSvcKeySize = 2 // __u16 svc_id
 	StatsEpKeySize  = 4 // __be32 pod ip
 	StatsValSize    = 8 // __u64 counter
+
+	SvcKey6Size     = 20
+	BackendVal6Size = 20
+	DropKey6Size    = 20
+	Config6Size     = 32
+	StatsEp6KeySize = 16 // struct in6_addr pod ip; also identity_v6's key
 )
 
 func checkLen(what string, b []byte, want int) error {
@@ -336,5 +357,120 @@ func IPKey(ip [4]byte) []byte {
 func SvcIDKey(id uint16) []byte {
 	b := make([]byte, StatsSvcKeySize)
 	binary.LittleEndian.PutUint16(b, id)
+	return b
+}
+
+// SvcKey6 is svc_v6's key: struct svc_key6 in kanea.c (v1.41).
+type SvcKey6 struct {
+	VIP   [16]byte // network order, as on the wire
+	Port  uint16   // host value here; encoded big-endian (__be16)
+	Proto uint8    // IPPROTO_*; always TCP for v1 service ports
+}
+
+// Marshal encodes the key in the C struct's byte layout.
+func (k SvcKey6) Marshal() []byte {
+	b := make([]byte, SvcKey6Size)
+	copy(b[0:16], k.VIP[:])
+	binary.BigEndian.PutUint16(b[16:18], k.Port)
+	b[18] = k.Proto
+	// b[19] is explicit padding, always zero.
+	return b
+}
+
+// Unmarshal decodes the C struct's byte layout.
+func (k *SvcKey6) Unmarshal(b []byte) error {
+	if err := checkLen("svc_key6", b, SvcKey6Size); err != nil {
+		return err
+	}
+	copy(k.VIP[:], b[0:16])
+	k.Port = binary.BigEndian.Uint16(b[16:18])
+	k.Proto = b[18]
+	return nil
+}
+
+// BackendVal6 is svc_backends6's value: struct backend_val6 in kanea.c.
+// The key is the shared BackendKey — the generation flip is one mechanism
+// for both families.
+type BackendVal6 struct {
+	IP   [16]byte // network order
+	Port uint16   // host value here; encoded big-endian (__be16)
+}
+
+// Marshal encodes the value in the C struct's byte layout.
+func (v BackendVal6) Marshal() []byte {
+	b := make([]byte, BackendVal6Size)
+	copy(b[0:16], v.IP[:])
+	binary.BigEndian.PutUint16(b[16:18], v.Port)
+	// b[18:20] is explicit padding, always zero.
+	return b
+}
+
+// Unmarshal decodes the C struct's byte layout.
+func (v *BackendVal6) Unmarshal(b []byte) error {
+	if err := checkLen("backend_val6", b, BackendVal6Size); err != nil {
+		return err
+	}
+	copy(v.IP[:], b[0:16])
+	v.Port = binary.BigEndian.Uint16(b[16:18])
+	return nil
+}
+
+// DropKey6 is stats_drops6's key: struct drop_key6 in kanea.c.
+type DropKey6 struct {
+	DstIP  [16]byte // network order
+	Reason uint8    // DropReason*
+}
+
+// Marshal encodes the key in the C struct's byte layout.
+func (k DropKey6) Marshal() []byte {
+	b := make([]byte, DropKey6Size)
+	copy(b[0:16], k.DstIP[:])
+	b[16] = k.Reason
+	// b[17:20] is explicit padding, always zero.
+	return b
+}
+
+// Unmarshal decodes the C struct's byte layout.
+func (k *DropKey6) Unmarshal(b []byte) error {
+	if err := checkLen("drop_key6", b, DropKey6Size); err != nil {
+		return err
+	}
+	copy(k.DstIP[:], b[0:16])
+	k.Reason = b[16]
+	return nil
+}
+
+// Config6 is config6's single value: struct dp_config6 in kanea.c. An
+// all-zero mask is the v6 enable switch read as "off" — it is the value an
+// ARRAY map is born with, so a node whose kanead never configured v6 fails
+// closed (the tc programs drop ETH_P_IPV6 outright).
+type Config6 struct {
+	ServiceCIDRNet  [16]byte // network order
+	ServiceCIDRMask [16]byte // network order
+}
+
+// Marshal encodes the value in the C struct's byte layout.
+func (v Config6) Marshal() []byte {
+	b := make([]byte, Config6Size)
+	copy(b[0:16], v.ServiceCIDRNet[:])
+	copy(b[16:32], v.ServiceCIDRMask[:])
+	return b
+}
+
+// Unmarshal decodes the C struct's byte layout.
+func (v *Config6) Unmarshal(b []byte) error {
+	if err := checkLen("dp_config6", b, Config6Size); err != nil {
+		return err
+	}
+	copy(v.ServiceCIDRNet[:], b[0:16])
+	copy(v.ServiceCIDRMask[:], b[16:32])
+	return nil
+}
+
+// IP6Key encodes a [16]byte address for the maps keyed by a bare
+// struct in6_addr (identity_v6, stats_ep6): the wire bytes, unchanged.
+func IP6Key(ip [16]byte) []byte {
+	b := make([]byte, StatsEp6KeySize)
+	copy(b, ip[:])
 	return b
 }

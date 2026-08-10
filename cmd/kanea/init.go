@@ -41,6 +41,12 @@ func runInit(args []string) error {
 		"this node's container subnet; also moves the internal DNS address, its .1")
 	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
 		"what the datapath masquerades as internal; it must contain --node-cidr")
+	nodeCIDR6 := fs.String("node-cidr6", "",
+		"this node's IPv6 container subnet (PRD v1.41, opt-in); requires the other two *6 flags, ULA recommended")
+	clusterCIDR6 := fs.String("cluster-cidr6", "",
+		"the routed IPv6 range; must contain --node-cidr6")
+	serviceCIDR6 := fs.String("service-cidr6", "",
+		"IPv6 pool for service frontend twins")
 	buildkitSocket := fs.String("buildkit", gitops.DefaultBuildkitSocket,
 		"rootless buildkitd address (\"off\" skips the build daemon)")
 	if err := fs.Parse(args); err != nil {
@@ -49,6 +55,13 @@ func runInit(args []string) error {
 	// Refused, not defaulted: before v1.36 any unknown value here silently
 	// meant the product mode, so a typo configured a node by accident.
 	if err := validNetworkMode(*networkMode); err != nil {
+		return err
+	}
+	// The full six-flag validation kanead itself performs at startup, run
+	// here first so the refusal lands in front of whoever typed the flags
+	// rather than in the journal after the unit is written.
+	if _, err := parseAgentCIDRs(*nodeCIDR, *clusterCIDR, reconciler.DefaultServiceCIDR,
+		*nodeCIDR6, *clusterCIDR6, *serviceCIDR6); err != nil {
 		return err
 	}
 
@@ -64,12 +77,15 @@ func runInit(args []string) error {
 		effectiveSocket = provision.DistroContainerdSocket
 	}
 
+	layout := componentLayout(*prefix, *nodeCIDR, *clusterCIDR)
+	layout.NodeCIDR6, layout.ClusterCIDR6 = *nodeCIDR6, *clusterCIDR6
 	opts := preflightOptions{
 		dataDir: *dataDir, containerdSocket: effectiveSocket,
 		networkMode:    *networkMode,
 		buildkitSocket: *buildkitSocket,
-		layout:         componentLayout(*prefix, *nodeCIDR, *clusterCIDR),
+		layout:         layout,
 		serviceCIDR:    reconciler.DefaultServiceCIDR,
+		serviceCIDR6:   *serviceCIDR6,
 	}
 
 	// The platform checks gate, and only they do. They are the things no
@@ -97,6 +113,10 @@ func runInit(args []string) error {
 			"--prefix", *prefix, "--unit-dir", *unitDir,
 			"--node-cidr", *nodeCIDR, "--cluster-cidr", *clusterCIDR,
 		}
+		if *nodeCIDR6 != "" {
+			installArgs = append(installArgs,
+				"--node-cidr6", *nodeCIDR6, "--cluster-cidr6", *clusterCIDR6)
+		}
 		if *bundlePath != "" {
 			installArgs = append(installArgs, "--bundle", *bundlePath)
 		}
@@ -120,6 +140,7 @@ func runInit(args []string) error {
 			dir: *unitDir, dataDir: *dataDir, logDir: *logDir,
 			reserve: *reserve, binary: executablePath(),
 			network: *networkMode, nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
+			nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
 		}); err != nil {
 			return err
 		}

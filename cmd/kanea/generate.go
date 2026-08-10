@@ -446,7 +446,11 @@ func writeExpose(block *hclwrite.Body, svc *reconciler.Desired) error {
 		return fmt.Errorf("cannot generate a spec for %s/%s: the exposed port %d matches no "+
 			"declared container port", svc.Project, svc.Service, svc.Expose.Port)
 	}
-	if matched != jobspec.EdgePortName && len(svc.Ports) > 1 {
+	// A grpc route may also carry its port under the name "grpc" — that is
+	// exactly what EdgePort would re-select for it (R28).
+	reSelected := matched == jobspec.EdgePortName ||
+		(svc.Expose.Protocol == jobspec.ExposeProtocolGRPC && matched == jobspec.ExposeProtocolGRPC)
+	if !reSelected && len(svc.Ports) > 1 {
 		return fmt.Errorf("cannot generate a spec for %s/%s: the exposed port %q would not be "+
 			"re-selected by the edge-port rule; edit the original spec file",
 			svc.Project, svc.Service, matched)
@@ -456,6 +460,7 @@ func writeExpose(block *hclwrite.Body, svc *reconciler.Desired) error {
 	if domains := svc.Expose.Domains; len(domains) > 0 {
 		expose.SetAttributeValue("domains", stringList(domains))
 	}
+	setOptionalString(expose, "protocol", svc.Expose.Protocol)
 	if svc.Expose.TLSMode != "" || svc.Expose.TLSName != "" {
 		tls := expose.AppendNewBlock("tls", nil).Body()
 		setOptionalString(tls, "mode", svc.Expose.TLSMode)

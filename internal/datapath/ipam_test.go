@@ -99,25 +99,57 @@ func TestParseAlias(t *testing.T) {
 		alias string
 		id    string
 		ip    string
+		ip6   string
 		ok    bool
 	}{
-		{"kanea/shop-web-0/10.0.0.4", "shop-web-0", "10.0.0.4", true},
-		{"kanea/shop-web-0/not-an-ip", "", "", false},
-		{"kanea/shop-web-0/fd00::1", "", "", false}, // v6 is not a v1 attachment
-		{"kanea//10.0.0.4", "", "", false},
-		{"kanea/shop-web-0", "", "", false},
-		{"veth-something", "", "", false},
-		{"", "", "", false},
+		// The v4-only form must stay parseable forever: it is the durable
+		// record written by nodes that predate v1.41.
+		{"kanea/shop-web-0/10.0.0.4", "shop-web-0", "10.0.0.4", "", true},
+		// The dual-stack form (v1.41).
+		{"kanea/shop-web-0/10.0.0.4,fd10:244::4", "shop-web-0", "10.0.0.4", "fd10:244::4", true},
+		{"kanea/shop-web-0/not-an-ip", "", "", "", false},
+		// v6 cannot stand alone: v4 is the required family.
+		{"kanea/shop-web-0/fd00::1", "", "", "", false},
+		// A garbage v6 half fails the whole alias, not silently half of it.
+		{"kanea/shop-web-0/10.0.0.4,not-an-ip", "", "", "", false},
+		{"kanea/shop-web-0/10.0.0.4,10.0.0.5", "", "", "", false}, // two v4s is not dual-stack
+		{"kanea//10.0.0.4", "", "", "", false},
+		{"kanea/shop-web-0", "", "", "", false},
+		{"veth-something", "", "", "", false},
+		{"", "", "", "", false},
 	}
 	for _, tc := range cases {
-		id, ip, ok := parseAlias(tc.alias)
+		id, ip, ip6, ok := parseAlias(tc.alias)
 		if ok != tc.ok {
 			t.Errorf("parseAlias(%q) ok = %v, want %v", tc.alias, ok, tc.ok)
 			continue
 		}
-		if ok && (id != tc.id || ip.String() != tc.ip) {
-			t.Errorf("parseAlias(%q) = %s %s, want %s %s", tc.alias, id, ip, tc.id, tc.ip)
+		if !ok {
+			continue
 		}
+		got6 := ""
+		if ip6.IsValid() {
+			got6 = ip6.String()
+		}
+		if id != tc.id || ip.String() != tc.ip || got6 != tc.ip6 {
+			t.Errorf("parseAlias(%q) = %s %s %s, want %s %s %s",
+				tc.alias, id, ip, got6, tc.id, tc.ip, tc.ip6)
+		}
+	}
+}
+
+// The alias round-trips both forms, and a v4-only render is byte-identical
+// to what a pre-v1.41 node wrote.
+func TestAliasForRoundTrips(t *testing.T) {
+	v4 := netip.MustParseAddr("10.0.0.4")
+	v6 := netip.MustParseAddr("fd10:244::4")
+
+	if got := aliasFor("shop-web-0", v4, netip.Addr{}); got != "kanea/shop-web-0/10.0.0.4" {
+		t.Errorf("v4-only alias = %q — the pre-v1.41 form changed", got)
+	}
+	id, ip, ip6, ok := parseAlias(aliasFor("shop-web-0", v4, v6))
+	if !ok || id != "shop-web-0" || ip != v4 || ip6 != v6 {
+		t.Errorf("dual alias round trip = %s %s %s (ok=%v)", id, ip, ip6, ok)
 	}
 }
 

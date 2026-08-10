@@ -55,7 +55,6 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 	return out, err
 }
 
-// Services lists the declared services.
 // Functions lists wasm functions (v1.39).
 func (c *Client) Functions(ctx context.Context) (FunctionsResponse, error) {
 	var out FunctionsResponse
@@ -63,6 +62,7 @@ func (c *Client) Functions(ctx context.Context) (FunctionsResponse, error) {
 	return out, err
 }
 
+// Services lists the declared services.
 func (c *Client) Services(ctx context.Context) ([]reconciler.Desired, error) {
 	var out ServicesResponse
 	if err := c.do(ctx, http.MethodGet, PathServices, nil, &out); err != nil {

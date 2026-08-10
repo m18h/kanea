@@ -1,7 +1,6 @@
 package datapath
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/netip"
@@ -49,10 +48,10 @@ func (d *Datapath) SyncServices(ctx context.Context, services []network.Service)
 		}
 		val := current[key]
 		if err := d.maps.DeleteService(key); err != nil {
-			return fmt.Errorf("datapath: delete service %s:%d: %w", netip.AddrFrom4(key.VIP), key.Port, err)
+			return fmt.Errorf("datapath: delete service %s:%d: %w", key.IP, key.Port, err)
 		}
 		if err := d.maps.ApplyFlip(key, backendDeletes(val)); err != nil {
-			return fmt.Errorf("datapath: delete backends for %s:%d: %w", netip.AddrFrom4(key.VIP), key.Port, err)
+			return fmt.Errorf("datapath: delete backends for %s:%d: %w", key.IP, key.Port, err)
 		}
 		delete(d.applied, key)
 	}
@@ -86,9 +85,12 @@ func (d *Datapath) SyncServices(ctx context.Context, services []network.Service)
 }
 
 // desiredFrontends validates and converts the reconciler's view into per-key
-// desired programming, minting frontend ids as needed.
-func (d *Datapath) desiredFrontends(ctx context.Context, services []network.Service) (map[dpmap.SvcKey]desiredSvc, error) {
-	desired := make(map[dpmap.SvcKey]desiredSvc)
+// desired programming, minting frontend ids as needed. A service with a v6
+// VIP twin gets a second frontend per port under the same frontend id — the
+// v6 set built from the backends' v6 addresses, omitting allocs that have
+// none (a pre-v1.41 attachment adopted across the upgrade).
+func (d *Datapath) desiredFrontends(ctx context.Context, services []network.Service) (map[dpmap.SvcAddr]desiredSvc, error) {
+	desired := make(map[dpmap.SvcAddr]desiredSvc)
 	for _, svc := range services {
 		if err := svc.Validate(); err != nil {
 			return nil, err
@@ -100,6 +102,14 @@ func (d *Datapath) desiredFrontends(ctx context.Context, services []network.Serv
 		if err != nil || !vip.Is4() {
 			return nil, fmt.Errorf("datapath: service %s/%s frontend %q is not an IPv4 address",
 				svc.Project, svc.Service, svc.VIP)
+		}
+		var vip6 netip.Addr
+		if svc.VIP6 != "" {
+			vip6, err = netip.ParseAddr(svc.VIP6)
+			if err != nil || !vip6.Is6() || vip6.Is4In6() {
+				return nil, fmt.Errorf("datapath: service %s/%s v6 frontend %q is not an IPv6 address",
+					svc.Project, svc.Service, svc.VIP6)
+			}
 		}
 
 		backends := make([]network.Backend, len(svc.Backends))
@@ -124,6 +134,7 @@ func (d *Datapath) desiredFrontends(ctx context.Context, services []network.Serv
 			}
 
 			set := make([]dpmap.Backend, 0, len(backends))
+			set6 := make([]dpmap.Backend, 0, len(backends))
 			for _, b := range backends {
 				addr, err := netip.ParseAddr(b.IPv4)
 				if err != nil || !addr.Is4() {
@@ -131,14 +142,36 @@ func (d *Datapath) desiredFrontends(ctx context.Context, services []network.Serv
 						svc.Project, svc.Service, b.IPv4)
 				}
 				// #nosec G115 — validate bounds ports to 1..65535.
-				set = append(set, dpmap.Backend{IP: addr.As4(), Port: uint16(target)})
+				set = append(set, dpmap.Backend{IP: addr, Port: uint16(target)})
+				if !vip6.IsValid() || b.IPv6 == "" {
+					// A backend with no v6 half is a pre-v1.41 attachment
+					// adopted across the upgrade: the v6 set omits it rather
+					// than failing the service (PRD v1.41).
+					continue
+				}
+				addr6, err := netip.ParseAddr(b.IPv6)
+				if err != nil || !addr6.Is6() || addr6.Is4In6() {
+					return nil, fmt.Errorf("datapath: service %s/%s v6 backend %q is not an IPv6 address",
+						svc.Project, svc.Service, b.IPv6)
+				}
+				set6 = append(set6, dpmap.Backend{IP: addr6, Port: uint16(target)}) // #nosec G115 — bounded as above
 			}
 
 			// #nosec G115 — validate bounds ports to 1..65535.
-			key := dpmap.SvcKey{VIP: vip.As4(), Port: uint16(p.Port), Proto: protoTCP}
+			key := dpmap.SvcAddr{IP: vip, Port: uint16(p.Port), Proto: protoTCP}
 			desired[key] = desiredSvc{
 				applied: appliedService{id: id, backends: set},
 				name:    svc.Project + "/" + svc.Service,
+			}
+			if vip6.IsValid() {
+				// The v6 twin: same frontend id (stats_svc folds both families
+				// into one invocation counter), its own key and backend set.
+				// #nosec G115 — validate bounds ports to 1..65535.
+				key6 := dpmap.SvcAddr{IP: vip6, Port: uint16(p.Port), Proto: protoTCP}
+				desired[key6] = desiredSvc{
+					applied: appliedService{id: id, backends: set6},
+					name:    svc.Project + "/" + svc.Service,
+				}
 			}
 		}
 	}
@@ -158,16 +191,17 @@ func backendDeletes(val dpmap.SvcVal) []dpmap.Op {
 }
 
 // svcKeyLess orders map keys so every pass walks frontends the same way — a
-// test, and a log, should be reproducible.
-func svcKeyLess(a, b dpmap.SvcKey) bool {
-	if c := bytes.Compare(a.VIP[:], b.VIP[:]); c != 0 {
+// test, and a log, should be reproducible. netip.Addr.Compare orders v4
+// before v6, so the families interleave deterministically too.
+func svcKeyLess(a, b dpmap.SvcAddr) bool {
+	if c := a.IP.Compare(b.IP); c != 0 {
 		return c < 0
 	}
 	return a.Port < b.Port
 }
 
-func sortedSvcKeys(m map[dpmap.SvcKey]dpmap.SvcVal) []dpmap.SvcKey {
-	keys := make([]dpmap.SvcKey, 0, len(m))
+func sortedSvcKeys(m map[dpmap.SvcAddr]dpmap.SvcVal) []dpmap.SvcAddr {
+	keys := make([]dpmap.SvcAddr, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
@@ -175,8 +209,8 @@ func sortedSvcKeys(m map[dpmap.SvcKey]dpmap.SvcVal) []dpmap.SvcKey {
 	return keys
 }
 
-func sortedDesiredKeys(m map[dpmap.SvcKey]desiredSvc) []dpmap.SvcKey {
-	keys := make([]dpmap.SvcKey, 0, len(m))
+func sortedDesiredKeys(m map[dpmap.SvcAddr]desiredSvc) []dpmap.SvcAddr {
+	keys := make([]dpmap.SvcAddr, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}

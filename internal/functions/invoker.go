@@ -136,11 +136,11 @@ type Invoker struct {
 	resolver Resolver
 	publish  func(notify.Event)
 	client   *http.Client
-	queue   chan notify.Event
-	wake    chan struct{}
-	sem     chan struct{}
-	now     func() time.Time
-	sleep   func(context.Context, time.Duration)
+	queue    chan notify.Event
+	wake     chan struct{}
+	sem      chan struct{}
+	now      func() time.Time
+	sleep    func(context.Context, time.Duration)
 
 	maxAttempts int
 	retryBase   time.Duration
@@ -412,6 +412,7 @@ func (i *Invoker) fireDueCrons(ctx context.Context) {
 	i.mu.Unlock()
 
 	for _, d := range due {
+		//nolint:errcheck // a map[string]string cannot fail to marshal
 		body, _ := json.Marshal(map[string]string{
 			"trigger":  "cron",
 			"schedule": d.schedule,

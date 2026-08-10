@@ -253,7 +253,7 @@ func (c *compiledAuth) verify(r *http.Request, now time.Time) bool {
 		if !known {
 			// Burn the cost anyway: a fast miss for an unknown user and a
 			// slow miss for a wrong password is a username oracle.
-			_ = bcrypt.CompareHashAndPassword(bcryptDummy, []byte(pass))
+			_ = bcrypt.CompareHashAndPassword(bcryptDummy, []byte(pass)) //nolint:errcheck // burning the cost; the mismatch is the point
 			return false
 		}
 		key := sha256.Sum256([]byte(user + "\x00" + pass))

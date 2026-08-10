@@ -96,6 +96,11 @@ service "web" {
     # the node's --tls-default decides; there is no field here for a path.
     tls { mode = "acme" }                        # acme | self-signed | provided | plaintext
 
+    # Upstream protocol (R28, v1.41). Omit for HTTP/1.1 upstreams. "grpc" makes
+    # the edge dial this service over plaintext HTTP/2 (h2c) — gRPC needs h2
+    # end-to-end. Declaring it beside tls { mode = "plaintext" } is a plan error.
+    # protocol = "grpc"
+
     # Edge middleware (§7.2) — evaluated in order: IP restriction → rate limit → headers
     ip_restriction {
       allow = ["10.0.0.0/8", "203.0.113.0/24"]   # CIDRs; empty allow = world

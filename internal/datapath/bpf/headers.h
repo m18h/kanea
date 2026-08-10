@@ -54,6 +54,7 @@ typedef __u16 __sum16;
 /* <linux/if_ether.h> */
 #define ETH_ALEN 6
 #define ETH_P_IP 0x0800
+#define ETH_P_IPV6 0x86DD
 
 /* <linux/in.h> */
 #define IPPROTO_TCP 6
@@ -165,6 +166,33 @@ struct iphdr {
 	__sum16 check;
 	__be32 saddr;
 	__be32 daddr;
+};
+
+/* <linux/in6.h> struct in6_addr, as the one member of its union we read.
+ * The UAPI type is a union of u8[16]/u16[8]/u32[4] views over the same 16
+ * bytes; declaring only the 32-bit view keeps the layout identical and the
+ * map-key size (16) exact. */
+struct in6_addr {
+	__be32 s6_addr32[4];
+};
+
+/* <linux/ipv6.h> struct ipv6hdr — fixed 40 bytes, no options inside the
+ * header itself. Extension headers follow it and are deliberately not
+ * parsed (PRD v1.41): both endpoints are Linux stacks kanead configured,
+ * and a packet whose nexthdr is not TCP falls through to the deny-closed
+ * branch of the policy program. */
+struct ipv6hdr {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u8 priority : 4, version : 4;
+#elif defined(__BIG_ENDIAN_BITFIELD)
+	__u8 version : 4, priority : 4;
+#endif
+	__u8 flow_lbl[3];
+	__be16 payload_len;
+	__u8 nexthdr;
+	__u8 hop_limit;
+	struct in6_addr saddr;
+	struct in6_addr daddr;
 };
 
 struct tcphdr {

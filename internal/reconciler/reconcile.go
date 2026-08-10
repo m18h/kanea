@@ -144,6 +144,9 @@ type Config struct {
 	// ServiceCIDR is the pool service frontends are allocated from
 	// (PRD §15.1). Empty means DefaultServiceCIDR.
 	ServiceCIDR string
+	// ServiceCIDR6 is the v6 twin pool (v1.41). Empty means v4-only — there
+	// is deliberately no default: dual-stack is opt-in.
+	ServiceCIDR6 string
 	// ResolvConfDir holds the generated per-project resolv.conf files.
 	ResolvConfDir string
 	// Nameserver is the address allocs are pointed at for DNS. Empty means
@@ -228,7 +231,7 @@ func New(cfg Config) (*Reconciler, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	vips, err := newVIPAllocator(cfg.Store, cfg.ServiceCIDR)
+	vips, err := newVIPAllocator(cfg.Store, cfg.ServiceCIDR, cfg.ServiceCIDR6)
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +468,7 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 		}
 		refs = append(refs, serviceRef{Project: d.Project, Service: d.Service})
 	}
-	vips, err := r.vips.Sync(ctx, refs)
+	vips, vips6, err := r.vips.Sync(ctx, refs)
 	if err != nil {
 		return nil, err
 	}
@@ -485,6 +488,7 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 			Project:  d.Project,
 			Service:  d.Service,
 			VIP:      vips[d.Project+"/"+d.Service],
+			VIP6:     vips6[d.Project+"/"+d.Service],
 			Ports:    ports,
 			Backends: backendsFor(w, d, attachments),
 		})
@@ -528,7 +532,7 @@ func backendsFor(w World, d Desired, attachments map[string]network.Attachment) 
 		if !ok || !att.Ready || att.IPv4 == "" {
 			continue
 		}
-		backends = append(backends, network.Backend{AllocID: id, IPv4: att.IPv4})
+		backends = append(backends, network.Backend{AllocID: id, IPv4: att.IPv4, IPv6: att.IPv6})
 	}
 	sort.Slice(backends, func(i, j int) bool { return backends[i].AllocID < backends[j].AllocID })
 	return backends

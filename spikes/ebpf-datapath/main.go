@@ -117,6 +117,7 @@ var allChecks = []struct {
 	{9, "batch map ops and the generation-flip update pattern", check9},
 	{10, "getpeername after connect-time DNAT", check10},
 	{11, "BPF_PROG_TEST_RUN for SCHED_CLS; bpf_sock_addr.protocol probe", check11},
+	{12, "dual-stack (v1.41): shipping object, connect6, tc v6 policy, disabled-mode drop", check12},
 }
 
 func main() {

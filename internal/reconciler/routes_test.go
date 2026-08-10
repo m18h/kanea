@@ -130,6 +130,30 @@ func TestReconcileRepublishesOnlyOnChange(t *testing.T) {
 	}
 }
 
+// A protocol-only edit must republish — the routesArePublished lesson: a
+// field buildRoutes sets but routesEqual does not compare publishes exactly
+// once and never again (R28, v1.41).
+func TestProtocolEditIsRepublished(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+	d := exposedService("api.shop.example.com")
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	if got := loadRoutes(t, path).Routes[0].Protocol; got != "" {
+		t.Fatalf("protocol = %q before the edit, want empty", got)
+	}
+
+	expose := *d.Expose
+	expose.Protocol = "grpc"
+	d.Expose = &expose
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	if got := loadRoutes(t, path).Routes[0].Protocol; got != "grpc" {
+		t.Errorf("protocol = %q after the edit, want grpc — the equality check is missing the field", got)
+	}
+}
+
 // Removing the expose block withdraws the route.
 // functionService is a lowered function with an http trigger and no declared
 // domains — the case the mode resolution decides (§7.2.3).
@@ -372,6 +396,24 @@ func TestSpecHashIgnoresTLSMode(t *testing.T) {
 
 	if reconciler.SpecHash(base) != reconciler.SpecHash(changed) {
 		t.Error("changing the certificate source rolled the allocs")
+	}
+}
+
+// R28 (v1.41): the upstream-protocol marker is not baked into a container, so
+// flipping it republishes routes and must never roll an alloc.
+func TestSpecHashIgnoresExposeProtocol(t *testing.T) {
+	base := reconciler.Desired{
+		Project: "shop", Service: "api", Count: 1,
+		Image:  "grpc-api:v3",
+		Expose: &reconciler.Expose{Domains: []string{"api.shop.example.com"}, Port: 50051},
+	}
+	changed := base
+	expose := *base.Expose
+	expose.Protocol = "grpc"
+	changed.Expose = &expose
+
+	if reconciler.SpecHash(base) != reconciler.SpecHash(changed) {
+		t.Error("changing the upstream protocol rolled the allocs")
 	}
 }
 

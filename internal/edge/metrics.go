@@ -62,11 +62,17 @@ func EntrypointForPort(port int) string { return fmt.Sprintf("port-%d", port) }
 
 // Request protocols, derived from the connection rather than read from
 // r.Proto: the request line is the client's to write, and a label taken from it
-// is a label the client chooses.
+// is a label the client chooses. A closed four-value set (§9.1.1): with the
+// nine-method allowlist and lazily created codes, it sits far under
+// maxSeriesPerService, and grpc requires the route marker AND the wire to
+// agree, so no client can mint the fourth value on an unmarked route.
 const (
 	ProtocolHTTP      = "http"
 	ProtocolHTTPS     = "https"
 	ProtocolWebsocket = "websocket"
+	// ProtocolGRPC is a request on an R28-marked route that is gRPC on the
+	// wire: negotiated HTTP/2 + the application/grpc content type (v1.41).
+	ProtocolGRPC = "grpc"
 )
 
 // Refusal reasons. A closed set, so no cap is needed on this dimension —
@@ -143,6 +149,11 @@ type tcpKey struct {
 // labelledSeries is one {code,method,protocol} combination's counters.
 type labelledSeries struct {
 	requests atomic.Uint64
+	// timed counts only the observations that entered the histogram. A hijacked
+	// connection is counted in requests but never timed (§9.1.1), and a
+	// histogram's _count must equal its +Inf bucket — so the two need separate
+	// counters.
+	timed atomic.Uint64
 	// buckets are cumulative counts per latency bound, plus one overflow.
 	buckets []atomic.Uint64
 	// durationSum is milliseconds, for a mean that does not need the histogram.
@@ -153,9 +164,15 @@ func newLabelledSeries() *labelledSeries {
 	return &labelledSeries{buckets: make([]atomic.Uint64, len(latencyBounds)+1)}
 }
 
-// observe records one request into a labelled series.
-func (s *labelledSeries) observe(ms float64) {
+// observe records one request into a labelled series. A hijacked connection's
+// "duration" is its session lifetime, not a latency, so it skips the histogram
+// (timed=false) while still being counted.
+func (s *labelledSeries) observe(ms float64, timed bool) {
 	s.requests.Add(1)
+	if !timed {
+		return
+	}
+	s.timed.Add(1)
 	s.durationSum.Add(uint64(ms))
 
 	// Cumulative buckets: bucket i counts everything at or below bound i, which
@@ -173,7 +190,10 @@ func (s *labelledSeries) observe(ms float64) {
 // reads; it is unchanged from before §9.1.1 and must stay that way. Everything
 // below it is the labelled family, which no scraper differences.
 type serviceMetrics struct {
-	requests    atomic.Uint64
+	requests atomic.Uint64
+	// timed counts observations that entered the histogram — see
+	// labelledSeries.timed for why it is separate from requests.
+	timed       atomic.Uint64
 	buckets     []atomic.Uint64
 	durationSum atomic.Uint64
 	// errors counts 5xx responses: the signal that a service is failing rather
@@ -208,12 +228,19 @@ func newServiceMetrics() *serviceMetrics {
 }
 
 // observeAggregate records into the unlabelled family the scraper reads.
-func (m *serviceMetrics) observeAggregate(ms float64, status int) {
+// timed=false counts the request (and any 5xx) without touching the latency
+// histogram — a hijacked connection's duration is its session lifetime, and
+// one long WebSocket would otherwise dominate the p95 the autoscaler reads.
+func (m *serviceMetrics) observeAggregate(ms float64, status int, timed bool) {
 	m.requests.Add(1)
-	m.durationSum.Add(uint64(ms))
 	if status >= 500 {
 		m.errors.Add(1)
 	}
+	if !timed {
+		return
+	}
+	m.timed.Add(1)
+	m.durationSum.Add(uint64(ms))
 	idx := sort.SearchFloat64s(latencyBounds, ms)
 	for i := idx; i < len(m.buckets); i++ {
 		m.buckets[i].Add(1)
@@ -354,10 +381,15 @@ type Observation struct {
 	Status int
 	// Method is the request method, folded through the allowlist here.
 	Method string
-	// Protocol is http, https or websocket.
+	// Protocol is http, https, websocket or grpc.
 	Protocol string
 	// Duration is the time spent in the upstream call.
 	Duration time.Duration
+	// Hijacked marks a connection that was upgraded and taken over. It is
+	// counted as a request but excluded from the latency histograms: ServeHTTP
+	// returns when the session ends, so its "duration" is a lifetime, and one
+	// long WebSocket would poison the p95 the autoscaler reads (§9.1.1).
+	Hijacked bool
 	// RequestBytes and ResponseBytes are the body bytes actually moved.
 	RequestBytes  int64
 	ResponseBytes int64
@@ -375,7 +407,7 @@ func (m *Metrics) Observe(o Observation) {
 	code := statusLabel(o.Status)
 
 	sm := m.service(o.Service)
-	sm.observeAggregate(ms, o.Status)
+	sm.observeAggregate(ms, o.Status, !o.Hijacked)
 
 	if o.RequestBytes > 0 {
 		sm.requestBytes.Add(uint64(o.RequestBytes))
@@ -391,7 +423,7 @@ func (m *Metrics) Observe(o Observation) {
 	series, dropped := sm.seriesFor(labelKey{
 		code: code, method: normalizeMethod(o.Method), protocol: protocol,
 	})
-	series.observe(ms)
+	series.observe(ms, !o.Hijacked)
 	if dropped {
 		m.dropped.Add(1)
 	}

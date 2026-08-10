@@ -153,11 +153,15 @@ func check4(e *env) error {
 			fmt.Sprintf("refused in %v, err=%q, eperm=%v", elapsed.Round(time.Millisecond), errText, isEPERM(errText)))
 	}
 
-	// pod -> uplink via masquerade. Reachability to the internet is not
-	// assumed; the masquerade counter incrementing is the assertion.
+	// pod -> off-node via masquerade. Reachability to the internet is not
+	// assumed; the masquerade counter incrementing is the assertion. The
+	// target must ROUTE OUT the uplink — an address on the default route, not
+	// the uplink's own IP (that is delivered locally and never traverses
+	// POSTROUTING with oifname == uplink, so the SNAT rule cannot match).
+	// 203.0.113.9 is TEST-NET-3: it routes via the default gateway and the
+	// forwarded SYN is SNAT'd on the way out whether or not anything answers.
 	p0, _, _ := masqCounter(e)
-	_, _, _, _, _ = podConnect(e, "p1", fmt.Sprintf("%s:%d", e.uplinkIP, 9), 1500*time.Millisecond, false)
-	// discard:9 will refuse/timeout; the SNAT still counts the SYN.
+	_, _, _, _, _ = podConnect(e, "p1", "203.0.113.9:9", 1500*time.Millisecond, false)
 	time.Sleep(200 * time.Millisecond)
 	p1, _, cerr := masqCounter(e)
 	if cerr != nil {

@@ -16,7 +16,7 @@ func webService(backends ...network.Backend) network.Service {
 	}
 }
 
-var webKey = dpmap.SvcKey{VIP: netip.MustParseAddr("10.201.0.1").As4(), Port: 80, Proto: protoTCP}
+var webKey = dpmap.SvcAddr{IP: netip.MustParseAddr("10.201.0.1"), Port: 80, Proto: protoTCP}
 
 func TestSyncServicesProgramsAFrontend(t *testing.T) {
 	f := newFixture(t)
@@ -39,7 +39,7 @@ func TestSyncServicesProgramsAFrontend(t *testing.T) {
 	if !ok {
 		t.Fatalf("no backend at index 0 gen 1; have %v", f.maps.backends)
 	}
-	if netip.AddrFrom4(backend.IP).String() != "10.200.0.2" || backend.Port != 8080 {
+	if backend.IP.String() != "10.200.0.2" || backend.Port != 8080 {
 		t.Fatalf("backend 0 = %+v, want 10.200.0.2:8080 (sorted by alloc id, target port)", backend)
 	}
 }
@@ -82,7 +82,7 @@ func TestSyncServicesFlipsAChangedBackendSet(t *testing.T) {
 		t.Fatal("gen 1 backend survived the flip")
 	}
 	fresh, ok := f.maps.backends[dpmap.BackendKey{SvcID: val.SvcID, Index: 0, Gen: 2}]
-	if !ok || netip.AddrFrom4(fresh.IP).String() != "10.200.0.3" {
+	if !ok || fresh.IP.String() != "10.200.0.3" {
 		t.Fatalf("gen 2 backend = %+v (ok=%v), want 10.200.0.3", fresh, ok)
 	}
 }

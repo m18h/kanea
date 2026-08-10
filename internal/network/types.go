@@ -39,6 +39,9 @@ type Service struct {
 	// caller, not by this package: DNS answers with it and clients cache it, so
 	// it has to survive a restart that rebuilds everything else.
 	VIP string
+	// VIP6 is the dual-stack twin (v1.41), or empty on a v4-only node. It is
+	// its own durable allocation (lb/vip6/…), never derived from VIP.
+	VIP6 string
 	// Ports the frontend listens on.
 	Ports []ServicePort
 	// Backends are the allocs that should receive traffic. Only allocs that are
@@ -56,6 +59,9 @@ type Service struct {
 type Backend struct {
 	AllocID string
 	IPv4    string
+	// IPv6 is empty on a v4-only node — and on a v4-only attachment adopted
+	// across the dual-stack upgrade, which a v6 frontend then omits (v1.41).
+	IPv6 string
 }
 
 // validate rejects a service no driver could program.
@@ -69,6 +75,10 @@ func (s Service) validate() error {
 	if len(s.Ports) > 0 && !validIP(s.VIP) {
 		return fmt.Errorf("network: service %s/%s has no valid frontend address (%q)",
 			s.Project, s.Service, s.VIP)
+	}
+	if s.VIP6 != "" && !validIP(s.VIP6) {
+		return fmt.Errorf("network: service %s/%s has an invalid v6 frontend address (%q)",
+			s.Project, s.Service, s.VIP6)
 	}
 	seen := make(map[string]bool, len(s.Ports))
 	for _, p := range s.Ports {
@@ -90,6 +100,10 @@ func (s Service) validate() error {
 		if !validIP(b.IPv4) {
 			return fmt.Errorf("network: service %s/%s has an invalid backend address %q",
 				s.Project, s.Service, b.IPv4)
+		}
+		if b.IPv6 != "" && !validIP(b.IPv6) {
+			return fmt.Errorf("network: service %s/%s has an invalid v6 backend address %q",
+				s.Project, s.Service, b.IPv6)
 		}
 		if b.AllocID == "" {
 			return fmt.Errorf("network: service %s/%s has a backend with no alloc id", s.Project, s.Service)
@@ -135,6 +149,9 @@ type Attachment struct {
 	EndpointID int64
 	// IPv4 is the address the datapath assigned.
 	IPv4 string
+	// IPv6 is the dual-stack twin (v1.41), or empty on a v4-only node — and
+	// on a v4-only attachment adopted across the dual-stack upgrade.
+	IPv6 string
 	// Service is the project/service the attachment's identity says it serves.
 	Service ServiceRef
 	// Ready reports a resolved identity fit to receive traffic.
