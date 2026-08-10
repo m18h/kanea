@@ -491,6 +491,16 @@ What is defended:
 - **Connections are bounded and refused when full, never queued**, per listener
   (`max_conns`, default 256) and node-wide (`--max-published-conns`, default
   1024).
+- **A `udp` listener (PRD v1.42) recovers the accept-time hook a datagram
+  socket lacks at session-create time.** `ip_restriction` and both session caps
+  are checked on the first datagram from a source address, before a byte is
+  forwarded; a refused or capped datagram is dropped and counted
+  (`kanea_edge_udp_refused_total`), because UDP has no way to tell the client
+  and a cap nobody can see reads as packet loss. Sessions expire after 90 s
+  idle. The relay dials backend alloc addresses directly — the connect-time LB
+  has no datagram hook — so the backend list crosses the §5.2.6 boundary in
+  `routes.json` for udp listeners alone: alloc addresses are already derivable
+  from the route table's shape and carry no secret.
 
 What is *not* defended, stated plainly:
 
@@ -499,7 +509,9 @@ What is *not* defended, stated plainly:
   edge. PROXY protocol would restore it and is deliberately not implemented
   (§19.3): it is a second wire protocol most homelab services do not speak, and
   a misconfiguration prepends garbage to the stream and presents as protocol
-  corruption rather than as a configuration error.
+  corruption rather than as a configuration error. On `udp` this bites twice:
+  protocols that embed or authenticate by source address (SIP Via, TFTP's port
+  dance) do not survive a relay, and the docs say so rather than pretending.
 - **There is no authentication on a published port.** Whatever the service does
   about that is the service's business. Publishing Postgres on :5432 exposes
   Postgres' own authentication and nothing of Kanea's.

@@ -383,7 +383,22 @@ type Expose struct {
 type Port struct {
 	Name      string
 	Container int
+	// Protocol is "" (TCP, the default) or "udp" (v1.42). A declared "tcp"
+	// normalizes to "" before it is stored. The tag's omitempty is
+	// load-bearing exactly as Desired.User's is: Ports are SpecHash material,
+	// and every pre-v1.42 record must hash with the field absent — a hash
+	// that moved on upgrade would roll every service on the node. Flipping a
+	// port's protocol *does* roll the alloc, which is right: what the process
+	// binds inside the container is baked into it.
+	Protocol string `json:"Protocol,omitempty"`
 }
+
+// PortProtocolUDP marks a datagram port (v1.42). A udp port never enters the
+// VIP's port set — it is reachable only through a published udp listener.
+const PortProtocolUDP = "udp"
+
+// IsUDP reports whether this is a datagram port.
+func (p Port) IsUDP() bool { return p.Protocol == PortProtocolUDP }
 
 // PublishedPort is one node port bound on this service's behalf (R21).
 //

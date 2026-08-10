@@ -290,6 +290,10 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 		for _, p := range svc.Ports {
 			port := network.AppendNewBlock("port", []string{p.Name}).Body()
 			port.SetAttributeValue("container", cty.NumberIntVal(int64(p.Container)))
+			// "" is tcp, the default; only udp is stored, and only udp is
+			// emitted — the round-trip depends on the generated spec
+			// converting back to the same "" (v1.42).
+			setOptionalString(port, "protocol", p.Protocol)
 		}
 		for i := range svc.Publish {
 			p := &svc.Publish[i]

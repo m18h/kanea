@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
@@ -246,6 +247,7 @@ type hclNetworkPolicy struct {
 type hclPort struct {
 	Name      string    `hcl:"name,label"`
 	Container int       `hcl:"container"`
+	Protocol  string    `hcl:"protocol,optional"`
 	DefRange  hcl.Range `hcl:",def_range"`
 }
 
@@ -582,7 +584,13 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 		out.Network = &Network{}
 		for i := range s.Network.Ports {
 			p := &s.Network.Ports[i]
-			out.Network.Ports = append(out.Network.Ports, &Port{Name: p.Name, Container: p.Container, DefRange: p.DefRange})
+			out.Network.Ports = append(out.Network.Ports, &Port{
+				Name: p.Name, Container: p.Container,
+				// Normalized for comparison; validation refuses anything that
+				// is not tcp or udp, so casing is forgiven and typos are not.
+				Protocol: strings.ToLower(strings.TrimSpace(p.Protocol)),
+				DefRange: p.DefRange,
+			})
 		}
 		for i := range s.Network.Publish {
 			out.Network.Publish = append(out.Network.Publish, convertPublish(&s.Network.Publish[i]))

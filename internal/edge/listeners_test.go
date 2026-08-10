@@ -127,7 +127,7 @@ func TestListenerSetDoesNotRebindOnConfigChange(t *testing.T) {
 	set.Apply([]Listener{cfg})
 
 	set.mu.Lock()
-	entry, ok := set.entries[9101]
+	entry, ok := set.entries[entryKey{port: 9101}]
 	set.mu.Unlock()
 	if !ok {
 		t.Fatal("the listener was not bound")
@@ -141,7 +141,7 @@ func TestListenerSetDoesNotRebindOnConfigChange(t *testing.T) {
 	set.Apply([]Listener{changed})
 
 	set.mu.Lock()
-	after := set.entries[9101]
+	after := set.entries[entryKey{port: 9101}]
 	set.mu.Unlock()
 	if after.ln != socket {
 		t.Error("a configuration change rebound the socket; every live connection would have dropped")
@@ -158,12 +158,12 @@ func TestListenerSetRebindsOnAModeChange(t *testing.T) {
 
 	set.Apply([]Listener{testListener(9102, ListenerTCP)})
 	set.mu.Lock()
-	before := set.entries[9102].ln
+	before := set.entries[entryKey{port: 9102}].ln
 	set.mu.Unlock()
 
 	set.Apply([]Listener{testListener(9102, ListenerHTTP)})
 	set.mu.Lock()
-	after := set.entries[9102]
+	after := set.entries[entryKey{port: 9102}]
 	set.mu.Unlock()
 
 	if after.ln == before {
@@ -195,8 +195,8 @@ func TestListenerBindFailureIsNotFatal(t *testing.T) {
 	set.Apply([]Listener{testListener(9201, ListenerTCP), testListener(9202, ListenerTCP)})
 
 	set.mu.Lock()
-	_, blocked := set.entries[9201]
-	_, other := set.entries[9202]
+	_, blocked := set.entries[entryKey{port: 9201}]
+	_, other := set.entries[entryKey{port: 9202}]
 	set.mu.Unlock()
 	if blocked {
 		t.Error("a port that could not bind is recorded as bound")
@@ -226,12 +226,12 @@ func TestListenerSetWithdrawsAPort(t *testing.T) {
 	set.Apply([]Listener{testListener(9301, ListenerTCP)})
 
 	set.mu.Lock()
-	socket := set.entries[9301].ln
+	socket := set.entries[entryKey{port: 9301}].ln
 	set.mu.Unlock()
 
 	set.Apply(nil)
 	set.mu.Lock()
-	_, still := set.entries[9301]
+	_, still := set.entries[entryKey{port: 9301}]
 	set.mu.Unlock()
 	if still {
 		t.Fatal("the listener was not withdrawn")
@@ -253,7 +253,7 @@ func TestPublishedHTTPListenerIgnoresTheHostHeader(t *testing.T) {
 	set.Apply([]Listener{cfg})
 
 	set.mu.Lock()
-	addr := set.entries[9401].ln.Addr().String()
+	addr := set.entries[entryKey{port: 9401}].ln.Addr().String()
 	set.mu.Unlock()
 
 	for _, host := range []string{"192.168.1.10:9401", "anything.invalid", ""} {
@@ -275,7 +275,7 @@ func TestListenerShutdownClosesLiveConnections(t *testing.T) {
 	set.Apply([]Listener{cfg})
 
 	set.mu.Lock()
-	addr := set.entries[9501].ln.Addr().String()
+	addr := set.entries[entryKey{port: 9501}].ln.Addr().String()
 	set.mu.Unlock()
 
 	client, err := net.Dial("tcp", addr)

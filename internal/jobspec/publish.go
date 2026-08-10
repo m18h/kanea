@@ -40,7 +40,14 @@ func validatePublish(svc *Service) hcl.Diagnostics {
 		return nil
 	}
 	var diags hcl.Diagnostics
-	byHost := map[int]*Publish{}
+	// Keyed per L4 family (v1.42): one host port may carry one http/tcp
+	// listener and one udp listener at once — 53 over both is the DNS shape —
+	// because a stream socket and a datagram socket do not contend.
+	type hostKey struct {
+		udp  bool
+		host int
+	}
+	byHost := map[hostKey]*Publish{}
 
 	for _, p := range svc.Network.Publish {
 		where := fmt.Sprintf("Service %q: publish %q", svc.Name, p.Port)
@@ -50,8 +57,10 @@ func validatePublish(svc *Service) hcl.Diagnostics {
 		diags = append(diags, validatePublishHost(p, where, rng)...)
 		mode, modeDiags := validatePublishMode(p, where, rng)
 		diags = append(diags, modeDiags...)
+		diags = append(diags, validatePublishProtocol(svc, p, mode, where, rng)...)
 
-		if prev, dup := byHost[p.Host]; dup {
+		key := hostKey{udp: mode == PublishUDP, host: p.Host}
+		if prev, dup := byHost[key]; dup {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Port published twice",
@@ -61,21 +70,53 @@ func validatePublish(svc *Service) hcl.Diagnostics {
 				Subject: rng.Ptr(),
 			})
 		} else {
-			byHost[p.Host] = p
+			byHost[key] = p
 		}
 
 		// The middleware the mode can actually honour. ip_restriction works on
-		// both — it is checked at accept time, before a byte is forwarded, and
-		// on a tcp listener it is the *only* mitigation there is, because the
-		// upstream sees the edge's address rather than the client's.
+		// all three — it is checked at accept time (session-create time, for
+		// udp), before a byte is forwarded, and on a tcp or udp listener it is
+		// the *only* mitigation there is, because the upstream sees the edge's
+		// address rather than the client's.
 		diags = append(diags, validateIPRestriction(where, p.IPRestriction)...)
-		if mode == PublishTCP {
+		if mode == PublishTCP || mode == PublishUDP {
 			continue
 		}
 		diags = append(diags, validateRateLimit(where, p.RateLimit)...)
 		diags = append(diags, validateExposeHeaders(where, p.Headers)...)
 	}
 	return diags
+}
+
+// validatePublishProtocol enforces v1.42's family agreement: a udp listener
+// may only front a udp port, and a stream listener only a tcp one. Either
+// mismatch is a listener that black-holes by construction — a datagram relay
+// in front of a TCP socket delivers nothing, and nothing says so.
+func validatePublishProtocol(svc *Service, p *Publish, mode, where string, rng hcl.Range) hcl.Diagnostics {
+	port := declaredPort(svc, p.Port)
+	if port == nil || mode == "" {
+		return nil // reported by validatePublishPort / validatePublishMode
+	}
+	switch {
+	case mode == PublishUDP && !port.IsUDP():
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "udp listener on a tcp port",
+			Detail: fmt.Sprintf("%s is mode = %q, but port %q is tcp. A datagram relay in front "+
+				"of a stream socket delivers nothing. Declare the port `protocol = %q` if the "+
+				"service really listens for datagrams there.", where, PublishUDP, p.Port, PortUDP),
+			Subject: rng.Ptr(),
+		}}
+	case mode != PublishUDP && port.IsUDP():
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Stream listener on a udp port",
+			Detail: fmt.Sprintf("%s is mode = %q, but port %q is udp. A stream cannot reach a "+
+				"datagram socket; write mode = %q.", where, mode, p.Port, PublishUDP),
+			Subject: rng.Ptr(),
+		}}
+	}
+	return nil
 }
 
 // validatePublishPort checks that the label names a port the service declared.
@@ -137,39 +178,44 @@ func validatePublishHost(p *Publish, where string, rng hcl.Range) hcl.Diagnostic
 // count requests has to be a plan error.
 func validatePublishMode(p *Publish, where string, rng hcl.Range) (string, hcl.Diagnostics) {
 	mode := p.ResolvedMode()
-	if mode != PublishHTTP && mode != PublishTCP {
+	if mode != PublishHTTP && mode != PublishTCP && mode != PublishUDP {
 		return "", hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary:  "Unknown publish mode",
-			Detail: fmt.Sprintf("%s sets mode = %q; it is %q or %q. "+
+			Detail: fmt.Sprintf("%s sets mode = %q; it is %q, %q or %q. "+
 				"%q reads requests and keeps the whole middleware chain; %q relays bytes "+
-				"and can only restrict who connects.",
-				where, p.Mode, PublishHTTP, PublishTCP, PublishHTTP, PublishTCP),
+				"and %q relays datagrams, and both can only restrict who connects.",
+				where, p.Mode, PublishHTTP, PublishTCP, PublishUDP,
+				PublishHTTP, PublishTCP, PublishUDP),
 			Subject: rng.Ptr(),
 		}}
 	}
 
 	var diags hcl.Diagnostics
-	if mode == PublishTCP {
+	if mode == PublishTCP || mode == PublishUDP {
+		what := "a byte stream"
+		if mode == PublishUDP {
+			what = "a datagram flow"
+		}
 		for _, unsupported := range []struct {
 			name    string
 			present bool
 			why     string
 		}{
 			{"rate_limit", p.RateLimit != nil,
-				"a rate limit counts requests, and a byte stream has none"},
+				fmt.Sprintf("a rate limit counts requests, and %s has none", what)},
 			{"headers", p.Headers != nil,
-				"there are no headers in a stream the edge does not parse"},
+				fmt.Sprintf("there are no headers in %s the edge does not parse", what)},
 		} {
 			if !unsupported.present {
 				continue
 			}
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
-				Summary:  "Middleware a tcp listener cannot honour",
+				Summary:  fmt.Sprintf("Middleware a %s listener cannot honour", mode),
 				Detail: fmt.Sprintf("%s is mode = %q and declares %s: %s. "+
 					"Silently dropping it would leave the spec claiming a control that is "+
-					"not being applied.", where, PublishTCP, unsupported.name, unsupported.why),
+					"not being applied.", where, mode, unsupported.name, unsupported.why),
 				Subject: rng.Ptr(),
 			})
 		}
@@ -207,7 +253,13 @@ func validatePublishedPorts(spec *Spec) hcl.Diagnostics {
 		service string
 		rng     hcl.Range
 	}
-	claimed := map[int]claim{}
+	// Per L4 family, as within one service (v1.42): a stream bind and a
+	// datagram bind on one number do not contend.
+	type claimKey struct {
+		udp  bool
+		host int
+	}
+	claimed := map[claimKey]claim{}
 	// Sorted, so two services colliding produce the same message whichever
 	// order the files were read in.
 	services := make([]*Service, len(spec.Services))
@@ -229,9 +281,10 @@ func validatePublishedPorts(spec *Spec) hcl.Diagnostics {
 				continue // already reported, and not a real claim
 			}
 			name := svc.Project + "/" + svc.Name
-			prev, taken := claimed[p.Host]
+			key := claimKey{udp: p.ResolvedMode() == PublishUDP, host: p.Host}
+			prev, taken := claimed[key]
 			if !taken {
-				claimed[p.Host] = claim{service: name, rng: p.DefRange}
+				claimed[key] = claim{service: name, rng: p.DefRange}
 				continue
 			}
 			if prev.service == name {
