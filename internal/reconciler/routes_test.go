@@ -1,9 +1,11 @@
 package reconciler_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -639,5 +641,28 @@ func TestMixedProtocolServiceKeepsItsTCPFrontend(t *testing.T) {
 	snap := loadRoutes(t, path)
 	if len(snap.Listeners) != 2 {
 		t.Fatalf("listeners = %+v, want the tcp and udp listeners to share the port", snap.Listeners)
+	}
+}
+
+// A pre-v1.50 record — one expose block — must serialize exactly as it always
+// has: ExtraExposes rides omitempty, so the key exists only on records that
+// declared a second route. A key appearing on every record would be a
+// byte-level change to state nobody edited (the R23 lesson).
+func TestASingleRouteRecordCarriesNoExtraExposesKey(t *testing.T) {
+	d := reconciler.Desired{Project: "shop", Service: "web",
+		Expose: &reconciler.Expose{Port: 80}}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "extra_exposes") {
+		t.Errorf("a single-route record serialized an extra_exposes key:\n%s", raw)
+	}
+
+	// And AllExposes is the one read path: first block first, extras after.
+	d.ExtraExposes = []reconciler.Expose{{Port: 9090}}
+	all := d.AllExposes()
+	if len(all) != 2 || all[0].Port != 80 || all[1].Port != 9090 {
+		t.Errorf("AllExposes = %+v, want ports [80 9090]", all)
 	}
 }

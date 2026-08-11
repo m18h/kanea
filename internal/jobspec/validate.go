@@ -469,8 +469,14 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		diags = append(diags, validateUpdate(svc)...)
 		diags = append(diags, validateExpose(svc)...)
 		diags = append(diags, validatePublish(svc)...)
-		if svc.Expose != nil && svc.Expose.Auth != nil {
-			diags = append(diags, validateAuth(svc, svc.Expose.Auth)...)
+		// The first non-nil auth stands for all of them: v1.50's identical-auth
+		// rule is enforced in validateExpose, so validating each block's copy
+		// would only repeat one refusal per block.
+		for _, e := range svc.Exposes {
+			if e.Auth != nil {
+				diags = append(diags, validateAuth(svc, e.Auth)...)
+				break
+			}
 		}
 		if svc.Function != nil {
 			diags = append(diags, validateFunction(svc)...)

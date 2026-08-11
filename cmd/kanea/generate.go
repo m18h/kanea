@@ -316,8 +316,8 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 		block.AppendNewline()
 	}
 
-	if svc.Expose != nil {
-		if err := writeExpose(block, svc); err != nil {
+	for _, e := range svc.AllExposes() {
+		if err := writeExpose(block, svc, e); err != nil {
 			return err
 		}
 	}
@@ -435,43 +435,70 @@ func writeTask(block *hclwrite.Body, svc *reconciler.Desired) error {
 	return nil
 }
 
-func writeExpose(block *hclwrite.Body, svc *reconciler.Desired) error {
-	// The expose block names no port — the edge picks the port named "http",
-	// or the only one (R16). Generation must refuse a Desired whose exposed
-	// port that rule would not re-select, or the round trip changes routing.
+func writeExpose(block *hclwrite.Body, svc *reconciler.Desired, e *reconciler.Expose) error {
+	// The record holds a container port number; the block names a port. A
+	// number matching nothing declared cannot round-trip and refuses by name
+	// (the v1.38 rule).
 	matched := ""
 	for _, p := range svc.Ports {
-		if p.Container == svc.Expose.Port {
+		if p.Container == e.Port {
 			matched = p.Name
 			break
 		}
 	}
 	if matched == "" {
 		return fmt.Errorf("cannot generate a spec for %s/%s: the exposed port %d matches no "+
-			"declared container port", svc.Project, svc.Service, svc.Expose.Port)
+			"declared container port", svc.Project, svc.Service, e.Port)
 	}
-	// A grpc route may also carry its port under the name "grpc" — that is
-	// exactly what EdgePort would re-select for it (R28).
-	reSelected := matched == jobspec.EdgePortName ||
-		(svc.Expose.Protocol == jobspec.ExposeProtocolGRPC && matched == jobspec.ExposeProtocolGRPC)
-	if !reSelected && len(svc.Ports) > 1 {
-		return fmt.Errorf("cannot generate a spec for %s/%s: the exposed port %q would not be "+
-			"re-selected by the edge-port rule; edit the original spec file",
-			svc.Project, svc.Service, matched)
+	// `port` is emitted exactly when the conventions would pick differently
+	// (R16, v1.49): a spec the conventions already serve regenerates
+	// byte-identically to its pre-v1.49 output, and everything else says what
+	// it means. The convention is EdgePort's, mirrored over the record: a grpc
+	// route's port named "grpc" (R28), then the port named "http", then the
+	// sole stream port.
+	convention := ""
+	var streamNames []string
+	for _, p := range svc.Ports {
+		if p.Protocol != reconciler.PortProtocolUDP {
+			streamNames = append(streamNames, p.Name)
+		}
 	}
+	if e.Protocol == jobspec.ExposeProtocolGRPC {
+		for _, n := range streamNames {
+			if n == jobspec.ExposeProtocolGRPC {
+				convention = n
+				break
+			}
+		}
+	}
+	if convention == "" {
+		for _, n := range streamNames {
+			if n == jobspec.EdgePortName {
+				convention = n
+				break
+			}
+		}
+	}
+	if convention == "" && len(streamNames) == 1 {
+		convention = streamNames[0]
+	}
+	reSelected := convention == matched
 
 	expose := block.AppendNewBlock("expose", nil).Body()
-	if domains := svc.Expose.Domains; len(domains) > 0 {
+	if domains := e.Domains; len(domains) > 0 {
 		expose.SetAttributeValue("domains", stringList(domains))
 	}
-	setOptionalString(expose, "protocol", svc.Expose.Protocol)
-	if svc.Expose.TLSMode != "" || svc.Expose.TLSName != "" {
-		tls := expose.AppendNewBlock("tls", nil).Body()
-		setOptionalString(tls, "mode", svc.Expose.TLSMode)
-		setOptionalString(tls, "name", svc.Expose.TLSName)
+	if !reSelected {
+		expose.SetAttributeValue("port", cty.StringVal(matched))
 	}
-	writeMiddleware(expose, svc.Expose.IPRestriction, svc.Expose.RateLimit, svc.Expose.Headers)
-	writeAuth(expose, svc.Expose.Auth)
+	setOptionalString(expose, "protocol", e.Protocol)
+	if e.TLSMode != "" || e.TLSName != "" {
+		tls := expose.AppendNewBlock("tls", nil).Body()
+		setOptionalString(tls, "mode", e.TLSMode)
+		setOptionalString(tls, "name", e.TLSName)
+	}
+	writeMiddleware(expose, e.IPRestriction, e.RateLimit, e.Headers)
+	writeAuth(expose, e.Auth)
 	block.AppendNewline()
 	return nil
 }

@@ -134,7 +134,7 @@ type hclService struct {
 	Build        *hclBuild        `hcl:"build,block"`
 	Tasks        []hclTask        `hcl:"task,block"`
 	Network      *hclNetwork      `hcl:"network,block"`
-	Expose       *hclExpose       `hcl:"expose,block"`
+	Exposes      []hclExpose      `hcl:"expose,block"`
 	HealthChecks []hclHealthCheck `hcl:"health_check,block"`
 	Volumes      []hclVolume      `hcl:"volume,block"`
 	Scaling      *hclScaling      `hcl:"scaling,block"`
@@ -252,7 +252,11 @@ type hclPort struct {
 }
 
 type hclExpose struct {
-	Domains       []string          `hcl:"domains,optional"`
+	Domains []string `hcl:"domains,optional"`
+	// Port names the declared network { port } this route proxies to (R16,
+	// v1.49). Optional: absent, the port named "http" or the sole declared
+	// port is chosen, as always.
+	Port          string            `hcl:"port,optional"`
 	TLS           *hclTLS           `hcl:"tls,block"`
 	IPRestriction *hclIPRestriction `hcl:"ip_restriction,block"`
 	RateLimit     *hclRateLimit     `hcl:"rate_limit,block"`
@@ -602,8 +606,13 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 			}
 		}
 	}
-	if s.Expose != nil {
-		out.Expose = convertExpose(s.Expose)
+	for i := range s.Exposes {
+		out.Exposes = append(out.Exposes, convertExpose(&s.Exposes[i]))
+	}
+	// Expose remains the first block (v1.50): every single-route reader —
+	// functions, the R28 publish check, the CLI — keeps meaning what it meant.
+	if len(out.Exposes) > 0 {
+		out.Expose = out.Exposes[0]
 	}
 	for i := range s.HealthChecks {
 		h := &s.HealthChecks[i]
@@ -719,7 +728,7 @@ func convertPublish(p *hclPublish) *Publish {
 }
 
 func convertExpose(e *hclExpose) *Expose {
-	out := &Expose{Domains: e.Domains, Auth: convertAuth(e.Auth), DefRange: e.DefRange}
+	out := &Expose{Domains: e.Domains, Port: e.Port, Auth: convertAuth(e.Auth), DefRange: e.DefRange}
 	// "http" is the default made explicit; normalizing it here keeps every
 	// consumer to one spelling of "no marker". Unknown values travel through
 	// so validation can refuse them with a diagnostic instead of a shrug.

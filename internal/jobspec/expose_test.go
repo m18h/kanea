@@ -111,6 +111,162 @@ func TestExposeRejectsAnAmbiguousPort(t *testing.T) {
 	}
 }
 
+// R16 (v1.49): an explicit port names the upstream and beats every convention.
+func TestExposeSelectsAnExplicitPort(t *testing.T) {
+	multi := `network {
+    port "http" { container = 80 }
+    port "api"  { container = 8080 }
+  }`
+	spec := parse(t, exposeSpec(multi, `
+    domains = ["shop.example.com"]
+    port    = "api"
+  `))
+	port := spec.ServiceByName("shop", "web").EdgePort()
+	if port == nil || port.Container != 8080 {
+		t.Fatalf("EdgePort = %+v, want the api port", port)
+	}
+}
+
+// A spec that says which port it means is never second-guessed by a naming
+// heuristic — R28's grpc-name preference included.
+func TestExposeExplicitPortBeatsTheGrpcPreference(t *testing.T) {
+	multi := `network {
+    port "grpc" { container = 50051 }
+    port "api"  { container = 8080 }
+  }`
+	spec := parse(t, exposeSpec(multi, `
+    domains  = ["shop.example.com"]
+    protocol = "grpc"
+    port     = "api"
+  `))
+	port := spec.ServiceByName("shop", "web").EdgePort()
+	if port == nil || port.Container != 8080 {
+		t.Fatalf("EdgePort = %+v, want the explicitly named api port", port)
+	}
+}
+
+// An explicit port naming nothing declared is its own refusal, listing what is
+// declared — not the ambiguity error, whose remedy is not this spec's problem.
+func TestExposeRejectsAnUnknownExplicitPort(t *testing.T) {
+	got := parseErr(t, exposeSpec(httpPort, `
+    domains = ["shop.example.com"]
+    port    = "api"
+  `))
+	if !strings.Contains(got, "Unknown exposed port") || !strings.Contains(got, `"http"`) {
+		t.Errorf("diagnostics = %q, want an unknown-port error naming the declared ports", got)
+	}
+}
+
+// A udp port has no frontend for the edge to dial (R21), and naming one
+// explicitly does not change that.
+func TestExposeRejectsAUdpExplicitPort(t *testing.T) {
+	multi := `network {
+    port "http" { container = 80 }
+    port "sync" {
+      container = 9999
+      protocol  = "udp"
+    }
+  }`
+	got := parseErr(t, exposeSpec(multi, `
+    domains = ["shop.example.com"]
+    port    = "sync"
+  `))
+	if !strings.Contains(got, "Exposed port is udp") {
+		t.Errorf("diagnostics = %q, want a udp refusal", got)
+	}
+}
+
+// v1.50: several expose blocks, each a complete route with its own domains
+// and port.
+func TestExposeAcceptsMultipleBlocks(t *testing.T) {
+	src := `
+spec_version = 1
+
+project "shop" {}
+
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx:1.27-alpine" }
+  network {
+    port "http" { container = 80 }
+    port "api"  { container = 8080 }
+  }
+  expose {
+    domains = ["shop.example.com"]
+  }
+  expose {
+    domains = ["api.shop.example.com"]
+    port    = "api"
+  }
+}
+`
+	spec := parse(t, src)
+	svc := spec.ServiceByName("shop", "web")
+	if len(svc.Exposes) != 2 {
+		t.Fatalf("Exposes = %d, want 2", len(svc.Exposes))
+	}
+	if svc.Expose != svc.Exposes[0] {
+		t.Error("Expose is not the first block")
+	}
+	if p := svc.EdgePortFor(svc.Exposes[0]); p == nil || p.Container != 80 {
+		t.Errorf("first route port = %+v, want 80", p)
+	}
+	if p := svc.EdgePortFor(svc.Exposes[1]); p == nil || p.Container != 8080 {
+		t.Errorf("second route port = %+v, want 8080", p)
+	}
+	domains := svc.EdgeDomains("")
+	if len(domains) != 2 || domains[0] != "shop.example.com" || domains[1] != "api.shop.example.com" {
+		t.Errorf("EdgeDomains = %v", domains)
+	}
+}
+
+// One auto-FQDN per service: only the first block may omit domains.
+func TestExposeSecondBlockRequiresDomains(t *testing.T) {
+	got := parseErr(t, exposeSpec(httpPort, `domains = ["shop.example.com"]`)+`
+service "web2" {
+  project = "shop"
+  task "app" { image = "nginx:1.27-alpine" }
+  `+httpPort+`
+  expose {
+    domains = ["web2.example.com"]
+  }
+  expose {}
+}
+`)
+	if !strings.Contains(got, "Expose block has no domains") {
+		t.Errorf("diagnostics = %q, want the nameless-extra-block refusal", got)
+	}
+}
+
+// A domain in two blocks of one service is a domain listed twice.
+func TestExposeBlocksMayNotShareADomain(t *testing.T) {
+	got := parseErr(t, exposeSpec(httpPort, `domains = ["shop.example.com"]`+"\n  }\n  expose {\n    domains = [\"shop.example.com\"]"))
+	if !strings.Contains(got, "Duplicate domain") {
+		t.Errorf("diagnostics = %q, want a duplicate-domain error", got)
+	}
+}
+
+// The verifier bundle is keyed per service (v1.40), so blocks that
+// authenticate must authenticate identically.
+func TestExposeBlocksMustAgreeAboutAuth(t *testing.T) {
+	multi := `network {
+    port "http" { container = 80 }
+    port "api"  { container = 8080 }
+  }`
+	got := parseErr(t, exposeSpec(multi, `
+    domains = ["shop.example.com"]
+    auth { basic_ref = "secret:shop/users-a" }
+  }
+  expose {
+    domains = ["api.shop.example.com"]
+    port    = "api"
+    auth { basic_ref = "secret:shop/users-b" }
+  `))
+	if !strings.Contains(got, "disagree about auth") {
+		t.Errorf("diagnostics = %q, want the auth-disagreement refusal", got)
+	}
+}
+
 // One port needs no name: there is no ambiguity to resolve.
 func TestExposeAcceptsASoleUnnamedPort(t *testing.T) {
 	sole := `network {

@@ -203,6 +203,8 @@ func convertFunction(f *hclFunction) (*Service, hcl.Diagnostics) {
 				Auth:     tr.Auth,
 				DefRange: tr.DefRange,
 			})
+			// A lowered function has exactly one route by construction (v1.50).
+			svc.Exposes = []*Expose{svc.Expose}
 		case TriggerEvent:
 			svc.Function.Events = append(svc.Function.Events, &EventTrigger{
 				On: tr.On, Path: tr.Path, DefRange: tr.DefRange,

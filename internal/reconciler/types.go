@@ -86,8 +86,16 @@ type Desired struct {
 	// project default (jobspec R14). It only ever adds reachability.
 	AllowFrom []PeerRef
 	// Expose is the north-south route this service publishes, or nil for a
-	// service that is only reachable east-west (PRD §7.2).
+	// service that is only reachable east-west (PRD §7.2). It is the FIRST
+	// route: a service may publish several (v1.50), and this field staying the
+	// first is what keeps every pre-v1.50 record and reader meaning what it
+	// meant.
 	Expose *Expose
+	// ExtraExposes are the routes after the first (PRD v1.50), additive beside
+	// Expose rather than a list replacing it: a single-route record must
+	// serialize byte-identically (the R23 lesson). Read through AllExposes,
+	// never directly. NOT SpecHash material, like Expose.
+	ExtraExposes []Expose `json:"extra_exposes,omitempty"`
 	// Publish are the node ports the edge binds for this service (PRD §7.2.2,
 	// R21). A service can be published and not exposed: Jellyfin on :8096 with
 	// no domain and no certificate is the case the feature exists for.
@@ -375,6 +383,21 @@ type Expose struct {
 	// material — nothing about the upstream dial is baked into a container,
 	// so changing it republishes routes and never rolls an alloc.
 	Protocol string `json:"protocol,omitempty"`
+}
+
+// AllExposes returns every route of the service in order, the first block
+// first — nil for an unexposed service. The one way to read routes (v1.50):
+// reading Expose alone silently drops the extras.
+func (d *Desired) AllExposes() []*Expose {
+	if d.Expose == nil {
+		return nil
+	}
+	out := make([]*Expose, 0, 1+len(d.ExtraExposes))
+	out = append(out, d.Expose)
+	for i := range d.ExtraExposes {
+		out = append(out, &d.ExtraExposes[i])
+	}
+	return out
 }
 
 // Port is a named container port. The service frontend listens on the same
