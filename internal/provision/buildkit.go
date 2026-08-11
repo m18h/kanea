@@ -84,7 +84,7 @@ func SetupBuildkit(ctx context.Context, l Layout, log *slog.Logger) error {
 		}
 	}
 
-	if _, err := exec.LookPath("newuidmap"); err != nil {
+	if _, err := lookupTool("newuidmap"); err != nil {
 		// Not fatal: the binaries are installed and the unit is written, and
 		// an operator who installs uidmap afterwards gets a working daemon
 		// without re-running anything. Refusing here would fail an install
@@ -103,14 +103,16 @@ func ensureUser(ctx context.Context, name string, log *slog.Logger) error {
 		return fmt.Errorf("look up %s: %w", name, err)
 	}
 
-	if _, err := exec.LookPath("useradd"); err != nil {
-		return fmt.Errorf("cannot create the %s account: useradd is not on PATH", name)
+	useradd, err := lookupTool("useradd")
+	if err != nil {
+		return fmt.Errorf("cannot create the %s account: %w — install the passwd (Debian) or shadow-utils (RHEL) package", name, err)
 	}
 	// --system: no ageing, no mail spool, a uid below the login range.
 	// --no-create-home: the home directory is under Kanea's data directory and
 	// is created above with the mode it needs, not by useradd's skeleton.
-	// #nosec G204 — name is a package constant.
-	cmd := exec.CommandContext(ctx, "useradd",
+	// #nosec G204 — the path comes from lookupTool over fixed directories, and
+	// name is a package constant.
+	cmd := exec.CommandContext(ctx, useradd,
 		"--system", "--no-create-home", "--shell", "/usr/sbin/nologin", name)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create the %s account: %w: %s", name, err, strings.TrimSpace(string(out)))

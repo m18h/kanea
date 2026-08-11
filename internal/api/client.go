@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -307,8 +308,15 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) (er
 
 // dialError turns a connection failure into the question the user actually
 // needs answered: "is kanead running?" rather than a bare ENOENT on a socket
-// path most people have never seen.
+// path most people have never seen — and for EACCES, the remedy rather than
+// the errno, because "permission denied" on a 0600 socket is working as
+// designed and the caller needs to know which door is theirs (§13.1, v1.48).
 func (c *Client) dialError(err error) error {
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("permission denied on %s — run with sudo, or join the %s group "+
+			"(sudo usermod -aG %s $USER, then log in again): %w",
+			c.Socket(), SocketGroup, SocketGroup, err)
+	}
 	var netErr *net.OpError
 	if errors.As(err, &netErr) {
 		return fmt.Errorf("cannot reach kanead at %s (is it running? try `kanea agent`): %w",
