@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/provision"
@@ -49,9 +52,25 @@ func runInit(args []string) error {
 		"IPv6 pool for service frontend twins")
 	buildkitSocket := fs.String("buildkit", gitops.DefaultBuildkitSocket,
 		"rootless buildkitd address (\"off\" skips the build daemon)")
+	listenFlag := fs.String("listen", api.DefaultListenAddr,
+		"API/dashboard network address written into the kanead unit (\"none\" keeps it socket-only)")
+	listenCert := fs.String("listen-cert", "", "TLS certificate for --listen (required beyond loopback)")
+	listenKey := fs.String("listen-key", "", "TLS private key for --listen")
+	adminUser := fs.String("admin-user", "", "first admin's username (default: prompt)")
+	noStart := fs.Bool("no-start", false,
+		"write units but do not start kanead or create the first account")
+	timeout := fs.Duration("timeout", 2*time.Minute, "how long to wait for kanead to come up")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// Prompted only when not passed — detected here, so a script that sets the
+	// flag (to anything, including the default) never consumes a stdin line.
+	explicitListen := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "listen" {
+			explicitListen = true
+		}
+	})
 	// Refused, not defaulted: before v1.36 any unknown value here silently
 	// meant the product mode, so a typo configured a node by accident.
 	if err := validNetworkMode(*networkMode); err != nil {
@@ -67,6 +86,18 @@ func runInit(args []string) error {
 
 	o := newOut()
 	o.printf("kanea init — %s\n\n", version)
+
+	// One reader for every prompt in this run. A second bufio.Reader over
+	// os.Stdin would buffer ahead and swallow lines meant for a later prompt —
+	// invisible on a terminal, fatal for a piped init.
+	reader := bufio.NewReader(os.Stdin)
+
+	// Settled first, before any check or install runs: a refused address
+	// should cost the operator nothing but the retype.
+	listenAddr, err := resolveListen(o, reader, explicitListen, *listenFlag, *listenCert, *listenKey)
+	if err != nil {
+		return err
+	}
 
 	// `--containerd external` adopts the daemon already on the node instead of
 	// installing one. Resolved here so the checks below and the install below
@@ -132,7 +163,7 @@ func runInit(args []string) error {
 	if err := createLayout(o, *dataDir, *logDir); err != nil {
 		return err
 	}
-	if err := keyCeremony(o, filepath.Join(*dataDir, secrets.KeyFileName)); err != nil {
+	if err := keyCeremony(o, filepath.Join(*dataDir, secrets.KeyFileName), reader); err != nil {
 		return err
 	}
 	if !*skipUnits {
@@ -141,18 +172,31 @@ func runInit(args []string) error {
 			reserve: *reserve, binary: executablePath(),
 			network: *networkMode, nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
 			nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
+			listen: listenAddr, listenCert: *listenCert, listenKey: *listenKey,
 		}); err != nil {
 			return err
 		}
 	}
 
 	o.println()
-	o.println("Next:")
-	o.println("  1. systemctl daemon-reload && systemctl enable --now kanead")
-	o.println("  2. kanea user add <name> --role admin        # the first account")
-	o.println("  3. kanea run <spec.hcl>                      # deploy something")
-	o.println()
-	o.println("Configure a backup destination before you need one — see docs/DR_RUNBOOK.md.")
+	if *skipUnits || *noStart || !systemdAvailable() {
+		// The pre-v1.45 ending, kept for the nodes it served: no systemd to
+		// drive, or an operator who asked init to stop at the files.
+		printManualNext(o)
+		return o.Err()
+	}
+	if err := bootstrapDaemon(o, reader, bootstrapOptions{
+		listen: listenAddr, adminUser: *adminUser, timeout: *timeout,
+		network:  *networkMode,
+		nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR, serviceCIDR: reconciler.DefaultServiceCIDR,
+		nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
+		client: api.NewClient(api.DefaultSocket),
+		run: func(ctx context.Context, args ...string) error {
+			return systemctl(ctx, *timeout, args...)
+		},
+	}); err != nil {
+		return err
+	}
 	return o.Err()
 }
 
@@ -199,7 +243,11 @@ func createLayout(o *out, dataDir, logDir string) error {
 // So the key is printed once and the operator has to type it back. Not a y/n
 // prompt: the point is to prove they actually recorded it, and "press y to
 // confirm you have done a thing" proves nothing.
-func keyCeremony(o *out, path string) error {
+//
+// The reader is the caller's shared stdin reader — the ceremony must not wrap
+// os.Stdin itself, because a private bufio.Reader buffers ahead and would
+// swallow the lines a later prompt (the first admin's, v1.45) is waiting for.
+func keyCeremony(o *out, path string, reader *bufio.Reader) error {
 	if _, err := os.Stat(path); err == nil {
 		// Never regenerated. A second key would leave every existing secret and
 		// every existing archive unreadable, silently.
@@ -236,7 +284,6 @@ func keyCeremony(o *out, path string) error {
 		return err
 	}
 
-	reader := bufio.NewReader(os.Stdin)
 	matched, err := confirm(reader, encoded)
 	if err != nil {
 		return fmt.Errorf("read confirmation: %w", err)

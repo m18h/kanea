@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -238,9 +239,11 @@ func expiry(at time.Time) string {
 
 // readPassword prompts without echoing, or reads one line from a pipe.
 //
-// The pipe case is what makes `kanea user add` scriptable — `kanea init` and CI
-// both need it — and the terminal case is what keeps a password off the screen
-// and out of the scrollback of anyone typing it by hand.
+// The pipe case is what makes `kanea user add` scriptable — CI needs it — and
+// the terminal case is what keeps a password off the screen and out of the
+// scrollback of anyone typing it by hand. `kanea init` uses readPasswordFrom
+// instead: its prompts share one buffered reader, and a second reader over
+// os.Stdin would race the buffer.
 func readPassword(prompt string) (string, error) {
 	fd := int(os.Stdin.Fd())
 	if !term.IsTerminal(fd) {
@@ -250,7 +253,28 @@ func readPassword(prompt string) (string, error) {
 		}
 		return line, nil
 	}
+	return readPasswordTerminal(fd, prompt)
+}
 
+// readPasswordFrom is readPassword for a caller that owns a shared stdin
+// reader. On a terminal the buffered reader is not involved — term.ReadPassword
+// works on the fd — so the two paths differ only in where a piped line comes
+// from: the shared buffer, which may already hold it.
+func readPasswordFrom(reader *bufio.Reader, prompt string) (string, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		line, err := reader.ReadString('\n')
+		if err != nil && line == "" {
+			return "", fmt.Errorf("read password from stdin: %w", err)
+		}
+		line, _, _ = strings.Cut(line, "\n")
+		return strings.TrimSuffix(line, "\r"), nil
+	}
+	return readPasswordTerminal(fd, prompt)
+}
+
+// readPasswordTerminal is the no-echo double-entry prompt both variants share.
+func readPasswordTerminal(fd int, prompt string) (string, error) {
 	if _, err := fmt.Fprint(os.Stderr, prompt); err != nil {
 		return "", err
 	}

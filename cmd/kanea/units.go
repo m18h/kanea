@@ -43,6 +43,13 @@ type unitOptions struct {
 	nodeCIDR6    string
 	clusterCIDR6 string
 	serviceCIDR6 string
+	// listen is the API/dashboard network address (v1.45), rendered only when
+	// set for the same reason as the v6 trio: the unit for a socket-only node
+	// must stay byte-identical. kanead owns the listener, so the flag belongs
+	// on its argv (the v1.33 rule for the CIDRs, applied to the bind address).
+	listen     string
+	listenCert string
+	listenKey  string
 }
 
 // unitFile is one file to write.
@@ -144,6 +151,13 @@ func kaneadService(opts unitOptions) string {
 			` --cluster-cidr6 ` + opts.clusterCIDR6 +
 			` --service-cidr6 ` + opts.serviceCIDR6
 	}
+	listenFlags := ""
+	if opts.listen != "" {
+		listenFlags = ` --listen ` + opts.listen
+		if opts.listenCert != "" {
+			listenFlags += ` --listen-cert ` + opts.listenCert + ` --listen-key ` + opts.listenKey
+		}
+	}
 	return heredoc(`
 		[Unit]
 		Description=Kanea control plane (kanead)
@@ -165,7 +179,7 @@ func kaneadService(opts unitOptions) string {
 		# binary — which Type=simple would report as a successful start.
 		Type=exec
 		ExecStart=` + opts.binary + ` agent --data-dir ` + opts.dataDir + ` --log-dir ` + opts.logDir +
-		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + v6Flags + `
+		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + v6Flags + listenFlags + `
 		Restart=always
 		RestartSec=5s
 		Slice=kanea.slice
