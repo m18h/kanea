@@ -610,6 +610,10 @@ func (s *Server) applySocketGroup(gid int) error {
 	if err := os.Chown(s.socket, -1, gid); err != nil {
 		return fmt.Errorf("chgrp socket: %w", err)
 	}
+	// #nosec G302 — 0660 is the feature: a unix socket needs the group write
+	// bit for connect(2), and granting the operator-created kanea group the
+	// socket is exactly what PRD v1.48 specifies. Root-only was set first, so
+	// failing here leaves 0600.
 	return os.Chmod(s.socket, 0o660)
 }
 
