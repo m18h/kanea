@@ -64,7 +64,7 @@ bpf-verify: ## Regenerate BPF artifacts and diff — CI gate (requires docker)
 .PHONY: dashboard
 dashboard: ## Dashboard gates: lint, typecheck, test, build, audit
 	@if [ -f dashboard/package.json ]; then \
-		cd dashboard && npm ci && npm run lint && npm run typecheck && npm test && npm run build && npm audit --audit-level=high; \
+		cd dashboard && npm ci && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm audit --audit-level=high; \
 	else \
 		echo "dashboard/ not scaffolded yet (milestone M4) — skipping"; \
 	fi

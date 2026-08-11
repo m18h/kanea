@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { apiFetch } from './session'
+import { apiFetch, csrfHeader, requestTimeout } from './session'
 
 /**
  * The spec editor's wire surface (PRD §12.2, v1.38).
@@ -81,9 +81,10 @@ export async function applySpec(
     credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
-      ...(csrf ? { 'X-Kanea-CSRF': csrf } : {}),
+      ...(csrf ? { [csrfHeader]: csrf } : {}),
     },
     body: JSON.stringify({ files: { 'editor.hcl': hcl }, ...(project ? { project } : {}) }),
+    signal: AbortSignal.timeout(requestTimeout),
   })
   if (resp.status === 422) {
     const body = renderResponseSchema.parse(await resp.json())
@@ -112,7 +113,7 @@ export async function fetchSpecSource(
   service: string,
   signal?: AbortSignal,
 ): Promise<{ hcl: string } | { refusal: string }> {
-  const init: RequestInit = signal ? { signal } : {}
+  const init: RequestInit = signal ? { signal } : { signal: AbortSignal.timeout(requestTimeout) }
   const resp = await fetch(
     `/v1/spec/source?project=${encodeURIComponent(project)}&service=${encodeURIComponent(service)}`,
     init,

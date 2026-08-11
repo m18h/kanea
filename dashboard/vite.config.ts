@@ -29,5 +29,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    coverage: {
+      provider: 'v8',
+      // Ratchet, not aspiration: the floor is where the suite stands today,
+      // and it should be raised whenever a page gains tests.
+      thresholds: { statements: 48, branches: 29, functions: 35, lines: 50 },
+    },
   },
 })

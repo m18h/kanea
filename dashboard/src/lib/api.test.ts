@@ -1,5 +1,15 @@
-import { describe, expect, it } from 'vitest'
-import { allocsResponseSchema, servicesResponseSchema, subscriptionKey, Topic } from './api'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  allocsResponseSchema,
+  createBackup,
+  servicesResponseSchema,
+  subscriptionKey,
+  syncProject,
+  Topic,
+  triggerBuild,
+  verifyBackup,
+} from './api'
+import { csrfHeader } from './session'
 
 describe('subscriptionKey', () => {
   it('is the bare topic when nothing scopes it', () => {
@@ -63,5 +73,67 @@ describe('allocsResponseSchema', () => {
       allocs: [{ ID: 'x', Project: 'shop', Service: 'web', Index: 0, State: 'running' }],
     })
     expect(result.success).toBe(false)
+  })
+})
+
+/** stubFetch records what was sent and answers with a fixed response. */
+function stubFetch(status: number, body: unknown = {}) {
+  const calls: { url: string; init: RequestInit | undefined }[] = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: typeof url === 'string' ? url : url instanceof URL ? url.href : url.url, init })
+      return Promise.resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve(body),
+      } as Response)
+    }),
+  )
+  return calls
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+// The daemon checks the double-submit token on every cookie-authenticated
+// mutation (§13.3), so each mutating helper must route through apiFetch with
+// its token. These pin the wire shape a missing token would silently break.
+describe('mutations carry the CSRF token', () => {
+  it('triggerBuild posts with the header', async () => {
+    const calls = stubFetch(200, {
+      id: 'run-1', project: 'shop', service: 'web', state: 'queued',
+      trigger: 'manual', started_at: '2026-08-11T00:00:00Z',
+    })
+    await triggerBuild('shop', 'web', true, 'token-value')
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(calls[0]?.init?.method).toBe('POST')
+    expect(headers[csrfHeader]).toBe('token-value')
+  })
+
+  it('syncProject posts with the header', async () => {
+    const calls = stubFetch(204)
+    await syncProject('shop', 'token-value')
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(calls[0]?.init?.method).toBe('POST')
+    expect(headers[csrfHeader]).toBe('token-value')
+  })
+
+  it('createBackup posts with the header', async () => {
+    const calls = stubFetch(204)
+    await createBackup('from the dashboard', 'token-value')
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(calls[0]?.init?.method).toBe('POST')
+    expect(headers[csrfHeader]).toBe('token-value')
+  })
+
+  // verify is a GET at the daemon, and reads carry no token.
+  it('verifyBackup reads without the header', async () => {
+    const calls = stubFetch(204)
+    await verifyBackup('arch-1')
+    const headers = (calls[0]?.init?.headers ?? {}) as Record<string, string>
+    expect(calls[0]?.init?.method ?? 'GET').toBe('GET')
+    expect(headers[csrfHeader]).toBeUndefined()
   })
 })
