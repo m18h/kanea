@@ -92,6 +92,21 @@ kanea backup list
 
 The header reports when replication last succeeded. "Last segment: 40 minutes
 ago" on a busy node means the destination is unreachable and nobody noticed.
+The dashboard's Settings page shows the same numbers beside the destination.
+
+**Where the destination is decided** (PRD v1.46): the unit's `--backup-*`
+flags are the seed; a `settings/backup` record written from the dashboard's
+Settings page or `PUT /v1/settings/backup` wins over them, and deleting the
+record reverts to the flags. Changing the destination at runtime is safe by
+construction — the new destination is probed with a real test write *before*
+anything commits, the old one receives a final segment ship, and the new one
+gets an immediate full snapshot. One consequence for this runbook: when
+reconstructing which bucket a dead node was shipping to, the unit file alone
+is not the answer — the settings record (in the Store, and therefore in the
+archives themselves) may have superseded it. `kanea backup list` on a live
+node, or the newest archive's manifest in whichever bucket you find, is
+authoritative. The offline `kanea restore` command always takes its
+destination explicitly and is unaffected.
 
 ---
 

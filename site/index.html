@@ -219,7 +219,9 @@
         <div class="card">
           <h3>Live dashboard</h3>
           <p>React and shadcn/ui, embedded in the binary and served by the daemon over one
-             multiplexed websocket: services, allocs, events, logs, backups. <code>kanea ui</code> opens it.</p>
+             multiplexed websocket: services, allocs, events, logs, backups — and a Settings
+             page where the backup destination and notification channels change at runtime.
+             <code>kanea ui</code> opens it.</p>
         </div>
         <div class="card">
           <h3>MCP server</h3>
@@ -247,12 +249,14 @@
         <div class="card">
           <h3>Backups &amp; DR</h3>
           <p>AEAD-encrypted archives replicated to S3 by change data capture, with staged and
-             offline restore. A truncated archive cannot restore cleanly to half a platform.</p>
+             offline restore. A truncated archive cannot restore cleanly to half a platform,
+             and a new destination is probed with a test write before it replaces a working one.</p>
         </div>
         <div class="card">
           <h3>Auth &amp; audit</h3>
           <p>Deny-by-default on every API, websocket and MCP route. Accounts and tokens live in
-             the store, OIDC with PKCE is supported, and every privileged action is audited.</p>
+             the store, OIDC with PKCE and LDAP (TLS-mandatory, deny-by-default group mapping)
+             sign in beside them, and every privileged action is audited.</p>
         </div>
         <div class="card">
           <h3>Signed releases</h3>
@@ -288,9 +292,12 @@
         </li>
         <li>
           <h3>Run the first-install ceremony</h3>
-          <p>Checks the node, <b>installs the runtime</b>, runs the master-key ceremony and
-             writes the systemd units. Have somewhere to record the key <em>before</em> you
-             start: it is shown once, and without it every backup is unreadable.</p>
+          <p>Checks the node, <b>installs the runtime</b>, runs the master-key ceremony,
+             writes the systemd units — then starts the control plane, asks for your admin
+             username and password, and prints where everything is: the dashboard URL, the
+             internal DNS address, the subnet layout. Have somewhere to record the key
+             <em>before</em> you start: it is shown once, and without it every backup is
+             unreadable.</p>
           <pre class="plain">sudo kanea init</pre>
           <p>Every component is pinned by version and SHA-256 in the binary — that table is
              also the version matrix <code>kanea doctor</code> enforces, so there is no
@@ -300,10 +307,8 @@
              adopts it instead.</p>
         </li>
         <li>
-          <h3>Start it and make yourself an admin</h3>
-          <pre class="plain">sudo systemctl daemon-reload
-sudo systemctl enable --now kanead
-kanea user add &lt;name&gt; --role admin
+          <h3>Deploy something</h3>
+          <pre class="plain">kanea run --image nginx:1.27-alpine --name web --project demo
 kanea ui</pre>
         </li>
       </ol>
@@ -315,7 +320,7 @@ kanea ui</pre>
       </p>
       <div class="window">
         <div class="bar"><i></i><i></i><i></i><span>manual install</span></div>
-<pre>VERSION=v0.1.0; ARCH=amd64
+<pre>VERSION=v0.5.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
