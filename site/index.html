@@ -56,8 +56,8 @@
       </p>
 
       <div class="cmd">
-        <pre id="install-cmd"><span class="p">$ </span>curl -fsSL https://m18h.github.io/kanea/install.sh | bash</pre>
-        <button type="button" id="copy" data-copy="curl -fsSL https://m18h.github.io/kanea/install.sh | bash">Copy</button>
+        <pre id="install-cmd"><span class="p">$ </span>curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash</pre>
+        <button type="button" id="copy" data-copy="curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash">Copy</button>
       </div>
       <p class="cmd-note">
         Piping a script into a root shell deserves a look first —
@@ -288,7 +288,7 @@
           <h3>Install the binary</h3>
           <p>Checksum verification is mandatory. If <code>cosign</code> is on
              <code>PATH</code>, the Sigstore signature is verified too.</p>
-          <pre class="plain">curl -fsSL https://m18h.github.io/kanea/install.sh | bash</pre>
+          <pre class="plain">curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash</pre>
         </li>
         <li>
           <h3>Run the first-install ceremony</h3>
@@ -320,7 +320,7 @@ kanea ui</pre>
       </p>
       <div class="window">
         <div class="bar"><i></i><i></i><i></i><span>manual install</span></div>
-<pre>VERSION=v0.5.0; ARCH=amd64
+<pre>VERSION=v0.6.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz

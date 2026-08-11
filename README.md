@@ -25,7 +25,7 @@ S3-backed state replication** with backup and restore.
 ## Install
 
 ```bash
-curl -fsSL https://m18h.github.io/kanea/install.sh | bash
+curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash
 ```
 
 The installer fetches the binary, verifies it, and stops. Checksum verification is
@@ -43,7 +43,7 @@ Prefer to do it by hand? Every release publishes
 signature over the checksums:
 
 ```bash
-VERSION=v0.5.0; ARCH=amd64
+VERSION=v0.6.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -78,6 +78,14 @@ sudo kanea init
 # 2. Deploy something.
 kanea run --image nginx:1.27-alpine --name web --project demo
 kanea ui
+```
+
+The CLI talks to `kanead` over a root-owned socket. To use it without sudo, join
+the `kanea` group init created and log in again — membership is root-equivalent,
+exactly like docker's group:
+
+```bash
+sudo usermod -aG kanea $USER
 ```
 
 Init ends with the node summary: the dashboard URL, your admin account, the
@@ -277,7 +285,7 @@ one place to update.
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.47) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.48) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |

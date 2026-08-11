@@ -15,7 +15,7 @@
 # Run it with bash, not sh: `set -o pipefail` is not POSIX, and the checksum
 # check below is a pipeline whose *first* command is the one that can fail.
 #
-#     curl -fsSL https://m18h.github.io/kanea/install.sh | bash
+#     curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash
 set -euo pipefail
 
 REPO="${KANEA_REPO:-m18h/kanea}"
@@ -134,7 +134,12 @@ Next:
 
          sudo systemctl daemon-reload
          sudo systemctl enable --now kanead
-         kanea user add <name> --role admin
+         sudo kanea user add --role admin <name>
+
+     To use the CLI without sudo, join the kanea group and log in again —
+     membership is root-equivalent, exactly like docker's:
+
+         sudo usermod -aG kanea <user>
 
 No egress on that node? Build a bundle on a machine that has some, carry it
 across, and install from it — the same verification either way:
