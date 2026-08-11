@@ -259,6 +259,36 @@ make check       # ALL gates — CI parity; must pass before any merge
 
 CI (`.github/workflows/ci.yml`) runs the same gates on every PR: Go build/vet/test, golangci-lint, gosec, govulncheck, gitleaks, and dashboard checks (auto-skipped until `dashboard/` exists). Dependabot watches gomod, npm, and GitHub Actions.
 
+## Releases
+
+Tagging `v*` triggers `.github/workflows/release.yml` (it runs `make check` first, then
+builds the archives, offline bundles and the keyless cosign signature). **The tag is the
+last step, not the first** — before pushing it, walk this list, because these are the
+things that drift silently and every one of them has drifted at least once:
+
+1. **Docs describe what ships.** New user-visible behaviour since the last tag — a flag,
+   a page, a login mechanism, a changed flow — is reflected in `README.md`,
+   `site/index.html` (feature cards + quickstart), `site/docs/index.html` (the CLI and
+   architecture references), and `docs/DR_RUNBOOK.md` where backup/restore behaviour
+   moved. The quickstarts must show the *current* flow, not the flow the last release had.
+2. **Version strings that name a release.** The manual-install examples pin one:
+   `VERSION=vX.Y.Z` in `README.md` **and** `site/index.html`. Bump both to the tag being
+   cut. (This shipped as `v0.1.0` for four releases before anyone noticed.)
+3. **PRD version references.** `README.md`'s documentation table and this file's header
+   both name the PRD version ("the north star (v1.NN)"). They must match `PRD.md`'s
+   actual header. (README said v1.37 while the PRD was at v1.44.)
+4. **This file's amendment bullets.** Every PRD amendment since the last tag has its
+   guidance bullet in the list above — the "things a change is most likely to trip over"
+   list is only useful while it is current.
+5. **The docs changes land on `main` before the tag**, as their own PR like anything
+   else — the release workflow builds from the tagged commit, and `site/` is published
+   from `main` by `pages.yml`, so a tag cut before the docs merge releases a binary whose
+   website describes the previous one.
+
+Version numbering: minor bump for features (`v0.4.0` → `v0.5.0`), patch for fixes.
+Tags are annotated, in the style of the existing ones: a one-line title
+(`Kanea vX.Y.Z — <the three-word story>`) and a short paragraph of what changed.
+
 ## Coding conventions
 
 - **Go:** standard project layout; `goimports`-formatted; no global state (dependencies injected); errors wrapped with `fmt.Errorf("...: %w", err)`; context plumbed through all blocking calls; interfaces defined at the consumer, small and focused (`Store`, `Scheduler`, runtime/network drivers).

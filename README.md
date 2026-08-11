@@ -7,6 +7,7 @@
 
 [![CI](https://github.com/m18h/kanea/actions/workflows/ci.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/ci.yml)
 [![Release](https://github.com/m18h/kanea/actions/workflows/release.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/m18h/kanea?label=release)](https://github.com/m18h/kanea/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26-00ADD8)](./go.mod)
 
@@ -42,7 +43,7 @@ Prefer to do it by hand? Every release publishes
 signature over the checksums:
 
 ```bash
-VERSION=v0.1.0; ARCH=amd64
+VERSION=v0.5.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -68,19 +69,23 @@ log.
 
 ```bash
 # 1. Check the node, install the runtime, run the master-key ceremony,
-#    write the systemd units. The key is shown once — have somewhere to
-#    record it before you start.
+#    write the units, start kanead, and create your admin account — init
+#    asks for a dashboard address (loopback by default) and a username,
+#    then prints where everything is. The master key is shown once — have
+#    somewhere to record it before you start.
 sudo kanea init
 
-# 2. Start the control plane and make yourself an admin.
-sudo systemctl daemon-reload
-sudo systemctl enable --now kanead
-kanea user add <name> --role admin
-
-# 3. Deploy something.
+# 2. Deploy something.
 kanea run --image nginx:1.27-alpine --name web --project demo
 kanea ui
 ```
+
+Init ends with the node summary: the dashboard URL, your admin account, the
+internal DNS address and the subnet layout. `--listen 0.0.0.0:8600` with
+`--listen-cert`/`--listen-key` serves the dashboard beyond loopback (TLS is
+required there, refused up front otherwise); `--admin-user` and a piped
+password make it scriptable; `--no-start` writes the files and stops, which is
+the pre-v0.5 behaviour.
 
 ### On a home network
 
@@ -170,6 +175,40 @@ then carries an HMAC (`X-Kanea-Signature`) the function verifies, exactly as
 it would a Kanea webhook — so a function can trust that an invocation really
 came from Kanea.
 
+### Signing in with your directory
+
+Local accounts (`kanea user add`) and OIDC have been there since M5; LDAP joins
+them. Point `kanead` at the directory and map groups to roles — deny-by-default,
+so a bind that maps to no group is refused:
+
+```bash
+sudo kanead … \
+  --ldap-url ldaps://dc1.corp.example.com \
+  --ldap-bind-dn "cn=kanea,ou=svc,dc=corp,dc=example,dc=com" \
+  --ldap-bind-password secret:shared/ldap-bind \
+  --ldap-user-base-dn "ou=people,dc=corp,dc=example,dc=com" \
+  --ldap-user-filter "(sAMAccountName=%s)" \
+  --ldap-admin-groups "cn=platform-admins,ou=groups,dc=corp,dc=example,dc=com" \
+  --ldap-viewer-groups "cn=developers,ou=groups,dc=corp,dc=example,dc=com"
+```
+
+The same login form serves it. TLS is mandatory (`ldaps://`, or `ldap://` gets
+StartTLS forced — there is no insecure flag), a local account with the same name
+always wins, and the rate limiter runs before any bind, so Kanea cannot be used
+to brute-force the directory. Directory identities are ephemeral: no account
+record, just a session.
+
+### Settings, from the dashboard
+
+The dashboard's **Settings** page shows the node's configuration and lets an
+admin change what changes at runtime: the **backup destination** (directory or
+S3 — a new destination is probed with a test write before anything commits, so
+a typo cannot silently stop working replication) and **notification channels**
+(node-wide defaults plus per-project overrides, each with a test button).
+Accounts, API tokens and the audit log live there too. What stays read-only is
+what belongs to the unit — listen address, subnets, DNS, the published-port
+policy — shown with a note saying so.
+
 If your LAN already uses `10.244.0.0/16`, move Kanea's:
 
 ```bash
@@ -238,7 +277,7 @@ one place to update.
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.37) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.47) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |
