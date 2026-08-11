@@ -45,6 +45,13 @@ export class ApiError extends Error {
 /** unauthorizedEvent is broadcast when any request is refused. */
 export const unauthorizedEvent = 'kanea:unauthorized'
 
+/**
+ * requestTimeout bounds every request. A hung daemon must show as a failed
+ * button, not a spinner that never resolves; callers that pass their own
+ * signal keep full control instead.
+ */
+export const requestTimeout = 30_000
+
 const errorSchema = z.object({ error: z.string() })
 
 /**
@@ -72,7 +79,9 @@ export async function apiFetch(
     credentials: 'same-origin',
   }
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body)
-  if (opts.signal) init.signal = opts.signal
+  // A caller signal wins; everything else gets the standing timeout so no
+  // request can hang past it.
+  init.signal = opts.signal ?? AbortSignal.timeout(requestTimeout)
 
   const resp = await fetch(path, init)
   if (resp.status === 401) {
@@ -114,6 +123,7 @@ export async function login(user: string, password: string): Promise<Session> {
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
     body: JSON.stringify({ user, password }),
+    signal: AbortSignal.timeout(requestTimeout),
   })
   if (resp.status === 401) throw new ApiError(401, 'wrong user name or password')
   if (resp.status === 429) {

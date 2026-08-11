@@ -377,13 +377,13 @@ export async function triggerBuild(
   project: string,
   service: string,
   deploy: boolean,
+  csrf?: string,
 ): Promise<Run> {
-  const resp = await fetch(`/v1/pipelines/${enc(project)}/${enc(service)}/build`, {
+  const resp = await apiFetch(`/v1/pipelines/${enc(project)}/${enc(service)}/build`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deploy }),
+    body: { deploy },
+    ...(csrf ? { csrf } : {}),
   })
-  if (!resp.ok) throw new Error(await refusalText(resp, 'build'))
   return runSchema.parse(await resp.json())
 }
 
@@ -419,28 +419,11 @@ export async function restartService(project: string, service: string, csrf?: st
 }
 
 /** Sync a project's git source. */
-export async function syncProject(project: string): Promise<void> {
-  const resp = await fetch(`/v1/projects/${enc(project)}/sync`, { method: 'POST' })
-  if (!resp.ok) throw new Error(await refusalText(resp, 'sync'))
-}
-
-/**
- * refusalText turns a refusal into something an operator can act on.
- *
- * The daemon's message says which of several conditions failed — no build
- * block, no git source, queue full — and a bare status code says none of it.
- */
-async function refusalText(resp: Response, what: string): Promise<string> {
-  try {
-    const body: unknown = await resp.json()
-    if (body && typeof body === 'object' && 'error' in body) {
-      const message = body.error
-      if (typeof message === 'string' && message) return message
-    }
-  } catch {
-    // Not JSON. The status is all there is.
-  }
-  return `${what}: ${resp.status}`
+export async function syncProject(project: string, csrf?: string): Promise<void> {
+  await apiFetch(`/v1/projects/${enc(project)}/sync`, {
+    method: 'POST',
+    ...(csrf ? { csrf } : {}),
+  })
 }
 
 /** enc escapes one path segment. Names are DNS-1123, but URLs are URLs. */
@@ -707,19 +690,18 @@ export async function fetchBackups(signal?: AbortSignal): Promise<BackupsRespons
 }
 
 /** Take an on-demand archive. */
-export async function createBackup(reason: string): Promise<void> {
-  const resp = await fetch('/v1/backups', {
+export async function createBackup(reason: string, csrf?: string): Promise<void> {
+  await apiFetch('/v1/backups', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reason }),
+    body: { reason },
+    ...(csrf ? { csrf } : {}),
   })
-  if (!resp.ok) throw new Error(await refusalText(resp, 'backup'))
 }
 
-/** Check an archive against its manifest. */
+/** Check an archive against its manifest. A read, so no CSRF — the daemon
+ * only checks the token on mutations. */
 export async function verifyBackup(id: string): Promise<void> {
-  const resp = await fetch(`/v1/backups/${enc(id)}/verify`)
-  if (!resp.ok) throw new Error(await refusalText(resp, 'verify'))
+  await apiFetch(`/v1/backups/${enc(id)}/verify`)
 }
 
 export const stageRestoreResponseSchema = z.object({

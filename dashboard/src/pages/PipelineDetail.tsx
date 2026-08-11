@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -196,12 +197,16 @@ function stepTone(state: string): StatusTone {
   }
 }
 
-/** DownloadRaw hands the fetched log over as a file, no extra endpoint. */
+/** DownloadRaw hands the fetched log over as a file, no extra endpoint. A
+ * blob URL rather than a data: URI — it stays valid under a strict CSP and
+ * does not grow the DOM attribute with the whole log. */
 function DownloadRaw({ text }: { text: string }) {
+  const url = useMemo(() => URL.createObjectURL(new Blob([text], { type: 'text/plain' })), [text])
+  useEffect(() => () => URL.revokeObjectURL(url), [url])
   return (
     <a
       download="build.log"
-      href={`data:text/plain;charset=utf-8,${encodeURIComponent(text)}`}
+      href={url}
       className="text-xs font-medium text-primary hover:underline"
     >
       Download raw

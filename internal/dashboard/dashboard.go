@@ -68,6 +68,10 @@ func Handler(prefix string) http.Handler {
 	server := http.FileServer(http.FS(files))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every answer carries these — the 200s, the 404s and the 405 alike —
+		// because the headers protect the origin, not one page on it.
+		setSecurityHeaders(w, r)
+
 		// Registered on the bare prefix so the API's own patterns stay more
 		// specific, which means the method check lands here rather than in the
 		// route pattern. Static assets answer GET and HEAD and nothing else.
@@ -139,4 +143,42 @@ func serveIndex(w http.ResponseWriter, r *http.Request, files fs.FS) {
 // `/assets/index-abc.js` is not.
 func looksLikeAsset(name string) bool {
 	return path.Ext(name) != ""
+}
+
+// contentSecurityPolicy is the depth layer under the app's own discipline.
+//
+// The dashboard renders attacker-influenced strings — log lines, service
+// names, event messages — and React escapes all of them; the ESLint ban on
+// dangerouslySetInnerHTML keeps it that way. This policy is what stops a
+// future slip from becoming an exploit: no inline script or style exists in
+// the build (Vite emits files, and only files), the one data: URI is the
+// favicon, and the only connections the app makes are to its own origin —
+// REST and the live socket, which CSP3's 'self' covers for ws/wss too.
+// frame-ancestors is the clickjacking guard: an admin console with stop,
+// restart and restore buttons is exactly what an invisible overlay wants.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self'; style-src 'self'; " +
+	"img-src 'self' data:; font-src 'self'; " +
+	"connect-src 'self'; frame-src 'none'; " +
+	"frame-ancestors 'none'; base-uri 'self'; " +
+	"form-action 'self'; object-src 'none'"
+
+// setSecurityHeaders writes the browser-side hardening for one response.
+func setSecurityHeaders(w http.ResponseWriter, r *http.Request) {
+	h := w.Header()
+	h.Set("Content-Security-Policy", contentSecurityPolicy)
+	// A 404 from here is plain text; nosniff keeps a browser from reading it
+	// as something else.
+	h.Set("X-Content-Type-Options", "nosniff")
+	// The modern spelling is frame-ancestors above; this is the one older
+	// browsers still read.
+	h.Set("X-Frame-Options", "DENY")
+	// The app never navigates away with a secret in the URL, and a referrer
+	// would leak a session's path to whatever is embedded or linked.
+	h.Set("Referrer-Policy", "no-referrer")
+	// Browsers ignore it over plain HTTP, and a homelab node behind its own
+	// proxy may legitimately serve HTTP — so it is only claimed under TLS.
+	if r.TLS != nil {
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+	}
 }

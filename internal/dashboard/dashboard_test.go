@@ -2,6 +2,7 @@ package dashboard_test
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -116,5 +117,71 @@ func TestBuiltReportsWhetherAssetsArePresent(t *testing.T) {
 	isPlaceholder := strings.Contains(text, "was not built into this binary")
 	if built == isPlaceholder {
 		t.Errorf("Built() = %v but the served page is the placeholder = %v", built, isPlaceholder)
+	}
+}
+
+// The security headers protect the origin, not one page, so every answer
+// carries them — the 200, the 404 and the 405 alike.
+func TestSecurityHeaders(t *testing.T) {
+	h := dashboard.Handler("/")
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/"},
+		{http.MethodGet, "/services"},
+		{http.MethodGet, "/assets/index-deadbeef.js"}, // a 404
+		{http.MethodPost, "/"},                        // a 405
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequestWithContext(context.Background(), tc.method, tc.path, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		resp := w.Result()
+		_ = body(t, resp)
+
+		for header, want := range map[string]string{
+			"X-Content-Type-Options": "nosniff",
+			"X-Frame-Options":        "DENY",
+			"Referrer-Policy":        "no-referrer",
+		} {
+			if got := resp.Header.Get(header); got != want {
+				t.Errorf("%s %s: %s = %q, want %q", tc.method, tc.path, header, got, want)
+			}
+		}
+
+		csp := resp.Header.Get("Content-Security-Policy")
+		for _, directive := range []string{
+			"default-src 'self'",
+			"script-src 'self'",
+			"frame-ancestors 'none'",
+		} {
+			if !strings.Contains(csp, directive) {
+				t.Errorf("%s %s: CSP missing %q: %q", tc.method, tc.path, directive, csp)
+			}
+		}
+	}
+}
+
+// HSTS is only claimed under TLS: browsers ignore it over plain HTTP, and a
+// node behind its own proxy may legitimately serve HTTP.
+func TestHSTSRequiresTLS(t *testing.T) {
+	h := dashboard.Handler("/")
+
+	plain := get(t, h, "/")
+	_ = body(t, plain)
+	if got := plain.Header.Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("HSTS over plain HTTP = %q, want none", got)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+	req.TLS = &tls.ConnectionState{} // any TLS state: the fact of it is the point
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	resp := w.Result()
+	_ = body(t, resp)
+	if got := resp.Header.Get("Strict-Transport-Security"); got == "" {
+		t.Error("no HSTS under TLS")
 	}
 }

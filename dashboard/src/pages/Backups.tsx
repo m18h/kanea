@@ -53,7 +53,7 @@ export function Backups() {
   })
 
   const take = useMutation({
-    mutationFn: () => createBackup('from the dashboard'),
+    mutationFn: () => createBackup('from the dashboard', csrf),
     onSuccess: () => {
       setError('')
       void client.invalidateQueries({ queryKey: ['backups'] })

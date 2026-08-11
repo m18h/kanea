@@ -22,6 +22,10 @@ export function Login() {
   // credential — including which sign-in methods exist.
   const health = useQuery({ queryKey: ['health'], queryFn: ({ signal }) => fetchHealth(signal) })
   const provider = health.data?.oidc?.enabled ? health.data.oidc : null
+  // The daemon supplies the SSO entry point; only a path on its own origin is
+  // ever rendered as a link. Anything else — an absolute URL, a javascript:
+  // scheme — is a misconfiguration to ignore, not navigate to.
+  const ssoPath = provider?.start_path?.startsWith('/') ? provider.start_path : null
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -94,7 +98,7 @@ export function Login() {
             </Button>
           </form>
 
-          {provider?.start_path ? (
+          {ssoPath ? (
             <div className="mt-4 space-y-4">
               <div className="flex items-center gap-3">
                 <span aria-hidden className="h-px flex-1 bg-border" />
@@ -105,13 +109,13 @@ export function Login() {
                   redirect to its own login page, which only the browser can
                   follow. The daemon sets the handle cookie on the way out. */}
               <a
-                href={provider.start_path}
+                href={ssoPath}
                 className="flex h-9 w-full items-center justify-center gap-2 rounded-md border text-sm font-medium transition-colors hover:bg-muted"
               >
                 <Globe size={15} aria-hidden />
                 Continue with SSO
               </a>
-              <p className="text-center text-xs text-muted-foreground">{issuerHost(provider.issuer)}</p>
+              <p className="text-center text-xs text-muted-foreground">{issuerHost(provider?.issuer)}</p>
             </div>
           ) : null}
         </CardContent>
