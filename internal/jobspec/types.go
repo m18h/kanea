@@ -177,8 +177,14 @@ type Service struct {
 	Task  *Task
 	// Network declares the container ports other services and the edge address.
 	Network *Network
-	// Expose turns on north-south ingress through kanea-edge (PRD §7.2).
-	Expose       *Expose
+	// Expose turns on north-south ingress through kanea-edge (PRD §7.2). It is
+	// the FIRST expose block; a service may declare several (v1.50), and this
+	// stays populated so single-route readers keep meaning what they meant.
+	Expose *Expose
+	// Exposes is every expose block in declaration order, the first included
+	// (PRD v1.50). Each is one complete route: domains, port, TLS, protocol,
+	// middleware and auth. Empty for an unexposed service.
+	Exposes      []*Expose
 	HealthChecks []*HealthCheck
 	Volumes      []*Volume
 	Scaling      *Scaling
@@ -486,7 +492,12 @@ func (p *Port) IsUDP() bool { return p.ResolvedProtocol() == PortUDP }
 // Expose configures north-south ingress and its middleware chain (PRD §7.2).
 type Expose struct {
 	// Domains defaults to <service>.<project>.<base_domain> when empty.
-	Domains       []string
+	Domains []string
+	// Port names the declared network { port } this route proxies to (R16,
+	// v1.49), or "" to let EdgePort's conventions choose. Explicit beats every
+	// convention, including R28's grpc-name preference: a spec that says which
+	// port it means is never second-guessed by a naming heuristic.
+	Port          string
 	TLS           *TLS
 	IPRestriction *IPRestriction
 	RateLimit     *RateLimit

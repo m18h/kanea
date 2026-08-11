@@ -58,10 +58,11 @@ func (r *Reconciler) syncEdgeAuth(ctx context.Context, w World) {
 func (r *Reconciler) buildAuthEntries(ctx context.Context, w World) []edge.AuthEntry {
 	entries := []edge.AuthEntry{}
 	for _, d := range sortedDesired(w.Desired) {
-		if d.Expose == nil || d.Expose.Auth == nil {
+		a := serviceAuth(d)
+		if a == nil {
 			continue
 		}
-		entry, err := r.resolveAuthEntry(ctx, d)
+		entry, err := r.resolveAuthEntry(ctx, d, a)
 		if err != nil {
 			r.log.Error("cannot resolve auth material; the route will answer 503",
 				"service", d.Project+"/"+d.Service, "error", err)
@@ -72,8 +73,19 @@ func (r *Reconciler) buildAuthEntries(ctx context.Context, w World) []edge.AuthE
 	return entries
 }
 
-func (r *Reconciler) resolveAuthEntry(ctx context.Context, d Desired) (edge.AuthEntry, error) {
-	a := d.Expose.Auth
+// serviceAuth is the service's one auth config: the first route that declares
+// one stands for all of them, because R16 (v1.50) refuses blocks that
+// disagree — the verifier bundle is keyed per service (v1.40's invariant).
+func serviceAuth(d Desired) *AuthPolicy {
+	for _, e := range d.AllExposes() {
+		if e.Auth != nil {
+			return e.Auth
+		}
+	}
+	return nil
+}
+
+func (r *Reconciler) resolveAuthEntry(ctx context.Context, d Desired, a *AuthPolicy) (edge.AuthEntry, error) {
 	entry := edge.AuthEntry{Project: d.Project, Service: d.Service}
 
 	switch {

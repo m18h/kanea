@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"net/textproto"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -47,15 +48,29 @@ func AutoFQDN(project, service, baseDomain string) string {
 // the server's base domain; callers that are only checking a file may not have
 // one.
 func (s *Service) EdgeDomains(baseDomain string) []string {
-	if s.Expose == nil {
+	var out []string
+	for _, e := range s.Exposes {
+		out = append(out, s.EdgeDomainsFor(e, baseDomain)...)
+	}
+	return out
+}
+
+// EdgeDomainsFor is EdgeDomains for one expose block (v1.50). Only the first
+// block may generate the auto-FQDN: there is one generated name per service,
+// and a second nameless block would be a second claim on it — R16 refuses it.
+func (s *Service) EdgeDomainsFor(e *Expose, baseDomain string) []string {
+	if e == nil {
 		return nil
 	}
-	if len(s.Expose.Domains) > 0 {
-		out := make([]string, 0, len(s.Expose.Domains))
-		for _, d := range s.Expose.Domains {
+	if len(e.Domains) > 0 {
+		out := make([]string, 0, len(e.Domains))
+		for _, d := range e.Domains {
 			out = append(out, canonicalDomain(d))
 		}
 		return out
+	}
+	if e != s.Expose {
+		return nil
 	}
 	if auto := AutoFQDN(s.Project, s.Name, baseDomain); auto != "" {
 		return []string{canonicalDomain(auto)}
@@ -72,6 +87,12 @@ func (s *Service) EdgeDomains(baseDomain string) []string {
 // the R16 rule. Deterministic when both exist: "grpc" wins, because
 // `protocol = "grpc"` is the spec choosing.
 func (s *Service) EdgePort() *Port {
+	return s.EdgePortFor(s.Expose)
+}
+
+// EdgePortFor is EdgePort for one expose block (v1.50): each block picks its
+// own upstream by the same rules.
+func (s *Service) EdgePortFor(e *Expose) *Port {
 	// The edge dials a VIP, and udp ports have no frontend on it (v1.42) —
 	// they are invisible here, including as the sole-port fallback: a service
 	// whose only port is udp is not exposable, and R16 says so at plan.
@@ -86,7 +107,20 @@ func (s *Service) EdgePort() *Port {
 	if len(candidates) == 0 {
 		return nil
 	}
-	if s.Expose != nil && s.Expose.Protocol == ExposeProtocolGRPC {
+	// An explicit port (R16, v1.49) beats every convention below, the grpc
+	// preference included: a spec that says which port it means is never
+	// second-guessed by a naming heuristic. A name that matches nothing here —
+	// undeclared, or declared udp — selects nothing, and validateExposePort
+	// says why.
+	if e != nil && e.Port != "" {
+		for _, p := range candidates {
+			if p.Name == e.Port {
+				return p
+			}
+		}
+		return nil
+	}
+	if e != nil && e.Protocol == ExposeProtocolGRPC {
 		for _, p := range candidates {
 			if p.Name == ExposeProtocolGRPC {
 				return p
@@ -117,26 +151,77 @@ func canonicalDomain(d string) string { return strings.ToLower(strings.TrimSpace
 // says the service is restricted, the edge is not restricting it, and nothing
 // says so.
 func validateExpose(svc *Service) hcl.Diagnostics {
-	if svc.Expose == nil {
+	if len(svc.Exposes) == 0 {
 		return nil
 	}
-	e := svc.Expose
 
 	var diags hcl.Diagnostics
-	diags = append(diags, validateExposePort(svc)...)
-	diags = append(diags, validateExposeDomains(svc)...)
-	diags = append(diags, validateExposeTLS(svc)...)
-	diags = append(diags, validateExposeProtocol(svc)...)
-	where := fmt.Sprintf("Service %q", svc.Name)
-	diags = append(diags, validateIPRestriction(where, e.IPRestriction)...)
-	diags = append(diags, validateRateLimit(where, e.RateLimit)...)
-	diags = append(diags, validateExposeHeaders(where, e.Headers)...)
+	seen := map[string]bool{}
+	var firstAuth *Auth
+	for i, e := range svc.Exposes {
+		// One auto-FQDN per service (v1.50): a second nameless block would be
+		// a second claim on the same generated name.
+		if i > 0 && len(e.Domains) == 0 {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Expose block has no domains",
+				Detail: fmt.Sprintf("Service %q declares several expose blocks, and only the "+
+					"first may omit domains — the auto-FQDN is one name per service. "+
+					"Declare domains on this block.", svc.Name),
+				Subject: e.DefRange.Ptr(),
+			})
+		}
+		// The R27 verifier bundle is keyed per service (v1.40's invariant), so
+		// every block that authenticates must authenticate the same way.
+		if e.Auth != nil {
+			if firstAuth == nil {
+				firstAuth = e.Auth
+			} else if !sameAuth(firstAuth, e.Auth) {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Expose blocks disagree about auth",
+					Detail: fmt.Sprintf("Service %q declares different auth configurations on "+
+						"different expose blocks. The verifier material is one entry per "+
+						"service, so every block that declares auth must declare the same "+
+						"auth; a route that needs different credentials is a different service.",
+						svc.Name),
+					Subject: e.Auth.DefRange.Ptr(),
+				})
+			}
+		}
+		diags = append(diags, validateExposePort(svc, e)...)
+		diags = append(diags, validateExposeDomains(svc, e, seen)...)
+		diags = append(diags, validateExposeTLS(svc, e)...)
+		diags = append(diags, validateExposeProtocol(svc, e)...)
+		where := fmt.Sprintf("Service %q", svc.Name)
+		diags = append(diags, validateIPRestriction(where, e.IPRestriction)...)
+		diags = append(diags, validateRateLimit(where, e.RateLimit)...)
+		diags = append(diags, validateExposeHeaders(where, e.Headers)...)
+	}
 	return diags
 }
 
+// sameAuth compares two auth blocks by what they verify, ignoring where they
+// were declared.
+func sameAuth(a, b *Auth) bool {
+	na, nb := *a, *b
+	na.DefRange, nb.DefRange = hcl.Range{}, hcl.Range{}
+	if na.JWT != nil {
+		j := *na.JWT
+		j.DefRange = hcl.Range{}
+		na.JWT = &j
+	}
+	if nb.JWT != nil {
+		j := *nb.JWT
+		j.DefRange = hcl.Range{}
+		nb.JWT = &j
+	}
+	return reflect.DeepEqual(na, nb)
+}
+
 // validateExposePort checks that there is exactly one sensible upstream.
-func validateExposePort(svc *Service) hcl.Diagnostics {
-	rng := svc.Expose.DefRange
+func validateExposePort(svc *Service, e *Expose) hcl.Diagnostics {
+	rng := e.DefRange
 
 	if svc.Network == nil || len(svc.Network.Ports) == 0 {
 		return hcl.Diagnostics{{
@@ -148,8 +233,37 @@ func validateExposePort(svc *Service) hcl.Diagnostics {
 			Subject: rng.Ptr(),
 		}}
 	}
-	if svc.EdgePort() != nil {
+	if svc.EdgePortFor(e) != nil {
 		return nil
+	}
+
+	// An explicit port that selected nothing (v1.49): the refusal names what
+	// went wrong rather than falling through to the ambiguity error, whose
+	// remedy — name a port "http" — is not this spec's problem.
+	if name := e.Port; name != "" {
+		if p := declaredPort(svc, name); p == nil {
+			declared := make([]string, 0, len(svc.Network.Ports))
+			for _, p := range svc.Network.Ports {
+				declared = append(declared, fmt.Sprintf("%q", p.Name))
+			}
+			return hcl.Diagnostics{{
+				Severity: hcl.DiagError,
+				Summary:  "Unknown exposed port",
+				Detail: fmt.Sprintf("Service %q exposes port %q, but declares only %s. "+
+					"An expose block may only name a network { port } the service declared.",
+					svc.Name, name, strings.Join(declared, ", ")),
+				Subject: rng.Ptr(),
+			}}
+		}
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Exposed port is udp",
+			Detail: fmt.Sprintf("Service %q exposes port %q, which is udp. The edge routes "+
+				"HTTP over a service frontend and udp ports have no frontend (R21); "+
+				"publish the port instead (network { publish … mode = %q }).",
+				svc.Name, name, PublishUDP),
+			Subject: rng.Ptr(),
+		}}
 	}
 
 	names := make([]string, 0, len(svc.Network.Ports))
@@ -183,19 +297,20 @@ func validateExposePort(svc *Service) hcl.Diagnostics {
 	}}
 }
 
-// validateExposeDomains checks each declared domain as a hostname.
-func validateExposeDomains(svc *Service) hcl.Diagnostics {
+// validateExposeDomains checks each declared domain as a hostname. The seen
+// map spans the service's expose blocks (v1.50): a domain in two blocks is
+// exactly a domain listed twice, and both are one route table entry.
+func validateExposeDomains(svc *Service, e *Expose, seen map[string]bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	seen := map[string]bool{}
 
-	for _, raw := range svc.Expose.Domains {
+	for _, raw := range e.Domains {
 		domain := canonicalDomain(raw)
 		if err := checkDomain(domain); err != nil {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Invalid domain",
 				Detail:   fmt.Sprintf("Service %q: domain %q %s.", svc.Name, raw, err),
-				Subject:  svc.Expose.DefRange.Ptr(),
+				Subject:  e.DefRange.Ptr(),
 			})
 			continue
 		}
@@ -204,7 +319,7 @@ func validateExposeDomains(svc *Service) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  "Duplicate domain",
 				Detail:   fmt.Sprintf("Service %q lists domain %q twice.", svc.Name, domain),
-				Subject:  svc.Expose.DefRange.Ptr(),
+				Subject:  e.DefRange.Ptr(),
 			})
 		}
 		seen[domain] = true
@@ -219,14 +334,14 @@ func validateExposeDomains(svc *Service) hcl.Diagnostics {
 // --tls-default is that a homelabber annotates nothing and still gets a
 // certificate, and a warning on every service teaches people to ignore
 // warnings — after which the two below stop being read either.
-func validateExposeTLS(svc *Service) hcl.Diagnostics {
-	t := svc.Expose.TLS
+func validateExposeTLS(svc *Service, e *Expose) hcl.Diagnostics {
+	t := e.TLS
 	if t == nil {
 		return nil
 	}
 	rng := t.DefRange
 	if rng.Filename == "" {
-		rng = svc.Expose.DefRange
+		rng = e.DefRange
 	}
 	var diags hcl.Diagnostics
 
@@ -595,6 +710,12 @@ func validateExposedDomains(spec *Spec) hcl.Diagnostics {
 		}
 		for _, domain := range svc.EdgeDomains(spec.BaseDomain) {
 			if first, taken := claimed[domain]; taken {
+				// A within-service repeat (two expose blocks, v1.50) is already
+				// the per-service "Duplicate domain" error; repeating it here as
+				// a claim by "shop/web and shop/web" would only confuse.
+				if first.service == svc.Name && first.project == svc.Project {
+					continue
+				}
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Domain claimed twice",
@@ -644,8 +765,7 @@ func quoteAll(in []string) []string {
 // dials the upstream, and it is refused where it cannot work. Fail-closed at
 // plan, per R16's doctrine — a gRPC route that silently served HTTP/1.1 is a
 // control the spec claimed and nothing applied.
-func validateExposeProtocol(svc *Service) hcl.Diagnostics {
-	e := svc.Expose
+func validateExposeProtocol(svc *Service, e *Expose) hcl.Diagnostics {
 	if e.Protocol == "" {
 		return nil
 	}
@@ -689,7 +809,7 @@ func validateExposeProtocol(svc *Service) hcl.Diagnostics {
 	// listener on the LAN for a service the spec just said speaks gRPC —
 	// R21's silently dropped control. `mode = "tcp"` relays the bytes and is
 	// the correct spelling for LAN gRPC.
-	if edgePort := svc.EdgePort(); edgePort != nil && svc.Network != nil {
+	if edgePort := svc.EdgePortFor(e); edgePort != nil && svc.Network != nil {
 		for _, p := range svc.Network.Publish {
 			if p.Port == edgePort.Name && p.ResolvedMode() == PublishHTTP {
 				diags = append(diags, &hcl.Diagnostic{

@@ -90,7 +90,8 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 	claimed := map[string]string{}
 
 	for _, d := range sortedDesired(w.Desired) {
-		if d.Expose == nil {
+		exposes := d.AllExposes()
+		if len(exposes) == 0 {
 			continue
 		}
 		vip := vips[d.Project+"/"+d.Service]
@@ -103,54 +104,61 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 			continue
 		}
 
-		domains := r.domainsFor(d)
-		if len(domains) == 0 {
-			if d.Function != nil {
-				// A function with no resolvable name is not stranded: it goes
-				// to the functions-port dispatch table instead (§7.2.3). The
-				// node-side mode resolution, R20's pattern.
+		// One edge.Route per expose block (v1.50): each has its own domains,
+		// port, middleware and marker, and the edge has routed a flat list by
+		// domain since v1.15 — N routes naming one service are as ordinary as
+		// N services.
+		for _, e := range exposes {
+			domains := EdgeDomainsFor(d, e, r.baseDomain)
+			if len(domains) == 0 {
+				if d.Function != nil || e != d.Expose {
+					// A function with no resolvable name is not stranded: it
+					// goes to the functions-port dispatch table (§7.2.3). An
+					// extra block with no domains is R16-refused at plan and
+					// generates nothing here by construction.
+					continue
+				}
+				r.log.Warn("exposed service has no domain",
+					"service", d.Project+"/"+d.Service,
+					"detail", "declare expose.domains, or set the server's base domain")
 				continue
 			}
-			r.log.Warn("exposed service has no domain",
-				"service", d.Project+"/"+d.Service,
-				"detail", "declare expose.domains, or set the server's base domain")
-			continue
-		}
 
-		// R16 rejects a collision at plan time, but plan sees one applied set
-		// and this sees all of them — two projects applied separately can still
-		// claim one host. First writer wins in a stable order, so the outcome
-		// does not depend on map iteration, and the loser is named in the log
-		// rather than silently dropped.
-		kept := make([]string, 0, len(domains))
-		for _, domain := range domains {
-			if owner, taken := claimed[domain]; taken {
-				r.log.Error("domain claimed by two services; ignoring the second",
-					"domain", domain, "owner", owner, "ignored", d.Project+"/"+d.Service)
+			// R16 rejects a collision at plan time, but plan sees one applied
+			// set and this sees all of them — two projects applied separately
+			// can still claim one host. First writer wins in a stable order, so
+			// the outcome does not depend on map iteration, and the loser is
+			// named in the log rather than silently dropped.
+			kept := make([]string, 0, len(domains))
+			for _, domain := range domains {
+				if owner, taken := claimed[domain]; taken {
+					r.log.Error("domain claimed by two services; ignoring the second",
+						"domain", domain, "owner", owner, "ignored", d.Project+"/"+d.Service)
+					continue
+				}
+				claimed[domain] = d.Project + "/" + d.Service
+				kept = append(kept, domain)
+			}
+			if len(kept) == 0 {
 				continue
 			}
-			claimed[domain] = d.Project + "/" + d.Service
-			kept = append(kept, domain)
-		}
-		if len(kept) == 0 {
-			continue
-		}
 
-		routes = append(routes, edge.Route{
-			Project:       d.Project,
-			Service:       d.Service,
-			Domains:       kept,
-			Upstream:      vip,
-			Port:          d.Expose.Port,
-			IPRestriction: d.Expose.IPRestriction,
-			RateLimit:     d.Expose.RateLimit,
-			Headers:       d.Expose.Headers,
-			// Only the marker (R27): this file is world-readable, and the
-			// verifier material travels in the restricted bundle.
-			AuthRequired: d.Expose.Auth != nil,
-			// R28 (v1.41): how the edge dials this upstream.
-			Protocol: d.Expose.Protocol,
-		})
+			routes = append(routes, edge.Route{
+				Project:       d.Project,
+				Service:       d.Service,
+				Domains:       kept,
+				Upstream:      vip,
+				Port:          e.Port,
+				IPRestriction: e.IPRestriction,
+				RateLimit:     e.RateLimit,
+				Headers:       e.Headers,
+				// Only the marker (R27): this file is world-readable, and the
+				// verifier material travels in the restricted bundle.
+				AuthRequired: e.Auth != nil,
+				// R28 (v1.41): how the edge dials this upstream.
+				Protocol: e.Protocol,
+			})
+		}
 	}
 	return routes
 }
@@ -355,17 +363,31 @@ func (e *Expose) ResolveTLSMode(nodeDefault string) string {
 // certificate for a name the edge does not route — an issuance guaranteed to
 // fail validation, and to keep failing.
 func EdgeDomains(d Desired, baseDomain string) []string {
-	if d.Expose == nil {
+	var out []string
+	for _, e := range d.AllExposes() {
+		out = append(out, EdgeDomainsFor(d, e, baseDomain)...)
+	}
+	return out
+}
+
+// EdgeDomainsFor is EdgeDomains for one route (v1.50). Only the first block
+// may generate the auto-FQDN — one generated name per service, R16's rule —
+// so an extra block with no domains resolves to nothing.
+func EdgeDomainsFor(d Desired, e *Expose, baseDomain string) []string {
+	if e == nil {
 		return nil
 	}
-	if len(d.Expose.Domains) > 0 {
-		out := make([]string, 0, len(d.Expose.Domains))
-		for _, domain := range d.Expose.Domains {
+	if len(e.Domains) > 0 {
+		out := make([]string, 0, len(e.Domains))
+		for _, domain := range e.Domains {
 			if canonical := canonicalDomain(domain); canonical != "" {
 				out = append(out, canonical)
 			}
 		}
 		return out
+	}
+	if e != d.Expose {
+		return nil
 	}
 	baseDomain = strings.Trim(strings.TrimSpace(baseDomain), ".")
 	if baseDomain == "" {

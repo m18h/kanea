@@ -119,8 +119,19 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				})
 			}
 		}
-		if expose := convertExpose(svc); expose != nil {
-			desired.Expose = expose
+		// One converted route per expose block (v1.50). The first lands on
+		// Expose, the rest on ExtraExposes — a single-route record must
+		// serialize exactly as it always has.
+		for _, e := range svc.Exposes {
+			converted := convertExpose(svc, e)
+			if converted == nil {
+				continue
+			}
+			if desired.Expose == nil {
+				desired.Expose = converted
+			} else {
+				desired.ExtraExposes = append(desired.ExtraExposes, *converted)
+			}
 		}
 
 		for _, v := range svc.Volumes {
@@ -234,22 +245,22 @@ func parseBackoff(s string) ([]time.Duration, error) {
 //
 // The middleware travels verbatim. It is validated at plan time (R16) and again
 // when the edge compiles it, so there is nothing to interpret in between.
-func convertExpose(svc *jobspec.Service) *reconciler.Expose {
-	if svc.Expose == nil {
+func convertExpose(svc *jobspec.Service, e *jobspec.Expose) *reconciler.Expose {
+	if e == nil {
 		return nil
 	}
-	port := svc.EdgePort()
+	port := svc.EdgePortFor(e)
 	if port == nil {
 		// R16 rejects this at validation, so reaching it means an unvalidated
 		// spec got here. A route with no upstream port is worse than no route.
 		return nil
 	}
 	out := &reconciler.Expose{
-		Domains: svc.Expose.Domains, Port: port.Container,
+		Domains: e.Domains, Port: port.Container,
 		// Already normalized at parse: "" or "grpc" (R28).
-		Protocol: svc.Expose.Protocol,
+		Protocol: e.Protocol,
 	}
-	if t := svc.Expose.TLS; t != nil {
+	if t := e.TLS; t != nil {
 		out.TLSMode, out.TLSName = t.Mode, t.Name
 		// The pre-v1.33 spelling, translated at the boundary rather than
 		// carried inward: a stored record names a certificate source (R20), and
@@ -268,10 +279,10 @@ func convertExpose(svc *jobspec.Service) *reconciler.Expose {
 			out.TLSMode = string(certsource.ModeACME)
 		}
 	}
-	out.IPRestriction = convertIPRestriction(svc.Expose.IPRestriction)
-	out.RateLimit = convertRateLimit(svc.Expose.RateLimit)
-	out.Headers = convertHeaders(svc.Expose.Headers)
-	out.Auth = convertAuthPolicy(svc.Expose.Auth)
+	out.IPRestriction = convertIPRestriction(e.IPRestriction)
+	out.RateLimit = convertRateLimit(e.RateLimit)
+	out.Headers = convertHeaders(e.Headers)
+	out.Auth = convertAuthPolicy(e.Auth)
 	return out
 }
 

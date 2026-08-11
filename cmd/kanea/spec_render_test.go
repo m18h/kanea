@@ -132,6 +132,41 @@ service "api" {
   }
 }
 
+service "search" {
+  project = "shop"
+  count   = 1
+
+  task "app" {
+    image = "registry.example.com/shop/search:4.2.0"
+
+    resources {
+      cpu    = 250
+      memory = 256
+    }
+  }
+
+  # The exposed port is named explicitly (R16, v1.49): neither port is named
+  # "http", so the generator must emit port = "query" for the trip to hold.
+  network {
+    port "query"   { container = 7700 }
+    port "metrics" { container = 9100 }
+  }
+
+  expose {
+    domains = ["search.shop.example.com"]
+    port    = "query"
+    tls { mode = "acme" }
+  }
+
+  # A second route on the same service (v1.50): its own domains, port and TLS.
+  expose {
+    domains = ["search-metrics.shop.example.com"]
+    port    = "metrics"
+    tls { mode = "self-signed" }
+    ip_restriction { allow = ["192.168.0.0/16"] }
+  }
+}
+
 service "voice" {
   project = "shop"
   count   = 1
@@ -165,8 +200,8 @@ service "voice" {
 // cannot survive the trip must refuse generation, never drift.
 func TestGeneratedSpecRoundTripsToTheSameDesired(t *testing.T) {
 	original, pipelines := renderText(t, roundTripSpec)
-	if len(original) != 3 {
-		t.Fatalf("services = %d, want 3", len(original))
+	if len(original) != 4 {
+		t.Fatalf("services = %d, want 4", len(original))
 	}
 
 	text, err := toHCL(original, pipelines)
