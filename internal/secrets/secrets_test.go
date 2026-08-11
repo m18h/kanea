@@ -336,3 +336,99 @@ func TestPutPreservesCreationTime(t *testing.T) {
 		t.Errorf("Resolve = %q, %v; want the new value", value, err)
 	}
 }
+
+// Provenance (§5.2.13): a synced secret says who manages it, an operator write
+// says nobody does.
+func TestPutManagedStampsProvenance(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	if err := s.PutManaged(ctx, "shop/db-url", []byte("postgres://…"), "doppler/ci"); err != nil {
+		t.Fatalf("PutManaged: %v", err)
+	}
+	infos, err := s.List(ctx, "shop/")
+	if err != nil || len(infos) != 1 {
+		t.Fatalf("List: %v %v", infos, err)
+	}
+	if infos[0].Source != "doppler/ci" {
+		t.Errorf("Source = %q, want doppler/ci", infos[0].Source)
+	}
+	if got, err := s.Resolve(ctx, "shop/db-url"); err != nil || string(got) != "postgres://…" {
+		t.Errorf("Resolve = %q, %v", got, err)
+	}
+}
+
+// A manual `kanea secret put` over a managed path takes manual control, and
+// the metadata must say so — the sync's next pass is what reasserts a mapping,
+// not a stale stamp.
+func TestAnOperatorWriteClearsProvenance(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	if err := s.PutManaged(ctx, "shop/key", []byte("from-provider"), "vault/infra"); err != nil {
+		t.Fatalf("PutManaged: %v", err)
+	}
+	if err := s.Put(ctx, "shop/key", []byte("typed-by-hand")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	infos, err := s.List(ctx, "shop/")
+	if err != nil || len(infos) != 1 {
+		t.Fatalf("List: %v %v", infos, err)
+	}
+	if infos[0].Source != "" {
+		t.Errorf("Source = %q after an operator write, want empty", infos[0].Source)
+	}
+}
+
+// The R23 lesson, applied to the record schema: an operator-written record must
+// serialise exactly as it did before v1.44 — no "source" key at all — so
+// existing databases and their backups decode byte-identically.
+func TestAnOperatorRecordCarriesNoSourceKey(t *testing.T) {
+	s, _, raw := newStore(t)
+	ctx := context.Background()
+
+	if err := s.Put(ctx, "shop/token", []byte("value")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	rec, err := raw.Get(ctx, store.KindSecret, "shop/token")
+	if err != nil {
+		t.Fatalf("read raw record: %v", err)
+	}
+	if strings.Contains(string(rec.Value), "source") {
+		t.Fatalf("an operator record serialised a source field: %s", rec.Value)
+	}
+}
+
+// Reassertion keeps the creation time, like rotation does (Put's rule).
+func TestPutManagedPreservesCreationTime(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+
+	if err := s.Put(ctx, "shop/token", []byte("first")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	before, err := s.List(ctx, "shop/")
+	if err != nil || len(before) != 1 {
+		t.Fatalf("List: %v %v", before, err)
+	}
+
+	if err := s.PutManaged(ctx, "shop/token", []byte("second"), "aws-sm/prod"); err != nil {
+		t.Fatalf("PutManaged: %v", err)
+	}
+	after, err := s.List(ctx, "shop/")
+	if err != nil || len(after) != 1 {
+		t.Fatalf("List: %v %v", after, err)
+	}
+	if !after[0].Created.Equal(before[0].Created) {
+		t.Errorf("Created changed on reassertion: %v -> %v", before[0].Created, after[0].Created)
+	}
+}
+
+// A managed write with no source would be an operator write wearing the wrong
+// method; refuse it rather than store an ambiguity.
+func TestPutManagedRequiresASource(t *testing.T) {
+	s, _, _ := newStore(t)
+	if err := s.PutManaged(context.Background(), "shop/token", []byte("v"), ""); err == nil {
+		t.Fatal("a managed write with no source was accepted")
+	}
+}

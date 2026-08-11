@@ -25,6 +25,7 @@ import (
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/secretsource"
 	"github.com/m18h/kanea/internal/store"
 )
 
@@ -61,6 +62,12 @@ type ServerConfig struct {
 	ServeDashboard bool
 	// Secrets backs the write-only secrets surface. Nil disables those routes.
 	Secrets SecretStore
+	// SecretSync reports external-provider sync status (§5.2.13). Nil means
+	// no providers are configured and the route answers 404 naming the flag.
+	// Callers must pass untyped nil when unconfigured — a typed nil pointer
+	// in an interface field is a non-nil interface (the buildReplication
+	// lesson).
+	SecretSync SecretSyncStatus
 	// Pipelines is optional: a daemon with no builder configured serves the
 	// pipeline routes with 503 rather than not routing them at all, so a
 	// dashboard can tell "not configured" from "wrong URL".
@@ -179,21 +186,29 @@ type SecretStore interface {
 	Delete(ctx context.Context, path string) error
 }
 
+// SecretSyncStatus reports external-provider sync state (PRD §5.2.13) —
+// paths, refs, timestamps and error strings, never values. The write-only
+// property is untouched: nothing here can express a read either.
+type SecretSyncStatus interface {
+	Status() []secretsource.ProviderStatus
+}
+
 // Server is the control-plane HTTP server.
 type Server struct {
-	store     Store
-	log       *slog.Logger
-	socket    string
-	version   string
-	logDir    string
-	notify    chan<- struct{}
-	listener  net.Listener
-	http      *http.Server
-	wsOrigins []string
-	ws        *wsHub
-	secrets   SecretStore
-	pipelines Pipelines
-	events    Events
+	store      Store
+	log        *slog.Logger
+	socket     string
+	version    string
+	logDir     string
+	notify     chan<- struct{}
+	listener   net.Listener
+	http       *http.Server
+	wsOrigins  []string
+	ws         *wsHub
+	secrets    SecretStore
+	secretSync SecretSyncStatus
+	pipelines  Pipelines
+	events     Events
 	// notifyStats reports the dispatcher's counters, so the feed can say when
 	// it is quiet because nothing happened rather than because the queue
 	// overflowed.
@@ -273,7 +288,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
-		secrets: cfg.Secrets, pipelines: cfg.Pipelines,
+		secrets: cfg.Secrets, secretSync: cfg.SecretSync, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
 		notifier: cfg.Notifier, backups: cfg.Backups, ca: cfg.CA,
 		publishPorts: cfg.PublishPorts,
@@ -418,6 +433,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		}
 	}
 	mux.Handle("GET "+PathSecrets, s.route(policy{action: "secret.list", adminOnly: true}, s.handleListSecrets))
+	mux.Handle("GET "+PathSecrets+"/providers",
+		s.route(policy{action: "secret.providers", adminOnly: true}, s.handleSecretProviders))
 	mux.Handle("PUT "+PathSecrets+"/{path...}",
 		s.route(policy{action: "secret.put", mutates: true}, s.handlePutSecret))
 	mux.Handle("DELETE "+PathSecrets+"/{path...}",

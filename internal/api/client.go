@@ -18,6 +18,7 @@ import (
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/secretsource"
 )
 
 // Client talks to a running kanead over its unix socket.
@@ -356,6 +357,16 @@ func (c *Client) ListSecrets(ctx context.Context, prefix string) ([]secrets.Info
 		return nil, err
 	}
 	return resp.Secrets, nil
+}
+
+// SecretProviders returns external-provider sync status (PRD §5.2.13) —
+// metadata only, like everything on this surface.
+func (c *Client) SecretProviders(ctx context.Context) ([]secretsource.ProviderStatus, error) {
+	var resp SecretProvidersResponse
+	if err := c.do(ctx, http.MethodGet, PathSecrets+"/providers", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Providers, nil
 }
 
 // PutSecret creates or replaces a secret.

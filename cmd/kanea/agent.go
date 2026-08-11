@@ -39,6 +39,7 @@ import (
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/scaling"
 	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/secretsource"
 	"github.com/m18h/kanea/internal/storage"
 	"github.com/m18h/kanea/internal/store"
 )
@@ -108,6 +109,12 @@ func runAgent(args []string) error {
 		"comma-separated directories that `host` volumes may mount from (default: none)")
 	passthroughConfig := fs.String("passthrough-config", "",
 		"HCL file granting host devices and sockets to named projects (default: no grants)")
+	secretsProvidersConfig := fs.String("secrets-providers-config", "",
+		"HCL file mapping external provider secrets (Doppler, AWS SM, Vault, Azure KV, GCP SM) "+
+			"into this node's store (default: no providers)")
+	secretsSyncInterval := fs.Duration("secrets-sync-interval", secretSyncDefaultInterval,
+		"how often external secret providers are polled (PRD §5.2.13; floor "+
+			secretSyncMinInterval.String()+")")
 	serviceCIDR := fs.String("service-cidr", reconciler.DefaultServiceCIDR, "pool for service frontend addresses")
 	dnsListen := fs.String("dns-listen", "",
 		"internal DNS listen address (default: the node CIDR's .1, the "+
@@ -334,6 +341,25 @@ func runAgent(args []string) error {
 		Secrets:       secretStore,
 		Logger:        logger,
 	})
+
+	// External secret providers (PRD §5.2.13): a sync loop pulls mapped
+	// values into the store above, so everything downstream — including every
+	// consumer wired in this function — reads them with no idea where they
+	// came from. The reconciler never waits for a pass; the store serves
+	// whatever the last one wrote.
+	if *secretsSyncInterval < secretSyncMinInterval {
+		return fmt.Errorf("--secrets-sync-interval %s is below the %s floor: "+
+			"a poll is a request against a provider's rate limit",
+			*secretsSyncInterval, secretSyncMinInterval)
+	}
+	secretProviders := secretsource.NewProviders(*secretsProvidersConfig,
+		secretsource.DefaultHTTPClient(), logger)
+	secretSyncer := secretsource.NewSyncer(secretsource.SyncerConfig{
+		Providers: secretProviders, Target: secretStore, Logger: logger,
+	})
+	if secretProviders.Configured() {
+		logger.Info("external secret providers configured", "config", *secretsProvidersConfig)
+	}
 
 	net, err := buildNetwork(ctx, *networkMode, datapath.Config{
 		NodeCIDR:     cidrs.node,
@@ -622,7 +648,8 @@ func runAgent(args []string) error {
 		Store: st, Logger: logger, Socket: *socket,
 		Version: version, LogDir: *logDir, Notify: notify,
 		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
-		Secrets: secretStore, Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
+		Secrets: secretStore, SecretSync: secretSyncStatus(secretSyncer, secretProviders),
+		Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
 		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
 		Backups: backups, CA: certificateAuthority(certs),
@@ -662,6 +689,9 @@ func runAgent(args []string) error {
 	if certs != nil {
 		tasks++
 	}
+	if secretProviders.Configured() {
+		tasks++
+	}
 	errs := make(chan error, tasks)
 	invokerNotify := make(chan struct{}, 1)
 	go fanOut(ctx, notify, reconcileNotify, certNotify, invokerNotify)
@@ -675,6 +705,12 @@ func runAgent(args []string) error {
 		go func() {
 			errs <- runCertificates(ctx, certs, st, *baseDomain, *tlsDefault,
 				certNotify, logger, notifier.Publish)
+		}()
+	}
+	if secretProviders.Configured() {
+		go func() {
+			errs <- runSecretSync(ctx, secretSyncer, secretProviders,
+				*secretsSyncInterval, logger, notifier.Publish)
 		}()
 	}
 	// The mount supervisor runs alongside, not inside, the reconcile loop: a

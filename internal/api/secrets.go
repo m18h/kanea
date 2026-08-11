@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/secretsource"
 )
 
 // PathSecrets is the secrets surface.
@@ -103,6 +104,26 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SecretProvidersResponse is the sync status surface (PRD §5.2.13):
+// per-provider metadata, never values.
+type SecretProvidersResponse struct {
+	Providers []secretsource.ProviderStatus `json:"providers"`
+}
+
+// handleSecretProviders reports external-provider sync status.
+func (s *Server) handleSecretProviders(w http.ResponseWriter, _ *http.Request) {
+	if s.secretSync == nil {
+		writeError(w, http.StatusNotFound, errors.New(
+			"api: no external secret providers are configured on this node (--secrets-providers-config)"))
+		return
+	}
+	status := s.secretSync.Status()
+	if status == nil {
+		status = []secretsource.ProviderStatus{}
+	}
+	writeJSON(w, http.StatusOK, SecretProvidersResponse{Providers: status})
 }
 
 // statusForSecretError maps a store error to a status a client can act on.
