@@ -5,6 +5,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/secretsource"
 )
 
 // The secrets surface is write-only (PRD §13.3, §16.3): there is no route that
@@ -96,3 +100,61 @@ func TestSecretsUnavailableWithoutAStore(t *testing.T) {
 		t.Errorf("list without a store = %d, want 503", status)
 	}
 }
+
+// The sync status surface (PRD §5.2.13): metadata only, and absent — with a
+// pointer at the flag — on a node with no providers configured.
+func TestSecretProvidersStatus(t *testing.T) {
+	status := []secretsource.ProviderStatus{{
+		Kind: secretsource.KindDoppler, Name: "ci", Mappings: 1,
+		Entries: []secretsource.MappingStatus{{To: "shop/db-url", Ref: "backend/prd/DATABASE_URL"}},
+	}}
+	h := newHarness(t, withSecrets, func(cfg *api.ServerConfig) {
+		cfg.SecretSync = fixedSecretSync(status)
+	})
+
+	code, body := h.raw(t, http.MethodGet, "/v1/secrets/providers")
+	if code != http.StatusOK {
+		t.Fatalf("providers = %d", code)
+	}
+	for _, want := range []string{"doppler", "ci", "shop/db-url", "backend/prd/DATABASE_URL"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("status is missing %q: %s", want, body)
+		}
+	}
+}
+
+func TestSecretProvidersAbsentWhenUnconfigured(t *testing.T) {
+	h := newHarness(t, withSecrets)
+	code, body := h.raw(t, http.MethodGet, "/v1/secrets/providers")
+	if code != http.StatusNotFound {
+		t.Errorf("providers without config = %d, want 404", code)
+	}
+	if !strings.Contains(body, "secrets-providers-config") {
+		t.Errorf("the refusal does not name the flag: %s", body)
+	}
+}
+
+// The listing carries provenance now (§5.2.13); still never a value.
+func TestSecretsListCarriesTheSource(t *testing.T) {
+	h := newHarness(t, withSecrets, func(cfg *api.ServerConfig) {
+		// Reach the underlying store through the concrete type to plant a
+		// managed secret the API itself has no verb to create.
+		s := cfg.Secrets.(*secrets.Store)
+		if err := s.PutManaged(context.Background(), "shop/db", []byte("v"), "doppler/ci"); err != nil {
+			panic(err)
+		}
+	})
+
+	infos, err := h.client.ListSecrets(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListSecrets: %v", err)
+	}
+	if len(infos) != 1 || infos[0].Source != "doppler/ci" {
+		t.Errorf("infos = %+v, want one entry sourced doppler/ci", infos)
+	}
+}
+
+// fixedSecretSync satisfies api.SecretSyncStatus with a literal.
+type fixedSecretSync []secretsource.ProviderStatus
+
+func (f fixedSecretSync) Status() []secretsource.ProviderStatus { return f }

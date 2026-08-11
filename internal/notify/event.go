@@ -49,6 +49,12 @@ const (
 
 	EventAuthLoginFailed = "auth.login_failed"
 
+	// External secret sync (PRD §5.2.13, v1.44). `synced` fires only when a
+	// pass actually changed something — steady state is silent — and both
+	// carry local paths only, never values.
+	EventSecretSynced     = "secret.synced"
+	EventSecretSyncFailed = "secret.sync_failed"
+
 	// EventFunctionInvokeFailed fires when the event/cron invoker exhausted its
 	// retries against a function's endpoint (PRD v1.39, §11). It is the ONLY
 	// function.* event, deliberately: a per-invocation info event would be a
@@ -165,6 +171,12 @@ var severities = map[string]Severity{
 	// Warning, not error: one failed login is a typo. What makes it interesting
 	// is volume, which is what coalescing turns into a single useful message.
 	EventAuthLoginFailed: SeverityWarning,
+
+	EventSecretSynced: SeverityInfo,
+	// Error, for cert.failed's reason: by the time this fires the pass already
+	// failed and retried, and a credential going stale is an outage with a
+	// date on it.
+	EventSecretSyncFailed: SeverityError,
 
 	// Error: the retries are already spent by the time this fires, so the
 	// event means invocations are being lost now.

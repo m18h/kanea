@@ -713,6 +713,42 @@ than sending unsigned: a signed channel that silently degrades to unsigned is
 the dropped control R16 refuses, and a function that verifies would reject the
 unsigned POST anyway.
 
+### 3.19 External secret providers (A02, A10; PRD v1.44, §5.2.13)
+
+The sync subsystem is a third outbound caller, beside the notification
+channels (§3.9) and the function invoker (§3.17), and its egress stance is the
+invoker's, for the invoker's reason. **The §3.9 guard is not consulted**: a
+provider endpoint is operator-written node config — the same trust class as
+the replication S3 endpoint, which has never consulted it — a spec has no
+field that reaches any of it, and Vault legitimately answers on RFC1918, so
+the guard would be theatre for this caller and *weakening* it would hole the
+channels that need it. What is kept is everything that is not the address
+check: **redirects are refused** (a 302 toward the metadata service is the
+classic residual), response bodies are read under a **hard size cap**, every
+dial carries a **short timeout**, and error bodies are decoded into the
+providers' own typed message shapes or dropped — an error string must never be
+able to carry a value into a log line.
+
+**Ambient cloud identity is refused by design.** Instance roles, managed
+identity and the GCP metadata server all mean dialing the link-local range the
+datapath's egress program drops for workloads (A10); the control plane
+granting itself the exception it denies everything else would be the wrong
+kind of precedent. Static credentials live in **0600-checked files** under
+`master.key`'s exact permission rule — never inline in the config (which is
+fingerprint-hashed and quoted in diagnostics), and never `secret:` references
+(a credential in the store it fills would ride every backup and be
+replaceable through the write-only API). Azure's and GCP's exchanged access
+tokens are cached in provider memory only.
+
+**The write-only property (§3.3) is untouched.** Synced values land in the
+same encrypted store under the same AEAD; the sync reads local values only to
+suppress no-op writes, in-process, exactly as the reconciler already resolves
+them. The new API surface — `GET /v1/secrets/providers` — is metadata by
+construction: the status types hold paths, external coordinates, timestamps
+and error strings, and there is no field for a value. A provider compromise
+is bounded by the config's required `allow` list on the write side: a
+provider may only overwrite local paths in scopes an operator named.
+
 ---
 
 ## 4. Attack walkthroughs
@@ -835,3 +871,4 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | A granted runtime socket is node-level control for the container holding it | No containment exists; a filtering proxy is deliberately not built (§3.12) | — |
 | A granted device exposes a kernel driver's ioctl surface | No seccomp filtering is applied over it | — |
 | An operator can grant a device that should never be granted | The config refuses `/` and the wrong file type; it cannot judge intent | — |
+| A provider credential file on the node reads every external secret its token can | 0600-checked and root-owned, but a scoped token is the provider's control, not Kanea's; docs prescribe least-privilege tokens (§3.19) | — |

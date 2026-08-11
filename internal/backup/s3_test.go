@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -359,17 +358,6 @@ func signatureOf(t *testing.T, req *http.Request) string {
 		t.Fatalf("no signature in %q", req.Header.Get("Authorization"))
 	}
 	return sig
-}
-
-func TestCanonicalQueryEncodesSpacesTheWaySigV4Requires(t *testing.T) {
-	// url.Values.Encode would write "+", which SigV4 does not accept. No
-	// current parameter contains a space, and relying on that is relying on a
-	// fact about today's callers.
-	got := canonicalQuery(url.Values{"prefix": {"a b"}, "list-type": {"2"}})
-	want := "list-type=2&prefix=a%20b"
-	if got != want {
-		t.Errorf("canonicalQuery = %q, want %q", got, want)
-	}
 }
 
 func TestS3ConfigRefusesTheIncomplete(t *testing.T) {

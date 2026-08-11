@@ -51,6 +51,11 @@ type record struct {
 	Ciphertext []byte    `json:"ciphertext"`
 	Created    time.Time `json:"created"`
 	Updated    time.Time `json:"updated"`
+	// Source names the external provider that last wrote this secret
+	// ("doppler/ci"), empty for an operator write (§5.2.13). Metadata beside
+	// the timestamps, never secret material — and omitempty, so every record
+	// written before v1.44 keeps decoding (and re-encoding) exactly as it did.
+	Source string `json:"source,omitempty"`
 }
 
 // Info describes a secret without revealing it. This is what listing returns.
@@ -58,6 +63,9 @@ type Info struct {
 	Path    string    `json:"path"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
+	// Source is the provider that manages this secret, empty when an operator
+	// wrote it (§5.2.13).
+	Source string `json:"source,omitempty"`
 }
 
 // Config configures a Store.
@@ -120,7 +128,25 @@ func Open(cfg Config) (*Store, error) {
 }
 
 // Put writes a secret, creating or replacing it.
+//
+// An operator write clears any provider provenance: whoever typed `kanea
+// secret put` took manual control, and the metadata should say so — until the
+// sync's next pass reasserts a mapping that still exists (§5.2.13).
 func (s *Store) Put(ctx context.Context, secretPath string, value []byte) error {
+	return s.put(ctx, secretPath, value, "")
+}
+
+// PutManaged writes a secret on behalf of an external provider, stamping the
+// provenance ("doppler/ci") the listing surfaces. Only the sync subsystem
+// calls this; nothing reachable from the API does.
+func (s *Store) PutManaged(ctx context.Context, secretPath string, value []byte, source string) error {
+	if source == "" {
+		return errors.New("secrets: a managed write needs a source")
+	}
+	return s.put(ctx, secretPath, value, source)
+}
+
+func (s *Store) put(ctx context.Context, secretPath string, value []byte, source string) error {
 	clean, err := CleanPath(secretPath)
 	if err != nil {
 		return err
@@ -151,6 +177,7 @@ func (s *Store) Put(ctx context.Context, secretPath string, value []byte) error 
 		Ciphertext: s.aead.Seal(nil, nonce, value, []byte(clean)),
 		Created:    created,
 		Updated:    now,
+		Source:     source,
 	}
 
 	mut, err := store.PutMutation(store.KindSecret, clean, rec)
@@ -161,7 +188,11 @@ func (s *Store) Put(ctx context.Context, secretPath string, value []byte) error 
 		return fmt.Errorf("secrets: write %s: %w", clean, err)
 	}
 	// The path is logged; the value never is (§6.2, R3).
-	s.log.Info("secret written", "path", clean)
+	if source == "" {
+		s.log.Info("secret written", "path", clean)
+	} else {
+		s.log.Info("secret synced", "path", clean, "source", source)
+	}
 	return nil
 }
 
@@ -188,6 +219,21 @@ func (s *Store) Resolve(ctx context.Context, ref string) ([]byte, error) {
 			ErrUndecryptable, clean)
 	}
 	return value, nil
+}
+
+// Describe returns one secret's metadata, without decrypting it. It is what
+// the sync subsystem reads to tell a manual overwrite (Source cleared by Put)
+// from an external rotation (§5.2.13) — metadata only, like List.
+func (s *Store) Describe(ctx context.Context, ref string) (Info, error) {
+	clean, err := CleanPath(ref)
+	if err != nil {
+		return Info{}, err
+	}
+	rec, err := s.load(ctx, clean)
+	if err != nil {
+		return Info{}, err
+	}
+	return Info{Path: clean, Created: rec.Created, Updated: rec.Updated, Source: rec.Source}, nil
 }
 
 // Exists reports whether a secret is set, without decrypting it.
@@ -229,7 +275,7 @@ func (s *Store) List(ctx context.Context, prefix string) ([]Info, error) {
 				s.log.Error("cannot decode secret metadata", "path", rec.Key, "error", err)
 				continue
 			}
-			out = append(out, Info{Path: rec.Key, Created: stored.Created, Updated: stored.Updated})
+			out = append(out, Info{Path: rec.Key, Created: stored.Created, Updated: stored.Updated, Source: stored.Source})
 		}
 		if !page.More {
 			return out, nil

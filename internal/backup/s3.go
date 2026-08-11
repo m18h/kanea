@@ -2,9 +2,6 @@ package backup
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -15,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/m18h/kanea/internal/sigv4"
 )
 
 // The S3 sink, written against the REST API rather than an SDK.
@@ -402,100 +401,17 @@ func (s *S3Sink) requestWithQuery(
 // to send. The body's integrity is not left to the transport: it is an AEAD
 // stream whose every chunk is authenticated, and the manifest records its
 // SHA-256 independently. TLS covers the wire.
-const unsignedPayload = "UNSIGNED-PAYLOAD"
+const unsignedPayload = sigv4.UnsignedPayload
 
-// sign applies AWS Signature Version 4 to a request.
+// sign applies AWS Signature Version 4 to a request. The algorithm lives in
+// internal/sigv4, shared with the Secrets Manager provider (§5.2.13).
 func (s *S3Sink) sign(req *http.Request) {
-	now := s.now().UTC()
-	stamp := now.Format("20060102T150405Z")
-	date := now.Format("20060102")
-
-	req.Header.Set("X-Amz-Date", stamp)
-	req.Header.Set("X-Amz-Content-Sha256", unsignedPayload)
-	// Host is not in Header for an outgoing request; it lives on the URL, and
-	// the canonical request needs it explicitly.
-	host := req.URL.Host
-
-	signed := []string{"host", "x-amz-content-sha256", "x-amz-date"}
-	canonicalHeaders := "host:" + host + "\n" +
-		"x-amz-content-sha256:" + unsignedPayload + "\n" +
-		"x-amz-date:" + stamp + "\n"
-
-	canonicalRequest := strings.Join([]string{
-		req.Method,
-		canonicalURI(req.URL.EscapedPath()),
-		canonicalQuery(req.URL.Query()),
-		canonicalHeaders,
-		strings.Join(signed, ";"),
-		unsignedPayload,
-	}, "\n")
-
-	scope := strings.Join([]string{date, s.region, "s3", "aws4_request"}, "/")
-	stringToSign := strings.Join([]string{
-		"AWS4-HMAC-SHA256",
-		stamp,
-		scope,
-		hashHex([]byte(canonicalRequest)),
-	}, "\n")
-
-	key := hmacSHA256([]byte("AWS4"+s.secretKey), date)
-	key = hmacSHA256(key, s.region)
-	key = hmacSHA256(key, "s3")
-	key = hmacSHA256(key, "aws4_request")
-	signature := hex.EncodeToString(hmacSHA256(key, stringToSign))
-
-	req.Header.Set("Authorization", fmt.Sprintf(
-		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
-		s.accessKey, scope, strings.Join(signed, ";"), signature))
-}
-
-// canonicalURI is the path, already percent-encoded, with an empty path
-// becoming "/".
-func canonicalURI(path string) string {
-	if path == "" {
-		return "/"
-	}
-	return path
-}
-
-// canonicalQuery is the query string sorted by name, with values encoded the
-// way SigV4 requires.
-//
-// url.Values.Encode sorts by key and percent-encodes to the same rules, with
-// one exception that matters: it encodes a space as "+", and SigV4 requires
-// "%20". None of the query parameters here contain spaces, but relying on that
-// is relying on a fact about today's callers.
-func canonicalQuery(values url.Values) string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		vs := append([]string(nil), values[key]...)
-		sort.Strings(vs)
-		for _, v := range vs {
-			parts = append(parts, escapeSigV4(key)+"="+escapeSigV4(v))
-		}
-	}
-	return strings.Join(parts, "&")
-}
-
-// escapeSigV4 percent-encodes to RFC 3986, which is what SigV4 canonicalises
-// with.
-func escapeSigV4(s string) string {
-	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
-}
-
-func hashHex(body []byte) string {
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:])
-}
-
-func hmacSHA256(key []byte, data string) []byte {
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(data))
-	return mac.Sum(nil)
+	sigv4.Sign(req, sigv4.Options{
+		AccessKey:   s.accessKey,
+		SecretKey:   s.secretKey,
+		Region:      s.region,
+		Service:     "s3",
+		PayloadHash: unsignedPayload,
+		Now:         s.now(),
+	})
 }

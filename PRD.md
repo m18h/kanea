@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Adopted v1.42 |
+| **Status** | Adopted v1.44 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-08-10 (v1.42) |
+| **Last updated** | 2026-08-11 (v1.44) |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.44 amendments** — **external secret providers, synced into the store** (new §5.2.13; §11, §14 A02/A10, §15.1, §16.1/16.2, §22). An operator who already keeps credentials in Doppler, AWS Secrets Manager, Vault, Azure Key Vault or GCP Secret Manager has been hand-copying them in with `kanea secret put` and hand-copying them again on every rotation — a manual replication loop whose failure mode is a workload running on a revoked credential. `kanead` gains a **sync subsystem**: a loop that periodically pulls named external secrets and writes them into the existing encrypted store (§14 A02's XChaCha20 store, unchanged). **The job-spec surface does not move**: a spec still says `secret:<project>/<name>` and never names a provider, an endpoint or an external coordinate — R17's "a spec names a grant, never a path", applied to secret origin, which is also why there is no new R-rule: nothing spec-visible changed, so there is nothing for `plan` to validate. The mapping lives in a node config file (`--secrets-providers-config`, default: does not exist), each provider block carries a **required `allow` list** of local scopes its mappings may write into, and provider credentials are **0600-checked files on the node** — never inline (the config is fingerprint-hashed and quoted in diagnostics) and never `secret:` refs (a credential living in the store it fills would ship in every backup and be overwritable through the write-only API). Clients are **hand-written HTTP, no SDKs** — the §15.3 S3-sink decision for the same reason — with SigV4 extracted from the backup sink into one shared implementation; Azure and GCP authenticate by OAuth2 client credentials and service-account JWT-bearer respectively, tokens cached in memory only. Cloud **ambient identity is deliberately out of v1** (IMDS, managed identity, metadata servers): every variant means dialing the link-local metadata endpoint §14 A10 treats as hostile, and static scoped credentials in files are the honest v1. Sync discipline is where the store's own rules bite: an **unchanged value is never rewritten** (resolve-and-compare in process — a stored plaintext hash beside the ciphertext would be an offline dictionary oracle, and a rewrite per poll is CDC/S3 write amplification, §15.3); a synced secret carries a **`source` provenance marker** in its metadata; a mapping that disappears — from the config or from the provider — **never deletes the local value** (the v1.41 `lb/vip6` rule: stale beats gone, and `kanea secret rm` remains the one deletion path); and a manual `put` over a managed path holds only until the next pass reasserts the mapping, saying so in the log. Failures are visible, not fatal: one provider failing never stops another (§7.3's source isolation), passes surface `secret.synced`/`secret.sync_failed` in the §11 vocabulary, and a metadata-only `GET /v1/secrets/providers` + `kanea secret providers` answer "when did this last work" — the write-only property of §13.3/§16.3 is untouched, and MCP still has no secrets verb. Provider endpoints are operator-written node config, so the §14 A10 egress guard is deliberately not consulted (the §11 invoker precedent: the guard exists for attacker-influencable text, and Vault legitimately lives on RFC1918) — while redirects are refused (a 302 to the metadata service is the residual risk), response bodies are size-capped, and every dial carries a short timeout.
 
 > **v1.43 amendments** — **node GPU VRAM visibility** (§9.1, §12.2, §17). v1.31 gave a spec a way to claim a GPU and stated why a transcoder silently running without one is the failure passthrough resolution guards against — yet once granted, the node's own numbers had nothing to say about the device: an operator sizing a second workload against an 8 GiB card was reading `nvidia-smi` over SSH beside a dashboard that reports everything else about the machine. The node reader grows a GPU half, and it reads what is already there rather than adding a protocol: **amdgpu comes from sysfs** (`/sys/class/drm/card*/device/mem_info_vram_{used,total}` — plain files, the procfs posture unchanged) and **NVIDIA through `nvidia-smi`**, because NVML is a C library and the single-static-binary constraint (§18) rules cgo out. The exec is timeout-bounded, skipped entirely when the binary is absent, and readings are cached for a short interval so a burst of `GET /v1/stats` requests cannot become a process storm — an exec is not a file read, and the reader must not let a polling client fork one per request. Per-GPU readings (name, VRAM used/total/percent) ride `GET /v1/stats` in the existing `node` object; one aggregate — used summed over total across every GPU reporting both — is the **third node series** recorded into the TS as `node_gpu_vram_percent` (v1.38's rule: a name §9.1's exporter never publishes, so the Prometheus surface is unchanged) and served as `gpu_vram` in `GET /v1/stats/history`'s node view. Every field is a pointer and every miss is an absence: a node with no GPU, an unreadable sysfs, a card whose driver reports no VRAM files and an `nvidia-smi` answering `[N/A]` all serve gaps, never zeros — the dashboard renders a GPU panel only when a GPU is visible, because a broken reader must not draw as an idle card (§9.2). Deliberately out of scope, with mechanisms named: per-GPU series in the TS (one aggregate answers the Overview page's question; per-card history is a read of the same sysfs files away if a real need appears), per-*process* VRAM attribution (needs the driver's per-PID accounting — a second protocol per vendor, fbdev/procfs for amdgpu and NVML sessions for NVIDIA — for a number no current consumer reads), and a scaling signal on VRAM (the evaluator's vocabulary is untouched; adding a metric nobody can act on invites a rule that thrashes on a cache that never shrinks).
 
@@ -347,6 +349,19 @@ Kanea runs on a kernel, cgroups v2, systemd and a clock. Everything else it need
 - **Own prefix, own sockets.** Binaries land under `/usr/local/lib/kanea`, configuration under `/etc/kanea`, state under `/var/lib/kanea`, sockets under `/run/kanea`. Nothing at a distribution's paths is read, written or restarted. `--containerd external` opts into adopting an existing daemon (§5.2.4); `--buildkit off` skips the build daemon.
 - **Air-gapped installation is first-class, not a workaround.** The installer is *handed* artefact bytes rather than fetching them, so the same code path serves both: `kanea bundle create` writes a per-architecture bundle on a connected machine, and `kanea install --bundle` consumes it with no network access at all. Bundle contents are verified against the hashes **in the binary**, never against a manifest inside the bundle — a bundle that supplied its own hashes would be a bundle that authenticates itself. Selecting a bundle disables network fetching entirely: an air-gapped install that silently falls back for one missing component fails later, on a node nobody can reach. Releases publish the bundle as a signed asset covered by the same `checksums.txt`. This covers **Kanea's own components**; workload images still come from a registry the node can reach (§10.2).
 - **`kanea doctor` verifies what `kanea install` established**, offline when asked, and enforces the matrix: a component present at a version the manifest does not pin is a finding, not a shrug. Since v1.36 it also verifies what the datapath needs from the node itself: bpffs mounted, cgroup2 unified, the kernel floor, and no foreign FORWARD-drop policy (§5.2.5).
+
+#### 5.2.13 Secret sync (external providers) — v1.44
+
+`kanead` can mirror named secrets **from** external managers **into** its own encrypted store: **Doppler** (service-token REST), **AWS Secrets Manager** (SigV4-signed `GetSecretValue`), **HashiCorp Vault** (KV v2 over token auth), **Azure Key Vault** (OAuth2 client credentials), and **GCP Secret Manager** (service-account JWT-bearer). The direction is the design: values land in the store the rest of the platform already reads, so every consumer — reconciler, notifier, GitOps, storage, edge-auth projection — is untouched, the node keeps working through a provider outage on whatever the last pass wrote, and a rotation propagates on the next poll instead of on the next human.
+
+- **The spec never sees a provider.** A workload references `secret:<project>/<name>` exactly as before; which of those paths are provider-backed is declared in a node config file named by `--secrets-providers-config` (default `""`: no file, no providers). Each `provider "<kind>" "<name>"` block maps external coordinates to local paths via `sync` blocks, and carries a **required, non-empty `allow`** list of local scopes those mappings may write into — writing into `shared/` must be stated, not implied. Two mappings targeting one local path are refused by name, anywhere in the file: two writers on one path is a fight, not a merge.
+- **Config semantics are the §7.3 `provided` certificate file's, not the passthrough file's**: re-read via a content fingerprint (SHA-256 over the config *and every credential file it names* — a renamed-into-place token changes no mtime worth trusting), parse failure keeps the last good config and warns once, and a fingerprint change triggers an immediate pass. A device grant is a decision; a credential is a thing a rotation tool rewrites behind Kanea's back.
+- **Provider credentials are files on the node**, 0600-checked with `master.key`'s exact rule, re-read every pass. Never inline in the config, and never `secret:` references — a credential stored in the store it fills would ride every CDC segment and backup, and be replaceable through the write-only API by any admin token. Azure and GCP exchange theirs for short-lived access tokens, **cached in memory** until near expiry — never stored, never in status output, never logged. **Ambient cloud identity (IMDS, managed identity, metadata servers) is deliberately not supported**: every variant dials the link-local range the platform's own egress posture (§14 A10) treats as hostile, and Kanea nodes are typically not cloud instances. Vault AppRole and JWKS-style dynamic auth are likewise deferred — token file only.
+- **A pass is quiet unless something changed.** The syncer resolves the current local value and compares in process; an unchanged value produces **no Store write** — a rewrite per poll would be a metric stream through the Store in everything but name (constraint: §15.3's CDC ships every mutation). A stored plaintext hash was rejected for the comparison: beside the ciphertext it is an offline dictionary oracle against a stolen `state.db` that the AEAD exists to deny.
+- **Provenance, and who wins.** A synced secret's metadata carries `source` (`doppler/ci`) — visible in `kanea secret ls` and `GET /v1/secrets`, which stay metadata-only. The mapping is declarative intent and the sync always reasserts it: a manual `kanea secret put` over a managed path holds until the next pass, which overwrites, restamps, and warns once per path. The reverse never happens silently: a mapping removed from the config, or an external secret that stops existing, **leaves the local value in place** with its provenance stamp. Deleting on a config edit would turn a typo into a mass secret deletion that fails every referencing alloc with no local undo; `kanea secret rm` is the one deletion path (the v1.41 `lb/vip6` rule).
+- **Failure is per-mapping, isolation is per-provider.** A mapping the provider cannot serve is a named failure that never suppresses its siblings; a provider that fails entirely never stops the others (§7.3's rule for certificate sources). Passes emit `secret.synced` / `secret.sync_failed` (§11), status is served metadata-only at `GET /v1/secrets/providers` and `kanea secret providers`, and a failed pass retries on a doubling backoff capped at the configured interval (default 5 m, floor 30 s — a poll is a request against someone else's rate limit).
+- **Transport hygiene without the egress guard.** The §14 A10 guard exists because notification URLs are attacker-influencable spec text; a provider endpoint is operator-written node config, the same trust class as the replication S3 endpoint, and Vault legitimately answers on RFC1918 — so the guard is not consulted (the §11 invoker's argument, recorded in the threat model). Kept regardless: **redirects refused** (a 302 to the metadata service is the classic residual), response bodies read under a hard size cap, short per-dial timeouts, and error bodies decoded into typed shapes or truncated — an error string must never be able to carry a value.
+- **Clients are hand-written HTTP, no SDKs** — the §15.3 S3-sink decision, for the same reasons: five fixed-verb clients are auditable, the dependency tree the §14 gates chase does not grow, and the one hard part (SigV4) is shared with the backup sink through a single extracted implementation.
 
 ---
 
@@ -685,7 +700,7 @@ function "resize-avatar" {
 - **R2** — Variables: `kanea run -var-file=env.hcl`, `${VAR}` interpolation from CLI-provided vars and built-ins (`GIT_SHA_SHORT`, `KANEA_PROJECT`, …).
 - **R3** — Secrets are referenced (`secret:<path>`), never inlined; the reconciler resolves them at alloc start. **Primary injection mechanism is tmpfs files** (`/run/kanea/secrets/<alloc>/<name>`); env-var injection is supported but documented as weaker (visible via `/proc/<pid>/environ`, runtime inspect APIs, inherited by child processes).
 - **R4** — `kanea plan` (dry-run) shows create/change/destroy diff before apply, Nomad-style.
-- **R5** — **Secret references are project-scoped:** a service may only reference `secret:<own-project>/…` or `secret:shared/…`; validation rejects cross-project references (IDOR-class exfiltration defense — §14, A01). Git, registry, storage, and notification credentials follow the same scoping.
+- **R5** — **Secret references are project-scoped:** a service may only reference `secret:<own-project>/…` or `secret:shared/…`; validation rejects cross-project references (IDOR-class exfiltration defense — §14, A01). Git, registry, storage, and notification credentials follow the same scoping. *Where* a secret's value comes from is invisible at this layer by design: a path may be operator-written or synced from an external provider (§5.2.13, v1.44), and the spec cannot tell — which is why v1.44 adds no R-rule.
 - **R6** — Job files declare `spec_version = 1`; future spec revisions are gated by this field (upgrade path, §15.4).
 - **R7** — Health check types: `http`, `tcp`, `exec` (exec runs inside the task's container, argument array — never a shell string).
 - **R8** — The minimal service is **image-only** (no Git, no `build` block): `task.image` alone deploys. At least one of `task.image` or `build` must be present; when both are, the pipeline-built image (digest-pinned, §10.2) wins and `task.image` serves as the pre-first-build value.
@@ -1018,7 +1033,7 @@ The labelled family **never enters `internal/scaling`**. That store is the evalu
 ## 11. Notifications
 
 - **Channels:** generic **webhook** (JSON POST, HMAC-SHA256 signed, `X-Kanea-Signature`), **Telegram** (bot API), **Slack/Discord** (incoming-webhook compatible payload), **SMTP** email, **ntfy.sh**.
-- **Events:** `deploy.started/succeeded/failed`, `service.unhealthy/healthy`, `service.crashed`, `scale.up/down`, `cert.issued/renewed/failed`, `build.started/succeeded/failed`, `image.updated/update_failed` (§6.2 R19), `backup.succeeded/failed`, `auth.login_failed`, `function.invoke_failed` (v1.39 — and deliberately no `function.invoked`: an info event per invocation is a metric wearing an event's name, at invocation cardinality; the rate lives in §9.1).
+- **Events:** `deploy.started/succeeded/failed`, `service.unhealthy/healthy`, `service.crashed`, `scale.up/down`, `cert.issued/renewed/failed`, `build.started/succeeded/failed`, `image.updated/update_failed` (§6.2 R19), `backup.succeeded/failed`, `auth.login_failed`, `function.invoke_failed` (v1.39 — and deliberately no `function.invoked`: an info event per invocation is a metric wearing an event's name, at invocation cardinality; the rate lives in §9.1), `secret.synced/sync_failed` (v1.44 — per provider per pass, naming local paths only, never values; `secret.synced` fires only when a pass actually changed something, so steady state is silent).
 - Config at server level (defaults) and project level (overrides), with event filters (glob patterns, e.g. `on = ["deploy.*", "scale.up"]`).
 - Delivery: at-least-once with retry/backoff; failures logged, never block the control plane.
 - **Storm protection:** events are coalesced into digests under load ("42 allocs restarted in 5m" — one message, not 42), with per-channel rate limits and severity floors; a crash-looping fleet must never get the Telegram bot rate-limited or blocked.
@@ -1090,7 +1105,7 @@ OWASP Top 10 (2021) compliance is a **release gate**: every milestone's definiti
 | # | Category | Kanea controls |
 |---|---|---|
 | **A01** | Broken Access Control | Auth middleware on **every** API/WS route (deny-by-default); project-scope checks on all object access (no IDOR — IDs resolved through project ownership); **secret references project-scoped at spec validation (§6.2, R5)**; role checks (`admin`/`viewer`) enforced server-side; CLI tokens scoped and revocable; WebSocket Origin allowlist (anti-CSWSH); CSRF tokens on cookie-auth mutations; `exec` admin-only + audited; **MCP tools pass through the same authz + audit pipeline, secrets are write-only via tools (§16.3)**; edge IP allow/deny middleware (§7.2.1). **A published port is unauthenticated reachability to a container, by design (§7.2.2)** — that is what the operator asked for, and it is stated rather than mitigated: on a `tcp` listener `ip_restriction` is the only control, it is checked at accept time before the upstream is dialled, and the upstream sees the edge's address, so its own address-based rules cannot do this job. The port range is the node's (R22), never the spec's |
-| **A02** | Cryptographic Failures | TLS 1.2+ everywhere (API, dashboard, edge); bcrypt/argon2id for passwords; secrets encrypted at rest in Store (XChaCha20-Poly1305, key from `data_dir/master.key` 0600 or external KMS later); cert/key material 0600; backups encrypted client-side before S3 upload; **master key escrowed at `init` via key ceremony (print-once + passphrase-derived KEK option) — without it, S3 backups are unrecoverable (§15.3)**; secrets injected via tmpfs files by default, not env vars (§6.2, R3); **the self-signed CA's private key (§7.3) sits in the `certs` bucket at exactly the protection every leaf key there already has, and no API route, CLI command or MCP tool returns it** — `kanea ca show` emits the certificate only |
+| **A02** | Cryptographic Failures | TLS 1.2+ everywhere (API, dashboard, edge); bcrypt/argon2id for passwords; secrets encrypted at rest in Store (XChaCha20-Poly1305, key from `data_dir/master.key` 0600 or external KMS later); **externally-synced secrets (§5.2.13, v1.44) land in that same store — the provider is a source, never a second at-rest story — and provider credentials are 0600-checked files under `master.key`'s exact permission rule, with Azure/GCP access tokens held in memory only**; cert/key material 0600; backups encrypted client-side before S3 upload; **master key escrowed at `init` via key ceremony (print-once + passphrase-derived KEK option) — without it, S3 backups are unrecoverable (§15.3)**; secrets injected via tmpfs files by default, not env vars (§6.2, R3); **the self-signed CA's private key (§7.3) sits in the `certs` bucket at exactly the protection every leaf key there already has, and no API route, CLI command or MCP tool returns it** — `kanea ca show` emits the certificate only |
 | **A03** | Injection | Strict HCL schema validation, no eval of user input; DNS-1123 name validation (§4.2); no shell invocation with user-controlled strings (buildctl/containerd called with arg arrays, never a shell); log output HTML-escaped in dashboard; SQL N/A (BoltDB); path-join sanitization for volume subpaths |
 | **A04** | Insecure Design | Secure-by-default config (localhost-only if unauthenticated, HTTPS-only API); threat model maintained in `docs/THREAT_MODEL.md`; security review per milestone |
 | **A05** | Security Misconfiguration | Hardened defaults; security headers on all responses: `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`; no debug/pprof endpoints in release builds. **Workload hardening defaults:** drop `ALL` capabilities (the explicit allowlist is `task.capabilities`, bounded by a permitted set that excludes every privilege-equivalent capability — §6.2 R13), `no-new-privileges`, default seccomp profile, no `privileged` escape hatch **a job spec can declare**, per-alloc PID/IPC/cgroup namespaces, optional read-only rootfs — Kanea's own tasks get the same treatment. **A workload can declare the uid/gid it runs as and the ownership of its volumes (§6.2 R23–R24)**, which is what makes most `task.capabilities` grants unnecessary: an image asks for `CAP_CHOWN`/`CAP_SETUID`/`CAP_SETGID` in order to fix a root-owned data directory and drop privileges, and a spec that states both facts up front leaves nothing to grant. It is **declarable, not default** — an absent `user` block means the image's own `USER` stands, because overriding it globally would break every image that ships a correct one. **Device and socket passthrough (§6.2 R17–R18) is the one way past these defaults, and it is not spec-declarable:** a spec asks for a grant by name, the grant lives in the node's config, names the projects that may claim it, and defaults to not existing. A socket grant is node-level control for the container holding it and is documented as such rather than mitigated |
@@ -1098,7 +1113,7 @@ OWASP Top 10 (2021) compliance is a **release gate**: every milestone's definiti
 | **A07** | Identification & Auth Failures | Rate-limited login (5/min/IP + exponential account backoff); session rotation on privilege change; token expiry; OIDC delegates MFA to IdP and uses PKCE + state/nonce + full ID-token validation with deny-by-default role mapping; global API rate limits and WS connection caps beyond login; **per-service edge rate limits via expose middleware (§7.2.1)**; no credentials in logs/audit (redaction filters) |
 | **A08** | Software & Data Integrity Failures | Release binaries signed (cosign) + checksums; image digest pinning honored (`image@sha256:` enforced when given); TLS-only registries (no insecure registries); pipeline deploys pin built digests; backup archives carry SHA-256 manifest verified before restore; Git webhook HMAC validation + replay protection. **`update.auto` (§6.2 R19) is the one deliberate exception and follows a moving tag by design** — opt-in per service, off by default, and it still runs a digest: the tag is resolved once and pinned, so every alloc of a deploy runs the same image and the digest that ran is recorded |
 | **A09** | Logging & Monitoring Failures | Append-only **audit log** (all mutating API calls, auth events, restores) in Store, viewable in dashboard, with **signed periodic export for tamper evidence**; security events surfaced as notifications; log retention configurable |
-| **A10** | SSRF | Containers blocked from cloud metadata (the whole `169.254.0.0/16` range) by the datapath's egress program on every alloc veth (§5.2.5) — enforced in the kernel with a per-alloc drop counter, not asserted in a policy file; Git sync URLs validated (scheme allowlist https/ssh, no local addresses unless `allow_insecure_git`); webhook delivery validates target URL against config, not user input at send-time; outbound notification webhooks https-only with RFC1918/link-local destinations blocked by default |
+| **A10** | SSRF | Containers blocked from cloud metadata (the whole `169.254.0.0/16` range) by the datapath's egress program on every alloc veth (§5.2.5) — enforced in the kernel with a per-alloc drop counter, not asserted in a policy file; Git sync URLs validated (scheme allowlist https/ssh, no local addresses unless `allow_insecure_git`); webhook delivery validates target URL against config, not user input at send-time; outbound notification webhooks https-only with RFC1918/link-local destinations blocked by default; **secret-provider endpoints (§5.2.13, v1.44) are operator-written node config and deliberately not behind that guard (the §11 invoker's argument — Vault legitimately answers on RFC1918), with redirects refused, bodies size-capped and dials time-bounded regardless; ambient metadata-service auth is unsupported by design** |
 
 **Secure SDLC:** pre-commit secret scanning (gitleaks), CI SAST (gosec), container scans of released images (trivy).
 
@@ -1201,6 +1216,72 @@ certificate "shop" {
   allow = ["shop"]                        # projects that may claim it
 }
 
+# External secret providers (§5.2.13, v1.44). Read from a separate file named
+# by `--secrets-providers-config`, which defaults to "" — no file, no
+# providers. Same shape and same reasoning as the grants above: a spec keeps
+# saying `secret:<project>/<name>` and never names a provider; where a value
+# comes from is this node's decision. `allow` is required — the scopes the
+# provider's mappings may write into — and credentials are 0600 files on the
+# node, never inline and never `secret:` references. Re-read by content
+# fingerprint (config + every credential file), like the certificate file.
+provider "doppler" "ci" {
+  token_file = "/etc/kanea/secrets/doppler.token"
+  project    = "backend"                  # Doppler project + config to read
+  config     = "prd"
+  allow      = ["shop", "shared"]         # writing into shared/ must be stated
+  sync {
+    name = "DATABASE_URL"
+    to = "shop/db-url"
+  }
+  sync {
+    name = "STRIPE_KEY"
+    to = "shop/stripe-key"
+  }
+}
+provider "vault" "infra" {
+  address    = "https://vault.internal:8200"
+  token_file = "/etc/kanea/secrets/vault.token"
+  # ca_file  = "/etc/kanea/tls/vault-ca.pem"   # extra root for a private endpoint
+  mount      = "kv"                       # KV v2 mount
+  allow      = ["media"]
+  sync {
+    path = "apps/media"
+    field = "s3_secret_key"
+    to = "media/s3-secret"
+  }
+}
+provider "aws-sm" "prod" {
+  region          = "eu-west-1"
+  access_key      = "AKIA…"               # an identifier, not a secret
+  secret_key_file = "/etc/kanea/secrets/aws.secret"
+  allow           = ["shop"]
+  sync {
+    id = "prod/shop/db"
+    json_key = "password"
+    to = "shop/db-password"
+  }
+}
+provider "azure-kv" "corp" {
+  vault_uri          = "https://corp-vault.vault.azure.net"
+  tenant_id          = "00000000-…"       # identifiers, not secrets
+  client_id          = "11111111-…"
+  client_secret_file = "/etc/kanea/secrets/azure.secret"
+  allow              = ["shop"]
+  sync {
+    name = "db-password"
+    to = "shop/db-password"
+  }   # optional: version = "…"
+}
+provider "gcp-sm" "prod" {
+  credentials_file = "/etc/kanea/secrets/gcp-sa.json"      # service-account key JSON
+  project          = "my-project"         # defaults to the key's project_id
+  allow            = ["shop"]
+  sync {
+    name = "db-password"
+    to = "shop/db-password"
+  }   # version defaults "latest"
+}
+
 auth {
   basic {
     user "admin" { password_bcrypt = "$2y$10$…" }
@@ -1294,6 +1375,10 @@ GET    /api/v1/events?filter=…
 GET    /api/v1/storage | POST /api/v1/storage
 GET    /api/v1/backups | POST /api/v1/backups | POST /api/v1/backups/{id}/restore
 GET    /api/v1/audit
+GET    /api/v1/secrets                         # metadata only: paths, timestamps, source — never values (§13.3)
+PUT    /api/v1/secrets/{path}                  # write-only; no GET-one route exists, by construction
+DELETE /api/v1/secrets/{path}
+GET    /api/v1/secrets/providers               # sync status per provider (§5.2.13, v1.44) — metadata only
 GET    /api/v1/certs/ca                        # this node's self-signed CA certificate (never the key)
 GET    /api/v1/edge/policy                     # permitted publish range + reserved ports (§7.2.2)
 POST   /api/v1/webhooks/git/{project}          # HMAC-validated
@@ -1322,6 +1407,10 @@ kanea build shop/web       # trigger pipeline
 kanea functions list       # wasm functions: triggers, invocation rate, status (v1.39)
 kanea project sync shop
 kanea backup create|list|verify
+kanea secret put shop/db-url   # value from stdin or --from-file, never argv
+kanea secret ls [prefix]       # paths, timestamps, source — never values
+kanea secret rm shop/db-url    # the one deletion path, synced or not (§5.2.13)
+kanea secret providers         # external-provider sync status (v1.44)
 kanea restore --from s3://…
 kanea ca show|info         # this node's self-signed CA, to install on your devices (§7.3)
 kanea token create --role viewer
@@ -1456,6 +1545,8 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 | R11 | AI agents (MCP) misused → destructive ops or secret exfiltration | Medium | Role-tiered tools, destructive ops require `confirm`, secrets write-only, full audit, rate limits, payload caps (§16.3) |
 | R12 | Workload resource exhaustion (memory/CPU/PIDs) starving or OOM-killing the control plane | High → mitigated | cgroups v2 reservation (`memory.min` floor, default 1 GiB) + collective workload ceiling + mandatory per-alloc limits with defaults + admission control (§5.2.11, §6.2 R11, §15.1); `mlock` rejected for the Go control plane |
 | R13 | **Wasmtime shim behaviour under Kanea's OCI spec** (v1.39 — hardening opts, netns join, cgroup caps on a runtime that is not runc) | Medium | **Spike-gated** (`spikes/wasm-functions/`, §20 M11): the compat matrix is findings before the PRD's claims freeze, the discipline spikes ① and ⑤ set. Residual: runwasi release cadence and artifact naming drift — pinned by SHA-256, `manifest-verify` CI catches re-tags, and a bump re-runs the spike checklist |
+| R14 | **Hand-written secret-provider clients drift with provider APIs** (v1.44 — five external services, no SDKs) | Medium | Fixed-verb clients against versioned/stable endpoints (Doppler v3 download, Vault KV v2, ASM `GetSecretValue`, Key Vault 7.4, GCP SM v1); httptest fakes that verify auth server-side (the ASM fake recomputes SigV4 — the MinIO lesson); a drift presents as a named `secret.sync_failed`, never a silent stale value, and the local store keeps serving the last good one |
+| R15 | **A provider credential file on the node reads every mapped external secret** (v1.44) | Medium | 0600-checked (`master.key`'s rule), root-owned under `/etc/kanea`; docs prescribe scoped credentials (Doppler service token per config, Vault token with a read-only policy on the mapped paths, IAM/SP/SA limited to the named secrets); the `allow` list bounds what a compromised *config* could overwrite locally; tokens never enter the Store, status output or logs |
 | Q1 | ~~Multi-task services (sidecars) in v1 or v1.1?~~ | **Resolved** | v1: exactly one task per service (spec shape keeps `task` blocks for v1.1 compatibility) |
 | Q2 | Built-in DNS vs. CoreDNS binary? | Impl detail | M2 decision; built-in preferred (zero deps) |
 | Q3 | ~~Log retention: how much disk by default?~~ | **Resolved** | Default 100 MiB/service cap, configurable (§17) |
