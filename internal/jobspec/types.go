@@ -343,6 +343,17 @@ const (
 	// PublishTCP relays bytes. Only ip_restriction survives, because there is
 	// nothing else in a byte stream to apply a rule to.
 	PublishTCP = "tcp"
+	// PublishUDP relays datagrams as sessions (v1.42, §7.2.2). ip_restriction
+	// is checked on the datagram that would create a session; max_conns bounds
+	// live sessions. It may only name a `protocol = "udp"` port.
+	PublishUDP = "udp"
+)
+
+// Port protocols (v1.42). A udp port never gets a VIP frontend — it exists
+// only to be published, and everything frontend-shaped refuses it at plan.
+const (
+	PortTCP = "tcp"
+	PortUDP = "udp"
 )
 
 // Publish is one node port the edge binds and forwards to this service (R21).
@@ -453,9 +464,24 @@ func ParsePeerRef(s string) (PeerRef, error) {
 type Port struct {
 	Name      string
 	Container int
+	// Protocol is PortTCP (the default) or PortUDP (v1.42). A udp port is
+	// excluded from the VIP, from expose, from ${service.*.port} references
+	// and from http/tcp health checks — it exists to be published (R21).
+	Protocol string
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }
+
+// ResolvedProtocol is the protocol with the default applied.
+func (p *Port) ResolvedProtocol() string {
+	if p == nil || p.Protocol == "" {
+		return PortTCP
+	}
+	return p.Protocol
+}
+
+// IsUDP reports whether this port is a datagram port (v1.42).
+func (p *Port) IsUDP() bool { return p.ResolvedProtocol() == PortUDP }
 
 // Expose configures north-south ingress and its middleware chain (PRD §7.2).
 type Expose struct {

@@ -39,12 +39,19 @@ export function runStateLabel(state: string): string {
  * that kept climbing after a build ended would be a lie about a finished thing.
  */
 export function runDuration(run: Run, now: number = Date.now()): string {
+  const ms = runDurationMs(run, now)
+  return ms === undefined ? '—' : humanDuration(ms)
+}
+
+/** runDurationMs is the same number before rendering — what a sorted Duration
+ * column compares, where "unparseable" must stay distinct from "instant". */
+export function runDurationMs(run: Run, now: number = Date.now()): number | undefined {
   const started = Date.parse(run.started_at)
-  if (!Number.isFinite(started)) return '—'
+  if (!Number.isFinite(started)) return undefined
 
   const ended = run.finished_at ? Date.parse(run.finished_at) : now
-  if (!Number.isFinite(ended)) return '—'
-  return humanDuration(Math.max(0, ended - started))
+  if (!Number.isFinite(ended)) return undefined
+  return Math.max(0, ended - started)
 }
 
 /** stepDuration is the same for one step. */

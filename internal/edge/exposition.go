@@ -63,6 +63,7 @@ type snapshot struct {
 	services    []namedService
 	entrypoints []namedEntrypoint
 	tcp         []namedTCP
+	udp         []namedUDP
 	certs       []CertExpiry
 }
 
@@ -79,6 +80,11 @@ type namedEntrypoint struct {
 type namedTCP struct {
 	key tcpKey
 	m   *tcpMetrics
+}
+
+type namedUDP struct {
+	key tcpKey
+	m   *udpMetrics
 }
 
 func (m *Metrics) snapshot() snapshot {
@@ -100,6 +106,9 @@ func (m *Metrics) snapshot() snapshot {
 	for key, t := range m.tcp {
 		s.tcp = append(s.tcp, namedTCP{key: key, m: t})
 	}
+	for key, u := range m.udp {
+		s.udp = append(s.udp, namedUDP{key: key, m: u})
+	}
 
 	sort.Slice(s.services, func(i, j int) bool { return s.services[i].name < s.services[j].name })
 	sort.Slice(s.entrypoints, func(i, j int) bool { return s.entrypoints[i].name < s.entrypoints[j].name })
@@ -108,6 +117,12 @@ func (m *Metrics) snapshot() snapshot {
 			return s.tcp[i].key.service < s.tcp[j].key.service
 		}
 		return s.tcp[i].key.entrypoint < s.tcp[j].key.entrypoint
+	})
+	sort.Slice(s.udp, func(i, j int) bool {
+		if s.udp[i].key.service != s.udp[j].key.service {
+			return s.udp[i].key.service < s.udp[j].key.service
+		}
+		return s.udp[i].key.entrypoint < s.udp[j].key.entrypoint
 	})
 	sort.Slice(s.certs, func(i, j int) bool {
 		if s.certs[i].CommonName != s.certs[j].CommonName {
@@ -127,6 +142,7 @@ func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
 	m.writeLabelled(out, s)
 	m.writeEntrypoints(out, s)
 	m.writeTCP(out, s)
+	m.writeUDP(out, s)
 	m.writePlatform(out, s)
 
 	return out.n, out.err
@@ -327,6 +343,55 @@ func (m *Metrics) writeTCP(out *printer, s snapshot) {
 	out.line("# TYPE kanea_edge_tcp_bytes_out_total counter")
 	for _, t := range s.tcp {
 		out.printf("kanea_edge_tcp_bytes_out_total{%s} %d\n", tcpLabels(t.key), t.m.bytesOut.Load())
+	}
+}
+
+// writeUDP renders published udp-port counters (v1.42, §7.2.2). A separate
+// family from the tcp one for the reason the aggregate and labelled families
+// are separate: a session and a connection are different facts, and one name
+// carrying both would lie under any sum().
+func (m *Metrics) writeUDP(out *printer, s snapshot) {
+	out.line("# HELP kanea_edge_udp_sessions_total Sessions opened on a published UDP port.")
+	out.line("# TYPE kanea_edge_udp_sessions_total counter")
+	for _, u := range s.udp {
+		out.printf("kanea_edge_udp_sessions_total{%s} %d\n",
+			tcpLabels(u.key), u.m.sessions.Load())
+	}
+
+	out.line("# HELP kanea_edge_udp_active_sessions Sessions currently relayed.")
+	out.line("# TYPE kanea_edge_udp_active_sessions gauge")
+	for _, u := range s.udp {
+		out.printf("kanea_edge_udp_active_sessions{%s} %d\n",
+			tcpLabels(u.key), clampGauge(u.m.active.Load()))
+	}
+
+	out.line("# HELP kanea_edge_udp_sessions_expired_total Sessions ended by the idle expiry.")
+	out.line("# TYPE kanea_edge_udp_sessions_expired_total counter")
+	for _, u := range s.udp {
+		out.printf("kanea_edge_udp_sessions_expired_total{%s} %d\n",
+			tcpLabels(u.key), u.m.expired.Load())
+	}
+
+	out.line("# HELP kanea_edge_udp_refused_total Datagrams denied a session.")
+	out.line("# TYPE kanea_edge_udp_refused_total counter")
+	for _, u := range s.udp {
+		for _, reason := range sortedCounterKeys(&u.m.mu, u.m.refused) {
+			out.printf("kanea_edge_udp_refused_total{%s,%s} %d\n",
+				tcpLabels(u.key), label("reason", reason),
+				loadCounter(&u.m.mu, u.m.refused, reason))
+		}
+	}
+
+	out.line("# HELP kanea_edge_udp_bytes_in_total Bytes relayed from client to backend.")
+	out.line("# TYPE kanea_edge_udp_bytes_in_total counter")
+	for _, u := range s.udp {
+		out.printf("kanea_edge_udp_bytes_in_total{%s} %d\n", tcpLabels(u.key), u.m.bytesIn.Load())
+	}
+
+	out.line("# HELP kanea_edge_udp_bytes_out_total Bytes relayed from backend to client.")
+	out.line("# TYPE kanea_edge_udp_bytes_out_total counter")
+	for _, u := range s.udp {
+		out.printf("kanea_edge_udp_bytes_out_total{%s} %d\n", tcpLabels(u.key), u.m.bytesOut.Load())
 	}
 }
 

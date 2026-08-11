@@ -77,6 +77,11 @@ const (
 	// ListenerTCP relays bytes. Only IPRestriction survives — there is nothing
 	// else in a stream to apply a rule to.
 	ListenerTCP = "tcp"
+	// ListenerUDP relays datagrams as sessions (v1.42). It dials backends
+	// directly rather than the VIP — connect-time LB has no hook an
+	// unconnected sendto ever calls — so it is the one listener kind that
+	// carries a backend list.
+	ListenerUDP = "udp"
 )
 
 // Listener is one node port the edge binds on a service's behalf.
@@ -94,19 +99,25 @@ type Listener struct {
 	Service string `json:"service"`
 	// Port is the node port to bind.
 	Port int `json:"port"`
-	// Mode is ListenerHTTP or ListenerTCP.
+	// Mode is ListenerHTTP, ListenerTCP or ListenerUDP.
 	Mode string `json:"mode"`
 	// Upstream and UpstreamPort are the service frontend, exactly as a Route's
-	// are: the eBPF LB balances, so a scale event changes nothing here.
-	Upstream     string `json:"upstream"`
+	// are: the eBPF LB balances, so a scale event changes nothing here. A udp
+	// listener leaves Upstream empty and uses Backends instead.
+	Upstream     string `json:"upstream,omitempty"`
 	UpstreamPort int    `json:"upstream_port"`
-	// MaxConns bounds live connections. TCP only; zero means the edge's own
-	// default.
+	// Backends are the alloc addresses a udp listener relays to (v1.42) — the
+	// LB cannot front datagrams, so this is the one place the backend list the
+	// VIP design avoids reappears, bounded to udp. Sorted; a change here is a
+	// change to the snapshot, so backend churn republishes it.
+	Backends []string `json:"backends,omitempty"`
+	// MaxConns bounds live connections (tcp) or live sessions (udp); zero
+	// means the edge's own default.
 	MaxConns int `json:"max_conns,omitempty"`
 
 	IPRestriction *IPRestriction `json:"ip_restriction,omitempty"`
-	// RateLimit and Headers are http only. A tcp listener carrying either is an
-	// invalid snapshot, not a dropped control.
+	// RateLimit and Headers are http only. A tcp or udp listener carrying
+	// either is an invalid snapshot, not a dropped control.
 	RateLimit *RateLimit `json:"rate_limit,omitempty"`
 	Headers   *Headers   `json:"headers,omitempty"`
 }
@@ -306,19 +317,45 @@ func (s Snapshot) Validate() error {
 // are different namespaces, and a service can legitimately be reachable as
 // shop.example.com and on :8096 at once.
 func (s Snapshot) validateListeners() error {
-	byPort := map[int]string{}
+	// Keyed per L4 family (v1.42): a stream bind and a datagram bind on one
+	// number do not contend, so 53 over both is one valid snapshot.
+	type portKey struct {
+		udp  bool
+		port int
+	}
+	byPort := map[portKey]string{}
 	for i, l := range s.Listeners {
 		where := fmt.Sprintf("listener %d (%s)", i, l.Name())
 		if l.Project == "" || l.Service == "" {
 			return fmt.Errorf("%w: %s has no project or service", ErrInvalidSnapshot, where)
 		}
-		if l.Mode != ListenerHTTP && l.Mode != ListenerTCP {
-			return fmt.Errorf("%w: %s has mode %q, which is neither %q nor %q",
-				ErrInvalidSnapshot, where, l.Mode, ListenerHTTP, ListenerTCP)
+		if l.Mode != ListenerHTTP && l.Mode != ListenerTCP && l.Mode != ListenerUDP {
+			return fmt.Errorf("%w: %s has mode %q, which is none of %q, %q and %q",
+				ErrInvalidSnapshot, where, l.Mode, ListenerHTTP, ListenerTCP, ListenerUDP)
 		}
-		if _, err := netip.ParseAddr(l.Upstream); err != nil {
-			return fmt.Errorf("%w: %s upstream %q is not an address",
-				ErrInvalidSnapshot, where, l.Upstream)
+		// A udp listener names backends; the stream kinds name the frontend.
+		// Either shape missing its addresses is a listener that black-holes.
+		if l.Mode == ListenerUDP {
+			if l.Upstream != "" {
+				return fmt.Errorf("%w: %s is a udp listener carrying an upstream VIP; "+
+					"the LB cannot front datagrams, so udp listeners carry backends",
+					ErrInvalidSnapshot, where)
+			}
+			for _, b := range l.Backends {
+				if _, err := netip.ParseAddr(b); err != nil {
+					return fmt.Errorf("%w: %s backend %q is not an address",
+						ErrInvalidSnapshot, where, b)
+				}
+			}
+		} else {
+			if _, err := netip.ParseAddr(l.Upstream); err != nil {
+				return fmt.Errorf("%w: %s upstream %q is not an address",
+					ErrInvalidSnapshot, where, l.Upstream)
+			}
+			if len(l.Backends) > 0 {
+				return fmt.Errorf("%w: %s is a %s listener carrying a backend list, which only udp uses",
+					ErrInvalidSnapshot, where, l.Mode)
+			}
 		}
 		for _, p := range []struct {
 			field string
@@ -336,17 +373,18 @@ func (s Snapshot) validateListeners() error {
 		// Refused, not dropped. A snapshot that carried a rate limit onto a
 		// listener that cannot count requests would leave the spec claiming a
 		// control nothing is applying — R16's rule, in the reader.
-		if l.Mode == ListenerTCP {
+		if l.Mode == ListenerTCP || l.Mode == ListenerUDP {
 			if l.RateLimit != nil {
-				return fmt.Errorf("%w: %s is a tcp listener carrying a rate limit, which it cannot apply",
-					ErrInvalidSnapshot, where)
+				return fmt.Errorf("%w: %s is a %s listener carrying a rate limit, which it cannot apply",
+					ErrInvalidSnapshot, where, l.Mode)
 			}
 			if l.Headers != nil {
-				return fmt.Errorf("%w: %s is a tcp listener carrying header rules, which it cannot apply",
-					ErrInvalidSnapshot, where)
+				return fmt.Errorf("%w: %s is a %s listener carrying header rules, which it cannot apply",
+					ErrInvalidSnapshot, where, l.Mode)
 			}
 		}
-		if first, dup := byPort[l.Port]; dup {
+		key := portKey{udp: l.Mode == ListenerUDP, port: l.Port}
+		if first, dup := byPort[key]; dup {
 			// Caught at plan time too, and caught again here for the reason
 			// duplicate domains are: a snapshot assembled from several applies
 			// can still collide, and which of two listeners binds a port would
@@ -354,7 +392,7 @@ func (s Snapshot) validateListeners() error {
 			return fmt.Errorf("%w: node port %d is claimed by both %s and %s",
 				ErrInvalidSnapshot, l.Port, first, l.Name())
 		}
-		byPort[l.Port] = l.Name()
+		byPort[key] = l.Name()
 
 		// Compiled here for the same reason a route's middleware is: the writer
 		// must not be able to publish a rule the reader will refuse.

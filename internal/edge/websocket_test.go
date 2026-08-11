@@ -325,7 +325,7 @@ func TestPublishedHTTPListenerCarriesWebSockets(t *testing.T) {
 	set.Apply([]Listener{cfg})
 
 	set.mu.Lock()
-	addr := set.entries[9601].ln.Addr().String()
+	addr := set.entries[entryKey{port: 9601}].ln.Addr().String()
 	set.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

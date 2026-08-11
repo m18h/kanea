@@ -92,6 +92,12 @@ func serviceContext(spec *Spec, project string) cty.Value {
 		ports := map[string]cty.Value{}
 		if svc.Network != nil {
 			for _, p := range svc.Network.Ports {
+				// A udp port is absent, not present-and-useless: the VIP the
+				// .host reference resolves to has no udp frontend (v1.42), so
+				// a reference would bake in a number that reaches nothing.
+				if p.IsUDP() {
+					continue
+				}
 				ports[p.Name] = cty.NumberIntVal(int64(p.Container))
 			}
 		}
@@ -205,9 +211,15 @@ func parseServiceRef(spec *Spec, from *Service, tr hcl.Traversal, envKey string)
 		if !ok {
 			return ServiceRef{}, bad("The port name must be a literal.")
 		}
-		if !hasPort(target, portName) {
+		port := declaredPort(target, portName)
+		if port == nil {
 			return ServiceRef{}, bad(fmt.Sprintf("Service %q has no port named %q. Declared ports: %s.",
 				name, portName, describePorts(target)))
+		}
+		if port.IsUDP() {
+			return ServiceRef{}, bad(fmt.Sprintf("Port %q of service %q is udp, and udp ports have "+
+				"no service frontend (v1.42) — the address this reference pairs with would reach "+
+				"nothing. A udp port is reachable only where it is published.", portName, name))
 		}
 		return ServiceRef{From: from.Name, Service: name, Port: portName, EnvKey: envKey}, nil
 
@@ -237,16 +249,17 @@ func findServiceAnyProject(spec *Spec, name string) *Service {
 	return nil
 }
 
-func hasPort(svc *Service, name string) bool {
+// declaredPort finds a declared port by name, or nil.
+func declaredPort(svc *Service, name string) *Port {
 	if svc.Network == nil {
-		return false
+		return nil
 	}
 	for _, p := range svc.Network.Ports {
 		if p.Name == name {
-			return true
+			return p
 		}
 	}
-	return false
+	return nil
 }
 
 func describePorts(svc *Service) string {
@@ -259,6 +272,11 @@ func describePorts(svc *Service) string {
 			out += ", "
 		}
 		out += p.Name
+		// Marked so a "declared ports" list explains why a udp name was
+		// still refused wherever only tcp ports count.
+		if p.IsUDP() {
+			out += " (udp)"
+		}
 	}
 	return out
 }

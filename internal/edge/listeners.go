@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -43,15 +44,26 @@ type listenerSet struct {
 	readHeaderTimeout time.Duration
 	idleTimeout       time.Duration
 	maxHeaderBytes    int
-	// listen and dial are injectable so tests can run on :0 and against a fake
-	// upstream without a real network.
-	listen func(network, address string) (net.Listener, error)
-	dial   func(network, address string) (net.Conn, error)
+	// listen, listenPacket and dial are injectable so tests can run on :0 and
+	// against a fake upstream without a real network.
+	listen       func(network, address string) (net.Listener, error)
+	listenPacket func(network, address string) (net.PacketConn, error)
+	dial         func(network, address string) (net.Conn, error)
 
 	mu      sync.Mutex
-	entries map[int]*listenerEntry
-	failed  map[int]failedBind
+	entries map[entryKey]*listenerEntry
+	failed  map[entryKey]failedBind
 }
+
+// entryKey is what a bind contends for: a node port *within one L4 family*
+// (v1.42). A stream socket and a datagram socket on one number coexist, so 53
+// over both tcp and udp is two entries, not a collision.
+type entryKey struct {
+	udp  bool
+	port int
+}
+
+func keyFor(l Listener) entryKey { return entryKey{udp: l.Mode == ListenerUDP, port: l.Port} }
 
 type failedBind struct {
 	listener Listener
@@ -61,11 +73,14 @@ type failedBind struct {
 // listenerEntry is one bound port.
 type listenerEntry struct {
 	cfg Listener
-	ln  net.Listener
-	// srv is set for an http listener, relay for a tcp one. Exactly one is
-	// non-nil: the kind is what a rebind is for.
+	// ln is set for the stream kinds, pc for udp.
+	ln net.Listener
+	pc net.PacketConn
+	// srv is set for an http listener, relay for a tcp one, udp for a udp
+	// one. Exactly one is non-nil: the kind is what a rebind is for.
 	srv   *http.Server
 	relay *relay
+	udp   *udpRelay
 }
 
 func newListenerSet(proxy *Proxy, cfg Config) *listenerSet {
@@ -79,8 +94,9 @@ func newListenerSet(proxy *Proxy, cfg Config) *listenerSet {
 		idleTimeout:       cfg.IdleTimeout,
 		maxHeaderBytes:    cfg.MaxHeaderBytes,
 		listen:            net.Listen,
-		entries:           map[int]*listenerEntry{},
-		failed:            map[int]failedBind{},
+		listenPacket:      net.ListenPacket,
+		entries:           map[entryKey]*listenerEntry{},
+		failed:            map[entryKey]failedBind{},
 	}
 }
 
@@ -95,44 +111,49 @@ func (s *listenerSet) Apply(want []Listener) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	wanted := make(map[int]Listener, len(want))
+	wanted := make(map[entryKey]Listener, len(want))
 	for _, l := range want {
-		wanted[l.Port] = l
+		wanted[keyFor(l)] = l
 	}
 
 	// Withdrawn first, so a listener moving from one service to another frees
 	// the port before the new one tries to bind it.
-	for port, entry := range s.entries {
-		if _, keep := wanted[port]; keep {
+	for key, entry := range s.entries {
+		if _, keep := wanted[key]; keep {
 			continue
 		}
-		s.log.Info("withdrawing published port", "port", port, "service", entry.cfg.Name())
+		s.log.Info("withdrawing published port", "port", key.port, "service", entry.cfg.Name())
 		s.stop(entry)
-		delete(s.entries, port)
+		delete(s.entries, key)
 	}
-	for port := range s.failed {
-		if _, keep := wanted[port]; !keep {
-			delete(s.failed, port)
+	for key := range s.failed {
+		if _, keep := wanted[key]; !keep {
+			delete(s.failed, key)
 		}
 	}
 
-	ports := make([]int, 0, len(wanted))
-	for port := range wanted {
-		ports = append(ports, port)
+	keys := make([]entryKey, 0, len(wanted))
+	for key := range wanted {
+		keys = append(keys, key)
 	}
-	sort.Ints(ports)
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].port != keys[j].port {
+			return keys[i].port < keys[j].port
+		}
+		return !keys[i].udp && keys[j].udp
+	})
 
-	for _, port := range ports {
-		cfg := wanted[port]
-		entry, bound := s.entries[port]
+	for _, key := range keys {
+		cfg := wanted[key]
+		entry, bound := s.entries[key]
 		switch {
 		case !bound:
 			s.bind(cfg)
 		case rebindRequired(entry.cfg, cfg):
 			s.log.Info("rebinding published port",
-				"port", port, "from", entry.cfg.Mode, "to", cfg.Mode)
+				"port", key.port, "from", entry.cfg.Mode, "to", cfg.Mode)
 			s.stop(entry)
-			delete(s.entries, port)
+			delete(s.entries, key)
 			s.bind(cfg)
 		default:
 			s.reconfigure(entry, cfg)
@@ -145,8 +166,8 @@ func (s *listenerSet) Apply(want []Listener) {
 	// two well-known entrypoints are always kept: they belong to the main
 	// server, which this set does not own.
 	keep := map[string]bool{EntrypointWeb: true, EntrypointWebSecure: true}
-	for port := range wanted {
-		keep[EntrypointForPort(port)] = true
+	for key := range wanted {
+		keep[EntrypointForPort(key.port)] = true
 	}
 	s.proxy.Metrics().RetainEntrypoints(keep)
 }
@@ -162,17 +183,21 @@ func rebindRequired(old, want Listener) bool { return old.Mode != want.Mode }
 
 // bind opens the socket and starts serving.
 func (s *listenerSet) bind(cfg Listener) {
+	if cfg.Mode == ListenerUDP {
+		s.bindUDP(cfg)
+		return
+	}
 	ln, err := s.listen("tcp", cfg.Bind())
 	if err != nil {
 		// Recorded rather than retried in a loop here: the next snapshot poll
 		// is the retry, and it arrives on its own schedule.
-		s.failed[cfg.Port] = failedBind{listener: cfg, err: err}
+		s.failed[keyFor(cfg)] = failedBind{listener: cfg, err: err}
 		s.log.Error("cannot bind a published port",
 			"service", cfg.Name(), "port", cfg.Port, "error", err,
 			"detail", "the rest of the snapshot is serving; the next poll retries this one")
 		return
 	}
-	delete(s.failed, cfg.Port)
+	delete(s.failed, keyFor(cfg))
 
 	entry := &listenerEntry{cfg: cfg, ln: ln}
 	switch cfg.Mode {
@@ -182,7 +207,7 @@ func (s *listenerSet) bind(cfg Listener) {
 			// Validate compiled this already, so it cannot normally fail. If it
 			// somehow does, the port stays unbound rather than open and unruled.
 			_ = ln.Close() //nolint:errcheck // cleanup path
-			s.failed[cfg.Port] = failedBind{listener: cfg, err: err}
+			s.failed[keyFor(cfg)] = failedBind{listener: cfg, err: err}
 			s.log.Error("cannot serve a published tcp port",
 				"service", cfg.Name(), "port", cfg.Port, "error", err)
 			return
@@ -201,9 +226,38 @@ func (s *listenerSet) bind(cfg Listener) {
 		}(entry.srv, ln, cfg)
 	}
 
-	s.entries[cfg.Port] = entry
+	s.entries[keyFor(cfg)] = entry
 	s.log.Info("published port bound",
 		"service", cfg.Name(), "port", cfg.Port, "mode", cfg.Mode, "upstream", cfg.Address())
+}
+
+// bindUDP opens the datagram socket and starts the relay (v1.42).
+func (s *listenerSet) bindUDP(cfg Listener) {
+	pc, err := s.listenPacket("udp", cfg.Bind())
+	if err != nil {
+		s.failed[keyFor(cfg)] = failedBind{listener: cfg, err: err}
+		s.log.Error("cannot bind a published udp port",
+			"service", cfg.Name(), "port", cfg.Port, "error", err,
+			"detail", "the rest of the snapshot is serving; the next poll retries this one")
+		return
+	}
+	delete(s.failed, keyFor(cfg))
+
+	relay, err := newUDPRelay(cfg, pc, s.limiter, s.log, s.proxy.Metrics(), s.dial)
+	if err != nil {
+		// Validate compiled this already, so it cannot normally fail; the port
+		// stays unbound rather than open and unruled.
+		_ = pc.Close() //nolint:errcheck // cleanup path
+		s.failed[keyFor(cfg)] = failedBind{listener: cfg, err: err}
+		s.log.Error("cannot serve a published udp port",
+			"service", cfg.Name(), "port", cfg.Port, "error", err)
+		return
+	}
+	s.entries[keyFor(cfg)] = &listenerEntry{cfg: cfg, pc: pc, udp: relay}
+	go relay.serve()
+	s.log.Info("published port bound",
+		"service", cfg.Name(), "port", cfg.Port, "mode", cfg.Mode,
+		"backends", len(cfg.Backends))
 }
 
 // reconfigure swaps a listener's configuration without touching its socket.
@@ -214,6 +268,13 @@ func (s *listenerSet) reconfigure(entry *listenerEntry, cfg Listener) {
 	if entry.relay != nil {
 		if err := entry.relay.update(cfg); err != nil {
 			s.log.Error("cannot apply the new configuration to a published port",
+				"service", cfg.Name(), "port", cfg.Port, "error", err)
+			return
+		}
+	}
+	if entry.udp != nil {
+		if err := entry.udp.update(cfg); err != nil {
+			s.log.Error("cannot apply the new configuration to a published udp port",
 				"service", cfg.Name(), "port", cfg.Port, "error", err)
 			return
 		}
@@ -284,6 +345,11 @@ func (s *listenerSet) stop(entry *listenerEntry) {
 		_ = entry.srv.Close() //nolint:errcheck // cleanup path
 		return
 	}
+	if entry.udp != nil {
+		_ = entry.pc.Close() //nolint:errcheck // cleanup path
+		entry.udp.closeLive()
+		return
+	}
 	_ = entry.ln.Close() //nolint:errcheck // cleanup path
 	if entry.relay != nil {
 		entry.relay.closeLive()
@@ -300,14 +366,25 @@ func (s *listenerSet) stop(entry *listenerEntry) {
 func (s *listenerSet) Shutdown(grace time.Duration) {
 	s.mu.Lock()
 	entries := make([]*listenerEntry, 0, len(s.entries))
-	for port, entry := range s.entries {
+	for key, entry := range s.entries {
 		entries = append(entries, entry)
-		delete(s.entries, port)
+		delete(s.entries, key)
 	}
 	s.mu.Unlock()
 
 	var relays []*relay
+	var udpRelays []*udpRelay
 	for _, entry := range entries {
+		if entry.pc != nil {
+			// The socket closes now — no new sessions — but live sessions
+			// drain like tcp connections: a game tick has no natural
+			// completion point either.
+			_ = entry.pc.Close() //nolint:errcheck // cleanup path
+			if entry.udp != nil {
+				udpRelays = append(udpRelays, entry.udp)
+			}
+			continue
+		}
 		_ = entry.ln.Close() //nolint:errcheck // cleanup path
 		if entry.srv != nil {
 			_ = entry.srv.Close() //nolint:errcheck // cleanup path
@@ -317,7 +394,7 @@ func (s *listenerSet) Shutdown(grace time.Duration) {
 			relays = append(relays, entry.relay)
 		}
 	}
-	if len(relays) == 0 {
+	if len(relays) == 0 && len(udpRelays) == 0 {
 		return
 	}
 	deadline := time.After(grace)
@@ -328,6 +405,9 @@ func (s *listenerSet) Shutdown(grace time.Duration) {
 		for _, r := range relays {
 			live += r.liveCount()
 		}
+		for _, u := range udpRelays {
+			live += u.liveCount()
+		}
 		if live == 0 {
 			return
 		}
@@ -336,6 +416,9 @@ func (s *listenerSet) Shutdown(grace time.Duration) {
 			closed := 0
 			for _, r := range relays {
 				closed += r.closeLive()
+			}
+			for _, u := range udpRelays {
+				closed += u.closeLive()
 			}
 			s.log.Warn("closing published connections that outlived the drain",
 				"connections", closed, "grace", grace)
@@ -356,12 +439,20 @@ func (s *listenerSet) States() []listenerState {
 		if entry.relay != nil {
 			state.Conns = entry.relay.liveCount()
 		}
+		if entry.udp != nil {
+			state.Conns = entry.udp.liveCount()
+		}
 		out = append(out, state)
 	}
 	for _, f := range s.failed {
 		out = append(out, listenerState{Listener: f.listener, Error: f.err.Error()})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Listener.Port < out[j].Listener.Port })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Listener.Port != out[j].Listener.Port {
+			return out[i].Listener.Port < out[j].Listener.Port
+		}
+		return out[i].Listener.Mode < out[j].Listener.Mode
+	})
 	return out
 }
 
@@ -376,7 +467,10 @@ func listenersSame(a, b Listener) bool {
 		a.MaxConns != b.MaxConns {
 		return false
 	}
-	return reflect.DeepEqual(a.IPRestriction, b.IPRestriction) &&
+	// Backends are how a udp listener reaches anything (v1.42): a changed set
+	// must reconfigure, or new sessions keep landing on departed allocs.
+	return slices.Equal(a.Backends, b.Backends) &&
+		reflect.DeepEqual(a.IPRestriction, b.IPRestriction) &&
 		reflect.DeepEqual(a.RateLimit, b.RateLimit) &&
 		reflect.DeepEqual(a.Headers, b.Headers)
 }

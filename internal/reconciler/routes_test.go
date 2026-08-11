@@ -562,3 +562,82 @@ func TestSpecHashIgnoresPublish(t *testing.T) {
 		t.Error("publishing a node port rolled the allocs")
 	}
 }
+
+// udpService is a service whose only port is udp: no frontend, publish-only
+// reachability (v1.42).
+func udpService(count int) reconciler.Desired {
+	d := desired(count)
+	d.Ports = []reconciler.Port{{Name: "game", Container: 34197, Protocol: reconciler.PortProtocolUDP}}
+	d.Publish = []reconciler.PublishedPort{{Port: "game", Host: 34197, Mode: "udp"}}
+	return d
+}
+
+// A udp listener carries backend addresses, not the VIP — the LB cannot front
+// datagrams — and a udp-only service holds no frontend at all.
+func TestReconcilePublishesAUDPListenerWithBackends(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+	h.setDesired(t, udpService(2))
+	h.reconcile(t)
+
+	if svcs := h.network.lastLBSync(); len(svcs) != 0 {
+		t.Fatalf("LB services = %+v, want none for a udp-only service", svcs)
+	}
+
+	snap := loadRoutes(t, path)
+	if len(snap.Listeners) != 1 {
+		t.Fatalf("listeners = %+v, want 1", snap.Listeners)
+	}
+	l := snap.Listeners[0]
+	if l.Mode != edge.ListenerUDP || l.Port != 34197 || l.UpstreamPort != 34197 {
+		t.Errorf("listener = %+v", l)
+	}
+	if l.Upstream != "" {
+		t.Errorf("upstream = %q, want none — a udp listener dials backends", l.Upstream)
+	}
+	if len(l.Backends) != 2 {
+		t.Errorf("backends = %v, want both running allocs", l.Backends)
+	}
+}
+
+// Backend churn must republish the snapshot: the backend list is how a udp
+// listener reaches anything, so leaving it out of listenersEqual would repeat
+// the routesArePublished mistake with a new field.
+func TestUDPBackendChurnRepublishes(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+	h.setDesired(t, udpService(2))
+	h.reconcile(t)
+	if got := loadRoutes(t, path).Listeners[0].Backends; len(got) != 2 {
+		t.Fatalf("backends = %v, want 2", got)
+	}
+
+	h.setDesired(t, udpService(1))
+	h.reconcile(t)
+	h.reconcile(t) // the pass after the stop sees the shrunken attachment set
+	if got := loadRoutes(t, path).Listeners[0].Backends; len(got) != 1 {
+		t.Fatalf("backends = %v, want the survivor only", got)
+	}
+}
+
+// A tcp port beside a udp one keeps its frontend: only the udp half leaves the
+// LB, and the two listeners of one service may share a host port across
+// families.
+func TestMixedProtocolServiceKeepsItsTCPFrontend(t *testing.T) {
+	h, path := routeHarness(t, "apps.example.com")
+	d := desiredWithPort(1)
+	d.Ports = append(d.Ports, reconciler.Port{Name: "game", Container: 8080, Protocol: reconciler.PortProtocolUDP})
+	d.Publish = []reconciler.PublishedPort{
+		{Port: "http", Host: 9000, Mode: "tcp"},
+		{Port: "game", Host: 9000, Mode: "udp"},
+	}
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	svcs := h.network.lastLBSync()
+	if len(svcs) != 1 || len(svcs[0].Ports) != 1 || svcs[0].Ports[0].Name != "http" {
+		t.Fatalf("LB services = %+v, want the tcp port alone", svcs)
+	}
+	snap := loadRoutes(t, path)
+	if len(snap.Listeners) != 2 {
+		t.Fatalf("listeners = %+v, want the tcp and udp listeners to share the port", snap.Listeners)
+	}
+}

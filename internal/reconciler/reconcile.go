@@ -418,8 +418,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		r.log.Error("sync service load balancing", "error", err)
 	}
 	// Routes last: an edge route points at a frontend, so publishing one before
-	// the frontend is programmed would advertise a host that 502s.
-	r.syncEdgeRoutes(ctx, world, vips)
+	// the frontend is programmed would advertise a host that 502s. Attachments
+	// travel too: udp listeners carry backend addresses (v1.42).
+	r.syncEdgeRoutes(ctx, world, vips, attachments)
 	// Auth material after the routes for the same reason in reverse: a route
 	// marked auth answers 503 until its material lands, which is the fail-
 	// closed direction (R27) — never a window where it serves open.
@@ -460,10 +461,14 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 	// Only services that will actually get a frontend hold an address. A worker
 	// with no ports would otherwise consume one for its whole life and shift
 	// every later assignment along, which makes the pool harder to read and the
-	// numbering harder to explain.
+	// numbering harder to explain. udp ports do not count (v1.42, §5.2.5):
+	// connect-time rewrite has no hook an unconnected sendto ever calls, so a
+	// udp frontend would be a VIP that silently black-holes — the published
+	// udp listener reaches backends directly instead, and a udp-only service
+	// holds no address at all.
 	refs := make([]serviceRef, 0, len(w.Desired))
 	for _, d := range w.Desired {
-		if len(d.Ports) == 0 {
+		if len(lbPorts(d)) == 0 {
 			continue
 		}
 		refs = append(refs, serviceRef{Project: d.Project, Service: d.Service})
@@ -475,11 +480,12 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 
 	services := make([]network.Service, 0, len(w.Desired))
 	for _, d := range w.Desired {
-		if len(d.Ports) == 0 {
+		lbPortSet := lbPorts(d)
+		if len(lbPortSet) == 0 {
 			continue // nothing to load balance
 		}
-		ports := make([]network.ServicePort, 0, len(d.Ports))
-		for _, p := range d.Ports {
+		ports := make([]network.ServicePort, 0, len(lbPortSet))
+		for _, p := range lbPortSet {
 			ports = append(ports, network.ServicePort{
 				Name: p.Name, Port: p.Container, TargetPort: p.Container,
 			})
@@ -536,6 +542,19 @@ func backendsFor(w World, d Desired, attachments map[string]network.Attachment) 
 	}
 	sort.Slice(backends, func(i, j int) bool { return backends[i].AllocID < backends[j].AllocID })
 	return backends
+}
+
+// lbPorts is the subset of a service's ports the LB fronts: everything but
+// udp, which has no connect-time hook and is served by published listeners
+// alone (v1.42).
+func lbPorts(d Desired) []Port {
+	out := make([]Port, 0, len(d.Ports))
+	for _, p := range d.Ports {
+		if !p.IsUDP() {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // resolvConfFor renders the project's resolv.conf, or reports why it cannot.
