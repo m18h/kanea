@@ -1254,6 +1254,12 @@ spec_version = 1
       are the ones systemd runs for you.
     </p>
     <p>
+      The socket is root-owned, so client commands run under <code>sudo</code> — or without
+      it, after joining the <code>kanea</code> group <code>init</code> creates and logging in
+      again: <code>sudo usermod -aG kanea &lt;user&gt;</code>. Membership is root-equivalent,
+      exactly like docker's group, and is never granted by Kanea itself.
+    </p>
+    <p>
       Services are addressed as <code>project/service</code> throughout, or as a bare service
       name with <code>--project</code>.
     </p>

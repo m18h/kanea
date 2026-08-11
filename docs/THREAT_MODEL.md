@@ -92,9 +92,16 @@ A caller is one of three things:
    12-hour absolute expiry, revocable server-side. Mutations additionally
    require a double-submit CSRF token, because SameSite is a property of the
    browser rather than of this server.
-3. **The local unix socket** — 0600, owned by the daemon's user. Reaching it
-   means being someone who can already replace the binary and read the master
-   key, so it is admitted as admin and recorded as `socket`, never as a person.
+3. **The local unix socket** — 0600, owned by the daemon's user; root:`kanea`
+   0660 when the operator has created that group (v1.48). Reaching it means
+   being someone who can already replace the binary and read the master key —
+   or someone an operator deliberately made equivalent to that person: group
+   membership is root-equivalent, exactly docker's model, granted only by an
+   explicit `usermod` (`kanea init` creates the group empty, and an empty
+   group grants nothing). Either way a caller is admitted as admin and
+   recorded as `socket`, never as a person. The socket's directory carries
+   the group for traversal only; the containerd socket beside it keeps its
+   own root-only mode.
 
 **Loopback is not local.** Only the unix socket confers that identity. Someone
 reaching 127.0.0.1 through a forwarded port, an SSH tunnel or a co-tenant

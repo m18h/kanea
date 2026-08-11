@@ -28,6 +28,12 @@ import (
 // DefaultSocket is where kanead listens.
 const DefaultSocket = "/run/kanea/kanead.sock"
 
+// SocketGroup is the operator-created group whose members may use the CLI
+// without sudo (PRD v1.48, §13.1). When it exists the socket is published
+// root:kanea 0660 instead of 0600. Membership is root-equivalent — docker's
+// model — and the group's absence, which is the default, changes nothing.
+const SocketGroup = "kanea"
+
 // Paths served by the API. Versioned from the start so the CLI and the daemon
 // can disagree about their versions without silently misbehaving.
 const (

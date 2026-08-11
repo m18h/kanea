@@ -163,6 +163,14 @@ func runInit(args []string) error {
 	if err := createLayout(o, *dataDir, *logDir); err != nil {
 		return err
 	}
+	// The CLI socket group (PRD v1.48, §13.1), created empty: membership is
+	// root-equivalent and granted only by an operator's own usermod, so an
+	// empty group changes nothing. kanead applies it to the socket at startup,
+	// which is why it exists before the daemon is first enabled below. A
+	// warning, not a failure: the CLI works over sudo either way.
+	if err := provision.EnsureGroup(context.Background(), api.SocketGroup, nil); err != nil {
+		o.printf("WARN  %v\n      (the CLI still works with sudo)\n", err)
+	}
 	if err := keyCeremony(o, filepath.Join(*dataDir, secrets.KeyFileName), reader); err != nil {
 		return err
 	}

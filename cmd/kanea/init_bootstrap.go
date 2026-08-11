@@ -111,8 +111,8 @@ func resolveListen(o *out, reader *bufio.Reader, explicit bool, value, cert, key
 func printManualNext(o *out) {
 	o.println()
 	o.println("Next:")
-	o.println("  1. systemctl daemon-reload && systemctl enable --now kanead")
-	o.println("  2. kanea user add <name> --role admin        # the first account")
+	o.println("  1. sudo systemctl daemon-reload && sudo systemctl enable --now kanead")
+	o.println("  2. sudo kanea user add --role admin <name>   # the first account")
 	o.println("  3. kanea run <spec.hcl>                      # deploy something")
 	o.println()
 	o.println("Configure a backup destination before you need one — see docs/DR_RUNBOOK.md.")
@@ -304,5 +304,6 @@ func initSummary(o *out, s summaryInfo) {
 	}
 	o.println()
 	o.println("Deploy something:  kanea run <spec.hcl>")
+	o.println("CLI without sudo:  sudo usermod -aG kanea <user>   # root-equivalent; log in again")
 	o.println("Configure a backup destination before you need one — see docs/DR_RUNBOOK.md.")
 }

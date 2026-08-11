@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -536,9 +537,23 @@ func (s *Server) Listen() error {
 	if err != nil {
 		return fmt.Errorf("api: listen on %s: %w", s.socket, err)
 	}
-	// 0600: reaching this socket is the local-root credential of §13.1.
+	// 0600: reaching this socket is the local-root credential of §13.1. When
+	// the operator has created the `kanea` group (PRD v1.48), the socket is
+	// published root:kanea 0660 instead — membership is root-equivalent,
+	// docker's model, and the group's absence is the default. Deny-closed:
+	// root-only is set first, and any failure widening it leaves it that way.
 	if err := os.Chmod(s.socket, 0o600); err != nil {
 		return errors.Join(fmt.Errorf("api: chmod socket: %w", err), listener.Close())
+	}
+	if gid, ok := socketGroupID(user.LookupGroup, s.log); ok {
+		if err := s.applySocketGroup(gid); err != nil {
+			s.log.Error("could not apply the socket group; the socket stays root-only",
+				"group", SocketGroup, "error", err,
+				"remedy", "kanead applies the group at startup; fix the error and restart")
+		} else {
+			s.log.Info("socket group applied; its members may use the CLI without sudo",
+				"group", SocketGroup, "socket", s.socket)
+		}
 	}
 	s.listener = listener
 
@@ -558,6 +573,44 @@ func (s *Server) Listen() error {
 		s.netListener = network
 	}
 	return nil
+}
+
+// socketGroupID resolves the SocketGroup gid, if the operator has created the
+// group. The lookup is injected so the decision is testable on a machine whose
+// /etc/group this test must not depend on.
+func socketGroupID(lookup func(string) (*user.Group, error), log *slog.Logger) (int, bool) {
+	g, err := lookup(SocketGroup)
+	if err != nil {
+		var unknown user.UnknownGroupError
+		if !errors.As(err, &unknown) {
+			// An absent group is the default and not worth a line; a lookup
+			// that failed some other way is — the operator may have created
+			// the group and be waiting on a socket that never widens.
+			log.Warn("could not look up the socket group", "group", SocketGroup, "error", err)
+		}
+		return 0, false
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		log.Warn("the socket group's gid is not numeric", "group", SocketGroup, "gid", g.Gid)
+		return 0, false
+	}
+	return gid, true
+}
+
+// applySocketGroup widens the socket to root:kanea 0660 (PRD v1.48).
+func (s *Server) applySocketGroup(gid int) error {
+	// The directory first: group members need traverse to reach the socket at
+	// all. Ownership only — the mode stays what the unit created (0710 gives
+	// the group traverse without listing), and the containerd socket next door
+	// keeps its own root-only mode, so the group reaches exactly one thing.
+	if err := os.Chown(filepath.Dir(s.socket), -1, gid); err != nil {
+		return fmt.Errorf("chgrp socket dir: %w", err)
+	}
+	if err := os.Chown(s.socket, -1, gid); err != nil {
+		return fmt.Errorf("chgrp socket: %w", err)
+	}
+	return os.Chmod(s.socket, 0o660)
 }
 
 // NetworkAddr reports the network listener's address, or "" when there is none
