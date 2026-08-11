@@ -10,6 +10,7 @@ import { Pipelines } from '@/pages/Pipelines'
 import { PipelineDetail } from '@/pages/PipelineDetail'
 import { Events } from '@/pages/Events'
 import { Backups } from '@/pages/Backups'
+import { Settings } from '@/pages/Settings'
 import { Login } from '@/pages/Login'
 import { SpecEditorPage } from '@/pages/SpecEditorPage'
 import { SessionProvider } from '@/lib/session-provider'
@@ -79,6 +80,7 @@ function Page({ path }: { path: string }) {
 
   if (matchPath('/events', path)) return <Events />
   if (matchPath('/backups', path)) return <Backups />
+  if (matchPath('/settings', path)) return <Settings />
 
   // A deep link the server handed to the app but the app does not know: say so
   // rather than render a blank page.

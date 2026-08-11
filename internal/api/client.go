@@ -16,6 +16,8 @@ import (
 	"github.com/m18h/kanea/internal/auth"
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/settings"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/secrets"
 	"github.com/m18h/kanea/internal/secretsource"
@@ -386,6 +388,58 @@ func (c *Client) DeleteSecret(ctx context.Context, secretPath string) error {
 		return err
 	}
 	return c.do(ctx, http.MethodDelete, PathSecrets+"/"+clean, nil, nil)
+}
+
+// Settings reads the node settings view (v1.46).
+func (c *Client) Settings(ctx context.Context) (SettingsResponse, error) {
+	var resp SettingsResponse
+	err := c.do(ctx, http.MethodGet, PathSettings, nil, &resp)
+	return resp, err
+}
+
+// PutBackupSettings replaces the backup destination.
+func (c *Client) PutBackupSettings(ctx context.Context, rec settings.BackupSettings) (BackupSettingsView, error) {
+	var view BackupSettingsView
+	err := c.do(ctx, http.MethodPut, PathSettings+"/backup", rec, &view)
+	return view, err
+}
+
+// ResetBackupSettings deletes the record, reverting to the daemon's flags.
+func (c *Client) ResetBackupSettings(ctx context.Context) (BackupSettingsView, error) {
+	var view BackupSettingsView
+	err := c.do(ctx, http.MethodDelete, PathSettings+"/backup", nil, &view)
+	return view, err
+}
+
+// PutNotificationSettings replaces the node-level channels.
+func (c *Client) PutNotificationSettings(ctx context.Context, rec settings.NotificationSettings) (NotificationSettingsView, error) {
+	var view NotificationSettingsView
+	err := c.do(ctx, http.MethodPut, PathSettings+"/notifications", rec, &view)
+	return view, err
+}
+
+// ResetNotificationSettings removes the node-level channels.
+func (c *Client) ResetNotificationSettings(ctx context.Context) (NotificationSettingsView, error) {
+	var view NotificationSettingsView
+	err := c.do(ctx, http.MethodDelete, PathSettings+"/notifications", nil, &view)
+	return view, err
+}
+
+// ProjectNotifications reads one project's channel config.
+func (c *Client) ProjectNotifications(ctx context.Context, project string) (ProjectNotificationsView, error) {
+	var view ProjectNotificationsView
+	err := c.do(ctx, http.MethodGet, PathProjects+"/"+url.PathEscape(project)+"/notifications", nil, &view)
+	return view, err
+}
+
+// PutProjectNotifications replaces one project's channel config.
+func (c *Client) PutProjectNotifications(
+	ctx context.Context, project string, n *jobspec.Notifications,
+) (ProjectNotificationsView, error) {
+	var view ProjectNotificationsView
+	err := c.do(ctx, http.MethodPut, PathProjects+"/"+url.PathEscape(project)+"/notifications",
+		map[string]any{"notifications": n}, &view)
+	return view, err
 }
 
 // Users lists accounts, without password hashes.

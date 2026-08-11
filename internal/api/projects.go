@@ -219,9 +219,12 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 
 // ---- notification test ----
 
-// Notifier is the slice of the dispatcher the test route needs.
+// Notifier is the slice of the dispatcher the test routes need.
 type Notifier interface {
 	Test(project, channel string) []notify.TestResult
+	// TestNodeChannels tests only the node-wide routes (v1.46), which Test's
+	// project filter can never name.
+	TestNodeChannels(channel string) []notify.TestResult
 }
 
 // TestNotificationResponse reports what each channel did with a test message.

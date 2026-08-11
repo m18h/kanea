@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/secrets"
+	"github.com/m18h/kanea/internal/settings"
 	"github.com/m18h/kanea/internal/store"
 )
 
@@ -216,47 +216,37 @@ type replicationSettings struct {
 	emit             func(notify.Event)
 }
 
-// buildReplication assembles the replicator, or returns nils when no
-// destination is configured.
+// assembleReplication builds the pipeline for one configured destination.
 //
 // A misconfigured destination is an error rather than a warning: the failure an
 // operator must never have is the one where backups were never happening and
 // nothing said so.
-// It returns the API's interface type rather than the concrete one on purpose.
-// A nil *backupService assigned into an api.Backups field is a non-nil
-// interface holding a nil pointer, so every "is a backup destination
-// configured" check would answer yes and then panic on the first call. Naming
-// the interface here makes the nil an actual nil.
-func buildReplication(
+func assembleReplication(
 	ctx context.Context, cfg replicationSettings, resolver secretResolver, log *slog.Logger,
-) (api.Backups, *backup.Replicator, error) {
-	if !cfg.sink.configured() {
-		return nil, nil, nil
-	}
-
+) (*backupService, error) {
 	if cfg.secretKeyRef != "" {
 		// A `secret:` reference like every other credential (R3): the S3 secret
-		// key is never a literal in a flag, because argv is world-readable
-		// through /proc/<pid>/cmdline.
+		// key is never a literal in a flag or a settings record, because argv
+		// is world-readable and the record replicates as metadata.
 		value, err := resolver.Resolve(ctx, cfg.secretKeyRef)
 		if err != nil {
-			return nil, nil, fmt.Errorf("backup S3 secret key: %w", err)
+			return nil, fmt.Errorf("backup S3 secret key: %w", err)
 		}
 		cfg.sink.secretKey = string(value)
 	}
 
 	sink, err := sinkFromFlags(cfg.sink, log)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	master, err := secrets.LoadKey(filepath.Join(cfg.dataDir, secrets.KeyFileName))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	keys, err := backup.DeriveKeys(master)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	archiver, err := backup.New(backup.Config{
@@ -269,7 +259,7 @@ func buildReplication(
 		Node:    nodeName(), Version: version, Logger: log,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	replicator, err := backup.NewReplicator(backup.ReplicatorConfig{
@@ -279,7 +269,7 @@ func buildReplication(
 		Emit: cfg.emit,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	log.Info("state replication configured",
@@ -288,7 +278,77 @@ func buildReplication(
 
 	return &backupService{
 		archiver: archiver, replicator: replicator, dataDir: cfg.dataDir, log: log,
-	}, replicator, nil
+	}, nil
+}
+
+// settingsToReplication converts a settings record into the same shape the
+// flags produce. The record wins wholesale: a zero interval means the
+// replicator's default, never the flag value it superseded.
+func settingsToReplication(rec settings.BackupSettings, base replicationSettings) replicationSettings {
+	out := base
+	out.sink = sinkOptions{}
+	out.secretKeyRef = ""
+	if rec.Dir != "" {
+		out.sink.dir = rec.Dir
+	}
+	if rec.S3 != nil {
+		out.sink.s3URL = rec.S3.URL
+		out.sink.endpoint = rec.S3.Endpoint
+		out.sink.region = rec.S3.Region
+		out.sink.accessKey = rec.S3.AccessKey
+		out.sink.pathStyle = rec.S3.UsePathStyle()
+		out.secretKeyRef = rec.S3.SecretKeyRef
+	}
+	out.snapshotInterval = rec.SnapshotInterval.Std()
+	out.segmentInterval = rec.SegmentInterval.Std()
+	out.retention = rec.Retention
+	return out
+}
+
+// buildBackups settles the startup precedence (v1.46): a Store record wins; a
+// corrupt or unbuildable record falls back to the flags loudly, because "the
+// node silently stopped replicating" is the failure the whole subsystem exists
+// to prevent; no record means the flags, and no flags means unconfigured.
+func buildBackups(
+	ctx context.Context, cfg replicationSettings, resolver secretResolver, log *slog.Logger,
+) (*backupManager, error) {
+	m := newBackupManager(log)
+
+	rec, found, err := settings.LoadBackup(ctx, cfg.store)
+	if err != nil {
+		log.Error("the backup settings record is unreadable; falling back to the unit's flags",
+			"error", err)
+		found = false
+	}
+	if found {
+		if verr := rec.Validate(); verr != nil {
+			log.Error("the backup settings record is invalid; falling back to the unit's flags",
+				"error", verr)
+			found = false
+		}
+	}
+	if found {
+		svc, err := assembleReplication(ctx, settingsToReplication(rec, cfg), resolver, log)
+		if err != nil {
+			log.Error("cannot build replication from the settings record; "+
+				"falling back to the unit's flags", "error", err)
+		} else {
+			m.adopt(svc, sourceStore)
+			return m, nil
+		}
+	}
+
+	if cfg.sink.configured() {
+		// A misconfigured *flag* destination stays a startup error, exactly as
+		// before: the operator wrote it into the unit, and the journal is
+		// where that refusal has always landed.
+		svc, err := assembleReplication(ctx, cfg, resolver, log)
+		if err != nil {
+			return nil, err
+		}
+		m.adopt(svc, sourceFlags)
+	}
+	return m, nil
 }
 
 // secretResolver is the slice of the secrets store this file needs.

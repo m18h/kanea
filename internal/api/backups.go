@@ -70,6 +70,13 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	manifests, err := s.backups.List(r.Context())
+	if errors.Is(err, backup.ErrNotConfigured) {
+		// The manager form of "no destination" (v1.46): the subsystem exists —
+		// it can be configured at runtime now — but nothing is behind it,
+		// which is the same 503 an absent one always answered.
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -108,7 +115,11 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 
 	manifest, err := s.backups.Create(ctx, req.Reason)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		status := http.StatusInternalServerError
+		if errors.Is(err, backup.ErrNotConfigured) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, err)
 		return
 	}
 	auditTarget(r, manifest.ID)
@@ -129,6 +140,8 @@ func (s *Server) handleVerifyBackup(w http.ResponseWriter, r *http.Request) {
 	if err := s.backups.Verify(r.Context(), id); err != nil {
 		status := http.StatusInternalServerError
 		switch {
+		case errors.Is(err, backup.ErrNotConfigured):
+			status = http.StatusServiceUnavailable
 		case errors.Is(err, backup.ErrNotFound), errors.Is(err, backup.ErrNoArchives):
 			status = http.StatusNotFound
 		case errors.Is(err, backup.ErrCorrupt):
@@ -171,6 +184,8 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {
+		case errors.Is(err, backup.ErrNotConfigured):
+			status = http.StatusServiceUnavailable
 		case errors.Is(err, backup.ErrNotFound), errors.Is(err, backup.ErrNoArchives):
 			status = http.StatusNotFound
 		case errors.Is(err, backup.ErrCorrupt), errors.Is(err, backup.ErrKey):
