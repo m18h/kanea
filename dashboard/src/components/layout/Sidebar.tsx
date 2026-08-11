@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   LogOut,
   Moon,
+  Settings2,
   Sun,
   type LucideIcon,
 } from 'lucide-react'
@@ -39,6 +40,7 @@ export function Sidebar({ className }: { className?: string | undefined }) {
     { to: '/functions', label: 'Functions', icon: FunctionSquare, exact: false, badge: counts.functions },
     { to: '/events', label: 'Events', icon: Activity, exact: false, badge: counts.alerts },
     { to: '/backups', label: 'Backups', icon: DatabaseBackup, exact: false },
+    { to: '/settings', label: 'Settings', icon: Settings2, exact: false },
   ]
 
   return (

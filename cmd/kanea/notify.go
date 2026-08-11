@@ -143,11 +143,12 @@ func buildNotifier(
 	}
 	// The dispatcher's Sink is a tee: the feed is the record and comes first,
 	// and the function invoker (v1.39, §11) attaches as the second consumer —
-	// after construction, before Run starts. Routes are startup-static; the
-	// Sink is the one place a live event trigger can see everything.
+	// after construction, before Run starts. Routes reload on config change
+	// since v1.46; the Sink remains the one place a live event trigger sees
+	// everything regardless of what channels exist.
 	tee := &teeSink{primary: feed}
 
-	egress := notify.EgressPolicy{AllowPrivate: cfg.allowPrivate, AllowHTTP: cfg.allowHTTP}
+	egress := cfg.egress()
 	if cfg.allowPrivate {
 		// Worth a line in the log: it is the §14 A10 guard being switched off,
 		// and an operator who did not mean to should find out from the startup
@@ -156,7 +157,9 @@ func buildNotifier(
 			"reason", "--notify-allow-private is set")
 	}
 
-	routes, err := notifyRoutes(ctx, cfg, egress, logger)
+	// Projects' channels plus the node-level defaults (v1.46) — the same
+	// builder the runtime reloader uses, so startup and reload cannot drift.
+	routes, err := allNotifyRoutes(ctx, cfg, egress, logger)
 	if err != nil {
 		return nil, nil, nil, err
 	}

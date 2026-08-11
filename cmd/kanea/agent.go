@@ -180,6 +180,24 @@ func runAgent(args []string) error {
 		"comma-separated claim values granted the admin role")
 	oidcViewers := fs.String("oidc-viewer-claims", "",
 		"comma-separated claim values granted the viewer role")
+	ldapURL := fs.String("ldap-url", "",
+		"directory URL, ldaps://host or ldap://host with StartTLS forced (default: no LDAP)")
+	ldapBindDN := fs.String("ldap-bind-dn", "",
+		"service account DN the user search runs as (omit for an anonymous search)")
+	ldapBindPassword := fs.String("ldap-bind-password", "",
+		"a secret: reference holding the service bind password, e.g. secret:shared/ldap-bind")
+	ldapUserBaseDN := fs.String("ldap-user-base-dn", "", "where users are searched, e.g. ou=people,dc=example,dc=com")
+	ldapUserFilter := fs.String("ldap-user-filter", "(uid=%s)",
+		"filter locating one user; %s receives the escaped username ((sAMAccountName=%s) for AD)")
+	ldapGroupBaseDN := fs.String("ldap-group-base-dn", "",
+		"where groups are searched (omit to read the user entry's memberOf)")
+	ldapGroupFilter := fs.String("ldap-group-filter", "",
+		"group filter; %s receives the escaped user DN, e.g. (member=%s)")
+	ldapAdmins := fs.String("ldap-admin-groups", "",
+		"comma-separated group DNs granted the admin role (matched case-insensitively)")
+	ldapViewers := fs.String("ldap-viewer-groups", "",
+		"comma-separated group DNs granted the viewer role")
+	ldapCA := fs.String("ldap-ca", "", "PEM file trusting a private CA for the directory's TLS")
 	metricsInterval := fs.Duration("metrics-interval", scaling.RawInterval,
 		"how often containerd and the edge are scraped for metrics")
 	containerdMetrics := fs.String("containerd-metrics", scaling.DefaultContainerdMetricsURL,
@@ -420,13 +438,14 @@ func runAgent(args []string) error {
 	// One breaker, fed by the reconciler and read by the autoscaler (§4.3).
 	// Two of them would each see half the node's failures and neither would
 	// trip on a fault both were watching.
-	notifier, feed, tee, err := buildNotifier(ctx, notifySettings{
+	notifyCfg := notifySettings{
 		store:        st,
 		secrets:      secretStore,
 		allowPrivate: *notifyAllowPrivate,
 		allowHTTP:    *notifyAllowHTTP,
 		retention:    *eventRetention,
-	}, logger)
+	}
+	notifier, feed, tee, err := buildNotifier(ctx, notifyCfg, logger)
 	if err != nil {
 		return err
 	}
@@ -481,10 +500,27 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// The directory verifier is built before the auth store so it wires at
+	// construction — no mutation window — and like OIDC it fails on bad
+	// config at startup, in front of the operator; only *reachability* is a
+	// warning (§3.20: an unreachable directory is weather).
+	directory, err := buildLDAP(ctx, ldapSettings{
+		url: *ldapURL, bindDN: *ldapBindDN, bindRef: *ldapBindPassword,
+		userBaseDN: *ldapUserBaseDN, userFilter: *ldapUserFilter,
+		groupBaseDN: *ldapGroupBaseDN, groupFilter: *ldapGroupFilter,
+		adminGroups: splitList(*ldapAdmins), viewerGroups: splitList(*ldapViewers),
+		caFile: *ldapCA,
+	}, secretStore, logger)
+	if err != nil {
+		return err
+	}
+
 	// Auth and the audit trail come before the API server, because the server
 	// refuses to authenticate anyone without them and every mutation it accepts
 	// is written to them (PRD §13, §14 A01/A09).
-	users, err := auth.NewStore(auth.StoreConfig{Store: st, Logger: logger})
+	users, err := auth.NewStore(auth.StoreConfig{
+		Store: st, Logger: logger, Verifier: ldapVerifier(directory),
+	})
 	if err != nil {
 		return err
 	}
@@ -523,8 +559,9 @@ func runAgent(args []string) error {
 
 	// State replication (§15.3). Built after the secrets store, because the S3
 	// secret key is a `secret:` reference like every other credential (R3) and
-	// there is nothing to resolve it with until now.
-	backups, replicator, err := buildReplication(ctx, replicationSettings{
+	// there is nothing to resolve it with until now. The flags are the seed;
+	// a settings/backup record in the Store, once written, wins (v1.46).
+	flagRepl := replicationSettings{
 		sink:             backupTarget,
 		secretKeyRef:     *backupS3Secret,
 		dataDir:          *dataDir,
@@ -533,17 +570,36 @@ func runAgent(args []string) error {
 		retention:        *backupRetention,
 		store:            st,
 		emit:             notifier.Publish,
-	}, secretStore, logger)
+	}
+	backups, err := buildBackups(ctx, flagRepl, secretStore, logger)
 	if err != nil {
 		return err
 	}
-	if replicator == nil {
+	if !backups.configured() {
 		// Said once, at warning. A node with no backup destination is a node
 		// whose entire state lives on one disk, and the operator should have
 		// decided that rather than defaulted into it.
 		logger.Warn("state replication is not configured",
 			"detail", "this node's state exists only on its own disk; "+
-				"set --backup-dir or --backup-s3 (PRD §15.3)")
+				"set --backup-dir or --backup-s3, or PUT /v1/settings/backup (PRD §15.3)")
+	}
+
+	// The settings service (v1.46): the API's window onto what this block just
+	// decided, and the runtime path for changing it. routesNotify wakes the
+	// notification reloader — pulsed by the fan-out below and directly by
+	// settings mutations.
+	routesNotify := make(chan struct{}, 1)
+	settingsSvc := &settingsService{
+		st: st, notifyCfg: notifyCfg, manager: backups, flagRepl: flagRepl,
+		resolver: secretStore, wake: routesNotify, log: logger,
+		node: api.NodeConfigView{
+			Listen: *listen, TLS: *listenCert != "" && *listenKey != "",
+			BaseDomain: *baseDomain, NetworkMode: *networkMode,
+			NodeCIDR: *nodeCIDR, ClusterCIDR: *clusterCIDR, ServiceCIDR: *serviceCIDR,
+			NodeCIDR6: *nodeCIDR6, ClusterCIDR6: *clusterCIDR6, ServiceCIDR6: *serviceCIDR6,
+			DNSListen: *dnsListen, DataDir: *dataDir, LogDir: *logDir,
+			PublishPorts: *publishPorts, TLSDefault: *tlsDefault,
+		},
 	}
 
 	// The image watcher follows the tags services declare (§6.2 R19). It is
@@ -652,7 +708,8 @@ func runAgent(args []string) error {
 		Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
 		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
-		Backups: backups, CA: certificateAuthority(certs),
+		Backups: backups, Settings: settingsSvc, LDAPServer: ldapServerName(directory),
+		CA:           certificateAuthority(certs),
 		PublishPorts: portPolicy,
 		OIDC:         provider, Sessions: users,
 		Metrics: metrics, EdgeMetrics: edgeExposition,
@@ -694,7 +751,11 @@ func runAgent(args []string) error {
 	}
 	errs := make(chan error, tasks)
 	invokerNotify := make(chan struct{}, 1)
-	go fanOut(ctx, notify, reconcileNotify, certNotify, invokerNotify)
+	go fanOut(ctx, notify, reconcileNotify, certNotify, invokerNotify, routesNotify)
+	// The notification reloader (v1.46): rebuilds the dispatcher's routes when
+	// channel config changes, through whichever door — HCL apply, GitOps sync,
+	// or the settings routes, which also pulse routesNotify directly.
+	go runNotifyReload(ctx, routesNotify, notifyCfg, notifyCfg.egress(), notifier, logger)
 	go invokerWaker(ctx, invokerNotify, invoker)
 	go func() { errs <- server.Serve(ctx) }()
 	go func() { errs <- rec.Run(ctx, reconcileNotify) }()
@@ -725,12 +786,11 @@ func runAgent(args []string) error {
 	// The invoker's own goroutine, for the reason the dispatcher has one: a
 	// slow function must never stall anything that emits (constraint #8).
 	go func() { _ = invoker.Run(ctx) }() //nolint:errcheck // Run only returns the context's error at shutdown
-	if replicator != nil {
-		// Its own goroutine, and it never touches the control plane's critical
-		// path: a bucket that is down means backups stop and say so, never that
-		// the platform stops.
-		go replicator.Run(ctx)
-	}
+	// The manager launches whatever destination is adopted and owns every
+	// later swap. Its own goroutine, and it never touches the control plane's
+	// critical path: a bucket that is down means backups stop and say so,
+	// never that the platform stops.
+	go backups.run(ctx)
 	if pipelines != nil {
 		// The queue worker and the sync loop are separate goroutines on
 		// purpose: a build that takes four minutes must not stop the loop

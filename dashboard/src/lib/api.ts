@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { apiFetch } from './session'
+import { ApiError, apiFetch } from './session'
 
 /**
  * Wire schemas for everything the daemon sends.
@@ -726,4 +726,441 @@ export async function stageRestore(id: string, csrf?: string): Promise<StageRest
     ...(csrf ? { csrf } : {}),
   })
   return stageRestoreResponseSchema.parse(await resp.json())
+}
+
+// ---- node settings (PRD v1.46, §15.1) ----
+
+/**
+ * The notifications channel block serialises with Go field names: the
+ * jobspec.Notifications type carries no json tags, so `Telegram`, `On` and the
+ * rest arrive PascalCase — the same fact the service schema notes about
+ * `Desired`. `DefRange` also rides along and is deliberately not declared
+ * here: zod strips unknown keys, and a PUT never needs to send it.
+ */
+export const telegramChannelSchema = z.object({
+  ChatID: z.string().optional(),
+  TokenRef: z.string().optional(),
+})
+
+export const webhookChannelSchema = z.object({
+  URL: z.string().optional(),
+  SecretRef: z.string().optional(),
+})
+
+export const slackChannelSchema = z.object({
+  URLRef: z.string().optional(),
+})
+
+export const ntfyChannelSchema = z.object({
+  URL: z.string().optional(),
+  TokenRef: z.string().optional(),
+})
+
+export const smtpChannelSchema = z.object({
+  Host: z.string().optional(),
+  Port: z.string().optional(),
+  From: z.string().optional(),
+  To: z.array(z.string()).nullish(),
+  Username: z.string().optional(),
+  PasswordRef: z.string().optional(),
+})
+
+export const notificationsSchema = z.object({
+  Telegram: telegramChannelSchema.nullish(),
+  Webhook: webhookChannelSchema.nullish(),
+  Slack: slackChannelSchema.nullish(),
+  Ntfy: ntfyChannelSchema.nullish(),
+  SMTP: smtpChannelSchema.nullish(),
+  On: z.array(z.string()).nullish(),
+  Severity: z.string().optional(),
+})
+
+export type WireNotifications = z.infer<typeof notificationsSchema>
+
+export const s3DestinationSchema = z.object({
+  url: z.string(),
+  endpoint: z.string(),
+  region: z.string().optional(),
+  access_key: z.string().optional(),
+  // A `secret:` reference — never the key itself. The daemon refuses anything
+  // else by shape, and the form's helper text says the same thing earlier.
+  secret_key_ref: z.string().optional(),
+  path_style: z.boolean().nullish(),
+})
+
+export const backupSettingsRecordSchema = z.object({
+  dir: z.string().optional(),
+  s3: s3DestinationSchema.nullish(),
+  // Durations travel as Go duration strings ("6h0m0s"); the form accepts the
+  // shorter spellings and the daemon parses them.
+  snapshot_interval: z.string().optional(),
+  segment_interval: z.string().optional(),
+  retention: z.number().optional(),
+})
+
+export const backupLiveStatusSchema = z.object({
+  sink: z.string(),
+  shipped_to: z.number(),
+  last_segment_at: z.string().optional(),
+  last_snapshot_at: z.string().optional(),
+  failures: z.number(),
+})
+
+export const backupSettingsViewSchema = z.object({
+  // "store", "flags" or "none" — where the effective configuration came from.
+  source: z.string(),
+  settings: backupSettingsRecordSchema.nullish(),
+  status: backupLiveStatusSchema.nullish(),
+})
+
+export const notificationSettingsViewSchema = z.object({
+  source: z.string(),
+  settings: z.object({ channels: notificationsSchema.nullish() }).nullish(),
+})
+
+export const nodeConfigSchema = z.object({
+  listen: z.string().optional(),
+  tls: z.boolean(),
+  base_domain: z.string().optional(),
+  network_mode: z.string(),
+  node_cidr: z.string(),
+  cluster_cidr: z.string(),
+  service_cidr: z.string(),
+  node_cidr6: z.string().optional(),
+  cluster_cidr6: z.string().optional(),
+  service_cidr6: z.string().optional(),
+  dns_listen: z.string().optional(),
+  data_dir: z.string(),
+  log_dir: z.string(),
+  publish_ports: z.string().optional(),
+  tls_default: z.string().optional(),
+})
+
+export const settingsResponseSchema = z.object({
+  node: nodeConfigSchema,
+  backup: backupSettingsViewSchema,
+  notifications: notificationSettingsViewSchema,
+})
+
+export type BackupSettingsRecord = z.infer<typeof backupSettingsRecordSchema>
+export type S3Destination = z.infer<typeof s3DestinationSchema>
+export type BackupSettingsView = z.infer<typeof backupSettingsViewSchema>
+export type NotificationSettingsView = z.infer<typeof notificationSettingsViewSchema>
+export type NodeConfig = z.infer<typeof nodeConfigSchema>
+export type SettingsResponse = z.infer<typeof settingsResponseSchema>
+
+/** Fetch the whole settings view. Admin-only at the daemon. */
+export async function fetchSettings(signal?: AbortSignal): Promise<SettingsResponse> {
+  const resp = await apiFetch('/v1/settings', signal ? { signal } : {})
+  return settingsResponseSchema.parse(await resp.json())
+}
+
+/**
+ * Replace the backup destination. A 400 carries the daemon's own refusal —
+ * including the probe failure text — and apiFetch surfaces it verbatim, which
+ * is what the form's error banner shows.
+ */
+export async function putBackupSettings(
+  rec: BackupSettingsRecord,
+  csrf?: string,
+): Promise<BackupSettingsView> {
+  const resp = await apiFetch('/v1/settings/backup', {
+    method: 'PUT',
+    body: rec,
+    ...(csrf ? { csrf } : {}),
+  })
+  return backupSettingsViewSchema.parse(await resp.json())
+}
+
+/** Delete the backup record, reverting the node to its unit flags. */
+export async function resetBackupSettings(csrf?: string): Promise<BackupSettingsView> {
+  const resp = await apiFetch('/v1/settings/backup', {
+    method: 'DELETE',
+    ...(csrf ? { csrf } : {}),
+  })
+  return backupSettingsViewSchema.parse(await resp.json())
+}
+
+/** Replace the node-level notification channels. */
+export async function putNotificationSettings(
+  channels: WireNotifications,
+  csrf?: string,
+): Promise<NotificationSettingsView> {
+  const resp = await apiFetch('/v1/settings/notifications', {
+    method: 'PUT',
+    body: { channels },
+    ...(csrf ? { csrf } : {}),
+  })
+  return notificationSettingsViewSchema.parse(await resp.json())
+}
+
+/** Remove the node-level channel record. */
+export async function resetNotificationSettings(csrf?: string): Promise<NotificationSettingsView> {
+  const resp = await apiFetch('/v1/settings/notifications', {
+    method: 'DELETE',
+    ...(csrf ? { csrf } : {}),
+  })
+  return notificationSettingsViewSchema.parse(await resp.json())
+}
+
+export const testResultSchema = z.object({
+  channel: z.string(),
+  project: z.string().optional(),
+  ok: z.boolean(),
+  error: z.string().optional(),
+})
+
+export const testResultsResponseSchema = z.object({
+  results: z.array(testResultSchema).nullish(),
+})
+
+export type ChannelTestResult = z.infer<typeof testResultSchema>
+
+/** Send a test message through the node-level channels. Empty tests them all. */
+export async function testNodeChannels(
+  channel: string,
+  csrf?: string,
+): Promise<ChannelTestResult[]> {
+  const resp = await apiFetch(
+    `/v1/settings/notifications/test?channel=${enc(channel)}`,
+    { method: 'POST', ...(csrf ? { csrf } : {}) },
+  )
+  return testResultsResponseSchema.parse(await resp.json()).results ?? []
+}
+
+export const projectNotificationsViewSchema = z.object({
+  project: z.string(),
+  notifications: notificationsSchema.nullish(),
+  // The next git sync wins for a synced project: the spec file is the durable
+  // home of this block, and the page warns before someone edits into the void.
+  git_managed: z.boolean(),
+  warning: z.string().optional(),
+})
+
+export type ProjectNotificationsView = z.infer<typeof projectNotificationsViewSchema>
+
+/** Read one project's channel config. */
+export async function fetchProjectNotifications(
+  project: string,
+  signal?: AbortSignal,
+): Promise<ProjectNotificationsView> {
+  const resp = await apiFetch(
+    `/v1/projects/${enc(project)}/notifications`,
+    signal ? { signal } : {},
+  )
+  return projectNotificationsViewSchema.parse(await resp.json())
+}
+
+/** Replace one project's channel config. Null removes it. */
+export async function putProjectNotifications(
+  project: string,
+  notifications: WireNotifications | null,
+  csrf?: string,
+): Promise<ProjectNotificationsView> {
+  const resp = await apiFetch(`/v1/projects/${enc(project)}/notifications`, {
+    method: 'PUT',
+    body: { notifications },
+    ...(csrf ? { csrf } : {}),
+  })
+  return projectNotificationsViewSchema.parse(await resp.json())
+}
+
+/** Send a test message through one project's channels. */
+export async function testProjectChannels(
+  project: string,
+  channel: string,
+  csrf?: string,
+): Promise<ChannelTestResult[]> {
+  const resp = await apiFetch(
+    `/v1/projects/${enc(project)}/notifications/test?channel=${enc(channel)}`,
+    { method: 'POST', ...(csrf ? { csrf } : {}) },
+  )
+  return testResultsResponseSchema.parse(await resp.json()).results ?? []
+}
+
+// ---- accounts (PRD §13.2, §13.3) ----
+
+export const userSchema = z.object({
+  name: z.string(),
+  role: z.enum(['admin', 'viewer']),
+  created: z.string(),
+  updated: z.string(),
+})
+
+export const usersResponseSchema = z.object({
+  users: z.array(userSchema).nullish(),
+})
+
+export type UserAccount = z.infer<typeof userSchema>
+
+/** List accounts. Hashes are stripped by the store before this. */
+export async function fetchUsers(signal?: AbortSignal): Promise<UserAccount[]> {
+  const resp = await apiFetch('/v1/users', signal ? { signal } : {})
+  return usersResponseSchema.parse(await resp.json()).users ?? []
+}
+
+/** Create or replace an account. The daemon answers 204 with no body. */
+export async function putUser(
+  name: string,
+  password: string,
+  role: 'admin' | 'viewer',
+  csrf?: string,
+): Promise<void> {
+  await apiFetch(`/v1/users/${enc(name)}`, {
+    method: 'PUT',
+    body: { password, role },
+    ...(csrf ? { csrf } : {}),
+  })
+}
+
+/** Remove an account. Deleting the last admin is refused with a 409. */
+export async function deleteUser(name: string, csrf?: string): Promise<void> {
+  await apiFetch(`/v1/users/${enc(name)}`, {
+    method: 'DELETE',
+    ...(csrf ? { csrf } : {}),
+  })
+}
+
+/**
+ * A bearer token's public half. `expires` and `last_used` arrive as the Go
+ * zero time when unset — the struct field cannot omit itself — so the page
+ * runs them through isZeroTime before calling anything "never".
+ */
+export const tokenSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  role: z.enum(['admin', 'viewer']),
+  created: z.string(),
+  expires: z.string().optional(),
+  last_used: z.string().optional(),
+})
+
+export const tokensResponseSchema = z.object({
+  tokens: z.array(tokenSchema).nullish(),
+})
+
+export const tokenCreatedSchema = z.object({
+  token: tokenSchema,
+  // The presented form, returned exactly once. Nothing stores it — a lost
+  // token is replaced, not recovered.
+  secret: z.string(),
+})
+
+export type ApiToken = z.infer<typeof tokenSchema>
+export type TokenCreated = z.infer<typeof tokenCreatedSchema>
+
+/** List bearer tokens, without their hashes. */
+export async function fetchTokens(signal?: AbortSignal): Promise<ApiToken[]> {
+  const resp = await apiFetch('/v1/tokens', signal ? { signal } : {})
+  return tokensResponseSchema.parse(await resp.json()).tokens ?? []
+}
+
+/** Mint a token. The secret in the response is shown once and never again. */
+export async function createToken(
+  req: { name: string; role: 'admin' | 'viewer'; expires_in?: string },
+  csrf?: string,
+): Promise<TokenCreated> {
+  const body: Record<string, unknown> = { name: req.name, role: req.role }
+  if (req.expires_in) body['expires_in'] = req.expires_in
+  const resp = await apiFetch('/v1/tokens', {
+    method: 'POST',
+    body,
+    ...(csrf ? { csrf } : {}),
+  })
+  return tokenCreatedSchema.parse(await resp.json())
+}
+
+/** Revoke a token by id. */
+export async function revokeToken(id: string, csrf?: string): Promise<void> {
+  await apiFetch(`/v1/tokens/${enc(id)}`, {
+    method: 'DELETE',
+    ...(csrf ? { csrf } : {}),
+  })
+}
+
+// ---- audit paging (PRD §13.3) ----
+
+export const auditPageSchema = z.object({
+  entries: z.array(auditEntrySchema).nullish(),
+  next_after: z.string().optional(),
+  more: z.boolean().optional(),
+})
+
+export type AuditPage = z.infer<typeof auditPageSchema>
+
+/**
+ * Read one page of the audit log, newest first, with the daemon's own filters
+ * — actor, action and the `after` cursor are all server-side, so the page
+ * never downloads the log to search it.
+ */
+export async function fetchAuditPage(
+  opts: { after?: string; actor?: string; action?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<AuditPage> {
+  const query = new URLSearchParams()
+  if (opts.after) query.set('after', opts.after)
+  if (opts.actor) query.set('actor', opts.actor)
+  if (opts.action) query.set('action', opts.action)
+  if (opts.limit) query.set('limit', String(opts.limit))
+  const suffix = query.toString() ? `?${query}` : ''
+  const resp = await apiFetch(`/v1/audit${suffix}`, signal ? { signal } : {})
+  return auditPageSchema.parse(await resp.json())
+}
+
+// ---- edge port policy (PRD §6.2 R22) ----
+
+export const edgePolicySchema = z.object({
+  publish_enabled: z.boolean(),
+  publish_ports: z.string(),
+  ranges: z.array(z.object({ from: z.number(), to: z.number() })).nullish(),
+  reserved: z.array(z.number()).nullish(),
+})
+
+export type EdgePolicy = z.infer<typeof edgePolicySchema>
+
+/** Read which node ports a spec may claim on this node. */
+export async function fetchEdgePolicy(signal?: AbortSignal): Promise<EdgePolicy> {
+  const resp = await apiFetch('/v1/edge/policy', signal ? { signal } : {})
+  return edgePolicySchema.parse(await resp.json())
+}
+
+// ---- external secret providers (PRD §5.2.13) ----
+
+export const secretMappingStatusSchema = z.object({
+  to: z.string(),
+  ref: z.string(),
+  last_synced: z.string().optional(),
+  error: z.string().optional(),
+})
+
+export const secretProviderStatusSchema = z.object({
+  kind: z.string(),
+  name: z.string(),
+  mappings: z.number(),
+  last_attempt: z.string().optional(),
+  last_success: z.string().optional(),
+  entries: z.array(secretMappingStatusSchema).nullish(),
+})
+
+export const secretProvidersResponseSchema = z.object({
+  providers: z.array(secretProviderStatusSchema).nullish(),
+})
+
+export type SecretProviderStatus = z.infer<typeof secretProviderStatusSchema>
+
+/**
+ * Read provider sync status — metadata by construction, never values. Null
+ * when this node has no --secrets-providers-config, which is the common case
+ * and not worth a section, let alone an error.
+ */
+export async function fetchSecretProviders(
+  signal?: AbortSignal,
+): Promise<SecretProviderStatus[] | null> {
+  try {
+    const resp = await apiFetch('/v1/secrets/providers', signal ? { signal } : {})
+    return secretProvidersResponseSchema.parse(await resp.json()).providers ?? []
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null
+    throw err
+  }
 }

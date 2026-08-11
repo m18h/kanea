@@ -33,7 +33,7 @@ export default defineConfig({
       provider: 'v8',
       // Ratchet, not aspiration: the floor is where the suite stands today,
       // and it should be raised whenever a page gains tests.
-      thresholds: { statements: 48, branches: 29, functions: 35, lines: 50 },
+      thresholds: { statements: 51, branches: 36, functions: 37, lines: 52 },
     },
   },
 })

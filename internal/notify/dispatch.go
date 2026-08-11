@@ -95,7 +95,15 @@ type Config struct {
 
 // Dispatcher fans events out to channels.
 type Dispatcher struct {
-	routes []*routeState
+	// routes is swappable at runtime (v1.46). Behind an atomic pointer because
+	// Test and Channels read it from handler goroutines; the per-route mutable
+	// state (pending, sent) is still touched only on Run's goroutine, which is
+	// also the only writer of the pointer.
+	routes atomic.Pointer[[]*routeState]
+	// reload carries a replacement route set to Run's goroutine. Buffered one
+	// deep with latest-wins semantics: two reconfigurations in one tick mean
+	// only the second describes reality.
+	reload chan []Route
 	sink   Sink
 	log    *slog.Logger
 	queue  chan Event
@@ -163,18 +171,31 @@ func New(cfg Config) (*Dispatcher, error) {
 	d := &Dispatcher{
 		sink: cfg.Sink, log: cfg.Logger,
 		queue:    make(chan Event, cfg.QueueDepth),
+		reload:   make(chan []Route, 1),
 		now:      cfg.Now,
 		sleep:    cfg.sleep,
 		maxBatch: cfg.MaxBatch, maxAttempts: cfg.MaxAttempts, retryBase: cfg.RetryBase,
 	}
-	for _, r := range cfg.Routes {
+	states, err := buildRouteStates(cfg.Routes, cfg.Logger)
+	if err != nil {
+		return nil, err
+	}
+	d.routes.Store(&states)
+	return d, nil
+}
+
+// buildRouteStates resolves routes into runnable state, shared by New and the
+// runtime reload so the two cannot drift.
+func buildRouteStates(routes []Route, log *slog.Logger) ([]*routeState, error) {
+	var out []*routeState
+	for _, r := range routes {
 		if r.Channel == nil {
 			return nil, errors.New("notify: a route needs a channel")
 		}
 		// A route whose filter can never match is dropped here rather than
 		// consulted per event forever.
 		if r.Filter.Empty() {
-			cfg.Logger.Warn("notification channel has no event filter and will send nothing",
+			log.Warn("notification channel has no event filter and will send nothing",
 				"channel", r.Channel.Name(), "project", r.Project)
 			continue
 		}
@@ -185,9 +206,26 @@ func New(cfg Config) (*Dispatcher, error) {
 		if state.limit == 0 {
 			state.limit = DefaultRateLimit
 		}
-		d.routes = append(d.routes, state)
+		out = append(out, state)
 	}
-	return d, nil
+	return out, nil
+}
+
+// SetRoutes replaces the route set (v1.46). Safe from any goroutine; the swap
+// itself happens on Run's, where the per-route state lives. Latest wins: a
+// pending replacement that was never applied is superseded, not queued.
+func (d *Dispatcher) SetRoutes(routes []Route) {
+	for {
+		select {
+		case d.reload <- routes:
+			return
+		default:
+			select {
+			case <-d.reload:
+			default:
+			}
+		}
+	}
 }
 
 // Publish queues an event. It never blocks and never fails.
@@ -228,10 +266,33 @@ func (d *Dispatcher) Run(ctx context.Context) {
 			return
 		case e := <-d.queue:
 			d.route(ctx, e)
+		case routes := <-d.reload:
+			d.applyRoutes(ctx, routes)
 		case <-ticker.C:
 			d.flushAll(ctx, false)
 		}
 	}
+}
+
+// applyRoutes swaps the route set on Run's own goroutine.
+//
+// Pending digests are force-flushed first, whole set: a digest two seconds
+// from sending when the operator reconfigured channels must not be silently
+// discarded, and delivering it through the outgoing route is the only honest
+// option. Rate windows reset with the routes — reloads are rare, and a
+// carried-over window would need identity matching for a property nobody
+// observes.
+func (d *Dispatcher) applyRoutes(ctx context.Context, routes []Route) {
+	d.flushAll(ctx, true)
+	states, err := buildRouteStates(routes, d.log)
+	if err != nil {
+		// Unreachable from the wired path — the builders never hand a nil
+		// channel — but a bad set must not tear down the good one.
+		d.log.Error("refusing a broken route set; keeping the current channels", "error", err)
+		return
+	}
+	d.routes.Store(&states)
+	d.log.Info("notification routes reconfigured", "routes", len(states))
 }
 
 // route files one event against every matching channel.
@@ -243,7 +304,7 @@ func (d *Dispatcher) route(ctx context.Context, e Event) {
 	}
 
 	now := d.now()
-	for _, r := range d.routes {
+	for _, r := range *d.routes.Load() {
 		// A project-level route sees only its own project's events. Without
 		// this, one project's chat receives another's failures — the same
 		// boundary R5 draws for secrets.
@@ -269,7 +330,7 @@ func (d *Dispatcher) route(ctx context.Context, e Event) {
 // flushAll sends every route whose window has closed.
 func (d *Dispatcher) flushAll(ctx context.Context, force bool) {
 	now := d.now()
-	for _, r := range d.routes {
+	for _, r := range *d.routes.Load() {
 		if len(r.pending) == 0 {
 			continue
 		}
@@ -431,8 +492,9 @@ func (d *Dispatcher) Stats() Stats {
 
 // Channels names the configured channels, for reporting configuration back.
 func (d *Dispatcher) Channels() []string {
-	out := make([]string, 0, len(d.routes))
-	for _, r := range d.routes {
+	routes := *d.routes.Load()
+	out := make([]string, 0, len(routes))
+	for _, r := range routes {
 		out = append(out, r.Channel.Name())
 	}
 	return out
@@ -477,7 +539,7 @@ func (d *Dispatcher) Test(project, channel string) []TestResult {
 	defer cancel()
 
 	var results []TestResult
-	for _, r := range d.routes {
+	for _, r := range *d.routes.Load() {
 		name := r.Channel.Name()
 		// A project-scoped test never reaches another project's channels, and
 		// never the node-wide ones either: an operator testing their own
@@ -489,15 +551,40 @@ func (d *Dispatcher) Test(project, channel string) []TestResult {
 			continue
 		}
 
-		event := NewEvent(EventTest, r.Project, "",
-			"test message from Kanea — this channel is configured correctly", d.now())
-		result := TestResult{Channel: name, Project: r.Project, OK: true}
-		if err := d.deliver(ctx, r.Channel, []Event{event}); err != nil {
-			result.OK, result.Error = false, err.Error()
-		}
-		results = append(results, result)
+		results = append(results, d.testRoute(ctx, r))
 	}
 	return results
+}
+
+// TestNodeChannels tests only the node-wide routes (v1.46) — the ones Test's
+// project filter can never name, because their scope is the empty string.
+func (d *Dispatcher) TestNodeChannels(channel string) []TestResult {
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
+	defer cancel()
+
+	var results []TestResult
+	for _, r := range *d.routes.Load() {
+		if r.Project != "" {
+			continue
+		}
+		name := r.Channel.Name()
+		if channel != "" && name != channel && !strings.HasSuffix(name, "/"+channel) {
+			continue
+		}
+		results = append(results, d.testRoute(ctx, r))
+	}
+	return results
+}
+
+// testRoute sends one test message through one route.
+func (d *Dispatcher) testRoute(ctx context.Context, r *routeState) TestResult {
+	event := NewEvent(EventTest, r.Project, "",
+		"test message from Kanea — this channel is configured correctly", d.now())
+	result := TestResult{Channel: r.Channel.Name(), Project: r.Project, OK: true}
+	if err := d.deliver(ctx, r.Channel, []Event{event}); err != nil {
+		result.OK, result.Error = false, err.Error()
+	}
+	return result
 }
 
 // testTimeout bounds a whole test action, retries included.

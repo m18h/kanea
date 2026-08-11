@@ -85,6 +85,11 @@ type ServerConfig struct {
 	// daemon with no backup destination configured is a supported (if
 	// regrettable) state, and it is different from a failure.
 	Backups Backups
+	// Settings backs the node-settings routes (v1.46, §15.1). Nil answers 503.
+	Settings SettingsService
+	// LDAPServer names the configured directory (v1.47) — audit Detail on
+	// directory logins, empty when LDAP is off. A name, never a credential.
+	LDAPServer string
 	// CA serves this node's self-signed CA certificate (§7.3). Nil answers 404
 	// on that route, which is the honest answer for a node that has never
 	// issued a self-signed certificate.
@@ -215,6 +220,8 @@ type Server struct {
 	notifyStats  func() notify.Stats
 	notifier     Notifier
 	backups      Backups
+	settings     SettingsService
+	ldapServer   string
 	ca           CertificateAuthority
 	publishPorts PortPolicy
 	publish      func(notify.Event)
@@ -290,7 +297,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, secretSync: cfg.SecretSync, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
-		notifier: cfg.Notifier, backups: cfg.Backups, ca: cfg.CA,
+		notifier: cfg.Notifier, backups: cfg.Backups, settings: cfg.Settings,
+		ldapServer: cfg.LDAPServer, ca: cfg.CA,
 		publishPorts: cfg.PublishPorts,
 		auth:         cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
@@ -422,6 +430,27 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		s.route(policy{action: "backup.verify"}, s.handleVerifyBackup))
 	mux.Handle("POST "+PathBackups+"/restore",
 		s.route(policy{action: "backup.restore", mutates: true}, s.handleRestore))
+	// Node settings (v1.46, §15.1). Reading them is admin-only — the view
+	// includes the backup destination and channel config, which is more of the
+	// node than a viewer's role describes. Mutations are CSRF'd and audited
+	// like every other; the settings service itself validates before anything
+	// commits, so a refused record costs nothing.
+	mux.Handle("GET "+PathSettings,
+		s.route(policy{action: "settings.read", adminOnly: true}, s.handleGetSettings))
+	mux.Handle("PUT "+PathSettings+"/backup",
+		s.route(policy{action: "settings.backup.put", mutates: true}, s.handlePutBackupSettings))
+	mux.Handle("DELETE "+PathSettings+"/backup",
+		s.route(policy{action: "settings.backup.delete", mutates: true}, s.handleResetBackupSettings))
+	mux.Handle("PUT "+PathSettings+"/notifications",
+		s.route(policy{action: "settings.notifications.put", mutates: true}, s.handlePutNotificationSettings))
+	mux.Handle("DELETE "+PathSettings+"/notifications",
+		s.route(policy{action: "settings.notifications.delete", mutates: true}, s.handleResetNotificationSettings))
+	mux.Handle("POST "+PathSettings+"/notifications/test",
+		s.route(policy{action: "settings.notifications.test", mutates: true}, s.handleTestNodeChannels))
+	mux.Handle("GET "+PathProjects+"/{project}/notifications",
+		s.route(policy{action: "project.notifications.get", adminOnly: true}, s.handleGetProjectNotifications))
+	mux.Handle("PUT "+PathProjects+"/{project}/notifications",
+		s.route(policy{action: "project.notifications.put", mutates: true}, s.handlePutProjectNotifications))
 	// The MCP transport (§16.3). Authenticated like everything else and no more:
 	// the route itself neither mutates nor requires admin, because what a tool
 	// call is allowed to do is decided by the route that call lands on, one

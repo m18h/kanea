@@ -172,6 +172,42 @@ func New(cfg Config) (*Archiver, error) {
 // Sink reports where this archiver writes, for messages.
 func (a *Archiver) Sink() string { return a.sink.Describe() }
 
+// ErrNotConfigured means no destination is configured; the API maps it to the
+// same 503 an absent backup subsystem always answered with.
+var ErrNotConfigured = errors.New(
+	"backup: no destination is configured (set one with --backup-dir/--backup-s3, or PUT /v1/settings/backup)")
+
+// Probe verifies the sink end to end: write a small object, list it back,
+// delete it. It runs through the sink's real Put — the reader-ownership defect
+// the s3-interop job caught was invisible to every fake — so a destination
+// that passes has proven auth, addressing style and writability, which is what
+// a hot swap (v1.46) needs to know before it stops working replication.
+func (a *Archiver) Probe(ctx context.Context) error {
+	name := fmt.Sprintf("probe/%d", a.now().UTC().UnixNano())
+	const body = "kanea destination probe"
+	if err := a.sink.Put(ctx, name, int64(len(body)), strings.NewReader(body)); err != nil {
+		return fmt.Errorf("backup: probe write to %s: %w", a.sink.Describe(), err)
+	}
+	objects, err := a.sink.List(ctx, "probe/")
+	if err != nil {
+		return fmt.Errorf("backup: probe listing on %s: %w", a.sink.Describe(), err)
+	}
+	found := false
+	for _, o := range objects {
+		if o.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("backup: probe object never appeared in %s's listing", a.sink.Describe())
+	}
+	if err := a.sink.Delete(ctx, name); err != nil {
+		return fmt.Errorf("backup: probe cleanup on %s: %w", a.sink.Describe(), err)
+	}
+	return nil
+}
+
 // Create takes a snapshot and uploads it as a new archive.
 func (a *Archiver) Create(ctx context.Context, reason string, counts map[string]int) (Manifest, error) {
 	at := a.now().UTC()
