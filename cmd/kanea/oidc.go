@@ -41,7 +41,7 @@ func buildOIDC(ctx context.Context, cfg oidcSettings, store *secrets.Store,
 		return nil, nil
 	}
 
-	clientSecret, err := resolveClientSecret(ctx, cfg.secretRef, store)
+	clientSecret, err := resolveSecretRef(ctx, "--oidc-client-secret", cfg.secretRef, store)
 	if err != nil {
 		return nil, err
 	}
@@ -66,20 +66,23 @@ func buildOIDC(ctx context.Context, cfg oidcSettings, store *secrets.Store,
 	return provider, nil
 }
 
-// resolveClientSecret reads the client secret from the secrets store.
+// resolveSecretRef reads a flag's credential from the secrets store, naming
+// the flag in every refusal so the operator meets the R3 rule ("argv is
+// world-readable through /proc/<pid>/cmdline") in front of the flag they
+// typed. Shared by the OIDC client secret and the LDAP bind password (v1.47).
 //
 // A `secret:` reference rather than a flag value, for the reason every other
 // credential in Kanea is one (§6.2 R3): everything in argv is world-readable
 // through /proc/<pid>/cmdline and ends up in the shell history and the systemd
 // unit file. An empty reference is a public PKCE client, which is a supported
 // configuration and not a downgrade.
-func resolveClientSecret(ctx context.Context, ref string, store *secrets.Store) (string, error) {
+func resolveSecretRef(ctx context.Context, flagName, ref string, store *secrets.Store) (string, error) {
 	if ref == "" {
 		return "", nil
 	}
 	if !strings.HasPrefix(ref, secrets.Prefix) {
-		return "", fmt.Errorf("--oidc-client-secret must be a %s reference, e.g. %sshared/oidc-client",
-			secrets.Prefix, secrets.Prefix)
+		return "", fmt.Errorf("%s must be a %s reference, e.g. %sshared/…",
+			flagName, secrets.Prefix, secrets.Prefix)
 	}
 	if store == nil {
 		return "", fmt.Errorf("cannot resolve %s: the secrets store is unavailable", ref)
@@ -87,7 +90,7 @@ func resolveClientSecret(ctx context.Context, ref string, store *secrets.Store) 
 
 	value, err := store.Resolve(ctx, ref)
 	if err != nil {
-		return "", fmt.Errorf("oidc client secret: %w", err)
+		return "", fmt.Errorf("%s: %w", flagName, err)
 	}
 	return string(value), nil
 }

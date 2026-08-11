@@ -180,6 +180,24 @@ func runAgent(args []string) error {
 		"comma-separated claim values granted the admin role")
 	oidcViewers := fs.String("oidc-viewer-claims", "",
 		"comma-separated claim values granted the viewer role")
+	ldapURL := fs.String("ldap-url", "",
+		"directory URL, ldaps://host or ldap://host with StartTLS forced (default: no LDAP)")
+	ldapBindDN := fs.String("ldap-bind-dn", "",
+		"service account DN the user search runs as (omit for an anonymous search)")
+	ldapBindPassword := fs.String("ldap-bind-password", "",
+		"a secret: reference holding the service bind password, e.g. secret:shared/ldap-bind")
+	ldapUserBaseDN := fs.String("ldap-user-base-dn", "", "where users are searched, e.g. ou=people,dc=example,dc=com")
+	ldapUserFilter := fs.String("ldap-user-filter", "(uid=%s)",
+		"filter locating one user; %s receives the escaped username ((sAMAccountName=%s) for AD)")
+	ldapGroupBaseDN := fs.String("ldap-group-base-dn", "",
+		"where groups are searched (omit to read the user entry's memberOf)")
+	ldapGroupFilter := fs.String("ldap-group-filter", "",
+		"group filter; %s receives the escaped user DN, e.g. (member=%s)")
+	ldapAdmins := fs.String("ldap-admin-groups", "",
+		"comma-separated group DNs granted the admin role (matched case-insensitively)")
+	ldapViewers := fs.String("ldap-viewer-groups", "",
+		"comma-separated group DNs granted the viewer role")
+	ldapCA := fs.String("ldap-ca", "", "PEM file trusting a private CA for the directory's TLS")
 	metricsInterval := fs.Duration("metrics-interval", scaling.RawInterval,
 		"how often containerd and the edge are scraped for metrics")
 	containerdMetrics := fs.String("containerd-metrics", scaling.DefaultContainerdMetricsURL,
@@ -482,10 +500,27 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// The directory verifier is built before the auth store so it wires at
+	// construction — no mutation window — and like OIDC it fails on bad
+	// config at startup, in front of the operator; only *reachability* is a
+	// warning (§3.20: an unreachable directory is weather).
+	directory, err := buildLDAP(ctx, ldapSettings{
+		url: *ldapURL, bindDN: *ldapBindDN, bindRef: *ldapBindPassword,
+		userBaseDN: *ldapUserBaseDN, userFilter: *ldapUserFilter,
+		groupBaseDN: *ldapGroupBaseDN, groupFilter: *ldapGroupFilter,
+		adminGroups: splitList(*ldapAdmins), viewerGroups: splitList(*ldapViewers),
+		caFile: *ldapCA,
+	}, secretStore, logger)
+	if err != nil {
+		return err
+	}
+
 	// Auth and the audit trail come before the API server, because the server
 	// refuses to authenticate anyone without them and every mutation it accepts
 	// is written to them (PRD §13, §14 A01/A09).
-	users, err := auth.NewStore(auth.StoreConfig{Store: st, Logger: logger})
+	users, err := auth.NewStore(auth.StoreConfig{
+		Store: st, Logger: logger, Verifier: ldapVerifier(directory),
+	})
 	if err != nil {
 		return err
 	}
@@ -673,7 +708,8 @@ func runAgent(args []string) error {
 		Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
 		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
-		Backups: backups, Settings: settingsSvc, CA: certificateAuthority(certs),
+		Backups: backups, Settings: settingsSvc, LDAPServer: ldapServerName(directory),
+		CA:           certificateAuthority(certs),
 		PublishPorts: portPolicy,
 		OIDC:         provider, Sessions: users,
 		Metrics: metrics, EdgeMetrics: edgeExposition,

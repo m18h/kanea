@@ -17,10 +17,10 @@ import (
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/jobspec"
-	"github.com/m18h/kanea/internal/settings"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/secrets"
 	"github.com/m18h/kanea/internal/secretsource"
+	"github.com/m18h/kanea/internal/settings"
 )
 
 // Client talks to a running kanead over its unix socket.

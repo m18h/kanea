@@ -34,7 +34,7 @@ type Provider interface {
 // Separate from Authenticator because it is a different question: that
 // interface asks "who is this caller", this one says "this one is vouched for".
 type SessionIssuer interface {
-	CreateSession(ctx context.Context, subject string, role auth.Role) (auth.Session, string, error)
+	CreateSession(ctx context.Context, subject string, role auth.Role, method auth.Method) (auth.Session, string, error)
 }
 
 // handleOIDCStart sends the browser to the identity provider.
@@ -106,7 +106,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, cookie, err := s.sessions.CreateSession(r.Context(), result.Subject, result.Role)
+	// Stamped MethodOIDC (v1.47), so audit entries on this session's later
+	// requests say how the caller actually authenticated.
+	session, cookie, err := s.sessions.CreateSession(r.Context(), result.Subject, result.Role, auth.MethodOIDC)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
