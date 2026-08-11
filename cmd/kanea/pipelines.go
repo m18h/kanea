@@ -99,7 +99,15 @@ func buildPipelines(cfg pipelineSettings, logger *slog.Logger) (*gitops.Service,
 		Deployer: storeDeployer{store: cfg.store, notify: cfg.notify, log: logger},
 		Secrets:  cfg.secrets,
 		LogDir:   cfg.logDir,
-		Logger:   logger,
+		// Checkouts are materialised beside the build logs — the one directory
+		// §10.2 already gives the right permissions — under their own name.
+		// This field was never set until v0.7.1: NewRunner refuses without it,
+		// so kanead with pipelines enabled (the default) crash-looped on every
+		// real node. Only unit tests ever built a RunnerConfig, and they all
+		// passed their own WorkDir — TestBuildPipelinesStartsWithDefaults now
+		// walks this wiring instead.
+		WorkDir: filepath.Join(cfg.logDir, "checkouts"),
+		Logger:  logger,
 	})
 	if err != nil {
 		return nil, nil, err
