@@ -48,6 +48,12 @@ type NodeStats struct {
 	MemoryTotal     *uint64  `json:"memory_total_bytes,omitempty"`
 	MemoryAvailable *uint64  `json:"memory_available_bytes,omitempty"`
 	MemoryPercent   *float64 `json:"memory_percent,omitempty"`
+	// GPUs are the node's visible GPUs (v1.42) — absent on a node without
+	// any, never an empty placeholder.
+	GPUs []GPUStats `json:"gpus,omitempty"`
+	// GPUVRAMPercent aggregates VRAM use across every GPU that reports both
+	// numbers: used summed over total. Nil when no GPU is visible.
+	GPUVRAMPercent *float64 `json:"gpu_vram_percent,omitempty"`
 	// Cores is what the CPU percentage is relative to.
 	Cores int       `json:"cores"`
 	At    time.Time `json:"at"`
@@ -62,6 +68,7 @@ type NodeReader struct {
 	// procRoot is "/proc" in production and a fixture directory in tests.
 	procRoot string
 	now      func() time.Time
+	gpu      *GPUReader
 
 	mu   sync.Mutex
 	last *nodeCPUSample
@@ -76,10 +83,17 @@ type nodeCPUSample struct {
 
 // NewNodeReader builds a reader over the given procfs root. Empty means /proc.
 func NewNodeReader(procRoot string) *NodeReader {
+	return NewNodeReaderWithGPU(procRoot, NewGPUReader(GPUReaderConfig{}))
+}
+
+// NewNodeReaderWithGPU is NewNodeReader with the GPU half pointed somewhere
+// specific — fixtures in tests. Production uses NewNodeReader, whose defaults
+// are the real /sys and the real nvidia-smi.
+func NewNodeReaderWithGPU(procRoot string, gpu *GPUReader) *NodeReader {
 	if procRoot == "" {
 		procRoot = "/proc"
 	}
-	return &NodeReader{procRoot: procRoot, now: time.Now}
+	return &NodeReader{procRoot: procRoot, now: time.Now, gpu: gpu}
 }
 
 // The node's own history series (v1.38). Deliberately not "cpu"/"memory":
@@ -89,6 +103,7 @@ func NewNodeReader(procRoot string) *NodeReader {
 const (
 	MetricNodeCPU    = "node_cpu_percent"
 	MetricNodeMemory = "node_memory_percent"
+	MetricNodeGPU    = "node_gpu_vram_percent"
 )
 
 // RecordNode records a node reading into the time series.
@@ -105,6 +120,9 @@ func RecordNode(m *Metrics, stats NodeStats) {
 	}
 	if stats.MemoryPercent != nil {
 		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeMemory}, stats.At, *stats.MemoryPercent)
+	}
+	if stats.GPUVRAMPercent != nil {
+		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeGPU}, stats.At, *stats.GPUVRAMPercent)
 	}
 }
 
@@ -136,6 +154,12 @@ func (r *NodeReader) Read() NodeStats {
 	}
 	if percent, ok := r.cpu(); ok {
 		stats.CPUPercent = &percent
+	}
+	if r.gpu != nil {
+		if gpus := r.gpu.Read(); len(gpus) > 0 {
+			stats.GPUs = gpus
+			stats.GPUVRAMPercent = aggregateVRAM(gpus)
+		}
 	}
 	return stats
 }

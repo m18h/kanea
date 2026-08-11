@@ -117,8 +117,10 @@ func TestHistoryNodeViewSumsAcrossServices(t *testing.T) {
 func TestHistoryNodeViewServesTheRecordedNodeSeries(t *testing.T) {
 	now := time.Now()
 	h := newAuthHarness(t, withMetrics(func(m *scaling.Metrics) {
-		cpu, mem := 38.0, 61.5
-		scaling.RecordNode(m, scaling.NodeStats{CPUPercent: &cpu, MemoryPercent: &mem, At: now})
+		cpu, mem, vram := 38.0, 61.5, 42.0
+		scaling.RecordNode(m, scaling.NodeStats{
+			CPUPercent: &cpu, MemoryPercent: &mem, GPUVRAMPercent: &vram, At: now,
+		})
 	}))
 
 	status, out := getHistory(t, h, "")
@@ -130,6 +132,9 @@ func TestHistoryNodeViewServesTheRecordedNodeSeries(t *testing.T) {
 	}
 	if got := len(out.Series["memory"]); got != 1 {
 		t.Errorf("node memory points = %d, want 1", got)
+	}
+	if got := len(out.Series["gpu_vram"]); got != 1 {
+		t.Errorf("node gpu points = %d, want 1", got)
 	}
 }
 

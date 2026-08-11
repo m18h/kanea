@@ -497,6 +497,15 @@ export async function fetchEvents(
  * reports nothing rather than a made-up figure — the first CPU read has no
  * delta to compute from, and procfs may be unreadable entirely.
  */
+/** One visible GPU (v1.42). VRAM fields are absent when a driver could not
+ * report them — an [N/A] from nvidia-smi is not an empty card. */
+export const nodeGPUSchema = z.object({
+  name: z.string(),
+  vram_used_bytes: z.number().optional(),
+  vram_total_bytes: z.number().optional(),
+  vram_percent: z.number().optional(),
+})
+
 export const nodeMachineSchema = z.object({
   cpu_percent: z.number().optional(),
   load1: z.number().optional(),
@@ -505,6 +514,8 @@ export const nodeMachineSchema = z.object({
   memory_total_bytes: z.number().optional(),
   memory_available_bytes: z.number().optional(),
   memory_percent: z.number().optional(),
+  gpus: z.array(nodeGPUSchema).optional(),
+  gpu_vram_percent: z.number().optional(),
   cores: z.number(),
   at: z.string(),
 })
