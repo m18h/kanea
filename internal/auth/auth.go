@@ -126,6 +126,12 @@ type Session struct {
 	Expires time.Time `json:"expires"`
 	// CSRF is the double-submit token for cookie-authenticated mutations.
 	CSRF string `json:"csrf"`
+	// Method records how the session was established (v1.47): "session" for
+	// a local password, "oidc", "ldap". omitempty keeps pre-v1.47 records
+	// byte-identical; an absent value reads as the local path. It is what
+	// lets an audit entry on a later request say via: ldap rather than
+	// claiming every cookie is a local login.
+	Method string `json:"method,omitempty"`
 }
 
 // SessionLifetime is the absolute ceiling on a dashboard session (§13.3).
@@ -219,7 +225,7 @@ func hashSecret(secret string) string {
 }
 
 // NewSession mints a session and returns it with the cookie value.
-func NewSession(subject string, role Role, now time.Time) (Session, string, error) {
+func NewSession(subject string, role Role, method Method, now time.Time) (Session, string, error) {
 	id, err := randomSecret()
 	if err != nil {
 		return Session{}, "", err
@@ -235,7 +241,17 @@ func NewSession(subject string, role Role, now time.Time) (Session, string, erro
 		Created: now,
 		Expires: now.Add(SessionLifetime),
 		CSRF:    csrf,
+		Method:  string(method),
 	}, id, nil
+}
+
+// Via reports how the session was established, defaulting the pre-v1.47
+// records (and any zero value) to the local path.
+func (s Session) Via() Method {
+	if s.Method == "" {
+		return MethodSession
+	}
+	return Method(s.Method)
 }
 
 // SessionKey is the Store key for a session cookie value.

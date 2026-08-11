@@ -749,6 +749,70 @@ and error strings, and there is no field for a value. A provider compromise
 is bounded by the config's required `allow` list on the write side: a
 provider may only overwrite local paths in scopes an operator named.
 
+### 3.20 Directory authentication (A07; PRD v1.47, §13.2)
+
+LDAP is the third way a password login can be verified, and it rests on a
+different trust argument from the other two: with a local account Kanea holds
+a bcrypt hash and verifies the password itself; with OIDC a provider hands
+over a *signed* assertion Kanea validates offline. An LDAP simple bind proves
+neither — Kanea learns only that the directory accepted the password on a
+channel Kanea configured. Everything below follows from taking that
+difference seriously.
+
+**The channel is the proof, so the channel is mandatory TLS.** `ldaps://`, or
+`ldap://` with StartTLS forced before any bind — and there is no insecure
+flag, deliberately, where the session cookie has one (`--insecure-cookies`):
+the wire here carries the user's actual password, not a derived credential.
+`--ldap-ca` trusts a private CA; nothing weakens verification.
+
+**The unauthenticated-bind trap is closed before the network is touched.**
+RFC 4513 §5.1.2 lets a server treat a bind with a DN and an *empty* password
+as anonymous success. An empty or whitespace-only password is therefore
+refused pre-dial — a directory server's permissiveness must never become a
+login.
+
+**Filter injection is escaped at both insertion points.** The typed name is
+substituted into `--ldap-user-filter` through `ldap.EscapeFilter`, and the
+resolved DN is escaped again into the group filter. A user search that
+matches more than one entry is refused as ambiguous rather than resolved by
+order.
+
+**Local wins, structurally.** A name with a Store record is answered by
+bcrypt alone — no fallthrough on a wrong password. A directory account can
+never shadow a local admin, and a local brute-force attempt costs no
+directory traffic.
+
+**The limiter stands in front of the bind.** Per-source and per-account rate
+limits run before any network I/O, so Kanea cannot be used as a brute-force
+amplifier against the directory. Lockouts for directory names are
+memory-only (the v1.37 rule: the name space is attacker-chosen, and each
+persisted entry would be replicated Store traffic); a directory *outage*
+increments nobody's failure count, because the user did nothing wrong.
+
+**Timing is stated, not equalised.** `EqualiseTiming` makes local-hit and
+local-miss indistinguishable when only local auth exists. With LDAP
+configured, a local-miss costs a directory round-trip instead of ~250 ms of
+bcrypt, so an observer can distinguish "this name is a local account" from
+"this name went to the directory". What does not leak: whether a name exists
+*in the directory* — an unknown name and a wrong password both perform the
+full search-and-bind round-trip, whose timing belongs to the directory. The
+error body is uniform for every refusal except one: bind success with no
+mapped group answers 403 (the OIDC no-role rule — "the directory vouched for
+them; Kanea has no role for them" is an ask-an-administrator answer).
+
+**Group membership is evaluated at login only.** A user removed from the
+admin group keeps an issued session until its absolute expiry (≤ 12 h) —
+the same residual OIDC has, now stated. Session revocation
+(`kanea user`-independent: delete the session records) is the operator's
+lever in an emergency.
+
+**Availability is one-way.** A down directory refuses LDAP logins loudly in
+the log and uniformly (401) to the caller; it never takes `kanead`, the local
+accounts, or token authentication with it. Startup validates configuration
+hard (a bad URL, a half-configured group search, an empty role mapping all
+refuse in front of the operator) but connects soft: an unreachable directory
+at boot is a warning, because a directory outage is weather.
+
 ---
 
 ## 4. Attack walkthroughs
@@ -831,7 +895,7 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | A04 | Secure-by-default config; this document | **Built** |
 | A05 | Security headers, CSP, hardened workload defaults, declarable non-root workload identity (§3.15) | **Built** |
 | A06 | `govulncheck`, `gosec`, `gitleaks`, `npm audit` in CI | **Built** |
-| A07 | Login and global rate limits, token expiry, OIDC + PKCE | **Built** |
+| A07 | Login and global rate limits, token expiry, OIDC + PKCE, LDAP with TLS-mandatory binds and escaped filters (v1.47, §3.20) | **Built** |
 | A08 | Digest pinning honoured; release signing | **Partial** — signing is M10 |
 | A09 | Hash-chained audit log, retention; MCP tool calls audited through the same routes | **Built** — signed export is M10 |
 | A10 | Metadata-endpoint egress block, enforced by the datapath's own egress program (v1.36 — previously claimed via a Cilium egress policy that was never emitted) | **Built** — git/webhook SSRF rules are M7/M8 |
@@ -872,3 +936,5 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | A granted device exposes a kernel driver's ioctl surface | No seccomp filtering is applied over it | — |
 | An operator can grant a device that should never be granted | The config refuses `/` and the wrong file type; it cannot judge intent | — |
 | A provider credential file on the node reads every external secret its token can | 0600-checked and root-owned, but a scoped token is the provider's control, not Kanea's; docs prescribe least-privilege tokens (§3.19) | — |
+| A local-account name and a directory name are timing-distinguishable at login | LDAP bind time is the directory's, not Kanea's; equalising against network I/O would be theatre (§3.20) | — |
+| A directory user's revoked group membership outlives login by up to a session lifetime | Group→role mapping is evaluated at bind time only; the session's 12 h absolute expiry bounds it (§3.20) | — |

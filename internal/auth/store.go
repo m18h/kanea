@@ -35,6 +35,20 @@ type Store struct {
 	now   func() time.Time
 
 	limiter *loginLimiter
+	// external verifies passwords for names with no local account (v1.47,
+	// LDAP). Nil means local-only — today's behaviour, bit for bit.
+	external PasswordVerifier
+}
+
+// PasswordVerifier verifies a name/password pair against an external
+// directory, for names that have no local account. The subject returned is
+// what the session and the audit trail carry.
+//
+// Error contract: ErrLDAPNoRole propagates (the API maps it to 403);
+// ErrLDAPUnavailable is an operational failure that must not count against
+// anyone's lockout; anything else is an authentication refusal.
+type PasswordVerifier interface {
+	Verify(ctx context.Context, name, password string) (subject string, role Role, err error)
 }
 
 // StoreConfig configures the auth store.
@@ -43,6 +57,8 @@ type StoreConfig struct {
 	Logger *slog.Logger
 	Limit  LoginLimit
 	Now    func() time.Time
+	// Verifier enables directory fallthrough for unknown names (v1.47).
+	Verifier PasswordVerifier
 }
 
 // NewStore builds the auth store.
@@ -60,10 +76,11 @@ func NewStore(cfg StoreConfig) (*Store, error) {
 		cfg.Limit = DefaultLoginLimit
 	}
 	return &Store{
-		store:   cfg.Store,
-		log:     cfg.Logger,
-		now:     cfg.Now,
-		limiter: newLoginLimiter(cfg.Limit, cfg.Now),
+		store:    cfg.Store,
+		log:      cfg.Logger,
+		now:      cfg.Now,
+		limiter:  newLoginLimiter(cfg.Limit, cfg.Now),
+		external: cfg.Verifier,
 	}, nil
 }
 
@@ -227,8 +244,8 @@ func (s *Store) RevokeToken(ctx context.Context, id string) error {
 // ---- sessions ----
 
 // CreateSession issues a dashboard session.
-func (s *Store) CreateSession(ctx context.Context, subject string, role Role) (Session, string, error) {
-	session, cookie, err := NewSession(subject, role, s.now())
+func (s *Store) CreateSession(ctx context.Context, subject string, role Role, method Method) (Session, string, error) {
+	session, cookie, err := NewSession(subject, role, method, s.now())
 	if err != nil {
 		return Session{}, "", err
 	}
@@ -313,6 +330,13 @@ func (s *Store) Login(ctx context.Context, name, password, source string) (Sessi
 
 	user, err := s.User(ctx, name)
 	if err != nil {
+		// No local record. With a directory configured, this is the
+		// fallthrough (v1.47) — and only this: a *local* account is answered
+		// by bcrypt alone below, so a directory account can never shadow a
+		// local admin and a wrong local password never costs a bind.
+		if s.external != nil {
+			return s.loginExternal(ctx, name, password, source)
+		}
 		EqualiseTiming(password)
 		// The failure counts, but is never persisted for a name that is not an
 		// account (v1.37): unknown names are attacker-chosen, and each would
@@ -335,12 +359,52 @@ func (s *Store) Login(ctx context.Context, name, password, source string) (Sessi
 			s.log.Warn("cannot clear a persisted lockout", "user", name, "error", err)
 		}
 	}
-	session, cookie, err := s.CreateSession(ctx, user.Name, user.Role)
+	session, cookie, err := s.CreateSession(ctx, user.Name, user.Role, MethodSession)
 	if err != nil {
 		return Session{}, "", err
 	}
 	s.log.Info("login", "user", user.Name, "role", user.Role, "source", source)
 	return session, cookie, nil
+}
+
+// loginExternal is the directory half of Login (v1.47). The limiter already
+// ran; what differs from the local path is deliberate: no EqualiseTiming (a
+// bind is network time Kanea does not control — §3.20 states the leak), no
+// persisted lockouts (directory names are not Store accounts, the v1.37
+// rule), and an unavailable directory counts against no one.
+func (s *Store) loginExternal(ctx context.Context, name, password, source string) (Session, string, error) {
+	subject, role, err := s.external.Verify(ctx, name, password)
+	switch {
+	case err == nil:
+		s.limiter.succeed(source, name)
+		session, cookie, err := s.CreateSession(ctx, subject, role, MethodLDAP)
+		if err != nil {
+			return Session{}, "", err
+		}
+		s.log.Info("login", "user", subject, "role", role, "source", source, "method", MethodLDAP)
+		return session, cookie, nil
+
+	case errors.Is(err, ErrLDAPNoRole):
+		// The directory vouched for them; Kanea has no role for them. It
+		// still spends a limiter slot — group-mapping refusals are guesses
+		// too, from the limiter's point of view — and propagates so the API
+		// can answer 403 rather than 401.
+		s.limiter.fail(source, name)
+		s.log.Warn("login failed", "user", name, "source", source, "reason", "no mapped role")
+		return Session{}, "", err
+
+	case errors.Is(err, ErrLDAPUnavailable):
+		// The user did nothing wrong: counting an outage as failures would
+		// let a directory outage lock every account out. Logged at error —
+		// this is the operator's problem — and refused uniformly.
+		s.log.Error("directory login unavailable", "user", name, "source", source, "error", err)
+		return Session{}, "", fmt.Errorf("%w: directory unavailable", ErrUnauthenticated)
+
+	default:
+		s.limiter.fail(source, name)
+		s.log.Warn("login failed", "user", name, "source", source, "reason", "directory refused")
+		return Session{}, "", ErrUnauthenticated
+	}
 }
 
 // lockoutRecord is a persisted account lockout (v1.37, §13.3).

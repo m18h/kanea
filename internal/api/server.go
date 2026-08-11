@@ -87,6 +87,9 @@ type ServerConfig struct {
 	Backups Backups
 	// Settings backs the node-settings routes (v1.46, §15.1). Nil answers 503.
 	Settings SettingsService
+	// LDAPServer names the configured directory (v1.47) — audit Detail on
+	// directory logins, empty when LDAP is off. A name, never a credential.
+	LDAPServer string
 	// CA serves this node's self-signed CA certificate (§7.3). Nil answers 404
 	// on that route, which is the honest answer for a node that has never
 	// issued a self-signed certificate.
@@ -218,6 +221,7 @@ type Server struct {
 	notifier     Notifier
 	backups      Backups
 	settings     SettingsService
+	ldapServer   string
 	ca           CertificateAuthority
 	publishPorts PortPolicy
 	publish      func(notify.Event)
@@ -293,7 +297,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, secretSync: cfg.SecretSync, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
-		notifier: cfg.Notifier, backups: cfg.Backups, settings: cfg.Settings, ca: cfg.CA,
+		notifier: cfg.Notifier, backups: cfg.Backups, settings: cfg.Settings,
+		ldapServer: cfg.LDAPServer, ca: cfg.CA,
 		publishPorts: cfg.PublishPorts,
 		auth:         cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,

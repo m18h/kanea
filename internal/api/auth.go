@@ -204,8 +204,11 @@ func (s *Server) identify(r *http.Request) (auth.Identity, error) {
 		if err != nil {
 			return auth.Identity{}, err
 		}
+		// Via carries how the session was established (v1.47): "session",
+		// "oidc" or "ldap". Whatever it says, this is a browser cookie —
+		// checkCSRF's allowlist is what enforces that reading.
 		return auth.Identity{
-			Subject: session.Subject, Role: session.Role, Via: auth.MethodSession,
+			Subject: session.Subject, Role: session.Role, Via: session.Via(),
 		}, nil
 	}
 
@@ -242,8 +245,13 @@ func bearerToken(r *http.Request) string {
 // is not a browser at all. SameSite=Lax on the cookie is defence in depth, not
 // a substitute — it does not cover every navigation, and it is a property of the
 // browser rather than of this server (PRD §13.3).
+//
+// An allowlist skip, not "skip unless via session": since v1.47 a cookie
+// identity's Via can read "ldap" or "oidc", and every one of those is still a
+// browser cookie a cross-site request can ride. The old predicate would have
+// silently exempted them — a hole opened by bookkeeping.
 func (s *Server) checkCSRF(r *http.Request, id auth.Identity) error {
-	if id.Via != auth.MethodSession {
+	if id.Via == auth.MethodToken || id.Via == auth.MethodSocket {
 		return nil
 	}
 	cookie, err := r.Cookie(SessionCookie)
@@ -398,8 +406,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	session, cookie, err := s.auth.Login(r.Context(), req.User, req.Password, source)
 	if err != nil {
 		status := http.StatusUnauthorized
-		if errors.Is(err, auth.ErrRateLimited) {
+		switch {
+		case errors.Is(err, auth.ErrRateLimited):
 			status = http.StatusTooManyRequests
+		case errors.Is(err, auth.ErrLDAPNoRole):
+			// The directory vouched for them; Kanea has no role for them —
+			// the difference between "log in again" and "ask an
+			// administrator" (v1.47, the OIDC no-role rule).
+			status = http.StatusForbidden
 		}
 		// Recorded with the attempted user name but never the password: the
 		// name is what makes a brute-force visible, and Redact would strip the
@@ -419,10 +433,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, s.sessionCookie(cookie, session.Expires))
-	s.record(r, audit.Entry{Action: "auth.login", Result: audit.ResultOK, Status: http.StatusOK},
-		auth.Identity{Subject: session.Subject, Role: session.Role, Via: auth.MethodSession})
+	// Via comes from the session itself (v1.47): "session" for a local
+	// password, "ldap" for a directory one. The audit Detail names the
+	// directory for LDAP logins, mirroring OIDC's "issuer …".
+	entry := audit.Entry{Action: "auth.login", Result: audit.ResultOK, Status: http.StatusOK}
+	if session.Via() == auth.MethodLDAP && s.ldapServer != "" {
+		entry.Detail = "server " + s.ldapServer
+	}
+	s.record(r, entry,
+		auth.Identity{Subject: session.Subject, Role: session.Role, Via: session.Via()})
 	writeJSON(w, http.StatusOK, SessionResponse{
-		Subject: session.Subject, Role: session.Role, Via: string(auth.MethodSession),
+		Subject: session.Subject, Role: session.Role, Via: string(session.Via()),
 		CSRF: session.CSRF, Expires: session.Expires,
 	})
 }
@@ -462,7 +483,13 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := SessionResponse{Subject: id.Subject, Role: id.Role, Via: string(id.Via)}
-	if id.Via == auth.MethodSession {
+	// checkCSRF's allowlist, mirrored (v1.47): an "ldap" or "oidc" Via is still
+	// a browser cookie, and this route is the only place a cookie client can
+	// learn its CSRF token (the OIDC callback is a redirect with no body, and a
+	// reload loses the login response). Gating on Via == "session" here while
+	// checkCSRF demands the token for every cookie caller would leave external
+	// logins unable to mutate at all.
+	if id.Via != auth.MethodToken && id.Via != auth.MethodSocket {
 		if cookie, err := r.Cookie(SessionCookie); err == nil {
 			if session, err := s.auth.Session(r.Context(), cookie.Value); err == nil {
 				out.CSRF, out.Expires = session.CSRF, session.Expires
