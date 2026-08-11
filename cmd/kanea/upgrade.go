@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -121,25 +120,17 @@ func runUpgrade(args []string) error {
 
 // restartUnit restarts a systemd unit.
 func restartUnit(ctx context.Context, unit string, timeout time.Duration) error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("kanea upgrade drives systemd, which is Linux-only (this is %s)", runtime.GOOS)
-	}
-	if _, err := exec.LookPath("systemctl"); err != nil {
-		return errors.New("systemctl not found; restart kanea-edge and then kanead by hand, in that order")
-	}
+	return systemctl(ctx, timeout, "restart", unit)
+}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "systemctl", "restart", unit) // #nosec G204 — unit names are literals above
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("systemctl restart %s: %w", unit, err)
-	}
-	return nil
+// healthAPI is the one call waitForDaemon needs; `kanea init`'s bootstrap
+// passes its own client seam through it.
+type healthAPI interface {
+	Health(ctx context.Context) (api.Health, error)
 }
 
 // waitForDaemon polls health until the daemon answers or the deadline passes.
-func waitForDaemon(ctx context.Context, client *api.Client, timeout time.Duration) (api.Health, error) {
+func waitForDaemon(ctx context.Context, client healthAPI, timeout time.Duration) (api.Health, error) {
 	deadline := time.Now().Add(timeout)
 	var last error
 	for time.Now().Before(deadline) {

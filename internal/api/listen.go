@@ -40,7 +40,7 @@ func (s *Server) listenNetwork() (net.Listener, error) {
 		return nil, fmt.Errorf("%w: refusing to open %s", ErrNoAuthConfigured, s.listenAddr)
 	}
 
-	public, err := isPublicAddr(s.listenAddr)
+	public, err := IsPublicAddr(s.listenAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -63,12 +63,14 @@ func (s *Server) listenNetwork() (net.Listener, error) {
 	return listener, nil
 }
 
-// isPublicAddr reports whether an address binds anything beyond loopback.
+// IsPublicAddr reports whether an address binds anything beyond loopback.
 //
 // An empty or unspecified host (":8600", "0.0.0.0:8600", "[::]:8600") is the
 // widest case there is and is treated as public — that is the address someone
-// types when they have not thought about who can reach it.
-func isPublicAddr(addr string) (bool, error) {
+// types when they have not thought about who can reach it. Exported for
+// `kanea init`, which validates a listen address before writing it into a
+// unit — the same refusal listenNetwork makes, moved in front of the operator.
+func IsPublicAddr(addr string) (bool, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return false, fmt.Errorf("api: bad listen address %q: %w", addr, err)

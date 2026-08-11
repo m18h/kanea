@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"io"
@@ -171,6 +172,9 @@ func TestUnitExecStartFlagsAreDefined(t *testing.T) {
 	if err := writeUnits(newOut(), unitOptions{
 		dir: dir, dataDir: "/var/lib/kanea", logDir: "/var/log/kanea",
 		reserve: "1G", binary: "/usr/local/bin/kanea",
+		// Every optional flag set, so this test polices them all against the
+		// subcommand's actual flag table.
+		listen: "10.0.0.5:8600", listenCert: "/etc/kanea/api.crt", listenKey: "/etc/kanea/api.key",
 	}); err != nil {
 		t.Fatalf("write units: %v", err)
 	}
@@ -372,25 +376,43 @@ func TestKeyCeremoryRefusesWhenTheKeyIsNotTypedBack(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "master.key")
 
-	stdin, err := os.CreateTemp(dir, "stdin")
-	if err != nil {
-		t.Fatalf("temp: %v", err)
-	}
-	if _, err := stdin.WriteString("not the key\n"); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if _, err := stdin.Seek(0, 0); err != nil {
-		t.Fatalf("seek: %v", err)
-	}
-	saved := os.Stdin
-	os.Stdin = stdin
-	t.Cleanup(func() { os.Stdin = saved; _ = stdin.Close() })
-
-	if err := keyCeremony(newOut(), path); err == nil {
+	reader := bufio.NewReader(strings.NewReader("not the key\n"))
+	if err := keyCeremony(newOut(), path, reader); err == nil {
 		t.Fatal("the ceremony accepted a wrong confirmation")
 	}
 	if _, err := os.Stat(path); err == nil {
 		t.Error("a key was written despite the confirmation failing")
+	}
+}
+
+func TestKaneadUnitRendersTheListenFlags(t *testing.T) {
+	// The v6-trio rule, applied to the listener (v1.45): rendered only when
+	// set, and the unit for a socket-only node stays byte-identical.
+	base := unitOptions{binary: "/usr/local/bin/kanea", dataDir: "/var/lib/kanea", logDir: "/var/log/kanea"}
+	if got := kaneadService(base); strings.Contains(got, "--listen") {
+		t.Errorf("a socket-only unit mentions --listen:\n%s", got)
+	}
+
+	withListen := base
+	withListen.listen = "127.0.0.1:8600"
+	if got := kaneadService(withListen); !strings.Contains(got, "--listen 127.0.0.1:8600") {
+		t.Errorf("unit is missing --listen:\n%s", got)
+	} else if strings.Contains(got, "--listen-cert") {
+		t.Errorf("unit renders TLS flags nobody set:\n%s", got)
+	}
+
+	withTLS := withListen
+	withTLS.listen = "10.0.0.5:8600"
+	withTLS.listenCert, withTLS.listenKey = "/etc/kanea/api.crt", "/etc/kanea/api.key"
+	got := kaneadService(withTLS)
+	for _, want := range []string{
+		"--listen 10.0.0.5:8600",
+		"--listen-cert /etc/kanea/api.crt",
+		"--listen-key /etc/kanea/api.key",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("TLS unit is missing %q:\n%s", want, got)
+		}
 	}
 }
 
