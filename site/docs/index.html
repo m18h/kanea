@@ -1357,7 +1357,8 @@ kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <pre class="plain">kanea run app.hcl [more.hcl …] [--wait=60s]
 kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
-      Applies the spec. <code>--wait</code> is how long to wait for allocs to reach running
+      Applies the spec. <code>kanea apply</code> is an alias — same flags, same
+      behaviour. <code>--wait</code> is how long to wait for allocs to reach running
       before returning; <code>0</code> returns immediately. Running it twice with an
       unchanged spec does nothing — a deploy is a spec-hash mismatch, not an invocation.
     </p>

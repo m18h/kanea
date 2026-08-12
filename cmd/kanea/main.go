@@ -37,7 +37,7 @@ var commands = []command{
 	{"edge", "run the edge ingress proxy (kanea-edge, separate process — PRD §5.2.6)", runEdge},
 	{"doctor", "verify node health: deps, versions, disk, clock", runDoctor},
 	{"plan", "dry-run diff of a job spec", runPlan},
-	{"run", "apply a job spec (or --image for a bare image)", runRun},
+	{"run", "apply a job spec (or --image for a bare image); alias: apply", runRun},
 	{"stop", "stop a service (scale to zero; --rm deletes it)", runStop},
 	{"ps", "list allocations", runPs},
 	{"status", "service and platform status", runStatus},
@@ -76,12 +76,22 @@ func main() {
 	os.Exit(1)
 }
 
+// aliases map a second spelling onto a command, resolved before dispatch —
+// one table entry, one handler, so the spellings cannot drift (PRD v1.52).
+// The usage output deliberately keeps one row per verb; the alias rides the
+// target's description instead.
+var aliases = map[string]string{"apply": "run"}
+
 func run(args []string) error {
 	if len(args) == 0 {
 		return printUsage(os.Stdout)
 	}
+	name := args[0]
+	if target, ok := aliases[name]; ok {
+		name = target
+	}
 	for _, c := range commands {
-		if c.name == args[0] {
+		if c.name == name {
 			return c.run(args[1:])
 		}
 	}
