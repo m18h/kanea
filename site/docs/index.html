@@ -768,7 +768,7 @@ service "web" {
         <thead><tr><th><code>type</code></th><th>Fields</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td><code>local</code></td><td>—</td><td>A directory on the node, managed by Kanea.</td></tr>
-          <tr><td><code>host</code></td><td><code>path</code></td><td>A directory the operator already owns. See R15 — it does nothing until an operator allowlists its parent.</td></tr>
+          <tr><td><code>host</code></td><td><code>path</code></td><td>A directory the operator already owns. See R15 — it does nothing until an operator allowlists its parent in <code>/etc/kanea/kanea.hcl</code>'s <code>storage { allowed_host_paths = […] }</code> stanza (or <code>--allowed-host-paths</code>, which wins).</td></tr>
           <tr><td><code>nfs</code></td><td><code>server</code>, <code>export</code>, <code>options</code></td><td></td></tr>
           <tr><td><code>smb</code></td><td><code>server</code>, <code>share</code>, <code>auth_ref</code>, <code>options</code></td><td></td></tr>
           <tr><td><code>s3</code></td><td><code>bucket</code>, <code>endpoint</code>, <code>auth_ref</code>, <code>mode</code></td><td><code>mode = "ro"</code> selects mountpoint-s3, <code>"rw"</code> selects s3fs.</td></tr>
@@ -858,19 +858,21 @@ service "web" {
       <table>
         <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>grant</code></td><td>string</td><td>Required, on both blocks. Names an entry in the node's <code>--passthrough-config</code>.</td></tr>
+          <tr><td><code>grant</code></td><td>string</td><td>Required, on both blocks. Names a <code>device</code>/<code>socket</code> grant in the node's server config, <code>/etc/kanea/kanea.hcl</code>.</td></tr>
           <tr><td><code>mount_path</code></td><td>string</td><td><code>socket</code> only, required. Where the socket appears in the container. A device appears at its host path.</td></tr>
           <tr><td><code>read_only</code></td><td>bool</td><td><code>socket</code> only. Restricts the filesystem entry, not the protocol spoken over it.</td></tr>
         </tbody>
       </table>
     </div>
     <p>
-      The operator side is a separate file, and the default is that it does not
-      exist — a spec asking for a grant on a node with none fails its alloc
-      rather than starting without it. Grants name the projects that may claim
-      them:
+      The operator side lives in the node's server config,
+      <code>/etc/kanea/kanea.hcl</code>, probed automatically at daemon start —
+      no flag, no unit editing, and a <code>kanea init</code> re-run never
+      touches it. The default is that the file does not exist — a spec asking
+      for a grant on a node with none fails its alloc rather than starting
+      without it. Grants name the projects that may claim them:
     </p>
-    <pre><code><span class="c"># /etc/kanea/passthrough.hcl — the node's, never the repository's</span>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl — the node's, never the repository's</span>
 <span class="k">device</span> <span class="s">"gpu"</span> {
   <span class="k">nodes</span> = [<span class="s">"/dev/dri/renderD128"</span>]
   <span class="k">allow</span> = [<span class="s">"media"</span>]
@@ -880,6 +882,23 @@ service "web" {
   <span class="k">path</span>  = <span class="s">"/run/kanea/containerd.sock"</span>
   <span class="k">allow</span> = [<span class="s">"ops"</span>]
 }</code></pre>
+    <p>
+      Setting it up, end to end:
+    </p>
+    <ol>
+      <li>Create the file (init already made the directory):
+        <code>sudo install -o root -g root -m 0644 /dev/null /etc/kanea/kanea.hcl</code>,
+        then write the grant blocks above — and, if you use host volumes, the
+        <a href="#spec-storage"><code>storage</code> allowlist stanza</a> in the
+        same file. It must stay root-owned and writable only by its owner;
+        kanead refuses a group- or world-writable policy file.</li>
+      <li><code>sudo systemctl restart kanead</code> — the file is read once, at
+        startup, never polled.</li>
+      <li>Verify: the startup log carries <code>server config loaded</code> with
+        the path, and a <code>warn</code> line naming the passthrough
+        consequence when grants are present. <code>kanea ps</code> shows the
+        alloc converging.</li>
+    </ol>
     <p>
       <b>A socket grant is root on this node for whoever holds it.</b> A
       container with the runtime socket can start other containers without the
@@ -1099,7 +1118,7 @@ restart {
     <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully — <code>redis-server --save ""</code> is how you disable snapshots.</p></div></div>
     <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> is an allowlist over a drop-everything default.</b> Only the set stock images legitimately need may be requested: <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>SETGID</code>, <code>SETUID</code>, <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_BIND_SERVICE</code>, <code>NET_RAW</code>, <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. Privilege-equivalent ones — <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends — are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Granted capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
     <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; the datapath's ingress rules only ever union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b> — <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
-    <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time — but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config, <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist.</p></div></div>
+    <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time — but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config <code>/etc/kanea/kanea.hcl</code> (or <code>--allowed-host-paths</code>, which wins when set), <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist.</p></div></div>
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous — declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
     <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device — checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
     <div class="rule"><b>R18</b><div><p><b><code>task.socket</code> is R17 for unix sockets, and is privilege delegation.</b> <code>mount_path</code> is validated as absolute, clean and <code>..</code>-free, may not sit under <code>/dev</code>, <code>/proc</code> or <code>/sys</code>, and may not collide with another socket or a volume. The bind carries <code>nosuid</code>, <code>noexec</code> and <code>nodev</code>. <b>None of that makes it safe and none of it is meant to</b>: a container holding the container runtime's socket can create containers without the hardening defaults, so the grant is equivalent to root on the node. The server config is the only control over it, which is why it is project-scoped and empty by default.</p></div></div>
@@ -1470,7 +1489,8 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
     <p>Normally systemd runs these. The flags are here because <code>systemctl cat</code> will show them to you.</p>
 
     <h4><code>kanea agent</code></h4>
-    <pre class="plain">kanea agent [--data-dir=…] [--log-dir=…] [--volume-dir=…] [--socket=…]
+    <pre class="plain">kanea agent [--config=/etc/kanea/kanea.hcl] [--data-dir=…] [--log-dir=…]
+            [--volume-dir=…] [--socket=…]
             [--containerd=…] [--network=ebpf|netns] [--node-cidr=…] [--cluster-cidr=…]
             [--service-cidr=…] [--bpf-dir=…] [--dns-listen=…]
             [--allowed-host-paths=…] [--passthrough-config=…]
@@ -1495,11 +1515,24 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
       any bind reaches the directory.
     </p>
     <p>
-      <code>--allowed-host-paths</code> and <code>--passthrough-config</code> are the two
-      operator gates: the first lists directories <code>host</code> volumes may come from
-      (R15), the second names the file granting devices and sockets to projects (R17, R18).
-      Both are empty by default, and both are deliberately node configuration — a job spec
-      can reference what they permit and can never add to it.
+      The two operator gates — which directories <code>host</code> volumes may come from
+      (R15) and which devices and sockets are granted to projects (R17, R18) — live in the
+      server config <code>/etc/kanea/kanea.hcl</code>: a <code>storage
+      { allowed_host_paths = […] }</code> stanza and <code>device</code>/<code>socket</code>
+      blocks. The file is probed once at startup when it exists; absent means neither gate
+      opens. It must be a regular file, owned by root (or the daemon's uid), and writable
+      only by its owner — anything else refuses startup, as does a file that does not
+      parse. Stanzas from the fuller PRD §15.1 sketch that this version does not read are
+      warned by name at startup, never silently ignored.
+    </p>
+    <p>
+      <code>--allowed-host-paths</code> and <code>--passthrough-config</code> remain as
+      explicit overrides: setting one means the corresponding half of the file is not
+      consulted (<code>--passthrough-config</code> names a separate grants file with the
+      same trust check), <code>off</code> on either disables that gate regardless of the
+      file, and <code>--config</code> moves or (<code>--config off</code>) disables the
+      file itself. Either way this is deliberately node configuration — a job spec can
+      reference what it permits and can never add to it.
     </p>
 
     <h4><code>kanea edge</code></h4>

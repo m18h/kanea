@@ -43,7 +43,7 @@ Prefer to do it by hand? Every release publishes
 signature over the checksums:
 
 ```bash
-VERSION=v0.7.1; ARCH=amd64
+VERSION=v0.8.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -129,6 +129,35 @@ network {
 else that is not HTTP. Which ports a spec may claim is the node's decision
 (`--publish-ports`, unprivileged by default), because a repository anyone can
 push to must not be able to take :22.
+
+### Granting what specs may use
+
+Host directories and device/GPU passthrough are off until the node's owner says
+otherwise — a spec *names* what it wants, and the node decides what is allowed.
+Both grants live in one file, `/etc/kanea/kanea.hcl`, read once at daemon start
+(`kanea init` already created the directory; no unit editing, and re-running
+init never touches it):
+
+```hcl
+# /etc/kanea/kanea.hcl — the node's, never the repository's
+storage {
+  allowed_host_paths = ["/srv/kanea", "/dev/shm"]  # parents `host` volumes may use
+}
+
+device "gpu" {
+  nodes = ["/dev/dri/card0", "/dev/dri/renderD128"]
+  allow = ["media"]                                # projects that may claim it
+}
+```
+
+```bash
+sudo systemctl restart kanead                      # read once, at startup
+```
+
+Keep it root-owned and `0644` — kanead refuses a policy file anyone else could
+have written. A spec then mounts with `storage "x" { type = "host" path = … }`
+and claims the GPU with `device "dri" { grant = "gpu" }`; a grant the node does
+not hold fails the alloc rather than starting without it.
 
 ### Functions
 
@@ -285,7 +314,7 @@ one place to update.
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.50) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.51) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |

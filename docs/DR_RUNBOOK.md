@@ -72,7 +72,10 @@ Two consequences worth internalising before you need them:
   minutes, and it is the reason the CA is in the archive rather than being a
   key-ceremony artefact like the master key. Certificates an operator *provided*
   (`--tls-certs-config`) are files on the node and are not in the archive at all;
-  back them up with the rest of `/etc`.
+  back them up with the rest of `/etc`. The same goes for the server config
+  `/etc/kanea/kanea.hcl` (host-path allowlist, device/socket grants — PRD §15.1)
+  and any separate file `--passthrough-config` names: node policy lives outside
+  the archive by design, so restoring a node means restoring `/etc/kanea` too.
 
 ---
 

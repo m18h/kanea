@@ -341,7 +341,8 @@ func resolve(path string) (string, os.FileInfo, error) {
 
 func notConfigured(kind, grant string) error {
 	return fmt.Errorf("%w: this node has no %s grants, so %q cannot be given "+
-		"(set --passthrough-config)", ErrNotAllowed, kind, grant)
+		"(add %s blocks to /etc/kanea/kanea.hcl, or set --passthrough-config)",
+		ErrNotAllowed, kind, grant, kind)
 }
 
 // grantNames lists what is defined, so a typo reports what was meant.

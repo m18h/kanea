@@ -416,8 +416,11 @@ every case is that no grant exists. This matters more than it first reads,
 because a spec is not a trusted document: Kanea syncs specs from git and deploys
 them automatically (§3.8), so anything a spec can declare, anyone who can push to
 a synced repository can declare. The boundary is therefore drawn at the node:
-`storage.allowed_host_paths` and `--passthrough-config` are files on the machine,
-written by whoever owns it, and no API, MCP tool or spec can add to them.
+since v1.51 both policies live in `/etc/kanea/kanea.hcl` — the `storage`
+allowlist stanza and the `device`/`socket` grant blocks — probed once at daemon
+start, with `--allowed-host-paths` and `--passthrough-config` remaining as
+explicit overrides. Either way it is a file on the machine, written by whoever
+owns it, and no API, MCP tool or spec can add to it.
 
 **What is defended:**
 
@@ -446,6 +449,17 @@ written by whoever owns it, and no API, MCP tool or spec can add to them.
   larger grant than an operator naming one device is making.
 - **Socket binds carry `nosuid`, `noexec` and `nodev`,** and the mount is
   `rbind` so submounts are not hidden.
+- **The policy file is trust-checked before it is parsed** (v1.51). Because the
+  boundary above now rests on a well-known path, `kanead` refuses a server
+  config — probed at `/etc/kanea/kanea.hcl` or named by flag, the check does
+  not weaken for argv — that is not a regular file, is owned by neither root
+  nor the daemon's own uid, or is group- or world-writable. The check is
+  writability-only by design: this is policy, not a secret, and 0644 root:root
+  is the expected mode (the 0600 rule for provider credential files, §3.19, is
+  the stricter kin for material that must also stay unread). A malformed file
+  refuses startup rather than half-loading: there is no keep-last-good for a
+  grant surface, because a policy that half-loads is a permissive default
+  wearing a strict one's name.
 
 **What is *not* defended — and this is the honest part:**
 
