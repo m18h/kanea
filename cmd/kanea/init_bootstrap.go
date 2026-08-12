@@ -24,6 +24,7 @@ import (
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/auth"
 	"github.com/m18h/kanea/internal/network"
+	"github.com/m18h/kanea/internal/nodeconfig"
 )
 
 // adminAPI is the slice of the API client the bootstrap needs — a seam so the
@@ -103,6 +104,33 @@ func resolveListen(o *out, reader *bufio.Reader, explicit bool, value, cert, key
 			"pass --listen-cert/--listen-key, bind loopback, or answer none", addr)
 	}
 	return addr, nil
+}
+
+// listenFromServerConfig decides whether kanea.hcl owns the API listener for
+// this init run (PRD §15.1, v1.61): a bind.api_addr with no explicit --listen.
+// When it does, init skips the prompt and renders no listen flags into the
+// unit — a unit that repeated the file's answer would turn the file off. The
+// beyond-loopback refusal is resolveListen's, made at the file's coordinates:
+// a unit that fails on its first boot is a refusal in a journal nobody is
+// watching yet.
+func listenFromServerConfig(cfg *nodeconfig.Config, explicitListen bool) (addr string, owned bool, err error) {
+	if explicitListen || cfg.Bind == nil || cfg.Bind.APIAddr == "" {
+		return "", false, nil
+	}
+	public, err := api.IsPublicAddr(cfg.Bind.APIAddr)
+	if err != nil {
+		return "", false, fmt.Errorf("%s: bind.api_addr: %w", cfg.Path, err)
+	}
+	// A declared api_tls mode is a TLS story (or, for plaintext, a typed
+	// decision) — parse already refused its contradictions. Only the unset
+	// mode with no pair meets the beyond-loopback refusal, exactly as the
+	// bare flags would.
+	if public && cfg.Bind.APITLS == "" && cfg.Bind.APICert == "" {
+		return "", false, fmt.Errorf("%s: bind.api_addr %s is beyond loopback and would carry "+
+			"credentials in clear text; set bind.api_tls (acme, self-signed, provided or "+
+			"plaintext), bind loopback, or remove the stanza", cfg.Path, cfg.Bind.APIAddr)
+	}
+	return cfg.Bind.APIAddr, true, nil
 }
 
 // printManualNext is the pre-v1.45 ending: the steps init could not run, on

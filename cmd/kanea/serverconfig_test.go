@@ -22,7 +22,7 @@ func writeServerConfig(t *testing.T, content string) string {
 
 func TestServerConfigProbesTheWellKnownPath(t *testing.T) {
 	path := writeServerConfig(t, `storage { allowed_host_paths = ["/srv"] }`)
-	cfg, err := serverConfigForRun("", "", "", path)
+	cfg, err := serverConfigForRun("", "", "", "", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestServerConfigProbesTheWellKnownPath(t *testing.T) {
 }
 
 func TestServerConfigAbsentIsOff(t *testing.T) {
-	cfg, err := serverConfigForRun("", "", "", filepath.Join(t.TempDir(), "kanea.hcl"))
+	cfg, err := serverConfigForRun("", "", "", "", filepath.Join(t.TempDir(), "kanea.hcl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestServerConfigAbsentIsOff(t *testing.T) {
 
 func TestServerConfigOffIgnoresAPresentFile(t *testing.T) {
 	path := writeServerConfig(t, `this is not hcl at all {{{`)
-	cfg, err := serverConfigForRun("off", "", "", path)
+	cfg, err := serverConfigForRun("off", "", "", "", path)
 	if err != nil {
 		t.Fatalf("--config off must not read the file: %v", err)
 	}
@@ -53,33 +53,164 @@ func TestServerConfigOffIgnoresAPresentFile(t *testing.T) {
 }
 
 func TestServerConfigExplicitPathMustExist(t *testing.T) {
-	if _, err := serverConfigForRun(filepath.Join(t.TempDir(), "x.hcl"), "", "", ""); err == nil {
+	if _, err := serverConfigForRun(filepath.Join(t.TempDir(), "x.hcl"), "", "", "", ""); err == nil {
 		t.Fatal("--config naming a missing file must be fatal")
 	}
 }
 
 func TestServerConfigMalformedProbedFileIsFatal(t *testing.T) {
 	path := writeServerConfig(t, `storage {`)
-	if _, err := serverConfigForRun("", "", "", path); err == nil {
+	if _, err := serverConfigForRun("", "", "", "", path); err == nil {
 		t.Fatal("a malformed probed file must refuse startup, not half-load")
 	}
 }
 
-// The upgrade-with-flags promise: a unit carrying both policy flags today must
+// The upgrade-with-flags promise: a unit carrying every policy flag today must
 // behave byte-identically after the upgrade, whatever sits at the well-known
 // path — nothing would read the file, so it cannot be allowed to refuse boot.
-func TestServerConfigSkipsTheProbeWhenBothHalvesAreFlagged(t *testing.T) {
+// Since v1.61 the halves are three: the listen flag joined the condition, so
+// two-of-three now probes (the file's bind stanza would be read).
+func TestServerConfigSkipsTheProbeWhenEveryHalfIsFlagged(t *testing.T) {
 	path := writeServerConfig(t, `garbage {{{`)
-	cfg, err := serverConfigForRun("", "/srv", "/etc/pt.hcl", path)
+	cfg, err := serverConfigForRun("", "/srv", "/etc/pt.hcl", "127.0.0.1:8600", path)
 	if err != nil {
 		t.Fatalf("a file nothing reads refused startup: %v", err)
 	}
 	if cfg.Path != "" {
 		t.Fatalf("the file was read: %+v", cfg)
 	}
+	// "none" is an explicit flag too — the socket-only spelling.
+	if cfg, err := serverConfigForRun("", "/srv", "/etc/pt.hcl", "none", path); err != nil || cfg.Path != "" {
+		t.Fatalf("--listen none must count as flagged: %+v %v", cfg, err)
+	}
+	// Two of three flagged means the file still feeds the third half.
+	if _, err := serverConfigForRun("", "/srv", "/etc/pt.hcl", "", path); err == nil {
+		t.Fatal("with --listen unset the bind half is the file's; a malformed file must be fatal")
+	}
 	// An explicit --config, though, is an instruction to read it.
-	if _, err := serverConfigForRun(path, "/srv", "/etc/pt.hcl", path); err == nil {
+	if _, err := serverConfigForRun(path, "/srv", "/etc/pt.hcl", "127.0.0.1:8600", path); err == nil {
 		t.Fatal("--config is explicit; a malformed file must still be fatal")
+	}
+}
+
+func TestResolveAPIListenPrecedence(t *testing.T) {
+	fileCfg := &nodeconfig.Config{
+		Path: "/etc/kanea/kanea.hcl",
+		Bind: &nodeconfig.BindConfig{
+			APIAddr: "192.168.1.10:8600",
+			APICert: "/etc/kanea/dash.crt", APIKey: "/etc/kanea/dash.key",
+		},
+	}
+	tests := []struct {
+		name                    string
+		flag, certFlag, keyFlag string
+		cfg                     *nodeconfig.Config
+		want                    apiListener
+	}{
+		{"a set flag wins, pair and all", "10.0.0.1:9000", "/c", "/k", fileCfg,
+			apiListener{addr: "10.0.0.1:9000", mode: nodeconfig.TLSProvided,
+				cert: "/c", key: "/k", source: "--listen"}},
+		{"a set flag with no pair keeps the flags' vocabulary", "127.0.0.1:8600", "", "", fileCfg,
+			apiListener{addr: "127.0.0.1:8600", source: "--listen"}},
+		{"none is the explicit socket-only", "none", "", "", fileCfg,
+			apiListener{source: "none"}},
+		{"unset flag reads the file, atomically", "", "/ignored-cert", "/ignored-key", fileCfg,
+			apiListener{addr: "192.168.1.10:8600", mode: nodeconfig.TLSProvided,
+				cert: "/etc/kanea/dash.crt", key: "/etc/kanea/dash.key", source: fileCfg.Path}},
+		{"no flag and no stanza is socket-only", "", "", "", &nodeconfig.Config{},
+			apiListener{}},
+		{"a bind block with no api_addr supplies nothing", "", "", "",
+			&nodeconfig.Config{Path: "/etc/kanea/kanea.hcl", Bind: &nodeconfig.BindConfig{}},
+			apiListener{}},
+		{"self-signed names api_domain when given", "", "", "",
+			&nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{
+				APIAddr: "192.168.1.10:8600", APITLS: nodeconfig.TLSSelfSigned,
+				APIDomain: "kanea.home.arpa"}},
+			apiListener{addr: "192.168.1.10:8600", mode: nodeconfig.TLSSelfSigned,
+				domain: "kanea.home.arpa", source: "kanea.hcl"}},
+		{"self-signed falls back to the address's host", "", "", "",
+			&nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{
+				APIAddr: "192.168.1.10:8600", APITLS: nodeconfig.TLSSelfSigned}},
+			apiListener{addr: "192.168.1.10:8600", mode: nodeconfig.TLSSelfSigned,
+				domain: "192.168.1.10", source: "kanea.hcl"}},
+		{"acme carries its domain", "", "", "",
+			&nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{
+				APIAddr: ":8600", APITLS: nodeconfig.TLSAcme,
+				APIDomain: "kanea.example.com"}},
+			apiListener{addr: ":8600", mode: nodeconfig.TLSAcme,
+				domain: "kanea.example.com", source: "kanea.hcl"}},
+		{"plaintext is carried, not resolved away", "", "", "",
+			&nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{
+				APIAddr: "192.168.1.10:8600", APITLS: nodeconfig.TLSPlaintext}},
+			apiListener{addr: "192.168.1.10:8600", mode: nodeconfig.TLSPlaintext,
+				source: "kanea.hcl"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveAPIListen(tt.flag, tt.certFlag, tt.keyFlag, tt.cfg); got != tt.want {
+				t.Fatalf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// tlsEnabled feeds the Settings page's read-only view: every mode that
+// carries a certificate reads true, plaintext and the bare-loopback default
+// read false.
+func TestAPIListenerTLSEnabled(t *testing.T) {
+	if (apiListener{mode: nodeconfig.TLSPlaintext}).tlsEnabled() {
+		t.Fatal("plaintext must not claim TLS")
+	}
+	if (apiListener{}).tlsEnabled() {
+		t.Fatal("the socket-only zero value must not claim TLS")
+	}
+	for _, l := range []apiListener{
+		{mode: nodeconfig.TLSAcme, domain: "d"},
+		{mode: nodeconfig.TLSSelfSigned, domain: "d"},
+		{mode: nodeconfig.TLSProvided, cert: "/c", key: "/k"},
+	} {
+		if !l.tlsEnabled() {
+			t.Fatalf("%+v must claim TLS", l)
+		}
+	}
+}
+
+// The init-side half of the same precedence (v1.61): a file-declared listener
+// skips the prompt and renders no listen flags — and meets the same
+// beyond-loopback refusal the flags meet, at the file's coordinates.
+func TestListenFromServerConfig(t *testing.T) {
+	tls := &nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{
+		APIAddr: "192.168.1.10:8600", APICert: "/c", APIKey: "/k"}}
+	plain := &nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{
+		APIAddr: "192.168.1.10:8600"}}
+	loopback := &nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{
+		APIAddr: "127.0.0.1:8600"}}
+
+	if addr, owned, err := listenFromServerConfig(tls, false); err != nil || !owned || addr != "192.168.1.10:8600" {
+		t.Fatalf("a declared bind with its pair must own the listener: %q %v %v", addr, owned, err)
+	}
+	if addr, owned, err := listenFromServerConfig(loopback, false); err != nil || !owned || addr != "127.0.0.1:8600" {
+		t.Fatalf("loopback needs no pair: %q %v %v", addr, owned, err)
+	}
+	if _, _, err := listenFromServerConfig(plain, false); err == nil {
+		t.Fatal("beyond loopback without a pair must be refused, file or flag alike")
+	}
+	// A declared mode is a TLS story (or a typed plaintext decision), so the
+	// beyond-loopback refusal does not apply (v1.61).
+	for _, mode := range []string{
+		nodeconfig.TLSSelfSigned, nodeconfig.TLSPlaintext,
+	} {
+		cfg := &nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{
+			APIAddr: "192.168.1.10:8600", APITLS: mode}}
+		if _, owned, err := listenFromServerConfig(cfg, false); err != nil || !owned {
+			t.Fatalf("api_tls %q must own the listener: %v %v", mode, owned, err)
+		}
+	}
+	if _, owned, err := listenFromServerConfig(tls, true); err != nil || owned {
+		t.Fatalf("an explicit --listen must win over the file: %v %v", owned, err)
+	}
+	if _, owned, err := listenFromServerConfig(&nodeconfig.Config{}, false); err != nil || owned {
+		t.Fatalf("no file must mean the prompt flow: %v %v", owned, err)
 	}
 }
 

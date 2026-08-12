@@ -112,6 +112,28 @@ required there, refused up front otherwise); `--admin-user` and a piped
 password make it scriptable; `--no-start` writes the files and stops, which is
 the pre-v0.5 behaviour.
 
+The listener can live in the server config instead of the unit (PRD §15.1),
+with its TLS in the same vocabulary services use:
+
+```hcl
+# /etc/kanea/kanea.hcl
+bind {
+  api_addr = "192.168.1.10:8600"
+  api_tls  = "self-signed"   # or: acme (with api_domain), provided, plaintext
+}
+```
+
+`self-signed` issues the dashboard's certificate from the node's own CA — the
+one `kanea ca show` installs on your devices — with a real IP SAN, renewed
+automatically; `acme` gets a Let's Encrypt certificate for `api_domain`
+through the same account and renewal loop your services use; `provided` is
+your own `api_cert`/`api_key` pair; `plaintext` is explicit HTTP, allowed
+beyond loopback because you typed it and logged loudly. Init then skips the
+listen question and renders no listen flags — moving the dashboard later is
+an edit to the file plus `systemctl restart kanead`, never a re-init. An
+explicit `--listen` always wins, and `--listen none` keeps the node
+socket-only regardless.
+
 ### On a home network
 
 No public name, no port 80 reachable from the internet, and still real HTTPS. Point
@@ -331,7 +353,7 @@ one place to update.
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.60) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.61) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |

@@ -16,6 +16,7 @@ import (
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/nodeconfig"
 	"github.com/m18h/kanea/internal/provision"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
@@ -94,9 +95,33 @@ func runInit(args []string) error {
 
 	// Settled first, before any check or install runs: a refused address
 	// should cost the operator nothing but the retype.
-	listenAddr, err := resolveListen(o, reader, explicitListen, *listenFlag, *listenCert, *listenKey)
+	//
+	// The §15.1 server config is consulted before the prompt (v1.61): a
+	// bind.api_addr in kanea.hcl with no explicit --listen means the file owns
+	// the listener — the question is not asked and no listen flags are
+	// rendered into the unit, because a unit that repeated the file's answer
+	// would turn the file off. An explicit --listen wins, as everywhere.
+	nodeCfg, err := nodeconfig.Probe(nodeconfig.DefaultPath)
 	if err != nil {
 		return err
+	}
+	fileAddr, fileOwned, err := listenFromServerConfig(nodeCfg, explicitListen)
+	if err != nil {
+		return err
+	}
+	var listenAddr, unitListen string
+	if fileOwned {
+		listenAddr = fileAddr
+		o.printf("API/dashboard listener: %s (from %s)\n\n", listenAddr, nodeCfg.Path)
+	} else {
+		if nodeCfg.Bind != nil && explicitListen {
+			o.printf("Note: --listen wins; %s's bind stanza is not consulted.\n\n", nodeCfg.Path)
+		}
+		listenAddr, err = resolveListen(o, reader, explicitListen, *listenFlag, *listenCert, *listenKey)
+		if err != nil {
+			return err
+		}
+		unitListen = listenAddr
 	}
 
 	// `--containerd external` adopts the daemon already on the node instead of
@@ -180,7 +205,7 @@ func runInit(args []string) error {
 			reserve: *reserve, binary: executablePath(),
 			network: *networkMode, nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
 			nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
-			listen: listenAddr, listenCert: *listenCert, listenKey: *listenKey,
+			listen: unitListen, listenCert: *listenCert, listenKey: *listenKey,
 		}); err != nil {
 			return err
 		}

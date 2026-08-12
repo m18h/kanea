@@ -44,12 +44,14 @@ func (s *Server) listenNetwork() (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if public && s.tls == nil {
+	if public && s.tls == nil && !s.listenPlaintext {
 		// Session cookies and bearer tokens over plain HTTP on a network
 		// anyone else is on is how a credential is stolen without anybody
-		// noticing. Loopback is exempt because there is no wire to read.
+		// noticing. Loopback is exempt because there is no wire to read —
+		// and bind.api_tls = "plaintext" is exempt because someone typed
+		// the decision (PRD v1.61); the caller logs that loudly.
 		return nil, fmt.Errorf("%w: %s carries credentials in clear text; "+
-			"pass a certificate, or bind loopback and put kanea-edge in front",
+			"pass a certificate, set bind.api_tls, or bind loopback and put kanea-edge in front",
 			ErrInsecureListener, s.listenAddr)
 	}
 

@@ -111,6 +111,153 @@ storage { allowed_host_paths = ["/b"] }`))
 	}
 }
 
+func TestParseReadsTheBindStanza(t *testing.T) {
+	cfg, err := Parse("kanea.hcl", []byte(`
+bind {
+  api_addr = " 192.168.1.10:8600 "
+  api_cert = "/etc/kanea/dash.crt"
+  api_key  = "/etc/kanea/dash.key"
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Bind == nil {
+		t.Fatal("Bind = nil, want the stanza")
+	}
+	if cfg.Bind.APIAddr != "192.168.1.10:8600" ||
+		cfg.Bind.APICert != "/etc/kanea/dash.crt" || cfg.Bind.APIKey != "/etc/kanea/dash.key" {
+		t.Fatalf("Bind = %+v", cfg.Bind)
+	}
+	if len(cfg.Ignored) != 0 {
+		t.Fatalf("a fully read bind stanza must warn nothing, got %v", cfg.Ignored)
+	}
+}
+
+func TestParseRefusesACertWithoutAKeyInBind(t *testing.T) {
+	_, err := Parse("kanea.hcl", []byte(bindHCL(`api_addr = "192.168.1.10:8600"`, `api_cert = "/c"`)))
+	if err == nil || !strings.Contains(err.Error(), "go together") {
+		t.Fatalf("bind.api_cert without bind.api_key must be refused by name, got %v", err)
+	}
+}
+
+func TestParseRefusesATLSPairWithNoAddrInBind(t *testing.T) {
+	_, err := Parse("kanea.hcl", []byte(bindHCL(`api_cert = "/c"`, `api_key = "/k"`)))
+	if err == nil || !strings.Contains(err.Error(), "no api_addr") {
+		t.Fatalf("a TLS pair with no api_addr to serve it on must be refused by name, got %v", err)
+	}
+}
+
+// bindHCL renders a bind stanza one attribute per line — HCL's single-line
+// block form takes at most one attribute, so a compact literal would fail on
+// syntax and vacuously "pass" a refusal test for the wrong reason.
+func bindHCL(attrs ...string) string {
+	return "bind {\n  " + strings.Join(attrs, "\n  ") + "\n}\n"
+}
+
+// Every bind contradiction parse can see is refused with the file named
+// (PRD v1.61). What resolution decides — an unset mode on a non-loopback
+// address — deliberately parses clean; the daemon refuses that one.
+func TestParseRefusesBindContradictions(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string // a fragment the error must carry, so a syntax slip cannot pass as a refusal
+	}{
+		{"an unknown mode",
+			bindHCL(`api_addr = "127.0.0.1:8600"`, `api_tls = "letsencrypt"`),
+			"api_tls"},
+		{"acme without a domain",
+			bindHCL(`api_addr = ":8600"`, `api_tls = "acme"`),
+			"api_domain"},
+		{"acme beside a pair",
+			bindHCL(`api_addr = ":8600"`, `api_tls = "acme"`, `api_domain = "d.example"`, `api_cert = "/c"`, `api_key = "/k"`),
+			"issues its own certificate"},
+		{"self-signed beside a pair",
+			bindHCL(`api_addr = "127.0.0.1:8600"`, `api_tls = "self-signed"`, `api_cert = "/c"`, `api_key = "/k"`),
+			"issues its own certificate"},
+		{"self-signed on every interface with no name",
+			bindHCL(`api_addr = "0.0.0.0:8600"`, `api_tls = "self-signed"`),
+			"every interface"},
+		{"self-signed on an empty host with no name",
+			bindHCL(`api_addr = ":8600"`, `api_tls = "self-signed"`),
+			"every interface"},
+		{"plaintext beside a pair",
+			bindHCL(`api_addr = "127.0.0.1:8600"`, `api_tls = "plaintext"`, `api_cert = "/c"`, `api_key = "/k"`),
+			"drops the pair"},
+		{"provided without a pair",
+			bindHCL(`api_addr = "127.0.0.1:8600"`, `api_tls = "provided"`),
+			"needs bind.api_cert"},
+		{"a mode with no address",
+			bindHCL(`api_tls = "self-signed"`),
+			"no api_addr"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse("kanea.hcl", []byte(tt.src))
+			if err == nil {
+				t.Fatalf("%s must be refused", tt.src)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("refused for the wrong reason: %v (want %q)", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseAcceptsEveryCoherentBindMode(t *testing.T) {
+	tests := []struct {
+		name, src string
+	}{
+		{"acme with a domain",
+			bindHCL(`api_addr = ":8600"`, `api_tls = "acme"`, `api_domain = "kanea.example.com"`)},
+		{"self-signed on a concrete address",
+			bindHCL(`api_addr = "192.168.1.10:8600"`, `api_tls = "self-signed"`)},
+		{"self-signed on every interface with a name",
+			bindHCL(`api_addr = ":8600"`, `api_tls = "self-signed"`, `api_domain = "kanea.home.arpa"`)},
+		{"plaintext beyond loopback",
+			bindHCL(`api_addr = "192.168.1.10:8600"`, `api_tls = "plaintext"`)},
+		{"provided with its pair",
+			bindHCL(`api_addr = ":8600"`, `api_tls = "provided"`, `api_cert = "/c"`, `api_key = "/k"`)},
+		{"an unset mode beyond loopback parses; the daemon resolves it",
+			bindHCL(`api_addr = "192.168.1.10:8600"`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Parse("kanea.hcl", []byte(tt.src)); err != nil {
+				t.Fatalf("%s: %v", tt.src, err)
+			}
+		})
+	}
+}
+
+func TestParseRefusesAnUnknownAttributeInsideBind(t *testing.T) {
+	if _, err := Parse("kanea.hcl", []byte(`bind { api_adr = "127.0.0.1:8600" }`)); err == nil {
+		t.Fatal("a typo inside a read stanza must be an error, not a warning")
+	}
+}
+
+// The sketch halves of a read stanza: edge_http/edge_https are §15.1's own
+// example, so they load — and land in Ignored by their dotted names, because
+// accepted-but-unread without a warning is exactly the silently-swallowed trap.
+func TestParseNamesTheBindSketchHalvesAsIgnored(t *testing.T) {
+	cfg, err := Parse("kanea.hcl", []byte(`
+bind {
+  api_addr   = "127.0.0.1:8600"
+  edge_http  = ":80"
+  edge_https = ":443"
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"bind.edge_http", "bind.edge_https"}
+	if len(cfg.Ignored) != len(want) || cfg.Ignored[0] != want[0] || cfg.Ignored[1] != want[1] {
+		t.Fatalf("Ignored = %v, want %v", cfg.Ignored, want)
+	}
+	if cfg.Bind == nil || cfg.Bind.APIAddr != "127.0.0.1:8600" {
+		t.Fatalf("the read half must still load: %+v", cfg.Bind)
+	}
+}
+
 func TestParseAnEmptyFileIsAnEmptyConfig(t *testing.T) {
 	cfg, err := Parse("kanea.hcl", nil)
 	if err != nil {
@@ -149,7 +296,9 @@ socket "containerd" {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"acme", "bind", "cluster_id", "tls_default"}
+	// bind left this list in v1.61: its api half is read now, so the sample's
+	// api_addr-only block is consumed rather than warned.
+	want := []string{"acme", "cluster_id", "tls_default"}
 	if len(cfg.Ignored) != len(want) {
 		t.Fatalf("Ignored = %v, want %v", cfg.Ignored, want)
 	}

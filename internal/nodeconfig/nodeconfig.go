@@ -10,8 +10,9 @@
 // path is well-known, the file is trust-checked before parsing (CheckTrusted)
 // so a policy nobody but the node's owner could have written stays true.
 //
-// This version reads only the storage stanza. The device/socket grant blocks
-// in the same file are decoded by internal/passthrough over the same bytes —
+// This version reads the storage stanza and the bind stanza's API listener
+// half (v1.61). The device/socket grant blocks in the same file are decoded
+// by internal/passthrough over the same bytes —
 // two decoders, each owning its blocks. Stanzas neither reads are collected
 // into Config.Ignored for a startup warning naming them: not silently
 // swallowed (a typo that vanishes is the trap), not refused (PRD §15.1
@@ -22,6 +23,8 @@ package nodeconfig
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
@@ -38,14 +41,17 @@ import (
 const DefaultPath = "/etc/kanea/kanea.hcl"
 
 // readBlocks are the top-level block types some decoder consumes: storage
-// here, device/socket by internal/passthrough over the same file.
-var readBlocks = map[string]bool{"storage": true, "device": true, "socket": true}
+// and bind here, device/socket by internal/passthrough over the same file.
+var readBlocks = map[string]bool{"storage": true, "device": true, "socket": true, "bind": true}
 
 // Config is the subset of PRD §15.1 this version reads.
 type Config struct {
 	// AllowedHostPaths is storage.allowed_host_paths (R15).
 	// nil when the file or the stanza is absent.
 	AllowedHostPaths []string
+	// Bind is the bind stanza's API listener half (v1.61).
+	// nil when the file or the stanza is absent.
+	Bind *BindConfig
 	// Ignored names the top-level blocks and attributes the file carries
 	// and no decoder reads, for the startup warning.
 	Ignored []string
@@ -57,8 +63,41 @@ type Config struct {
 	Path string
 }
 
+// The api_tls modes (PRD §15.1, v1.61) — R20's vocabulary applied to the
+// node's own listener. An empty mode resolves at the daemon: a declared pair
+// means provided, a loopback address means plaintext, anything else refuses.
+const (
+	TLSAcme       = "acme"
+	TLSSelfSigned = "self-signed"
+	TLSProvided   = "provided"
+	TLSPlaintext  = "plaintext"
+)
+
+// BindConfig is what the bind stanza supplies for kanead's API/dashboard
+// listener (PRD §15.1, v1.61). The half is atomic: whichever source supplies
+// the address supplies its TLS story, so these travel together. Parse refuses
+// every contradiction it can see — a cert without a key, plaintext beside a
+// pair, acme without a domain — but whether an *unset* mode on a non-loopback
+// address may stand is deliberately not decided here: that refusal lives
+// where the equivalent flags are refused, at the daemon's listener
+// construction, so the file cannot express what the flags cannot.
+type BindConfig struct {
+	APIAddr string
+	// APITLS is one of the mode constants above, or "" for the default
+	// resolution.
+	APITLS string
+	// APIDomain names the certificate for the acme and self-signed modes.
+	// Required for acme, and for self-signed when APIAddr binds every
+	// interface — a certificate needs a name, and "every interface" is not
+	// one.
+	APIDomain string
+	APICert   string
+	APIKey    string
+}
+
 type hclRoot struct {
 	Storage *hclStorage `hcl:"storage,block"`
+	Bind    *hclBind    `hcl:"bind,block"`
 	Remain  hcl.Body    `hcl:",remain"`
 }
 
@@ -67,6 +106,20 @@ type hclRoot struct {
 // configuring the real feature, and a typo there must not half-apply.
 type hclStorage struct {
 	AllowedHostPaths []string `hcl:"allowed_host_paths,optional"`
+}
+
+// hclBind reads the bind stanza. edge_http/edge_https are §15.1's sketch:
+// schema-accepted so the document's own example is never an error, surfaced
+// in Ignored when set so they are never silently swallowed either. A truly
+// unknown attribute inside the block stays an error (no remain body).
+type hclBind struct {
+	APIAddr   string `hcl:"api_addr,optional"`
+	APITLS    string `hcl:"api_tls,optional"`
+	APIDomain string `hcl:"api_domain,optional"`
+	APICert   string `hcl:"api_cert,optional"`
+	APIKey    string `hcl:"api_key,optional"`
+	EdgeHTTP  string `hcl:"edge_http,optional"`
+	EdgeHTTPS string `hcl:"edge_https,optional"`
 }
 
 // Probe loads path if it exists. A missing file is the feature being off —
@@ -131,7 +184,97 @@ func Parse(filename string, src []byte) (*Config, error) {
 		}
 		cfg.AllowedHostPaths = paths
 	}
+	if root.Bind != nil {
+		bind := &BindConfig{
+			APIAddr:   strings.TrimSpace(root.Bind.APIAddr),
+			APITLS:    strings.TrimSpace(root.Bind.APITLS),
+			APIDomain: strings.TrimSpace(root.Bind.APIDomain),
+			APICert:   strings.TrimSpace(root.Bind.APICert),
+			APIKey:    strings.TrimSpace(root.Bind.APIKey),
+		}
+		if err := validateBind(bind); err != nil {
+			return nil, fmt.Errorf("nodeconfig: %s: %w", filename, err)
+		}
+		cfg.Bind = bind
+		// The sketch halves: accepted (the document's own example must not
+		// error) and named (never silently swallowed) — the v1.51 rule split
+		// down the middle of one stanza.
+		if strings.TrimSpace(root.Bind.EdgeHTTP) != "" {
+			cfg.Ignored = append(cfg.Ignored, "bind.edge_http")
+		}
+		if strings.TrimSpace(root.Bind.EdgeHTTPS) != "" {
+			cfg.Ignored = append(cfg.Ignored, "bind.edge_https")
+		}
+		sort.Strings(cfg.Ignored)
+	}
 	return cfg, nil
+}
+
+// validateBind refuses every bind contradiction parse can see (PRD §15.1,
+// v1.61). What it deliberately does not decide: whether an unset mode on a
+// non-loopback address may stand — that resolution needs the daemon's
+// context and lives at its listener construction.
+func validateBind(b *BindConfig) error {
+	hasPair := b.APICert != "" || b.APIKey != ""
+	if (b.APICert == "") != (b.APIKey == "") {
+		return errors.New("bind.api_cert and bind.api_key go together")
+	}
+	if hasPair && b.APIAddr == "" {
+		return errors.New("bind declares a TLS pair with no api_addr to serve it on")
+	}
+	if (b.APITLS != "" || b.APIDomain != "") && b.APIAddr == "" {
+		return errors.New("bind declares TLS with no api_addr to serve it on")
+	}
+
+	switch b.APITLS {
+	case "":
+		// Resolved at the daemon: a pair means provided, loopback means
+		// plaintext, anything else refuses there.
+	case TLSProvided:
+		if !hasPair {
+			return errors.New("bind.api_tls \"provided\" needs bind.api_cert and bind.api_key")
+		}
+	case TLSPlaintext:
+		if hasPair {
+			// A pair beside plaintext is a control that cannot act, carried —
+			// R21's rule: refused, never silently dropped.
+			return errors.New("bind.api_tls \"plaintext\" beside a TLS pair drops the pair; remove one")
+		}
+	case TLSAcme:
+		if hasPair {
+			return errors.New("bind.api_tls \"acme\" issues its own certificate; remove the api_cert/api_key pair")
+		}
+		if b.APIDomain == "" {
+			return errors.New("bind.api_tls \"acme\" needs bind.api_domain — an IP cannot hold an ACME certificate")
+		}
+	case TLSSelfSigned:
+		if hasPair {
+			return errors.New("bind.api_tls \"self-signed\" issues its own certificate; remove the api_cert/api_key pair")
+		}
+		if b.APIDomain == "" && unspecifiedHost(b.APIAddr) {
+			return fmt.Errorf("bind.api_addr %q binds every interface; set bind.api_domain so the certificate has a name", b.APIAddr)
+		}
+	default:
+		return fmt.Errorf("bind.api_tls %q: use one of %s, %s, %s, %s",
+			b.APITLS, TLSAcme, TLSSelfSigned, TLSProvided, TLSPlaintext)
+	}
+	return nil
+}
+
+// unspecifiedHost reports whether addr binds every interface: an empty host
+// (":8600") or the unspecified address of either family. An address that does
+// not even split is not this function's finding — the daemon's listener will
+// name that problem.
+func unspecifiedHost(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsUnspecified()
 }
 
 // walkTopLevel collects the top-level blocks and attributes no decoder

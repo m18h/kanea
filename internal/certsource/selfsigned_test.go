@@ -88,6 +88,43 @@ func TestSelfSignedIssuesUsableCertificates(t *testing.T) {
 	}
 }
 
+// A requested name that is an IP becomes an IP SAN (PRD v1.61): the API
+// listener is dialled at a bare address, and a client matches an IP against
+// IPAddresses, never against DNSNames. Service domains are DNS-1123 by
+// construction, so only the listener's synthetic request takes this path.
+func TestSelfSignedIssuesIPSANs(t *testing.T) {
+	src := newTestSelfSigned(t, time.Now)
+	res, err := src.Ensure(context.Background(),
+		[]Request{{Domains: []string{"192.168.1.10"}, Service: "kanead/api"}})
+	if err != nil || len(res.Failures) != 0 || len(res.Certificates) != 1 {
+		t.Fatalf("Ensure: %v %+v", err, res)
+	}
+	leaf := parseLeaf(t, res.Certificates[0].CertPEM)
+	if len(leaf.DNSNames) != 0 {
+		t.Fatalf("an IP request must not become a DNS SAN: %v", leaf.DNSNames)
+	}
+	if len(leaf.IPAddresses) != 1 || leaf.IPAddresses[0].String() != "192.168.1.10" {
+		t.Fatalf("IPAddresses = %v, want [192.168.1.10]", leaf.IPAddresses)
+	}
+
+	// The verification a real client performs when dialling by IP.
+	pool := x509.NewCertPool()
+	caPEM, err := src.CACertificate(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.AppendCertsFromPEM(caPEM)
+	if err := leaf.VerifyHostname("192.168.1.10"); err != nil {
+		t.Fatalf("a client dialling the IP rejects the certificate: %v", err)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots: pool, CurrentTime: time.Now(),
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}); err != nil {
+		t.Fatalf("a client trusting the CA rejects the chain: %v", err)
+	}
+}
+
 // A device whose clock runs a few minutes fast must not reject a certificate
 // minted this second — to its owner that reads as "your CA is broken".
 func TestSelfSignedBackdatesForClockSkew(t *testing.T) {
