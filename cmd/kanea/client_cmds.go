@@ -232,18 +232,40 @@ func runPs(args []string) error {
 	socket := socketFlag(fs)
 	project := fs.String("project", "", "filter by project")
 	service := fs.String("service", "", "filter by service")
+	all := fs.Bool("a", false,
+		"also show what is declared but not running: stopped services, uncreated slots")
+	allLong := fs.Bool("all", false, "alias for -a")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	showAll := *all || *allLong
 
+	ctx := context.Background()
 	client := api.NewClient(*socket)
-	allocs, err := client.Allocs(context.Background(), *project, *service)
+	allocs, err := client.Allocs(ctx, *project, *service)
 	if err != nil {
 		return err
 	}
+
+	// A removed alloc leaves no record on purpose (only failed-and-declared
+	// ones persist to explain themselves), so a stopped service is invisible
+	// to the plain table. -a re-derives those rows from the declarations.
+	var ghosts []psGhost
+	if showAll {
+		services, err := client.Services(ctx)
+		if err != nil {
+			return err
+		}
+		ghosts = declaredButAbsent(services, allocs, *project, *service)
+	}
+
 	o := newOut()
-	if len(allocs) == 0 {
-		o.println("No allocs.")
+	if len(allocs) == 0 && len(ghosts) == 0 {
+		if showAll {
+			o.println("No allocs and no declared services.")
+		} else {
+			o.println("No allocs. (`kanea ps -a` also shows stopped services.)")
+		}
 		return o.Err()
 	}
 
@@ -274,7 +296,54 @@ func runPs(args []string) error {
 		o.printf("%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			a.ID, a.Project, a.Service, state, a.Restarts, a.Image, age)
 	}
+	for _, g := range ghosts {
+		o.printf("%s\t%s\t%s\t%s\t-\t%s\t-\n",
+			g.id, g.project, g.service, g.state, g.image)
+	}
 	return o.Err()
+}
+
+// psGhost is a `ps -a` row for something declared with no alloc record.
+type psGhost struct {
+	id, project, service, state, image string
+}
+
+// declaredButAbsent derives the -a rows: a service scaled to zero is one
+// "stopped" row, and a declared slot with no record is "pending" — the
+// reconciler simply has not created it yet.
+func declaredButAbsent(
+	services []reconciler.Desired, allocs []reconciler.AllocRecord,
+	project, service string,
+) []psGhost {
+	present := map[string]bool{}
+	for _, a := range allocs {
+		present[reconciler.AllocID(a.Project, a.Service, a.Index)] = true
+	}
+	var ghosts []psGhost
+	for _, svc := range services {
+		if project != "" && svc.Project != project {
+			continue
+		}
+		if service != "" && svc.Service != service {
+			continue
+		}
+		if svc.Count == 0 {
+			ghosts = append(ghosts, psGhost{
+				id: "-", project: svc.Project, service: svc.Service,
+				state: "stopped (count 0)", image: svc.RunImage(),
+			})
+			continue
+		}
+		for i := 0; i < svc.Count; i++ {
+			if id := reconciler.AllocID(svc.Project, svc.Service, i); !present[id] {
+				ghosts = append(ghosts, psGhost{
+					id: id, project: svc.Project, service: svc.Service,
+					state: "pending (not created)", image: svc.RunImage(),
+				})
+			}
+		}
+	}
+	return ghosts
 }
 
 // runStatus implements `kanea status`: the one-screen answer to "is the
@@ -775,6 +844,18 @@ func (o *out) println(args ...any) {
 // table switches subsequent writes to a tabwriter; Err flushes it.
 func (o *out) table() {
 	o.tw = tabwriter.NewWriter(o.w, 0, 0, 2, ' ', 0)
+}
+
+// endTable flushes a table and returns subsequent writes to plain output,
+// for screens that mix a table with prose sections (`kanea describe`).
+func (o *out) endTable() {
+	if o.tw == nil {
+		return
+	}
+	if err := o.tw.Flush(); err != nil && o.err == nil {
+		o.err = err
+	}
+	o.tw = nil
 }
 
 func (o *out) writer() io.Writer {

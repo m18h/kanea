@@ -18,6 +18,7 @@ import (
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/jobspec"
+	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/secrets"
 	"github.com/m18h/kanea/internal/secretsource"
@@ -221,6 +222,27 @@ func (c *Client) Stats(ctx context.Context, project, service string) (StatsSampl
 	var out StatsSample
 	err := c.do(ctx, http.MethodGet, PathStats+"?"+q.Encode(), nil, &out)
 	return out, err
+}
+
+// Events fetches the notification feed (§11), newest first. The server
+// filters by project; a service cut is the caller's to make.
+func (c *Client) Events(ctx context.Context, project string, limit int) ([]notify.Event, error) {
+	q := url.Values{}
+	if project != "" {
+		q.Set("project", project)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := PathEvents
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out EventsResponse
+	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Events, nil
 }
 
 // Logs streams alloc logs to w until the stream ends or the context is

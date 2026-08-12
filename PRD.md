@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Adopted v1.53 |
+| **Status** | Adopted v1.54 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-08-12 (v1.53) |
+| **Last updated** | 2026-08-12 (v1.54) |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.54 amendments** — **`kanea describe`, and `kanea ps -a`** (§16.2). Two reads, no new writes and no new API surface — both compose routes that already exist, so nothing here touches auth, the Store, or the §13 boundary. `ps` has always shown every alloc record the Store holds, but a record is deleted when its alloc is deliberately removed (only failed-and-still-declared ones persist to explain themselves), so a stopped service simply vanishes from the table — indistinguishable from one that never existed, on the screen an operator checks first. **`-a` adds what is declared but has no record**: a service scaled to zero prints one `stopped (count 0)` row, and a declared slot the reconciler has not created yet prints `pending (not created)` — the docker `ps -a` muscle memory, honest about Kanea's model, where a removed alloc leaves no corpse to list and the *declaration* is the durable thing. **`describe` is the one-service deep view** (`kanea describe shop/web`): the declared spec beside what is actually true — image with its pinned digest when auto-update holds one, routes from every `expose` block and published port, volumes, dependencies, update/restart policy, the alloc table with health verdicts, a stats snapshot, and the service's slice of the §11 event feed. Assembled client-side from `GET /v1/services`, `/v1/allocs`, `/v1/stats` and `/v1/events` — the same reads the dashboard makes, which is the §16.3 rule (no side channels) applied to the CLI's read path. Stats and health render absent as absent (`-`), never as zero (§9.2), and the event feed's project filter is the server's; the service cut is the client's.
 
 > **v1.53 amendments** — **`kanead` gets no mount-namespace sandbox, because a mount manager cannot live in one** (§5.2.11). v1.1's "both Kanea units run with `ProtectSystem=strict`, `PrivateTmp=yes`" read as defense in depth and was actually a livelock in waiting: each of `ProtectSystem`, `ProtectHome`, `PrivateTmp` and even a bare `ReadWritePaths=` gives the service a **private mount namespace with slave propagation** — mounts flow in from the host, and every mount the service makes dies at its own boundary. `kanead`'s job is to make mounts *for other processes*: `ip netns add` bind-mounts an alloc's netns under `/run/netns` for **runc** to join, and the storage manager mounts SMB/NFS/S3 volumes for **containerd** to bind into containers. Under the sandbox, runc opened what was — in the host namespace — an empty regular file and failed `setns` with EINVAL on every task create, and a volume mount would have surfaced as a silently empty directory inside the workload: the second failure is the worse one, because it looks healthy. Found on the first real systemd-managed node to reach task-create (dev runs never had the sandbox). The unit now carries `NoNewPrivileges=yes` — which implies no mount namespace — and nothing that does; `kanea-edge` keeps the full sandbox unchanged, because it mounts nothing and writes nothing. This is the R23-shaped lesson at the systemd layer: the directive that looks like a hardening default is load-bearing infrastructure the moment the process's job is to produce state others consume, and a regression test now refuses any mount-namespace-implying directive on the kanead unit by name.
 
@@ -1447,7 +1449,8 @@ kanea plan app.hcl         # dry-run diff
 kanea run app.hcl          # apply job spec (alias: kanea apply)
 kanea run --image=nginx:1.27-alpine --name web --project demo   # minimal image-only deploy, no spec file
 kanea stop shop/web        # stop a service
-kanea ps [-p shop]         # allocs table
+kanea ps [-p shop] [-a]    # allocs table; -a adds declared-but-not-running rows (stopped, not created)
+kanea describe shop/web    # one service in full: spec, routes, volumes, allocs, stats, recent events
 kanea status [shop/web]    # health, events, scaling
 kanea logs -f shop/web     # stream logs (merged or --alloc)
 kanea exec shop/web -- sh  # debug shell into an alloc
