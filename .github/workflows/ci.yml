@@ -219,6 +219,50 @@ jobs:
           test ! -e /usr/local/lib/kanea/bin/containerd
           echo "refused, and nothing was written"
 
+  brew-verify:
+    # The Homebrew formula (PRD §5.2.12, v1.60) points at *published* release
+    # archives, so this job can always install whatever the committed formula
+    # names — the formula on main is only ever advanced by the release
+    # workflow, after the assets exist. Style is checked everywhere; the
+    # install half runs where the formula has assets for the runner, which
+    # for macOS means: from the first release that ships darwin archives.
+    name: Homebrew formula — style, install, test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Homebrew/actions/setup-homebrew@master
+      - name: brew style
+        run: brew style Formula/kanea.rb
+      - name: The generator reproduces the committed formula
+        # The formula is generated output (like the BPF artifacts): regenerate
+        # from the release the formula names and diff, so a hand edit — or a
+        # generator change that forgot to regenerate — fails here by name.
+        run: |
+          set -euo pipefail
+          tag="v$(sed -n 's/^  version "\(.*\)"/\1/p' Formula/kanea.rb)"
+          curl -fsSL "https://github.com/m18h/kanea/releases/download/${tag}/checksums.txt" \
+            -o /tmp/checksums.txt
+          bash scripts/update-formula.sh "$tag" /tmp/checksums.txt
+          git diff --exit-code Formula/kanea.rb
+      - name: Install and test
+        # Through a throwaway local tap: brew ≥ 6 refuses to install a formula
+        # from a bare path, and tapping the checkout itself would install the
+        # default branch's formula rather than this PR's.
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ] && ! grep -q on_macos Formula/kanea.rb; then
+            echo "no darwin release published yet; style and reproducibility only"
+            exit 0
+          fi
+          brew tap-new kanea/ci --no-git
+          cp Formula/kanea.rb "$(brew --repository kanea/ci)/Formula/kanea.rb"
+          brew install kanea/ci/kanea
+          kanea version
+          brew test kanea/ci/kanea
+
   lint:
     name: Lint — golangci-lint
     runs-on: ubuntu-latest

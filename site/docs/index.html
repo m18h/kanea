@@ -1292,6 +1292,13 @@ spec_version = 1
       Services are addressed as <code>project/service</code> throughout, or as a bare service
       name with <code>--project</code>.
     </p>
+    <p>
+      The CLI also installs through <a href="../#homebrew">Homebrew</a>, on Linux and on
+      macOS. A Mac gets the authoring half: <code>kanea plan</code> parses and validates a
+      job spec with file-and-line diagnostics before anything dials a socket, so no daemon
+      is needed — the platform itself, and everything above that needs the socket, runs on
+      Linux.
+    </p>
 
     <h3 id="cli-setup">Setup</h3>
 
