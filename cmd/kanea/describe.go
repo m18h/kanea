@@ -78,6 +78,14 @@ func describeSpec(o *out, svc reconciler.Desired) {
 	if svc.Runtime != "" {
 		o.printf("Runtime      %s\n", svc.Runtime)
 	}
+	// The stored list is what was declared; an empty one means the R13
+	// baseline for a runc service, and saying so beats printing nothing —
+	// the difference between "default" and "none" is the whole feature.
+	if len(svc.Capabilities) > 0 {
+		o.printf("Capabilities %s\n", strings.Join(svc.Capabilities, ", "))
+	} else if svc.Runtime == "" {
+		o.printf("Capabilities baseline (default)\n")
+	}
 	if len(svc.DependsOn) > 0 {
 		o.printf("Depends on   %s\n", strings.Join(svc.DependsOn, ", "))
 	}

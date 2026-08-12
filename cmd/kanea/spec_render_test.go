@@ -41,6 +41,10 @@ service "web" {
   task "app" {
     image = "registry.example.com/shop/web:1.14.0"
 
+    # The "none" token and an explicit grant must both survive the round trip
+    # in their stored, normalized forms (R13, v1.56).
+    capabilities = ["none", "CAP_NET_RAW"]
+
     env = {
       NODE_ENV     = "production"
       DATABASE_URL = "secret:shop/database-url"

@@ -10,9 +10,11 @@ import (
 
 // PermittedCapabilities is the closed set a service may request (R13).
 //
-// Every alloc starts with ALL capabilities dropped (PRD §14, A05). This set is
-// what stock images legitimately need in order to start at all: chowning a data
-// directory, dropping to their own user, binding a privileged port. It is
+// Every runc alloc starts from the baseline set (PRD §14 A05, v1.56 —
+// reconciler.BaselineCapabilities), and the declared list adds to it; the
+// CapabilityNone token starts from nothing instead. This set bounds what may
+// be *declared*: what stock images legitimately need beyond the baseline —
+// binding a raw socket, chrooting, dropping bounding-set entries. It is
 // deliberately the conservative half of Docker's default set.
 //
 // Anything not listed here is refused at parse time. That is the point: v1 has
@@ -55,6 +57,15 @@ var forbiddenCapabilities = map[string]string{
 	"CAP_NET_ADMIN":       "it can reconfigure networking, including Kanea's own datapath",
 }
 
+// CapabilityNone is the canonical spelling of the opt-out token: a service
+// declaring it starts from nothing rather than from the baseline set. The
+// constant is duplicated in the reconciler (reconciler.CapabilityNone), the
+// ownershipRefusedBy precedent: a dependency from reconciler to jobspec would
+// point the wrong way, and the contract is one lowercase word.
+const CapabilityNone = "none"
+
+var capabilityNoneUpper = strings.ToUpper(CapabilityNone)
+
 // validateCapabilities enforces R13.
 func validateCapabilities(svc *Service) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -65,6 +76,19 @@ func validateCapabilities(svc *Service) hcl.Diagnostics {
 	seen := make(map[string]bool, len(svc.Task.Capabilities))
 	for _, capability := range svc.Task.Capabilities {
 		name := strings.ToUpper(strings.TrimSpace(capability))
+
+		// "none" opts out of the baseline: start from nothing, then grant
+		// only what the rest of the list names (R13, v1.56). Checked before
+		// the CAP_ prefix rule — it is a token, not a capability — but still
+		// through the duplicate map.
+		if name == capabilityNoneUpper {
+			if seen[CapabilityNone] {
+				diags = append(diags, capDiag(svc, fmt.Sprintf("%q is listed twice", CapabilityNone)))
+				continue
+			}
+			seen[CapabilityNone] = true
+			continue
+		}
 
 		switch {
 		case name == "":
@@ -130,8 +154,13 @@ func capDiag(svc *Service, detail string) *hcl.Diagnostic {
 	}
 }
 
-// NormalizeCapabilities upper-cases and de-duplicates a validated list, so the
-// runtime always receives canonical names.
+// NormalizeCapabilities upper-cases and de-duplicates a validated list, so
+// every consumer sees canonical names. The one exception is the "none" token,
+// canonicalized to lowercase — it is a spec-level word, not a capability, and
+// the case difference is what keeps it visually distinct from the CAP_ names
+// it stands beside. Sorting puts it after them, which is fine: position never
+// carries meaning (this function sorts, and spec-source regenerates from the
+// stored form).
 func NormalizeCapabilities(in []string) []string {
 	if len(in) == 0 {
 		return nil
@@ -140,6 +169,9 @@ func NormalizeCapabilities(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, c := range in {
 		name := strings.ToUpper(strings.TrimSpace(c))
+		if name == capabilityNoneUpper {
+			name = CapabilityNone
+		}
 		if name == "" || seen[name] {
 			continue
 		}

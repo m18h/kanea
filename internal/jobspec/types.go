@@ -232,8 +232,9 @@ type Task struct {
 	// Command overrides the image entrypoint (R12). Argument array, never a
 	// shell string.
 	Command []string
-	// Capabilities is the explicit allowlist on top of the drop-ALL default
-	// (R13). Only PermittedCapabilities may be requested.
+	// Capabilities are grants added to the R13 baseline; the "none" token
+	// starts from nothing instead. Only PermittedCapabilities (or "none") may
+	// be declared.
 	Capabilities []string
 	Env          map[string]string
 	// User is the numeric identity the workload runs as (R23). Nil means the
@@ -292,9 +293,10 @@ type Socket struct {
 //
 // Numeric only, and there is no field here for a username: see hclUser for why
 // resolving one is a thing this deliberately does not do. Setting a user is not
-// a substitute for R13 — capabilities are still dropped to nothing — but it is
-// what makes most capability grants unnecessary, because the CHOWN/SETUID/SETGID
-// trio exists so an image can do at startup what this states up front.
+// a substitute for R13 — the capability rules apply unchanged — but it is what
+// makes startup privilege unnecessary: the baseline's CHOWN/SETUID/SETGID exist
+// so an image can do at startup what this states up front, and a spec that
+// states it can pair this block with capabilities = ["none"].
 // The fields are `int` rather than `uint32` so that validateUser sees the value
 // as it was written and can say so. Narrowing happens at the toDesired boundary,
 // where Resources is narrowed too — after validation has refused the values that

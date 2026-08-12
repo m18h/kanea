@@ -1509,6 +1509,13 @@ func TestCapabilityAllowlist(t *testing.T) {
 		{"redis drops privileges", `["CAP_SETUID", "CAP_SETGID"]`, ""},
 		{"binding port 80", `["CAP_NET_BIND_SERVICE"]`, ""},
 		{"empty list", `[]`, ""},
+		// "none" opts out of the v1.56 baseline. It is a token, not a
+		// capability, so the CAP_ prefix rule does not apply to it — but the
+		// duplicate rule does.
+		{"none opts out of the baseline", `["none"]`, ""},
+		{"none is case-insensitive", `["NONE"]`, ""},
+		{"none beside a grant", `["none", "CAP_NET_RAW"]`, ""},
+		{"none listed twice", `["none", "NONE"]`, "listed twice"},
 		{"sys_admin is refused", `["CAP_SYS_ADMIN"]`, "equivalent to root"},
 		{"ptrace is refused", `["CAP_SYS_PTRACE"]`, "escaping the container"},
 		{"net_admin is refused", `["CAP_NET_ADMIN"]`, "Kanea's own datapath"},
@@ -1570,6 +1577,23 @@ func TestNormalizeCapabilities(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("normalized = %v, want %v (sorted and deduplicated)", got, want)
+		}
+	}
+}
+
+// The "none" token canonicalizes to lowercase — a spec-level word, visually
+// distinct from the CAP_ names it stands beside — and deduplicates across
+// spellings. Its stored form is what the reconciler's projection matches on,
+// so this is a contract, not cosmetics.
+func TestNormalizeCapabilitiesCanonicalizesNone(t *testing.T) {
+	got := jobspec.NormalizeCapabilities([]string{"NONE", "None", "CAP_NET_RAW"})
+	want := []string{"CAP_NET_RAW", "none"}
+	if len(got) != len(want) {
+		t.Fatalf("normalized = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("normalized = %v, want %v", got, want)
 		}
 	}
 }

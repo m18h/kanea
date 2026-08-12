@@ -74,9 +74,11 @@ type AllocSpec struct {
 	// Command overrides the image entrypoint when non-empty. Argument array,
 	// never a shell string (PRD §6.2 R12).
 	Command []string
-	// Capabilities is the explicit allowlist on top of the drop-ALL default
-	// (PRD §6.2 R13). The caller is responsible for having validated it: this
-	// package grants exactly what it is given.
+	// Capabilities is the *effective* set, already projected by the caller
+	// (PRD §6.2 R13): the reconciler resolves the baseline, the union with a
+	// service's declared grants, and the "none" opt-out before anything
+	// reaches this package. This package grants exactly what it is given and
+	// defaults nothing — every entry must be a real CAP_* name (Validate).
 	Capabilities []string
 	// Env is the resolved environment. Secret values are already materialised
 	// by the caller; this package never resolves secret: references.
