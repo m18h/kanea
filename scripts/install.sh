@@ -62,10 +62,24 @@ fi
 ARCHIVE="kanea_${VERSION#v}_linux_${ARCH}.tar.gz"
 BASE="https://github.com/${REPO}/releases/download/${VERSION}"
 
+# An existing binary makes this an upgrade, and the ending below changes with
+# it: a node that is already initialised needs a restart in the right order,
+# not a second key ceremony.
+OLD_VERSION=""
+if [ -x "${PREFIX}/kanea" ]; then
+  OLD_VERSION="$("${PREFIX}/kanea" version 2>/dev/null | awk '{print $2}')" || OLD_VERSION=""
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-note "Downloading kanea ${VERSION} (linux/${ARCH})"
+if [ -n "$OLD_VERSION" ] && [ "$OLD_VERSION" = "$VERSION" ]; then
+  note "kanea ${VERSION} is already installed; reinstalling it"
+elif [ -n "$OLD_VERSION" ]; then
+  note "Upgrading kanea ${OLD_VERSION} -> ${VERSION} (linux/${ARCH})"
+else
+  note "Downloading kanea ${VERSION} (linux/${ARCH})"
+fi
 curl -fsSL "${BASE}/${ARCHIVE}" -o "${WORK}/${ARCHIVE}"
 
 # Checksum verification is not optional and there is no flag to skip it. A
@@ -109,6 +123,33 @@ fi
 tar -xzf "${WORK}/${ARCHIVE}" -C "$WORK"
 install -m 0755 "${WORK}/kanea" "${PREFIX}/kanea"
 note "Installed ${PREFIX}/kanea"
+
+# The upgrade ending. The new binary is on disk but the old one is still the
+# one running — `kanea upgrade` owns the restart order (PRD §15.4): back up,
+# drain and restart the edge, then kanead, which runs any state migrations.
+# Workloads are untouched throughout (KillMode=process).
+if [ -n "$OLD_VERSION" ]; then
+  cat <<'UPGRADE'
+
+The running daemons are still on the old binary. Next:
+
+    sudo kanea upgrade
+
+It backs up, drains and restarts kanea-edge, then restarts kanead — which
+runs any state migrations. Running workloads are untouched throughout.
+
+If the release notes mention changed systemd units, regenerate them too —
+`kanea upgrade` deliberately never rewrites units:
+
+    sudo kanea init      # idempotent: key, accounts and settings are kept
+    sudo systemctl daemon-reload
+
+Host components (containerd, runc, buildkitd) are pinned by the new binary;
+`sudo kanea install --dry-run` shows whether any of them need to move, and
+`sudo kanea doctor` confirms the node agrees with the version matrix.
+UPGRADE
+  exit 0
+fi
 
 cat <<'NEXT'
 

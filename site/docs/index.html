@@ -1336,10 +1336,18 @@ spec_version = 1
       <b class="label">It does not download anything</b>
       <p>
         Installing software is the package manager's job — or
-        <a href="../install.sh">install.sh</a>. A command that both fetched a binary and
-        restarted the platform would be a command nobody could safely run twice.
+        <a href="../install.sh">install.sh</a>, which recognises an existing install,
+        replaces the binary, and tells you to run this. A command that both fetched a
+        binary and restarted the platform would be a command nobody could safely run
+        twice.
       </p>
     </div>
+    <p>
+      One thing it deliberately never does: rewrite systemd units. When release notes
+      say the units changed, re-run <code>sudo kanea init</code> after upgrading —
+      idempotent: the master key, accounts and settings are kept — then
+      <code>sudo systemctl daemon-reload</code>.
+    </p>
 
     <h3 id="cli-deploy">Deploying</h3>
 
@@ -1373,8 +1381,26 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <h3 id="cli-inspect">Inspecting</h3>
 
     <h4><code>kanea ps</code></h4>
-    <pre class="plain">kanea ps [--project=p] [--service=s]</pre>
-    <p>The alloc table: id, service, state, health, restarts, age, address.</p>
+    <pre class="plain">kanea ps [--project=p] [--service=s] [-a]</pre>
+    <p>
+      The alloc table: id, service, state, health, restarts, age, address.
+      A removed alloc leaves no record (only failed-and-still-declared ones
+      persist to explain themselves), so a stopped service is invisible here —
+      <code>-a</code> adds what is declared but not running: services scaled to
+      zero (<code>stopped</code>) and slots the reconciler has not created yet
+      (<code>pending</code>).
+    </p>
+
+    <h4><code>kanea describe</code></h4>
+    <pre class="plain">kanea describe [--project=p] &lt;[project/]service&gt;</pre>
+    <p>
+      One service in full: the declared spec beside what is actually true —
+      image and its pinned digest under auto-update, routes from every
+      <code>expose</code> block and published port, volumes and grants, the
+      alloc table with health verdicts, a stats snapshot, and the service's
+      recent events. Stats and health render absent as absent (<code>-</code>),
+      never as zero: a missing metric and an idle service are different facts.
+    </p>
 
     <h4><code>kanea status</code></h4>
     <pre class="plain">kanea status [--project=p] [[project/]service]</pre>

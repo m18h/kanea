@@ -68,7 +68,7 @@ var implemented = map[string]bool{
 	"version": true,
 	// M1 runtime core:
 	"agent": true, "plan": true, "run": true, "stop": true, "ps": true, "logs": true,
-	"status": true,
+	"status": true, "describe": true,
 	// M3 ingress:
 	"edge": true,
 	// M5 auth & secrets:
