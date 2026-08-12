@@ -735,6 +735,112 @@ func runStop(args []string) error {
 	return o.Err()
 }
 
+// runStart implements `kanea start`: scale a stopped service back up — stop's
+// counterpart, through the same scale route. The daemon does not remember the
+// pre-stop count (a stopped record says zero, PRD v1.54), so the default is
+// one replica; and a service already running is left exactly as it is,
+// because start is idempotent, never a second spelling of scale.
+func runStart(args []string) error {
+	fs := flag.NewFlagSet("start", flag.ContinueOnError)
+	socket := socketFlag(fs)
+	project := fs.String("project", "", "project name")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 || fs.NArg() > 2 {
+		return errors.New("usage: kanea start [--project P] <[project/]service> [count]")
+	}
+	count := 1
+	if fs.NArg() == 2 {
+		n, err := strconv.Atoi(fs.Arg(1))
+		if err != nil || n < 1 {
+			return fmt.Errorf("count %q must be a number, one or more", fs.Arg(1))
+		}
+		count = n
+	}
+
+	ctx := context.Background()
+	client := api.NewClient(*socket)
+
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	target, err := findService(services, *project, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+
+	o := newOut()
+	if target.Count > 0 {
+		o.printf("%s/%s is already running (count %d); use kanea scale to change it\n",
+			target.Project, target.Service, target.Count)
+		return o.Err()
+	}
+
+	// An autoscaled service is started at its own floor: the server refuses a
+	// count outside the declared bounds (it would be undone within seconds),
+	// so defaulting to 1 against min = 2 would be an error nobody typed. An
+	// explicit count is passed through and meets the server's refusal, which
+	// names the bounds.
+	autoscaled := target.Scaling != nil && target.Scaling.Max > 0 && len(target.Scaling.Metrics) > 0
+	if fs.NArg() != 2 && autoscaled && target.Scaling.Min > count {
+		count = target.Scaling.Min
+	}
+
+	if _, err := client.Scale(ctx, target.Project, target.Service, count); err != nil {
+		return err
+	}
+	if fs.NArg() == 2 {
+		o.printf("started %s/%s (count %d)\n", target.Project, target.Service, count)
+	} else {
+		o.printf("started %s/%s (count %d; kanea scale sets more)\n",
+			target.Project, target.Service, count)
+	}
+	if autoscaled {
+		o.printf("note: %s/%s autoscales between %d and %d; it converges to its own count\n",
+			target.Project, target.Service, target.Scaling.Min, target.Scaling.Max)
+	}
+	return o.Err()
+}
+
+// runRestart implements `kanea restart`: ask the server to bump the service's
+// generation, which rolls its allocs through the update policy — the same
+// route the dashboard and MCP's restart_service have always used. It is also
+// the way out of an exhausted restart budget: the bump is a new spec hash,
+// and R29 ties the crash-restart count to the hash that spent it.
+func runRestart(args []string) error {
+	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
+	socket := socketFlag(fs)
+	project := fs.String("project", "", "project name")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: kanea restart [--project P] <[project/]service>")
+	}
+
+	ctx := context.Background()
+	client := api.NewClient(*socket)
+
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	target, err := findService(services, *project, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+
+	if _, err := client.Restart(ctx, target.Project, target.Service); err != nil {
+		return err
+	}
+	o := newOut()
+	o.printf("restart requested for %s/%s; allocs roll through the update policy\n",
+		target.Project, target.Service)
+	return o.Err()
+}
+
 // runScale sets a service's replica count.
 //
 // The same operation the autoscaler performs, through the same route: a manual
@@ -784,8 +890,18 @@ func runScale(args []string) error {
 }
 
 // findService resolves a service name, requiring --project only when the name
-// is ambiguous across projects.
+// is ambiguous across projects. The documented `project/service` form (PRD
+// §16.2: `kanea stop shop/web`) is resolved here, so every command that looks
+// a service up accepts it — a service name is a DNS-1123 label and can never
+// contain a slash, so the split is unambiguous.
 func findService(services []reconciler.Desired, project, name string) (reconciler.Desired, error) {
+	if p, s, ok := strings.Cut(name, "/"); ok {
+		if project != "" && project != p {
+			return reconciler.Desired{}, fmt.Errorf(
+				"--project %s disagrees with %q; drop one of them", project, name)
+		}
+		project, name = p, s
+	}
 	var matches []reconciler.Desired
 	for _, svc := range services {
 		if svc.Service != name {

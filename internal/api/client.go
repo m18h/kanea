@@ -193,6 +193,18 @@ func (c *Client) Scale(ctx context.Context, project, service string, count int) 
 	return out, err
 }
 
+// Restart requests a rolling restart. The server bumps the service's
+// generation — which is SpecHash material — so the reconciler rolls its
+// allocs through the update policy: a restart is a spec change, not a second
+// path to the runtime.
+func (c *Client) Restart(ctx context.Context, project, service string) (ApplyResponse, error) {
+	var out ApplyResponse
+	path := fmt.Sprintf("%s/%s/%s/restart", PathServices,
+		url.PathEscape(project), url.PathEscape(service))
+	err := c.do(ctx, http.MethodPost, path, nil, &out)
+	return out, err
+}
+
 // Allocs lists alloc records, optionally filtered.
 func (c *Client) Allocs(ctx context.Context, project, service string) ([]reconciler.AllocRecord, error) {
 	q := url.Values{}

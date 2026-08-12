@@ -1826,6 +1826,70 @@ service "web" {
 	}
 }
 
+func TestRestartPolicyRules(t *testing.T) {
+	// R29: the restart block is validated where it is written. Before the rule
+	// it parsed and went no further, so a mistyped schedule surfaced as a
+	// conversion error with no file or line.
+	tests := []struct {
+		name    string
+		block   string
+		wantErr string
+	}{
+		{
+			name:  "the documented form",
+			block: "restart {\n attempts = 5\n backoff = \"10s,30s,1m,5m\"\n}",
+		},
+		{
+			name:  "empty block means the defaults",
+			block: "restart {}",
+		},
+		{
+			name:  "spaces around entries are fine",
+			block: "restart {\n backoff = \"10s, 30s, 1m\"\n}",
+		},
+		{
+			name:    "negative attempts",
+			block:   "restart {\n attempts = -1\n}",
+			wantErr: "Invalid restart attempts",
+		},
+		{
+			name:    "a token that is not a duration",
+			block:   "restart {\n backoff = \"10s,soon\"\n}",
+			wantErr: "Invalid restart backoff",
+		},
+		{
+			name:    "a stray comma is not skipped",
+			block:   "restart {\n backoff = \"10s,,30s\"\n}",
+			wantErr: "empty entry",
+		},
+		{
+			name:    "a zero delay is a tight loop",
+			block:   "restart {\n backoff = \"0s,30s\"\n}",
+			wantErr: "must be positive",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+  ` + tc.block + `
+}
+`
+			if tc.wantErr == "" {
+				parse(t, src)
+				return
+			}
+			if out := parseErr(t, src); !strings.Contains(out, tc.wantErr) {
+				t.Errorf("diagnostics = %q, want %q", out, tc.wantErr)
+			}
+		})
+	}
+}
+
 // R23/R24: who a container runs as, and who owns its data.
 
 func TestUserAndVolumeOwnershipValidation(t *testing.T) {

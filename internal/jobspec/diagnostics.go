@@ -23,6 +23,36 @@ func ParseDuration(s string) (time.Duration, error) {
 	return d, nil
 }
 
+// ParseBackoff parses the restart block's comma-separated delay schedule
+// ("10s,30s,1m,5m"), per R29. Every entry must be a positive duration: an
+// empty entry is refused rather than skipped, because a stray comma silently
+// shortening a backoff schedule is the kind of quiet edit the rule exists to
+// catch, and a zero delay is refused because "restart immediately, forever"
+// is the tight loop the schedule exists to prevent. Empty input means "use
+// the default schedule" and returns nil.
+func ParseBackoff(s string) ([]time.Duration, error) {
+	if s == "" {
+		return nil, nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]time.Duration, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			return nil, fmt.Errorf("empty entry in schedule %q", s)
+		}
+		d, err := ParseDuration(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", trimmed, err)
+		}
+		if d == 0 {
+			return nil, fmt.Errorf("%q: must be positive", trimmed)
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
 // FormatDiagnostics renders diagnostics for a terminal, one per line, with
 // file:line:column. The CLI writes the result to stderr; it never prints
 // diagnostics itself, so the format stays in one place.

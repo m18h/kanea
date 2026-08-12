@@ -39,6 +39,8 @@ var commands = []command{
 	{"plan", "dry-run diff of a job spec", runPlan},
 	{"run", "apply a job spec (or --image for a bare image); alias: apply", runRun},
 	{"stop", "stop a service (scale to zero; --rm deletes it)", runStop},
+	{"start", "start a stopped service (one replica unless a count is given)", runStart},
+	{"restart", "roll a service's allocs through its update policy", runRestart},
 	{"ps", "list allocations (-a adds stopped and not-yet-created)", runPs},
 	{"describe", "one service in full: spec, routes, allocs, stats, events", runDescribe},
 	{"status", "service and platform status", runStatus},
