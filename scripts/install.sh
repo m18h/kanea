@@ -138,6 +138,9 @@ The running daemons are still on the old binary. Next:
 It backs up, drains and restarts kanea-edge, then restarts kanead — which
 runs any state migrations. Running workloads are untouched throughout.
 
+(Next time, `sudo kanea upgrade` alone is the whole upgrade: it downloads
+and verifies the release itself before restarting anything.)
+
 If the release notes mention changed systemd units, regenerate them too —
 `kanea upgrade` deliberately never rewrites units:
 

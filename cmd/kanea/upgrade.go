@@ -15,18 +15,23 @@ import (
 
 // runUpgrade is `kanea upgrade` (PRD §15.4).
 //
-// It orchestrates a restart; it does not fetch a binary. Installing software is
-// the package manager's job — or `scripts/install.sh` — and a command that both
-// downloaded and restarted would be a command nobody could safely run twice.
-// What it owns is the *order*, which is the part §15.4 specifies and the part
-// that is easy to get wrong.
+// Since v1.59 it fetches the release it is about to become: resolve latest
+// (or --version), verify sha256 + cosign-when-present against the signed
+// checksums.txt, and install atomically over its own path. The fetch is
+// idempotent — already at the target version means nothing to download — so
+// the command is safe to run twice, which is what unblocked folding the two
+// halves together. --no-fetch keeps the pre-v1.59 behaviour for a node whose
+// binary a package manager owns.
 //
-// The order is: back up, drain the edge and restart it, then restart kanead.
-// The edge goes first because it is the thing carrying traffic and it comes
-// back in seconds; kanead goes last because it is the thing that will migrate
-// the schema, and a migration should happen once every other moving part has
-// already settled. Running allocs are untouched throughout — that is what
-// KillMode=process in the unit is for.
+// The restart order it has always owned: back up, drain the edge and restart
+// it, then restart kanead. The edge goes first because it is the thing
+// carrying traffic and it comes back in seconds; kanead goes last because it
+// is the thing that will migrate the schema, and a migration should happen
+// once every other moving part has already settled. Running allocs are
+// untouched throughout — that is what KillMode=process in the unit is for.
+// The orchestration runs under the old process image while the daemons
+// restart into the new one; if a future release changes the order, its own
+// release notes win.
 func runUpgrade(args []string) error {
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
 	socket := socketFlag(fs)
@@ -34,8 +39,15 @@ func runUpgrade(args []string) error {
 		"do not take a backup first (the schema migration takes its own local copy either way)")
 	dryRun := fs.Bool("dry-run", false, "print what would run and stop")
 	timeout := fs.Duration("timeout", 2*time.Minute, "how long to wait for each service")
+	check := fs.Bool("check", false, "report the running, installed and latest versions and stop")
+	pin := fs.String("version", "", "upgrade to this release instead of the latest (vX.Y.Z)")
+	noFetch := fs.Bool("no-fetch", false,
+		"do not download anything; restart onto whatever binary is already installed")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *pin != "" && !releaseTag.MatchString(*pin) {
+		return fmt.Errorf("--version %q is not a release tag (vX.Y.Z)", *pin)
 	}
 
 	o := newOut()
@@ -46,9 +58,60 @@ func runUpgrade(args []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot reach kanead: %w", err)
 	}
+	binaryVersion := version
+
+	if *check {
+		source := newReleaseSource()
+		latest, err := source.latest(ctx)
+		if err != nil {
+			return err
+		}
+		o.printf("Running version: %s\n", installed.Version)
+		o.printf("Binary version:  %s\n", binaryVersion)
+		o.printf("Latest release:  %s\n", latest)
+		if installed.Version != latest {
+			o.println("\nRun `sudo kanea upgrade` to move to it.")
+		}
+		return o.Err()
+	}
+
+	if !*noFetch {
+		source := newReleaseSource()
+		target := *pin
+		if target == "" {
+			if target, err = source.latest(ctx); err != nil {
+				return err
+			}
+		}
+		switch {
+		case target == binaryVersion:
+			o.printf("The installed binary is already %s; nothing to download.\n", target)
+		case *dryRun:
+			o.printf("would download and install %s over the %s binary\n", target, binaryVersion)
+		default:
+			asset, err := assetName(target)
+			if err != nil {
+				return err
+			}
+			binPath, err := runningBinaryPath()
+			if err != nil {
+				return err
+			}
+			o.printf("Fetching %s (installed binary is %s)…\n", target, binaryVersion)
+			notes, err := source.selfUpdate(ctx, target, asset, binPath)
+			for _, note := range notes {
+				o.printf("  %s\n", note)
+			}
+			if err != nil {
+				return err
+			}
+			binaryVersion = target
+		}
+	}
+
 	o.printf("Running version: %s\n", installed.Version)
-	o.printf("Binary version:  %s\n", version)
-	if installed.Version == version && !*dryRun {
+	o.printf("Binary version:  %s\n", binaryVersion)
+	if installed.Version == binaryVersion && !*dryRun {
 		// Not an error: the units may still need restarting after a package
 		// upgrade that replaced the binary in place, and a restart is harmless.
 		o.println("\nThe daemon is already running this version. Restarting anyway is safe;")
