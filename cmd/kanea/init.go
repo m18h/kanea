@@ -160,7 +160,7 @@ func runInit(args []string) error {
 		o.println()
 	}
 
-	if err := createLayout(o, *dataDir, *logDir); err != nil {
+	if err := createLayout(o, *dataDir, *logDir, provision.DefaultConfDir); err != nil {
 		return err
 	}
 	// The CLI socket group (PRD v1.48, §13.1), created empty: membership is
@@ -215,10 +215,12 @@ const defaultUnitDir = "/etc/systemd/system"
 const defaultReserve = "1G"
 
 // createLayout makes the directories, with the modes they need.
-func createLayout(o *out, dataDir, logDir string) error {
+func createLayout(o *out, dataDir, logDir, confDir string) error {
 	// 0750 on the data directory: it holds the master key, the secrets bucket
 	// and every certificate. 0750 on logs: workload output can carry anything a
-	// workload printed.
+	// workload printed. 0755 on the config directory: kanea.hcl is policy, not
+	// a secret, and no example file is written — the default is that the
+	// server config does not exist (PRD §15.1).
 	for _, dir := range []struct {
 		path string
 		mode os.FileMode
@@ -227,6 +229,7 @@ func createLayout(o *out, dataDir, logDir string) error {
 		{filepath.Join(dataDir, volumeSubdir), 0o750},
 		{filepath.Join(dataDir, resolvSubdir), 0o755},
 		{logDir, 0o750},
+		{confDir, 0o755},
 	} {
 		if err := os.MkdirAll(dir.path, dir.mode); err != nil {
 			return fmt.Errorf("create %s: %w", dir.path, err)
@@ -236,7 +239,7 @@ func createLayout(o *out, dataDir, logDir string) error {
 			return fmt.Errorf("chmod %s: %w", dir.path, err)
 		}
 	}
-	o.printf("Created %s and %s\n", dataDir, logDir)
+	o.printf("Created %s, %s and %s\n", dataDir, logDir, confDir)
 	return nil
 }
 

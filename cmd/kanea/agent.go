@@ -32,6 +32,7 @@ import (
 	"github.com/m18h/kanea/internal/logging"
 	"github.com/m18h/kanea/internal/mcp"
 	"github.com/m18h/kanea/internal/network"
+	"github.com/m18h/kanea/internal/nodeconfig"
 	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/passthrough"
 	"github.com/m18h/kanea/internal/provision"
@@ -105,10 +106,15 @@ func runAgent(args []string) error {
 		"the routed IPv6 range; must contain --node-cidr6")
 	serviceCIDR6 := fs.String("service-cidr6", "",
 		"IPv6 pool for service frontend twins; enables dual-stack with the other two *6 flags")
+	serverConfig := fs.String("config", "",
+		"server config file (PRD §15.1; default: "+nodeconfig.DefaultPath+
+			" when it exists; \"off\" disables the file)")
 	hostPaths := fs.String("allowed-host-paths", "",
-		"comma-separated directories that `host` volumes may mount from (default: none)")
+		"comma-separated directories that `host` volumes may mount from "+
+			"(default: storage.allowed_host_paths in the server config; \"off\" disables)")
 	passthroughConfig := fs.String("passthrough-config", "",
-		"HCL file granting host devices and sockets to named projects (default: no grants)")
+		"HCL file granting host devices and sockets to named projects "+
+			"(default: device/socket blocks in the server config; \"off\" disables)")
 	secretsProvidersConfig := fs.String("secrets-providers-config", "",
 		"HCL file mapping external provider secrets (Doppler, AWS SM, Vault, Azure KV, GCP SM) "+
 			"into this node's store (default: no providers)")
@@ -317,28 +323,58 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// The §15.1 server config (PRD v1.51): probed once at its well-known path,
+	// explicit with --config, "off" to refuse a stray file. Everything it can
+	// grant is an operator input and empty by default — no file, no flags, no
+	// host volumes and no passthrough.
+	nodeCfg, err := serverConfigForRun(*serverConfig, *hostPaths, *passthroughConfig, nodeconfig.DefaultPath)
+	if err != nil {
+		return err
+	}
+	if nodeCfg.Path != "" {
+		logger.Info("server config loaded", "config", nodeCfg.Path)
+	}
+	if len(nodeCfg.Ignored) > 0 {
+		logger.Warn("server config carries stanzas this version does not read",
+			"config", nodeCfg.Path, "ignored", nodeCfg.Ignored)
+	}
+
 	// The host-volume allowlist is deliberately an operator input and empty by
 	// default: until someone who owns this node names a directory, no job spec
 	// can mount one (PRD §6.2 R15).
-	hostPolicy, err := storage.NewHostPathPolicy(splitList(*hostPaths))
+	hostPathList, hostSource := resolveHostPaths(*hostPaths, nodeCfg)
+	if hostSource == "--allowed-host-paths" && nodeCfg.AllowedHostPaths != nil {
+		logger.Info("server config storage stanza is not consulted (--allowed-host-paths wins)",
+			"config", nodeCfg.Path)
+	}
+	hostPolicy, err := storage.NewHostPathPolicy(hostPathList)
 	if err != nil {
 		return err
 	}
 	if hostPolicy.Enabled() {
-		logger.Info("host volumes enabled", "allowed_paths", hostPolicy.Allowed())
+		logger.Info("host volumes enabled",
+			"allowed_paths", hostPolicy.Allowed(), "source", hostSource)
 	}
 
 	// Device and socket grants are the same kind of operator input and the same
 	// empty default (PRD §6.2 R17–R18). A configured socket grant is logged at
 	// warn: it is node-level control for whoever holds it, and the one place
 	// that is unambiguously recorded should be the node's own log.
-	grants, err := passthrough.Load(*passthroughConfig)
+	passthroughPath, passthroughSource, err := resolvePassthroughPath(*passthroughConfig, nodeCfg)
+	if err != nil {
+		return err
+	}
+	if passthroughSource == "--passthrough-config" && nodeCfg.HasGrants {
+		logger.Info("server config grant blocks are not consulted (--passthrough-config wins)",
+			"config", nodeCfg.Path)
+	}
+	grants, err := passthrough.Load(passthroughPath)
 	if err != nil {
 		return err
 	}
 	if grants.Enabled() {
 		logger.Warn("device and socket passthrough is configured",
-			"config", *passthroughConfig,
+			"config", passthroughPath, "source", passthroughSource,
 			"note", "a granted runtime socket is equivalent to root on this node")
 	}
 

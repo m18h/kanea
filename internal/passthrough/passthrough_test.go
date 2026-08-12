@@ -91,8 +91,9 @@ func TestPolicyIsClosedByDefault(t *testing.T) {
 			if !errors.Is(err, ErrNotAllowed) {
 				t.Fatalf("ResolveSocket = %v, want ErrNotAllowed", err)
 			}
-			if !strings.Contains(err.Error(), "--passthrough-config") {
-				t.Errorf("error %v does not say how to enable it", err)
+			if !strings.Contains(err.Error(), "/etc/kanea/kanea.hcl") ||
+				!strings.Contains(err.Error(), "--passthrough-config") {
+				t.Errorf("error %v does not name both ways to enable it", err)
 			}
 		})
 	}
@@ -112,6 +113,47 @@ func TestLoadWithNoFileConfiguredPermitsNothing(t *testing.T) {
 func TestLoadReportsAMissingFile(t *testing.T) {
 	if _, err := Load(filepath.Join(shortDir(t), "absent.hcl")); err == nil {
 		t.Fatal("a named-but-missing config file was accepted")
+	}
+}
+
+// Since v1.51 the grants live in /etc/kanea/kanea.hcl beside stanzas other
+// decoders own. hclRoot's remain body is what makes that work: Load over a
+// full server config must extract the grants and ignore the rest.
+func TestLoadExtractsGrantsFromAFullServerConfig(t *testing.T) {
+	dir := shortDir(t)
+	sock := filepath.Join(dir, "rt.sock")
+	listenUnix(t, sock)
+	path := filepath.Join(dir, "kanea.hcl")
+	src := `
+cluster_id  = ""
+tls_default = "acme"
+
+bind { api_addr = "127.0.0.1:8600" }
+
+storage { allowed_host_paths = ["/srv/kanea"] }
+
+device "gpu" {
+  nodes = ["/dev/dri/renderD128"]
+  allow = ["media"]
+}
+
+socket "runtime" {
+  path  = "` + sock + `"
+  allow = ["ops"]
+}
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := Load(path)
+	if err != nil {
+		t.Fatalf("a kanea.hcl with foreign stanzas must still parse: %v", err)
+	}
+	if !policy.Enabled() {
+		t.Fatal("the grants in the file were not extracted")
+	}
+	if _, err := policy.ResolveSocket("ops", "runtime"); err != nil {
+		t.Fatalf("socket grant not usable: %v", err)
 	}
 }
 

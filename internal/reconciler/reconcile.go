@@ -998,7 +998,8 @@ func (r *Reconciler) ensurePassthrough(d Desired) error {
 	}
 	if r.passthrough == nil {
 		return fmt.Errorf("service asks for device or socket passthrough but no grants " +
-			"are configured on this node (set --passthrough-config)")
+			"are configured on this node (add device/socket blocks to /etc/kanea/kanea.hcl, " +
+			"or set --passthrough-config)")
 	}
 
 	for i := range d.Devices {
