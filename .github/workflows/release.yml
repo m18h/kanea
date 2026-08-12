@@ -66,7 +66,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for platform in linux/amd64 linux/arm64; do
+          # The darwin archives are the CLI half (PRD §5.2.12, v1.60): spec
+          # authoring and validation on a Mac, via the Homebrew formula. The
+          # daemons stay Linux; nothing else about the release changes — the
+          # checksums glob below covers these too, so the one cosign signature
+          # extends over them with no second signing step.
+          for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os="${platform%/*}"; arch="${platform#*/}"
             echo "building ${os}/${arch}"
             # CGO off: the whole premise is one static binary that runs on any
@@ -152,3 +157,39 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem
+
+  # The Homebrew formula (PRD §5.2.12, v1.60). This job is the formula's only
+  # author: it regenerates Formula/kanea.rb from the tag and the checksums the
+  # build job just published, so the version and hashes are never typed and
+  # cannot drift from the release they name. It runs after Publish because the
+  # formula's URLs must resolve the moment the commit lands on main.
+  formula:
+    name: Bump the Homebrew formula
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The formula lives on main, not on the tagged commit — a tag is
+          # immutable and the formula must advance past it.
+          ref: main
+
+      - name: Regenerate and push the formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "${{ github.ref_name }}" \
+            --pattern checksums.txt --output /tmp/checksums.txt
+          bash scripts/update-formula.sh "${{ github.ref_name }}" /tmp/checksums.txt
+          if git diff --quiet Formula/kanea.rb; then
+            echo "formula already at ${{ github.ref_name }}; nothing to push"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/kanea.rb
+          git commit -m "chore: bump Homebrew formula to ${{ github.ref_name }}"
+          git push origin main

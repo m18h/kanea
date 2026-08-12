@@ -45,6 +45,7 @@
     <div class="wrap">
       <div class="badges">
         <span class="badge">Linux amd64 · arm64</span>
+        <span class="badge">CLI on macOS · Homebrew</span>
         <span class="badge">Apache-2.0</span>
       </div>
       <h1>Container orchestration<br><em>in one binary</em>.</h1>
@@ -64,6 +65,7 @@
         <a href="install.sh">read it first</a>, or
         <a href="#install">install it by hand</a>.
         Every download is checksum-verified with no flag to skip it.
+        On a Mac? <a href="#homebrew">Homebrew installs the CLI</a>.
       </p>
 
       <div class="cta">
@@ -316,6 +318,16 @@ kanea ui</pre>
         </li>
       </ol>
 
+      <h3 id="homebrew" style="margin:38px 0 10px">Or through Homebrew</h3>
+      <p class="lede" style="margin-bottom:18px">
+        The CLI, on macOS and Linux. On a Mac it is the authoring half —
+        <code>kanea plan</code> validates job specs with file-and-line
+        diagnostics, no daemon needed; the platform itself runs on Linux, and a
+        <em>node</em> belongs to the installer above.
+      </p>
+      <pre class="plain">brew tap m18h/kanea https://github.com/m18h/kanea
+brew install kanea</pre>
+
       <h3 style="margin:38px 0 10px">Or install it by hand</h3>
       <p class="lede" style="margin-bottom:18px">
         Same artefacts, same verification, nothing piped anywhere. Replace
@@ -350,6 +362,7 @@ sudo install -m 0755 kanea /usr/local/bin/kanea</pre>
           <thead><tr><th>Requirement</th><th>Version</th></tr></thead>
           <tbody>
             <tr><td>Platform</td><td><code>linux/amd64</code>, <code>linux/arm64</code></td></tr>
+            <tr><td>CLI only (Homebrew)</td><td>also macOS <code>arm64</code> · <code>amd64</code> — spec authoring; the node is Linux</td></tr>
             <tr><td>Kernel</td><td><code>≥ 5.10</code>, cgroups v2 unified hierarchy</td></tr>
             <tr><td>Init system</td><td>systemd</td></tr>
             <tr><td>Clock</td><td>NTP-synchronised</td></tr>
