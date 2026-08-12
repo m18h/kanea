@@ -104,6 +104,69 @@ func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
 	}
 }
 
+// TestKaneadUnitCreatesNoMountNamespace pins PRD v1.53: kanead is the node's
+// mount manager — the netns bind mounts runc joins and the volume mounts
+// containerd binds into containers must be made in the host mount namespace.
+// Every directive below gives the unit a private mount namespace with slave
+// propagation, where a mount kanead makes is invisible to its consumer: runc
+// setns()es an empty file (EINVAL on every task create) and a mounted volume
+// reads as an empty directory inside the workload — the silent one. Found on
+// the first real systemd-managed node to reach task-create.
+func TestKaneadUnitCreatesNoMountNamespace(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeUnits(newOut(), unitOptions{
+		dir: dir, dataDir: "/var/lib/kanea", logDir: "/var/log/kanea/allocs",
+		reserve: "2G", binary: "/usr/local/bin/kanea",
+	}); err != nil {
+		t.Fatalf("write units: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "kanead.service")) // #nosec G304 — a test path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Directives that imply a file system namespace (systemd.exec(5)). Checked
+	// as line prefixes, not substrings: the unit's own comment names them while
+	// explaining why they must not appear.
+	mountNS := []string{
+		"ProtectSystem=", "ProtectHome=", "PrivateTmp=", "PrivateMounts=",
+		"ReadWritePaths=", "ReadOnlyPaths=", "InaccessiblePaths=", "ExecPaths=",
+		"NoExecPaths=", "ProtectKernelTunables=", "ProtectKernelModules=",
+		"ProtectKernelLogs=", "ProtectControlGroups=", "ProtectProc=",
+		"ProcSubset=", "PrivateDevices=", "MountFlags=", "TemporaryFileSystem=",
+		"BindPaths=", "BindReadOnlyPaths=", "RootDirectory=", "RootImage=",
+		"MountAPIVFS=",
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		for _, directive := range mountNS {
+			if strings.HasPrefix(trimmed, directive) {
+				t.Errorf("kanead.service carries %q, which gives it a private mount "+
+					"namespace; its netns and volume mounts would be invisible to "+
+					"runc and containerd (PRD v1.53)", trimmed)
+			}
+		}
+	}
+	if !strings.Contains(string(body), "NoNewPrivileges=yes") {
+		t.Error("kanead.service lost NoNewPrivileges; that one implies no mount namespace and stays")
+	}
+
+	// The edge keeps the full sandbox: it mounts nothing and writes nothing,
+	// so the reasoning above does not apply to it.
+	edge, err := os.ReadFile(filepath.Join(dir, "kanea-edge.service")) // #nosec G304 — a test path
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ProtectSystem=strict", "PrivateTmp=yes"} {
+		if !strings.Contains(string(edge), want) {
+			t.Errorf("kanea-edge.service lost its sandbox directive %q", want)
+		}
+	}
+}
+
 // The values `kanea init` was told about render into ExecStart; the defaults
 // above are only what an empty unitOptions falls back to.
 func TestKaneadUnitRendersTheNetworkFlags(t *testing.T) {

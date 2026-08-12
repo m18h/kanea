@@ -34,6 +34,27 @@ func TestUnknownCommandFails(t *testing.T) {
 	}
 }
 
+// Aliases resolve before dispatch: every alias must target a real command and
+// must not shadow one — a map entry naming an existing command would silently
+// re-route it.
+func TestAliasesResolveToRealCommands(t *testing.T) {
+	names := map[string]bool{}
+	for _, c := range commands {
+		names[c.name] = true
+	}
+	for alias, target := range aliases {
+		if !names[target] {
+			t.Errorf("alias %q targets %q, which is not a command", alias, target)
+		}
+		if names[alias] {
+			t.Errorf("alias %q shadows a real command", alias)
+		}
+	}
+	if aliases["apply"] != "run" {
+		t.Error(`kanea apply must be an alias for run (PRD v1.52, §16.2)`)
+	}
+}
+
 func TestNoArgsPrintsUsage(t *testing.T) {
 	if err := run(nil); err != nil {
 		t.Fatalf("run with no args should print usage, got: %v", err)

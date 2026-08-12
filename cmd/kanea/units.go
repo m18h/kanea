@@ -189,13 +189,17 @@ func kaneadService(opts unitOptions) string {
 		OOMScoreAdjust=-900
 
 		# kanead needs root: it creates network namespaces, writes cgroups and
-		# talks to containerd's socket. What it does not need is the ability to
-		# be surprised by its own filesystem.
+		# talks to containerd's socket. Deliberately NO mount-namespace sandbox
+		# (PRD v1.53): kanead is the node's mount manager — it bind-mounts alloc
+		# netns files under /run/netns for runc to join, and mounts SMB/NFS/S3
+		# volumes for containerd to bind into containers. ProtectSystem,
+		# ProtectHome, PrivateTmp and even a bare ReadWritePaths= each give the
+		# unit a private mount namespace with slave propagation, where every
+		# mount kanead makes dies at its own boundary: runc then setns()es an
+		# empty regular file (EINVAL, every task create) and a mounted volume
+		# reads as an empty directory inside the workload. NoNewPrivileges
+		# implies no mount namespace and stays.
 		NoNewPrivileges=yes
-		ProtectSystem=strict
-		ProtectHome=yes
-		PrivateTmp=yes
-		ReadWritePaths=` + opts.dataDir + ` ` + opts.logDir + ` /run /sys/fs/cgroup /var/run
 
 		# A control plane restart must not take the workloads with it.
 		KillMode=process
