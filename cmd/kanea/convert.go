@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/m18h/kanea/internal/certsource"
@@ -173,7 +172,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 		}
 		if svc.Restart != nil {
 			desired.Restart.Attempts = svc.Restart.Attempts
-			backoff, err := parseBackoff(svc.Restart.Backoff)
+			backoff, err := jobspec.ParseBackoff(svc.Restart.Backoff)
 			if err != nil {
 				return nil, fmt.Errorf("service %s/%s: restart backoff: %w", svc.Project, svc.Name, err)
 			}
@@ -211,26 +210,6 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			}
 		}
 		out = append(out, desired)
-	}
-	return out, nil
-}
-
-// parseBackoff reads the spec's comma-separated schedule ("10s,30s,1m,5m").
-func parseBackoff(s string) ([]time.Duration, error) {
-	if s == "" {
-		return nil, nil
-	}
-	var out []time.Duration
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		d, err := jobspec.ParseDuration(part)
-		if err != nil {
-			return nil, fmt.Errorf("%q: %w", part, err)
-		}
-		out = append(out, d)
 	}
 	return out, nil
 }

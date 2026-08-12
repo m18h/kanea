@@ -88,6 +88,8 @@ var implemented = map[string]bool{
 	"ca": true,
 	// M11 functions (PRD v1.39):
 	"functions": true,
+	// Service lifecycle verbs (PRD v1.55):
+	"start": true, "restart": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {
@@ -128,6 +130,52 @@ func TestImplementedCommandsAreWired(t *testing.T) {
 		if !found {
 			t.Errorf("command %q is listed as implemented but missing from the table", name)
 		}
+	}
+}
+
+func TestFindServiceResolvesTheSlashForm(t *testing.T) {
+	// PRD §16.2 has always written `kanea stop shop/web`; v1.55 makes the CLI
+	// actually parse it. A service name is a DNS-1123 label, so the slash is
+	// unambiguous.
+	services := []reconciler.Desired{
+		{Project: "shop", Service: "web", Count: 2},
+		{Project: "blog", Service: "web", Count: 1},
+		{Project: "shop", Service: "api", Count: 1},
+	}
+	tests := []struct {
+		name        string
+		project     string
+		arg         string
+		wantProject string
+		wantErr     string
+	}{
+		{name: "slash form disambiguates", arg: "shop/web", wantProject: "shop"},
+		{name: "bare name still works when unique", arg: "api", wantProject: "shop"},
+		{name: "bare ambiguous name still asks for a project", arg: "web",
+			wantErr: "use --project"},
+		{name: "flag and slash agreeing is fine", project: "shop", arg: "shop/web",
+			wantProject: "shop"},
+		{name: "flag and slash disagreeing is refused", project: "blog", arg: "shop/web",
+			wantErr: "disagrees"},
+		{name: "slash form of a missing service", arg: "shop/worker",
+			wantErr: "no service"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := findService(services, tc.project, tc.arg)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Project != tc.wantProject {
+				t.Errorf("resolved project = %q, want %q", got.Project, tc.wantProject)
+			}
+		})
 	}
 }
 

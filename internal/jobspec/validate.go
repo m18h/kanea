@@ -467,6 +467,7 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		diags = append(diags, validateVolumes(spec, svc)...)
 		diags = append(diags, validateScaling(svc)...)
 		diags = append(diags, validateUpdate(svc)...)
+		diags = append(diags, validateRestart(svc)...)
 		diags = append(diags, validateExpose(svc)...)
 		diags = append(diags, validatePublish(svc)...)
 		// The first non-nil auth stands for all of them: v1.50's identical-auth
@@ -898,6 +899,40 @@ func validateUpdate(svc *Service) hcl.Diagnostics {
 	diags = append(diags, validateDuration("interval", up.Interval, svc.DefRange)...)
 	diags = append(diags, validateDuration("deadline", up.Deadline, svc.DefRange)...)
 	diags = append(diags, validateAutoUpdate(svc)...)
+	return diags
+}
+
+// validateRestart enforces R29's parse-time half: the crash-restart policy is
+// checked where the operator wrote it. Before this rule the block parsed and
+// went no further, so a mistyped backoff schedule surfaced as a conversion
+// error with no file or line — the same gap the update block had before v1.25.
+func validateRestart(svc *Service) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	re := svc.Restart
+	if re == nil {
+		return diags
+	}
+
+	if re.Attempts < 0 {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid restart attempts",
+			Detail: fmt.Sprintf("Service %q has restart attempts = %d; it must be zero or more "+
+				"(zero, like an absent block, means the default of %d).",
+				svc.Name, re.Attempts, reconciler.DefaultRestartAttempts),
+			Subject: svc.DefRange.Ptr(),
+		})
+	}
+	if _, err := ParseBackoff(re.Backoff); err != nil {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid restart backoff",
+			Detail: fmt.Sprintf("Service %q has restart backoff = %q: %s. Use a comma-separated "+
+				"schedule of positive durations, like \"10s,30s,1m,5m\"; the last entry repeats.",
+				svc.Name, re.Backoff, err),
+			Subject: svc.DefRange.Ptr(),
+		})
+	}
 	return diags
 }
 

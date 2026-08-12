@@ -1378,6 +1378,26 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       reconciler stops holding desired state for it.
     </p>
 
+    <h4><code>kanea start</code></h4>
+    <pre class="plain">kanea start [--project=p] &lt;[project/]service&gt; [count]</pre>
+    <p>
+      <code>stop</code>'s counterpart: scales a stopped service back up. The daemon does
+      not remember the pre-stop count — a stopped record says zero — so it starts one
+      replica unless a count is given, or an autoscaled service's own floor (the scale
+      route refuses a count outside the declared bounds). A service already running is
+      left exactly as it is: <code>start</code> is idempotent, never a second spelling
+      of <code>scale</code>.
+    </p>
+
+    <h4><code>kanea restart</code></h4>
+    <pre class="plain">kanea restart [--project=p] &lt;[project/]service&gt;</pre>
+    <p>
+      Rolls the service's allocs through its update policy — a generation bump, the same
+      route the dashboard uses, not a second path into the runtime. It is also the way
+      out of an exhausted crash-restart budget: the bump is a new spec hash, and the
+      restart count belongs to the hash that spent it.
+    </p>
+
     <h3 id="cli-inspect">Inspecting</h3>
 
     <h4><code>kanea ps</code></h4>
