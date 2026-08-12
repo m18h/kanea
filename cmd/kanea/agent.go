@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -165,7 +166,8 @@ func runAgent(args []string) error {
 	wsOrigins := fs.String("dashboard-origins", "",
 		"comma-separated Origins allowed to open the live-data websocket (default: same-origin only)")
 	listen := fs.String("listen", "",
-		"network address for the control API, e.g. "+api.DefaultListenAddr+" (default: unix socket only)")
+		"network address for the control API, e.g. "+api.DefaultListenAddr+
+			" (default: the server config's bind.api_addr, else unix socket only; \"none\" forces socket-only)")
 	listenCert := fs.String("listen-cert", "", "TLS certificate for --listen (required beyond loopback)")
 	listenKey := fs.String("listen-key", "", "TLS private key for --listen")
 	insecureCookies := fs.Bool("insecure-cookies", false,
@@ -327,7 +329,7 @@ func runAgent(args []string) error {
 	// explicit with --config, "off" to refuse a stray file. Everything it can
 	// grant is an operator input and empty by default — no file, no flags, no
 	// host volumes and no passthrough.
-	nodeCfg, err := serverConfigForRun(*serverConfig, *hostPaths, *passthroughConfig, nodeconfig.DefaultPath)
+	nodeCfg, err := serverConfigForRun(*serverConfig, *hostPaths, *passthroughConfig, *listen, nodeconfig.DefaultPath)
 	if err != nil {
 		return err
 	}
@@ -337,6 +339,31 @@ func runAgent(args []string) error {
 	if len(nodeCfg.Ignored) > 0 {
 		logger.Warn("server config carries stanzas this version does not read",
 			"config", nodeCfg.Path, "ignored", nodeCfg.Ignored)
+	}
+
+	// The API/dashboard listener (§15.1 bind, v1.61): --listen wins, "none" is
+	// the explicit socket-only, the file fills in otherwise. The half is
+	// atomic — the source that supplies the address supplies its TLS story.
+	apiL := resolveAPIListen(*listen, *listenCert, *listenKey, nodeCfg)
+	if apiL.source == "--listen" && nodeCfg.Bind != nil {
+		logger.Info("server config bind stanza is not consulted (--listen wins)",
+			"config", nodeCfg.Path)
+	}
+	if apiL.source != "" && apiL.source != "--listen" && apiL.source != listenNone {
+		logger.Info("api/dashboard listener from server config",
+			"config", apiL.source, "listen", apiL.addr, "tls", apiL.mode)
+	}
+	apiInsecureCookies := *insecureCookies
+	if apiL.mode == nodeconfig.TLSPlaintext {
+		if public, err := api.IsPublicAddr(apiL.addr); err == nil && public {
+			// Typed, so allowed — and said loudly, once, where the decision
+			// lives. The Secure cookie attribute is dropped with it: a Secure
+			// cookie over plain HTTP is a login that silently fails (v1.61).
+			apiInsecureCookies = true
+			logger.Warn("the API/dashboard listener serves plain HTTP beyond loopback (bind.api_tls = \"plaintext\")",
+				"listen", apiL.addr,
+				"detail", "credentials cross this network unencrypted; session cookies drop the Secure attribute")
+		}
 	}
 
 	// The host-volume allowlist is deliberately an operator input and empty by
@@ -629,7 +656,7 @@ func runAgent(args []string) error {
 		st: st, notifyCfg: notifyCfg, manager: backups, flagRepl: flagRepl,
 		resolver: secretStore, wake: routesNotify, log: logger,
 		node: api.NodeConfigView{
-			Listen: *listen, TLS: *listenCert != "" && *listenKey != "",
+			Listen: apiL.addr, TLS: apiL.tlsEnabled(),
 			BaseDomain: *baseDomain, NetworkMode: *networkMode,
 			NodeCIDR: *nodeCIDR, ClusterCIDR: *clusterCIDR, ServiceCIDR: *serviceCIDR,
 			NodeCIDR6: *nodeCIDR6, ClusterCIDR6: *clusterCIDR6, ServiceCIDR6: *serviceCIDR6,
@@ -731,6 +758,27 @@ func runAgent(args []string) error {
 	// before rec.Run so no pass runs without the sink.
 	rec.SetAuthSink(certs.publisher)
 
+	// A managed listener certificate (bind.api_tls acme/self-signed, v1.61)
+	// rides the §7.3 pass: the request is registered here, and the pass
+	// delivers each issuance — and each renewal — through the holder the
+	// listener's handshakes read.
+	var apiGetCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	switch apiL.mode {
+	case nodeconfig.TLSAcme:
+		if !certs.hasACME {
+			return fmt.Errorf("bind.api_tls %q needs an ACME account: set --acme-email", apiL.mode)
+		}
+		certs.listener = &listenerCertificate{
+			mode: certsource.ModeACME, domains: []string{apiL.domain},
+		}
+		apiGetCert = certs.listener.GetCertificate
+	case nodeconfig.TLSSelfSigned:
+		certs.listener = &listenerCertificate{
+			mode: certsource.ModeSelfSigned, domains: []string{apiL.domain},
+		}
+		apiGetCert = certs.listener.GetCertificate
+	}
+
 	// One reader for the API's point-in-time stats and the history recorder
 	// alike: CPU percent is a delta between readings, and two readers would
 	// each see only half the sample history (v1.38).
@@ -756,8 +804,10 @@ func runAgent(args []string) error {
 		// whichever door it arrives through (v1.38).
 		Spec:   specRenderer{opts: jobspec.Options{BaseDomain: *baseDomain}},
 		Exec:   driver,
-		Listen: *listen, TLSCert: *listenCert, TLSKey: *listenKey,
-		AuthConfigured: configured, InsecureCookies: *insecureCookies,
+		Listen: apiL.addr, TLSCert: apiL.cert, TLSKey: apiL.key,
+		TLSGetCertificate: apiGetCert,
+		ListenPlaintext:   apiL.mode == nodeconfig.TLSPlaintext,
+		AuthConfigured:    configured, InsecureCookies: apiInsecureCookies,
 	})
 	if err != nil {
 		return err

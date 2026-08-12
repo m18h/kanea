@@ -878,6 +878,11 @@ service "web" {
       without it. Grants name the projects that may claim them:
     </p>
     <pre><code><span class="c"># /etc/kanea/kanea.hcl — the node's, never the repository's</span>
+<span class="k">bind</span> {                                  <span class="c"># the API/dashboard listener (v1.61)</span>
+  <span class="k">api_addr</span> = <span class="s">"192.168.1.10:8600"</span>
+  <span class="k">api_tls</span>  = <span class="s">"self-signed"</span>              <span class="c"># acme | self-signed | provided | plaintext</span>
+}
+
 <span class="k">device</span> <span class="s">"gpu"</span> {
   <span class="k">nodes</span> = [<span class="s">"/dev/dri/renderD128"</span>]
   <span class="k">allow</span> = [<span class="s">"media"</span>]
@@ -1322,6 +1327,17 @@ spec_version = 1
       <code>--no-start</code> writes the files and stops, which is the pre-v0.5 behaviour.
       Re-running is safe: an existing master key and an existing account are left alone.
     </p>
+    <p>
+      Since v1.61 the listener can live in the server config instead: a
+      <code>bind { api_addr = …  api_tls = … }</code> stanza in
+      <code>/etc/kanea/kanea.hcl</code>, where <code>api_tls</code> is
+      <code>acme</code>, <code>self-signed</code>, <code>provided</code> or
+      <code>plaintext</code> — the same modes services use. When it is
+      declared and <code>--listen</code> was not passed, init skips the listen question
+      and renders no listen flags into the unit — the file owns the listener, and moving
+      the dashboard later is an edit to the file plus
+      <code>systemctl restart kanead</code>, never a re-init.
+    </p>
     <div class="callout warn">
       <b class="label">The key is shown once</b>
       <p>
@@ -1573,7 +1589,9 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
             [--oidc-client-id=…] [--ldap-url=…] [--acme-dns-tsig-key=…]</pre>
     <p>
       <code>--listen</code> beyond loopback requires <code>--listen-cert</code> and
-      <code>--listen-key</code>. Credential-shaped options such as
+      <code>--listen-key</code>. Unset, the listener comes from the server config's
+      <code>bind</code> stanza when one is declared (below); <code>--listen none</code>
+      forces socket-only regardless of the file. Credential-shaped options such as
       <code>--oidc-client-secret</code>, <code>--ldap-bind-password</code> and
       <code>--acme-dns-tsig-secret</code> take <code>secret:</code> references, never
       literals.
@@ -1588,21 +1606,32 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
       any bind reaches the directory.
     </p>
     <p>
-      The two operator gates — which directories <code>host</code> volumes may come from
-      (R15) and which devices and sockets are granted to projects (R17, R18) — live in the
-      server config <code>/etc/kanea/kanea.hcl</code>: a <code>storage
-      { allowed_host_paths = […] }</code> stanza and <code>device</code>/<code>socket</code>
-      blocks. The file is probed once at startup when it exists; absent means neither gate
-      opens. It must be a regular file, owned by root (or the daemon's uid), and writable
+      The operator-owned settings live in the server config
+      <code>/etc/kanea/kanea.hcl</code>: which directories <code>host</code> volumes may
+      come from (R15, a <code>storage { allowed_host_paths = […] }</code> stanza), which
+      devices and sockets are granted to projects (R17, R18,
+      <code>device</code>/<code>socket</code> blocks), and — since v1.61 — where the
+      API and dashboard listen (a <code>bind</code> stanza: <code>api_addr</code>, with
+      <code>api_tls</code> choosing among <code>acme</code> — a Let's Encrypt certificate
+      for <code>api_domain</code>, issued and renewed by the same pass that serves your
+      services; <code>self-signed</code> — the node CA, with a real IP SAN when the
+      address is bare; <code>provided</code> — your own
+      <code>api_cert</code>/<code>api_key</code> pair; and <code>plaintext</code> —
+      explicit HTTP, allowed beyond loopback because it was typed and logged loudly).
+      The file is probed once at
+      startup when it exists; absent means every setting's zero value. It must be a
+      regular file, owned by root (or the daemon's uid), and writable
       only by its owner — anything else refuses startup, as does a file that does not
       parse. Stanzas from the fuller PRD §15.1 sketch that this version does not read are
       warned by name at startup, never silently ignored.
     </p>
     <p>
-      <code>--allowed-host-paths</code> and <code>--passthrough-config</code> remain as
+      <code>--allowed-host-paths</code>, <code>--passthrough-config</code> and
+      <code>--listen</code> remain as
       explicit overrides: setting one means the corresponding half of the file is not
       consulted (<code>--passthrough-config</code> names a separate grants file with the
-      same trust check), <code>off</code> on either disables that gate regardless of the
+      same trust check), <code>off</code> on the first two — or <code>--listen none</code> —
+      disables that half regardless of the
       file, and <code>--config</code> moves or (<code>--config off</code>) disables the
       file itself. Either way this is deliberately node configuration — a job spec can
       reference what it permits and can never add to it.

@@ -160,6 +160,17 @@ type ServerConfig struct {
 	// beyond loopback: see listenNetwork.
 	TLSCert string
 	TLSKey  string
+	// TLSGetCertificate serves a certificate a subsystem manages and renews
+	// (PRD v1.61, bind.api_tls acme/self-signed) — the one listener whose
+	// material renews behind its own socket, so it cannot be loaded once at
+	// construction. Mutually exclusive with the pair above; the caller
+	// resolves which story applies before building the server.
+	TLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	// ListenPlaintext is bind.api_tls = "plaintext": an explicit decision to
+	// serve the listener without TLS beyond loopback (PRD v1.61). Off by
+	// default, so the beyond-loopback refusal stands unless someone typed the
+	// word.
+	ListenPlaintext bool
 	// AuthConfigured reports whether any account exists. The daemon asks its
 	// auth store at startup; the API only needs the answer, and the network
 	// listener is refused when it is false (§13.1).
@@ -242,10 +253,11 @@ type Server struct {
 	sessions        SessionIssuer
 	insecureCookies bool
 
-	listenAddr     string
-	authConfigured bool
-	tls            *tls.Config
-	netListener    net.Listener
+	listenAddr      string
+	authConfigured  bool
+	tls             *tls.Config
+	listenPlaintext bool
+	netListener     net.Listener
 
 	limiter     *ratelimit.Limiter
 	publicLimit ratelimit.Spec
@@ -274,6 +286,15 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.TLSGetCertificate != nil {
+		if tlsConfig != nil {
+			return nil, errors.New("api: a certificate pair and a managed certificate are two TLS stories; pick one")
+		}
+		tlsConfig = &tls.Config{
+			MinVersion:     tls.VersionTLS12,
+			GetCertificate: cfg.TLSGetCertificate,
+		}
+	}
 
 	publicLimit, authLimit := DefaultPublicLimit, DefaultAuthenticatedLimit
 	if cfg.PublicLimit != nil {
@@ -293,7 +314,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		now:     now, started: now(), pid: os.Getpid(),
 		publicLimit: publicLimit, authLimit: authLimit,
 		listenAddr: cfg.Listen, authConfigured: cfg.AuthConfigured, tls: tlsConfig,
-		store: cfg.Store, log: cfg.Logger, socket: cfg.Socket,
+		listenPlaintext: cfg.ListenPlaintext,
+		store:           cfg.Store, log: cfg.Logger, socket: cfg.Socket,
 		version: cfg.Version, logDir: cfg.LogDir, notify: cfg.Notify,
 		wsOrigins: cfg.WSOrigins, ws: newWSHub(cfg.WSMaxConns),
 		secrets: cfg.Secrets, secretSync: cfg.SecretSync, pipelines: cfg.Pipelines,

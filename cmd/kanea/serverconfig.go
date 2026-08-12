@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"strings"
 
 	"github.com/m18h/kanea/internal/nodeconfig"
@@ -10,14 +11,15 @@ import (
 // all, and loads it. wellKnown is nodeconfig.DefaultPath in production; a
 // parameter so tests can point it at a temp file.
 //
-// When both halves the file can feed are flag-overridden and no --config was
+// When every half the file can feed is flag-overridden and no --config was
 // asked for, the probe is skipped entirely: nothing would read the file, so a
 // stray or malformed one must not be able to refuse startup — a node upgraded
 // with its unit flags intact behaves byte-identically to the release before
-// the file existed.
-func serverConfigForRun(configFlag, hostPathsFlag, passthroughFlag, wellKnown string) (*nodeconfig.Config, error) {
+// the file existed. Since v1.61 the halves are three: the listen flag joins
+// the skip condition, and its explicit socket-only spelling is "none".
+func serverConfigForRun(configFlag, hostPathsFlag, passthroughFlag, listenFlag, wellKnown string) (*nodeconfig.Config, error) {
 	configFlag = strings.TrimSpace(configFlag)
-	if configFlag == "" && hostPathsFlag != "" && passthroughFlag != "" {
+	if configFlag == "" && hostPathsFlag != "" && passthroughFlag != "" && listenFlag != "" {
 		return &nodeconfig.Config{}, nil
 	}
 	switch configFlag {
@@ -41,6 +43,72 @@ func resolveHostPaths(flagValue string, cfg *nodeconfig.Config) (paths []string,
 		return cfg.AllowedHostPaths, cfg.Path
 	default:
 		return splitList(flagValue), "--allowed-host-paths"
+	}
+}
+
+// listenNone is --listen's explicit socket-only spelling (v1.61) — init's own
+// prompt vocabulary, chosen over the other flags' "off" because "none" is what
+// that prompt has always accepted.
+const listenNone = "none"
+
+// apiListener is the resolved API/dashboard listener story (PRD §15.1,
+// v1.61): where it binds and which of R20's modes secures it.
+type apiListener struct {
+	addr string
+	// mode is a nodeconfig.TLS* constant, or "" — the flags' pre-v1.61
+	// vocabulary, where a pair means TLS and a bare non-loopback address is
+	// refused at the daemon's listener construction.
+	mode      string
+	cert, key string // the provided pair
+	domain    string // the certificate's name for acme/self-signed
+	source    string // for the startup log
+}
+
+// tlsEnabled reports whether handshakes will carry a certificate.
+func (l apiListener) tlsEnabled() bool {
+	return l.cert != "" || l.mode == nodeconfig.TLSAcme || l.mode == nodeconfig.TLSSelfSigned
+}
+
+// resolveAPIListen picks the listener source: the --listen flag when set
+// ("none" is the explicit socket-only), the server config's bind stanza
+// otherwise. The half is atomic — whichever source supplies the address
+// supplies its TLS story, because a listener assembled from two sources is a
+// misconfiguration wearing a merge's name. Neither source means socket-only,
+// today's posture byte for byte.
+//
+// An unset bind.api_tls resolves here: a declared pair means provided, and
+// everything else keeps the flags' semantics — loopback serves plaintext,
+// beyond loopback is refused at the daemon's listener construction. The
+// self-signed certificate name falls back to the address's host; parse
+// already refused the unspecified-host case with no api_domain.
+func resolveAPIListen(listenFlag, certFlag, keyFlag string, cfg *nodeconfig.Config) apiListener {
+	switch listenFlag = strings.TrimSpace(listenFlag); listenFlag {
+	case listenNone:
+		return apiListener{source: listenNone}
+	case "":
+		if cfg.Bind == nil || cfg.Bind.APIAddr == "" {
+			return apiListener{}
+		}
+		l := apiListener{
+			addr: cfg.Bind.APIAddr, mode: cfg.Bind.APITLS,
+			cert: cfg.Bind.APICert, key: cfg.Bind.APIKey,
+			domain: cfg.Bind.APIDomain, source: cfg.Path,
+		}
+		if l.mode == "" && l.cert != "" {
+			l.mode = nodeconfig.TLSProvided
+		}
+		if l.mode == nodeconfig.TLSSelfSigned && l.domain == "" {
+			if host, _, err := net.SplitHostPort(l.addr); err == nil {
+				l.domain = host
+			}
+		}
+		return l
+	default:
+		l := apiListener{addr: listenFlag, cert: certFlag, key: keyFlag, source: "--listen"}
+		if l.cert != "" {
+			l.mode = nodeconfig.TLSProvided
+		}
+		return l
 	}
 }
 

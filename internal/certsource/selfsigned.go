@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -211,6 +212,19 @@ func (s *SelfSigned) issue(ctx context.Context, domains []string, now time.Time)
 
 	notBefore := now.Add(-clockSkewAllowance)
 	notAfter := now.Add(LeafValidity)
+	// A requested name that parses as an IP becomes an IP SAN, not a DNS SAN —
+	// clients match the two differently, and a dashboard reached at a bare
+	// address needs the former (PRD v1.61, bind.api_tls). Service domains are
+	// DNS-1123 by construction and never take this branch.
+	var dnsNames []string
+	var ipAddrs []net.IP
+	for _, d := range domains {
+		if ip := net.ParseIP(d); ip != nil {
+			ipAddrs = append(ipAddrs, ip)
+			continue
+		}
+		dnsNames = append(dnsNames, d)
+	}
 	template := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: domains[0]},
@@ -218,7 +232,8 @@ func (s *SelfSigned) issue(ctx context.Context, domains []string, now time.Time)
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     domains,
+		DNSNames:     dnsNames,
+		IPAddresses:  ipAddrs,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca.cert, &key.PublicKey, ca.key)
 	if err != nil {

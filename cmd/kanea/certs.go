@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/m18h/kanea/internal/acme"
@@ -127,6 +129,14 @@ func syncCertificates(ctx context.Context, c *certificates, st store.Store,
 	if err != nil {
 		return err
 	}
+	if c.listener != nil {
+		// The API listener's own certificate (PRD v1.61): a synthetic request
+		// no spec wrote, riding the same pass so issuance, renewal and events
+		// are the ones every other certificate already gets.
+		byMode[c.listener.mode] = append(byMode[c.listener.mode], certsource.Request{
+			Domains: c.listener.domains, Service: "kanead/api",
+		})
+	}
 
 	var firstErr error
 	for _, source := range c.sources {
@@ -155,12 +165,26 @@ func syncCertificates(ctx context.Context, c *certificates, st store.Store,
 			}
 		}
 		emitCertChanges(emit, res.Certificates, seen)
-		if err := c.publisher.SetCertificates(mode, res.Certificates); err != nil {
+		// The listener's certificate is delivered to the listener and kept out
+		// of the edge bundle: the edge serves services, and a bundle entry no
+		// route names would be dead weight with a private key in it.
+		published := res.Certificates
+		if c.listener != nil && mode == c.listener.mode {
+			published = make([]certsource.Certificate, 0, len(res.Certificates))
+			for _, cert := range res.Certificates {
+				if cert.Covers(c.listener.domains) {
+					c.listener.deliver(cert, logger)
+					continue
+				}
+				published = append(published, cert)
+			}
+		}
+		if err := c.publisher.SetCertificates(mode, published); err != nil {
 			return fmt.Errorf("publish %s certificates: %w", mode, err)
 		}
-		if len(reqs) > 0 || len(res.Certificates) > 0 {
+		if len(reqs) > 0 || len(published) > 0 {
 			logger.Info("certificates published", "mode", mode,
-				"certificates", len(res.Certificates), "requested", len(reqs))
+				"certificates", len(published), "requested", len(reqs))
 		}
 	}
 	return firstErr
@@ -492,6 +516,51 @@ type certificates struct {
 	// the only source whose material can change while kanead is not looking,
 	// so the loop has to be able to ask it whether anything moved.
 	provided *certsource.Provided
+	// hasACME reports whether an ACME source was built (--acme-email). The
+	// bind.api_tls "acme" refusal reads it at startup (PRD v1.61).
+	hasACME bool
+	// listener is the API listener's certificate need, when bind.api_tls
+	// names a managed mode (PRD v1.61). Its request rides the ordinary pass
+	// as a synthetic request no spec wrote; the resulting certificate is
+	// delivered here and never enters the edge bundle.
+	listener *listenerCertificate
+}
+
+// listenerCertificate carries the API listener's certificate from the §7.3
+// pass to the listener's own handshakes. The pointer swap is the renewal
+// story: this is the one listener whose material renews behind its own
+// socket, so it serves through GetCertificate rather than a config loaded
+// once at construction.
+type listenerCertificate struct {
+	mode    certsource.Mode
+	domains []string
+	cert    atomic.Pointer[tls.Certificate]
+}
+
+// GetCertificate implements tls.Config.GetCertificate. No SNI is required —
+// a dashboard is dialled by IP, and this listener holds exactly one
+// certificate. Before the first issuance the handshake fails by name rather
+// than serving something wrong.
+func (l *listenerCertificate) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	if c := l.cert.Load(); c != nil {
+		return c, nil
+	}
+	return nil, fmt.Errorf("api listener: no %s certificate issued yet for %s",
+		l.mode, strings.Join(l.domains, ", "))
+}
+
+// deliver parses and swaps in a freshly ensured certificate.
+func (l *listenerCertificate) deliver(cert certsource.Certificate, logger *slog.Logger) {
+	pair, err := tls.X509KeyPair([]byte(cert.CertPEM), []byte(cert.KeyPEM))
+	if err != nil {
+		logger.Error("api listener certificate does not parse", "error", err)
+		return
+	}
+	if prev := l.cert.Swap(&pair); prev == nil {
+		logger.Info("api listener certificate installed",
+			"mode", l.mode, "domains", strings.Join(l.domains, ", "),
+			"not_after", cert.NotAfter.Format(time.DateOnly))
+	}
 }
 
 // CACertificate implements api.CertificateAuthority.
@@ -600,7 +669,7 @@ func buildCertificates(cfg certConfig) (*certificates, error) {
 		return nil, err
 	}
 
-	out := &certificates{publisher: publisher}
+	out := &certificates{publisher: publisher, hasACME: wantACME}
 
 	if wantACME {
 		caBundle, err := readCABundle(cfg.CAPath)

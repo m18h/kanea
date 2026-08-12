@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Adopted v1.60 |
+| **Status** | Adopted v1.61 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-08-12 (v1.60) |
+| **Last updated** | 2026-08-12 (v1.61) |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,8 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.61 amendments** — **`bind.api_addr` becomes the second thing `kanea.hcl` really carries, and the listener's TLS speaks §7.3's vocabulary** (§15.1, §13.1, §7.3, §16.2). The stanza has been in this document's sketch since v1.0 — v1.18 said "where the API listens" is what config should decide, and then every implementation put it in argv: `kanea init` renders `--listen` into the kanead unit, so moving the dashboard to a network address means a re-init or a hand-edited `ExecStart` that the next init regenerates — exactly the failure v1.51 built the file to end, on exactly the kind of setting it named as the file's future. So `kanead` now reads the **`bind`** stanza: `api_addr`, **`api_tls`**, `api_domain`, and `api_cert`/`api_key`. **`api_tls` is R20's mode set applied to the node's own listener** — the platform already knows four ways to hold a certificate, and inventing a fifth spelling for the dashboard would be two vocabularies for one concept: **`acme`** requires `api_domain` (an IP cannot hold an ACME certificate) and rides the ordinary §7.3 pass as a synthetic request no spec wrote — the same account, the same HTTP-01-through-the-edge or DNS-01, the same renewal loop — with one structural difference: this is the one listener whose material renews behind its own socket, so it is served through a certificate the pass hot-swaps rather than one loaded at construction, and no SNI is required (a dashboard is dialled by IP; the edge's unknown-SNI refusal is about picking among many certificates, and this listener has one). **`self-signed`** issues from the node's own CA — the same one `kanea ca show` installs on devices, so a dashboard at a bare IP gets a real green padlock on every device that already trusts the node; the certificate names `api_domain` when given, else the host of `api_addr`, **as an IP SAN when that host is an IP** (the CA previously only ever named DNS SANs, because service domains are DNS-1123 by construction), and an unspecified host (`0.0.0.0`, `::`, none) requires `api_domain`, because a certificate needs a name and "every interface" is not one. **`provided`** is the pair of files, loaded once at construction exactly as before — a certbot renewal restarts kanead, stated rather than discovered. **`plaintext`** is allowed beyond loopback *because it was typed*: logged loudly at startup, and it implies the insecure-cookie posture on a non-loopback listener, because a Secure cookie over plain HTTP is a login that silently fails — a control that cannot act, carried, which R21 exists to refuse. An **unset `api_tls` resolves**: a declared pair means `provided`, a loopback address means `plaintext`, and anything else refuses — v1.45's posture byte for byte. Contradictions are parse errors with file and line: `plaintext` beside a pair (a dropped control), `provided` without one, `acme` without `api_domain`, a pair beside a managed mode; `acme` on a node with no `--acme-email` refuses at startup, where the subsystem's absence is known. The listener's certificate **never enters the edge bundle** — the edge serves services, and a bundle entry no route names would be dead weight with a private key in it. The v1.51 doctrine applies unchanged, half by half: **an explicit `--listen` wins and the stanza is not consulted**; the new spelling **`--listen none`** is the explicit socket-only (init's own vocabulary, chosen over the other flags' `off` because `none` is what the init prompt has always accepted), and the listen half is atomic — whichever source supplies the address supplies its TLS story; the flags keep their pre-v1.61 vocabulary (a pair or loopback), because four modes as five flags is the config file's job. No flag and no stanza is socket-only, byte for byte today's posture, and the beyond-loopback refusal for the flag path does not move from the daemon's listener construction. The sketch's `edge_http`/`edge_https` stay sketch: schema-accepted, **warned by name when set** — inside a read stanza the not-silently-swallowed rule needs the warning, since erroring on the document's own sketch would refuse v1.51's stated contract. **`kanea init` consults the file before it prompts**: a `bind.api_addr` in `kanea.hcl` (no explicit `--listen` on init's own argv) skips the listen question, renders **no** listen flags into the unit — the file owns the listener, and a unit that repeated it would turn the file off — and says so in the summary. And the v1.51 probe-skip narrows honestly: skipping the file now requires **all three** halves flagged; a node carrying only the two v1.51 flags beside a `kanea.hcl` it never wanted read should say `--config off`, which has always been the whole-file switch.
 
 > **v1.60 amendments** — **the CLI ships through Homebrew, and the formula is written by the release workflow, never by hand** (§5.2.12, §15.4, §20 M10). Releases now publish `darwin_{amd64,arm64}` archives beside the Linux ones: the same static binary, cross-compiled with CGO off — everything Linux-only about the platform (containerd, netns, eBPF, systemd) is runtime behaviour, not build-time, so the darwin artefact costs one loop iteration and no build tags. **What a Mac gets is the authoring half and nothing more**: `kanea plan`'s parse and R-rule validation (file-and-line diagnostics, produced before any dial), spec authoring, and `kanea version`; the daemons, `init`, `install` and every socket-backed verb remain Linux, and nothing else is claimed — `install.sh` still refuses a non-Linux uname, unchanged, because a *node* install is still the script's job. The new archives ride the existing `checksums.txt` glob, so the one cosign signature extends over them with no second signing step (v1.30's bundle rule). **The formula lives in this repository** (`Formula/kanea.rb`; the tap is the repo itself) — a separate `homebrew-*` repository is the Homebrew convention and was rejected as a second repository plus a cross-repo credential to rot, for the sake of one file. **`scripts/update-formula.sh` is the formula's only author**: the release workflow regenerates it from the tag and the release's own `checksums.txt` after publishing, so the version and hashes are never typed and the asset names are read out of the checksum file itself — the release.yml/install.sh/`assetName` naming contract gains a generated reader, not a fourth hand-maintained copy. A release that predates the darwin archives generates a Linux-only formula (the `on_macos` block appears with its assets), which is also the committed formula's initial state. **Homebrew is a CLI channel, not a node channel**: a Linux binary that brew owns is exactly the package-manager case v1.59 named — brew upgrades the file, `kanea upgrade --no-fetch` is the restart half — but the supported node story stays `install.sh` + `kanea init`, root-owned at `/usr/local/bin`, where `upgrade`'s rename(2) swap owns the path. CI style-checks the formula and install-tests it on both platforms; the macOS install check arms itself on the first release that ships darwin assets.
 
@@ -1173,7 +1175,8 @@ OWASP Top 10 (2021) compliance is a **release gate**: every milestone's definiti
 Since v1.51 the file is real: `kanead` probes this path once at startup (override
 the location with `--config <path>`, disable the file with `--config off`). Absent
 means every stanza's zero value — the posture of a node that never wrote it. This
-version reads the `storage` stanza and the `device`/`socket` grant blocks; every
+version reads the `storage` stanza, the `device`/`socket` grant blocks, and (since
+v1.61) the `bind` stanza's API listener half; every
 other stanza below is the design sketch it has always been, and a file that
 carries one is loaded with a startup warning naming what was not read — never
 silently swallowed, never refused. A present-but-malformed file, or one that is
@@ -1192,8 +1195,26 @@ log_level   = "info"
 base_domain = "apps.example.com"        # enables service.project.apps.example.com
 
 bind {
-  api_addr   = "127.0.0.1:8600"         # before TLS/auth are set: localhost
-  edge_http  = ":80"
+  # api_addr and its TLS are read since v1.61: the API/dashboard listener
+  # kanead binds. --listen, when set, wins and this stanza is not consulted;
+  # --listen none is the explicit socket-only.
+  api_addr = "192.168.1.10:8600"
+
+  # api_tls is R20's mode set, applied to the node's own listener:
+  #   acme        Let's Encrypt via the ordinary §7.3 pass; requires api_domain
+  #   self-signed the node CA (`kanea ca show`); names api_domain when given,
+  #               else api_addr's host — as an IP SAN when that host is an IP
+  #   provided    api_cert/api_key files, loaded once (a renewal restarts kanead)
+  #   plaintext   explicit HTTP; beyond loopback it is allowed because it was
+  #               typed, logged loudly, and implies the insecure-cookie posture
+  # Unset resolves: a pair means provided, loopback means plaintext, anything
+  # else refuses — v1.45's posture unchanged.
+  api_tls    = "self-signed"
+  api_domain = ""                        # the certificate's name, when one is needed
+  api_cert   = ""                        # provided mode's pair
+  api_key    = ""
+
+  edge_http  = ":80"                     # still sketch: accepted, warned, not read
   edge_https = ":443"
 }
 
