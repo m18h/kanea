@@ -56,7 +56,7 @@ var commands = []command{
 	{"ca", "this node's self-signed CA, to install on your devices: show, info", runCA},
 	{"user", "manage accounts: add, ls, rm", runUser},
 	{"token", "manage API tokens: create, ls, rm", runToken},
-	{"upgrade", "drain edge, restart services, run state migrations", runUpgrade},
+	{"upgrade", "fetch + verify the latest release, drain edge, restart, migrate (--check, --no-fetch)", runUpgrade},
 	{"mcp", "stdio MCP server for local AI agents (PRD §16.3)", runMCP},
 	{"ui", "open the dashboard URL", runUI},
 	{"version", "print version and exit", runVersion},

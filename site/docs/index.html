@@ -1332,19 +1332,23 @@ spec_version = 1
     </p>
 
     <h4><code>kanea upgrade</code></h4>
-    <pre class="plain">kanea upgrade [--skip-backup] [--dry-run] [--timeout=2m] [--socket=…]</pre>
+    <pre class="plain">kanea upgrade [--check] [--version vX.Y.Z] [--no-fetch] [--skip-backup] [--dry-run] [--timeout=2m]</pre>
     <p>
-      Takes a pre-upgrade backup, restarts <code>kanea-edge</code> and then
-      <code>kanead</code> in that order, runs any state migrations, and waits for health.
+      One command, both halves: it fetches the latest release (or <code>--version</code>),
+      verifies it — sha256 against the release's <code>checksums.txt</code> always, the
+      cosign keyless signature over that file when cosign is installed, a loud note when
+      it is not — installs it atomically over its own path, then takes a pre-upgrade
+      backup, restarts <code>kanea-edge</code> and then <code>kanead</code> in that order,
+      runs any state migrations, and waits for health. Already at the target version means
+      nothing to download, so running it twice is safe by construction.
     </p>
     <div class="callout">
-      <b class="label">It does not download anything</b>
+      <b class="label">Owned by a package manager?</b>
       <p>
-        Installing software is the package manager's job — or
-        <a href="../install.sh">install.sh</a>, which recognises an existing install,
-        replaces the binary, and tells you to run this. A command that both fetched a
-        binary and restarted the platform would be a command nobody could safely run
-        twice.
+        <code>--no-fetch</code> restarts onto whatever binary is already installed —
+        the orchestration half alone — and <code>--check</code> only reports the running,
+        installed and latest versions. Air-gapped nodes get their binary from the
+        offline bundle flow; the fetch refuses with that pointer rather than hanging.
       </p>
     </div>
     <p>
