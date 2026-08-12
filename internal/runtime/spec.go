@@ -66,6 +66,17 @@ func (s AllocSpec) Validate() error {
 			}
 		}
 	}
+	// runc refuses an unknown capability name at task create, which fails
+	// every alloc of the service with an error nobody can attribute. The
+	// reconciler's projection strips jobspec's "none" token and only ever
+	// emits real names — this catches the caller that forgot to project.
+	for _, c := range s.Capabilities {
+		if !strings.HasPrefix(c, "CAP_") {
+			return fmt.Errorf("%w: alloc %s capability %q is not a capability name; "+
+				"the spec-level tokens must be resolved before the spec reaches the driver",
+				ErrInvalidSpec, s.ID, c)
+		}
+	}
 	for _, m := range s.Mounts {
 		if !filepath.IsAbs(m.Source) || !filepath.IsAbs(m.Destination) {
 			return fmt.Errorf("%w: alloc %s mount %s -> %s: both paths must be absolute",
@@ -132,9 +143,11 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 			s.Linux = &specs.Linux{}
 		}
 
-		// Drop ALL capabilities, then grant back exactly what the spec asked
-		// for (PRD §6.2 R13). jobspec has already refused anything outside the
-		// permitted set, so this grants a bounded, reviewed list.
+		// Drop ALL capabilities, then grant back exactly what the spec
+		// carries. The driver has no default of its own: the R13 baseline —
+		// and the union with a service's declared grants — is the
+		// reconciler's projection (effectiveCapabilities), so what arrives
+		// here is already the effective, validated set.
 		//
 		// Bounding, effective and permitted — never inheritable or ambient: a
 		// granted capability must not survive into a child that re-execs, which

@@ -96,6 +96,10 @@ func TestSpecHashIgnoresWhatDoesNotNeedANewContainer(t *testing.T) {
 		// The runtime decides which shim runs the container (R25) — moving a
 		// service between runc and wasmtime cannot happen in place.
 		"runtime": func(d *reconciler.Desired) { d.Runtime = "io.containerd.wasmtime.v1" },
+		// The declared capability list is baked in at creation (R13, v1.56):
+		// opting out of the baseline — or granting past it — needs new
+		// containers.
+		"capabilities": func(d *reconciler.Desired) { d.Capabilities = []string{"none"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := base

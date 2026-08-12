@@ -454,7 +454,7 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 		Image:          d.RunImage(),
 		Runtime:        d.Runtime,
 		Command:        d.Command,
-		Capabilities:   d.Capabilities,
+		Capabilities:   effectiveCapabilities(d),
 		Env:            d.Env,
 		User:           d.User,
 		Resources:      d.Resources,
@@ -599,6 +599,13 @@ func Diff(current, desired []Desired) []string {
 		}
 		if have.Count != want.Count {
 			changes = append(changes, fmt.Sprintf("count %d -> %d", have.Count, want.Count))
+		}
+		// Capabilities are spec-hash material — declaring ["none"] (or adding a
+		// grant) rolls every alloc, and a plan that did not mention it would
+		// show a redeploy with no visible cause.
+		if !reflect.DeepEqual(have.Capabilities, want.Capabilities) {
+			changes = append(changes, fmt.Sprintf("capabilities %s -> %s",
+				describeCapabilities(have.Capabilities), describeCapabilities(want.Capabilities)))
 		}
 		if have.Resources != want.Resources {
 			changes = append(changes, fmt.Sprintf("resources %+v -> %+v", have.Resources, want.Resources))

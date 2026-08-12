@@ -168,13 +168,20 @@ Two deliberate gaps, stated rather than hidden:
 
 ### 3.5 Workloads (A01, A04)
 
-Every alloc runs with all capabilities dropped, `no-new-privileges`, the default
-seccomp profile, private PID and IPC namespaces, and mandatory cpu/memory/pids
-limits — no container is ever unlimited, and **nothing a job spec can declare on
-its own** lifts any of it: there is no `privileged` field, and the capability
-allowlist is bounded by a set that excludes every privilege-equivalent
-capability (§6.2 R13). The control plane holds a cgroups v2 `memory.min` floor,
-so a workload cannot OOM-kill the reconciler that would otherwise restart it.
+Every alloc runs with capabilities dropped to the **baseline set** (§6.2 R13,
+v1.56: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `KILL`, `NET_BIND_SERVICE`,
+`SETGID`, `SETUID` — the uid-switching grants the PUID-pattern image class needs
+at startup, confined by the alloc's own private PID namespace and netns;
+`capabilities = ["none"]` restores full drop-ALL per service), plus
+`no-new-privileges`, the default seccomp profile, private PID and IPC
+namespaces, and mandatory cpu/memory/pids limits — no container is ever
+unlimited, and **nothing a job spec can declare on its own** lifts past the
+permitted set: there is no `privileged` field, and the capability allowlist
+excludes every privilege-equivalent capability. `CAP_NET_RAW` is deliberately
+not baseline — the datapath's identity is the IP (PRD §5.2.5), and a raw
+socket forges sources against a stateless policy layer — it remains an
+explicit, reviewed grant. The control plane holds a cgroups v2 `memory.min` floor, so a
+workload cannot OOM-kill the reconciler that would otherwise restart it.
 
 The exceptions are host volumes, devices and sockets, and all three are
 *operator* grants rather than spec declarations — see §3.12. A **published node
@@ -573,12 +580,15 @@ volumes. This *reduces* privilege rather than granting it, which makes it the
 one entry in this section with no operator gate — a uid is a number, not a node
 resource, so unlike §3.12 there is nothing for the node to permit.
 
-- **It exists to make capability grants unnecessary.** A stock image asks for
+- **It exists to make startup privilege unnecessary.** A stock image uses
   `CAP_CHOWN`, `CAP_SETUID` and `CAP_SETGID` — sometimes `CAP_DAC_OVERRIDE`,
-  which bypasses file permission checks outright — so that it can chown a
-  root-owned data directory and drop privileges at startup. A spec that states
-  the uid and the ownership up front leaves nothing to do and nothing to grant.
-  PRD §6.1's postgres example now runs with no capabilities at all.
+  which bypasses file permission checks outright — to chown a root-owned data
+  directory and drop privileges at startup; since v1.56 those grants are the
+  R13 baseline, so such images start without a `capabilities` line. A spec
+  that states the uid and the ownership up front leaves nothing to do at
+  startup, and *pairing it with `capabilities = ["none"]`* is the strongest
+  posture available: PRD §6.1's postgres example runs with no capabilities at
+  all, declared rather than defaulted.
 - **It is declarable, not default.** An absent `user` block means the image's
   own `USER` stands. Forcing a uid globally would break every image that ships
   a correct one, and the internal representation keeps "unset" distinct from
@@ -863,11 +873,13 @@ the browser refuses, and cannot open the live socket (`Origin`). A cross-site
 form post carries the cookie and nothing else — exactly the request the CSRF
 check rejects.
 
-**A workload is compromised.** No capabilities, no escalation, no route to
-another project's services (the datapath's default-deny, §3.5 — with the
-SYN-gating caveat stated there), no cloud metadata (the egress program drops
-`169.254.0.0/16` in the kernel, with a counter), no way to exhaust the node
-(cgroup ceiling). It can reach what its project's policy allows, which is the
+**A workload is compromised.** The R13 baseline capabilities only (file
+ownership and uid-switching inside its own namespaces — no `NET_RAW`, no
+`NET_ADMIN`, nothing privilege-equivalent; `["none"]` if the operator declared
+it), no escalation, no route to another project's services (the datapath's
+default-deny, §3.5 — with the SYN-gating caveat stated there), no cloud
+metadata (the egress program drops `169.254.0.0/16` in the kernel, with a
+counter), no way to exhaust the node (cgroup ceiling). It can reach what its project's policy allows, which is the
 point of declaring it. Unless it holds a socket grant — see below, where this
 stops being true.
 
@@ -928,9 +940,9 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 - **Node-local root.** Anyone root on the host owns the daemon, the master key
   and the container runtime. Nothing here defends against that, and pretending
   otherwise would mean designing around a boundary that does not exist.
-- **Kernel container escape.** Kanea drops capabilities, applies seccomp and
-  namespaces every alloc; a kernel bug past all of that is the kernel's boundary,
-  not Kanea's. The mitigation is patching, which `kanea doctor` (M10) checks.
+- **Kernel container escape.** Kanea drops capabilities to a reviewed baseline,
+  applies seccomp and namespaces every alloc; a kernel bug past all of that is
+  the kernel's boundary, not Kanea's. The mitigation is patching, which `kanea doctor` (M10) checks.
 - **Hostility between projects on one node.** Projects are isolated by network
   policy and cgroups, not by virtualisation. v1 is a single-team platform;
   a project is an organisational boundary that happens to be enforced, not a

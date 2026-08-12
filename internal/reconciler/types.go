@@ -57,7 +57,12 @@ type Desired struct {
 	RegistryAuthRef string `json:"registry_auth_ref,omitempty"`
 	// Command overrides the image entrypoint when non-empty.
 	Command []string
-	// Capabilities is the validated capability allowlist (jobspec R13).
+	// Capabilities is the validated *declared* list (jobspec R13) — grants on
+	// top of the baseline, or CapabilityNone to start from nothing. The
+	// baseline itself is never written here: it is applied at projection time
+	// (effectiveCapabilities), because this field is SpecHash material and a
+	// default that entered the record would re-hash — and roll — every
+	// capability-less service at upgrade (the R23 lesson).
 	Capabilities []string
 	// Env is the fully resolved environment for each alloc.
 	Env map[string]string

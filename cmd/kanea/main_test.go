@@ -135,8 +135,10 @@ func TestImplementedCommandsAreWired(t *testing.T) {
 
 func TestFindServiceResolvesTheSlashForm(t *testing.T) {
 	// PRD §16.2 has always written `kanea stop shop/web`; v1.55 makes the CLI
-	// actually parse it. A service name is a DNS-1123 label, so the slash is
-	// unambiguous.
+	// actually parse it, and v1.56 routes every service-targeting command
+	// through this one resolver — logs, exec, build and status included, the
+	// four that used to carry their own weaker parsing. A service name is a
+	// DNS-1123 label, so the slash is unambiguous.
 	services := []reconciler.Desired{
 		{Project: "shop", Service: "web", Count: 2},
 		{Project: "blog", Service: "web", Count: 1},
@@ -176,6 +178,27 @@ func TestFindServiceResolvesTheSlashForm(t *testing.T) {
 				t.Errorf("resolved project = %q, want %q", got.Project, tc.wantProject)
 			}
 		})
+	}
+}
+
+// The status table's scope filter: a project narrows, a resolved service
+// narrows further, and the zero filter shows everything. Display-only — the
+// dependency reasoning keeps the full list.
+func TestVisibleServicesNarrowsTheStatusTable(t *testing.T) {
+	services := []reconciler.Desired{
+		{Project: "shop", Service: "web"},
+		{Project: "shop", Service: "api"},
+		{Project: "blog", Service: "web"},
+	}
+	if got := visibleServices(services, "", ""); len(got) != 3 {
+		t.Errorf("unfiltered view shows %d services, want all 3", len(got))
+	}
+	if got := visibleServices(services, "shop", ""); len(got) != 2 {
+		t.Errorf("project view shows %d services, want 2", len(got))
+	}
+	got := visibleServices(services, "shop", "web")
+	if len(got) != 1 || got[0].Project != "shop" || got[0].Service != "web" {
+		t.Errorf("service view shows %v, want exactly shop/web", got)
 	}
 }
 

@@ -19,29 +19,38 @@ import (
 func runBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	socket := socketFlag(fs)
-	project := fs.String("project", "", "project name, when the service is not given as project/service")
+	project := fs.String("project", "", "project name")
 	deploy := fs.Bool("deploy", true, "deploy the built digest when the build succeeds")
 	follow := fs.Bool("follow", true, "stream the build log until it finishes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: kanea build [--project p] [project/]service")
-	}
-	proj, service, err := splitServiceRef(fs.Arg(0), *project)
-	if err != nil {
-		return err
+		return errors.New("usage: kanea build [--project P] <[project/]service>")
 	}
 
 	ctx := context.Background()
 	client := api.NewClient(*socket)
-	run, err := client.Build(ctx, proj, service, *deploy)
+
+	// One resolver for every service-targeting command (v1.56): build used
+	// to carry its own stricter splitter, which was the one place a unique
+	// bare name did not resolve.
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	target, err := findService(services, *project, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+
+	run, err := client.Build(ctx, target.Project, target.Service, *deploy)
 	if err != nil {
 		return err
 	}
 
 	o := newOut()
-	o.printf("queued build %s for %s/%s\n", gitops.ShortID(run.ID), proj, service)
+	o.printf("queued build %s for %s/%s\n", gitops.ShortID(run.ID), target.Project, target.Service)
 	if err := o.Err(); err != nil {
 		return err
 	}
@@ -193,20 +202,6 @@ func runProjectBuilds(args []string) error {
 			lastPathElement(run.Image))
 	}
 	return o.Err()
-}
-
-// splitServiceRef accepts "project/service" or a bare service with --project.
-func splitServiceRef(ref, project string) (string, string, error) {
-	if proj, service, found := strings.Cut(ref, "/"); found {
-		if proj == "" || service == "" {
-			return "", "", fmt.Errorf("%q is not project/service", ref)
-		}
-		return proj, service, nil
-	}
-	if project == "" {
-		return "", "", fmt.Errorf("%q needs a project: pass --project or write project/%s", ref, ref)
-	}
-	return project, ref, nil
 }
 
 // firstLine trims a commit message to its subject.

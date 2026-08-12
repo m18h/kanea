@@ -39,16 +39,30 @@ func runExec(args []string) error {
 	defer stop()
 
 	client := api.NewClient(*socket)
+
+	// The service resolves like every other service-targeting command
+	// (v1.56). Before this, a bare name with no --project scanned allocs
+	// across every project and then met the server's 400 — the resolver
+	// answers with the right project, or with the ambiguity, up front.
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	svc, err := findService(services, *project, service)
+	if err != nil {
+		return err
+	}
+
 	target := *alloc
 	if target == "" {
-		target, err = pickAlloc(ctx, client, *project, service)
+		target, err = pickAlloc(ctx, client, svc.Project, svc.Service)
 		if err != nil {
 			return err
 		}
 	}
 
 	code, err := client.Exec(ctx, api.ExecOptions{
-		Project: *project, Alloc: target, Command: command,
+		Project: svc.Project, Alloc: target, Command: command,
 		TTY: *interactive, User: *user,
 		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
 	})
@@ -71,7 +85,7 @@ func runExec(args []string) error {
 // flag meant for the remote command is silently eaten here.
 func splitExecArgs(args []string) (service string, command []string, err error) {
 	if len(args) == 0 {
-		return "", nil, errors.New("usage: kanea exec [--project P] [-it] <service> -- <command> [args…]")
+		return "", nil, errors.New("usage: kanea exec [--project P] [-it] <[project/]service> -- <command> [args…]")
 	}
 	service = args[0]
 	rest := args[1:]
@@ -113,20 +127,15 @@ func pickAlloc(ctx context.Context, client *api.Client, project, service string)
 		}
 	}
 	if best.Index < 0 {
+		// The caller resolved the service (findService), so the label is
+		// always fully qualified.
 		if len(allocs) == 0 {
-			return "", fmt.Errorf("no allocs for %s; is it running?", serviceLabel(project, service))
+			return "", fmt.Errorf("no allocs for %s/%s; is it running?", project, service)
 		}
-		return "", fmt.Errorf("no running alloc for %s (%d exist but none are running) — "+
-			"`kanea ps` shows why", serviceLabel(project, service), len(allocs))
+		return "", fmt.Errorf("no running alloc for %s/%s (%d exist but none are running) — "+
+			"`kanea ps` shows why", project, service, len(allocs))
 	}
 	return best.ID, nil
-}
-
-func serviceLabel(project, service string) string {
-	if project == "" {
-		return service
-	}
-	return project + "/" + service
 }
 
 // exitCodeError carries a remote exit code out to main without a message.

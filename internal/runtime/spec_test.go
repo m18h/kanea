@@ -429,6 +429,17 @@ func TestValidate(t *testing.T) {
 			func(a *AllocSpec) { a.Runtime = "io.containerd.runc.v2" },
 			"only",
 		},
+		// runc refuses an unknown capability name at task create, failing every
+		// alloc of the service with an error nobody can attribute. The spec-level
+		// "none" token must be resolved by the reconciler's projection before the
+		// spec reaches this driver — a leaked one is a caller bug, refused here
+		// by name (R13, v1.56).
+		{"granted capability", func(a *AllocSpec) { a.Capabilities = []string{"CAP_CHOWN"} }, ""},
+		{
+			"unprojected capability token",
+			func(a *AllocSpec) { a.Capabilities = []string{"none"} },
+			"not a capability name",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -566,7 +577,11 @@ func TestRequestedCapabilitiesAreGranted(t *testing.T) {
 }
 
 func TestNoRequestedCapabilitiesStillDropsAll(t *testing.T) {
-	// The default must not change: no request means no capabilities.
+	// The DRIVER's default must not change: an empty list means no
+	// capabilities, full stop. The R13 baseline is the reconciler's
+	// projection (effectiveCapabilities) — by the time a spec reaches this
+	// package the union has already happened, so an empty list here is a
+	// service that opted out, or a function.
 	s := buildSpec(t, validAlloc())
 	caps := s.Process.Capabilities
 	if len(caps.Bounding)+len(caps.Effective)+len(caps.Permitted)+len(caps.Inheritable) != 0 {

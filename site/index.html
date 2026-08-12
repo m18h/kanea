@@ -91,9 +91,10 @@
           <span class="tag">Runtime</span>
           <h3>containerd, hardened by default</h3>
           <p>
-            All capabilities dropped, <code>no-new-privileges</code>, the default seccomp
-            profile, per-alloc PID and IPC namespaces — and no <code>privileged</code>
-            escape hatch in the spec at all. Nothing runs uncapped: workloads share a
+            Capabilities dropped to a reviewed uid-switching baseline
+            (<code>["none"]</code> drops the rest), <code>no-new-privileges</code>, the
+            default seccomp profile, per-alloc PID and IPC namespaces — and no
+            <code>privileged</code> escape hatch in the spec at all. Nothing runs uncapped: workloads share a
             cgroup with a hard ceiling, and the control plane holds a kernel-guaranteed
             memory floor beneath it.
           </p>
@@ -320,7 +321,7 @@ kanea ui</pre>
       </p>
       <div class="window">
         <div class="bar"><i></i><i></i><i></i><span>manual install</span></div>
-<pre>VERSION=v0.10.0; ARCH=amd64
+<pre>VERSION=v0.11.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz

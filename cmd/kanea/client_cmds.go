@@ -358,6 +358,9 @@ func runStatus(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() > 1 {
+		return errors.New("usage: kanea status [--project P] [[project/]service]")
+	}
 
 	ctx := context.Background()
 	client := api.NewClient(*socket)
@@ -370,13 +373,29 @@ func runStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	allocs, err := client.Allocs(ctx, *project, "")
+
+	// The optional service argument §16.2 has always documented (v1.56):
+	// resolved like every other service-targeting command, it narrows the
+	// table to one service. The full list is still fetched, because the
+	// "waiting for" verdict below needs the dependencies' rows to reason
+	// about, even when they are not displayed.
+	proj, svcName := *project, ""
+	if fs.NArg() == 1 {
+		target, err := findService(services, *project, fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		proj, svcName = target.Project, target.Service
+	}
+	visible := visibleServices(services, proj, svcName)
+
+	allocs, err := client.Allocs(ctx, proj, "")
 	if err != nil {
 		return err
 	}
 
 	if *asJSON {
-		return writeStatusJSON(ctx, client, health, services, allocs, *project, *traffic)
+		return writeStatusJSON(ctx, client, health, visible, allocs, "", *traffic)
 	}
 
 	o := newOut()
@@ -397,11 +416,8 @@ func runStatus(args []string) error {
 	o.table()
 	o.println("SERVICE\tDESIRED\tRUNNING\tHEALTH\tIMAGE")
 	unhealthy := 0
-	for _, svc := range services {
+	for _, svc := range visible {
 		key := svc.Project + "/" + svc.Service
-		if *project != "" && svc.Project != *project {
-			continue
-		}
 		t := counts[key]
 		if t == nil {
 			t = &tally{}
@@ -426,7 +442,7 @@ func runStatus(args []string) error {
 	}
 
 	if *traffic {
-		if err := printTraffic(ctx, client, services, *project); err != nil {
+		if err := printTraffic(ctx, client, visible, ""); err != nil {
 			return err
 		}
 	}
@@ -439,6 +455,24 @@ func runStatus(args []string) error {
 		tail.printf("%d service(s) need attention — see `kanea ps` and `kanea logs <service>`.\n", unhealthy)
 	}
 	return tail.Err()
+}
+
+// visibleServices narrows the status table to a project, a single service, or
+// neither. It filters what is *displayed* only — the caller keeps the full
+// list for the dependency reasoning, because "waiting for db" is an answer a
+// scoped view still owes even when db's own row is not shown.
+func visibleServices(services []reconciler.Desired, project, service string) []reconciler.Desired {
+	out := make([]reconciler.Desired, 0, len(services))
+	for _, svc := range services {
+		if project != "" && svc.Project != project {
+			continue
+		}
+		if service != "" && svc.Service != service {
+			continue
+		}
+		out = append(out, svc)
+	}
+	return out
 }
 
 // tallyAllocs groups alloc records by service and by state.
@@ -682,8 +716,25 @@ func runLogs(args []string) error {
 	defer stop()
 
 	client := api.NewClient(*socket)
+
+	// A service name resolves like every other service-targeting command
+	// (v1.56): `media/plex` used to be passed through as a literal — a name
+	// no service can have — and matched nothing.
+	proj := *project
+	if service != "" {
+		services, err := client.Services(ctx)
+		if err != nil {
+			return err
+		}
+		target, err := findService(services, *project, service)
+		if err != nil {
+			return err
+		}
+		proj, service = target.Project, target.Service
+	}
+
 	return client.Logs(ctx, api.LogOptions{
-		Project: *project, Service: service, AllocID: *alloc,
+		Project: proj, Service: service, AllocID: *alloc,
 		Follow: *follow, Tail: *tail,
 	}, os.Stdout)
 }
@@ -698,7 +749,7 @@ func runStop(args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: kanea stop [--project P] [--rm] <service>")
+		return errors.New("usage: kanea stop [--project P] [--rm] <[project/]service>")
 	}
 	service := fs.Arg(0)
 
@@ -854,7 +905,7 @@ func runScale(args []string) error {
 		return err
 	}
 	if fs.NArg() != 2 {
-		return errors.New("usage: kanea scale [--project P] <service> <count>")
+		return errors.New("usage: kanea scale [--project P] <[project/]service> <count>")
 	}
 	count, err := strconv.Atoi(fs.Arg(1))
 	if err != nil || count < 0 {

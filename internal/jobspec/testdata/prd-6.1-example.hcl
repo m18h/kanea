@@ -208,14 +208,15 @@ service "postgres" {
     # Numeric only (R23): a username would be read from the image's own
     # /etc/passwd, and it would mean a different uid after a rebuild.
     #
-    # No `capabilities` line. Stock images ask for CAP_CHOWN, CAP_SETUID and
-    # CAP_SETGID so they can chown a root-owned data directory and drop to
-    # their own user at startup — this says both facts up front instead, so
-    # there is nothing left to do at startup and nothing to grant.
+    # The user block states up front what a stock image does at startup —
+    # chown a root-owned data directory, drop to its own user. With nothing
+    # left to do at startup, "none" opts out of R13's baseline set too:
+    # this container runs with no capabilities at all.
     user {
       uid = 999
       gid = 999
     }
+    capabilities = ["none"]
 
     resources {
       cpu    = 1000
@@ -245,8 +246,9 @@ service "assets" {
     image = "nginx:1.27-alpine"
 
     # Argument array, never a shell string (R12).
-    command      = ["nginx", "-g", "daemon off;"]
-    capabilities = ["CAP_CHOWN", "CAP_SETUID", "CAP_SETGID"]
+    command = ["nginx", "-g", "daemon off;"]
+    # No `capabilities` line: R13's baseline already covers what nginx does at
+    # startup — chown its temp dirs, drop to the nginx user, bind :80.
   }
   volume "media" {
     storage    = "s3-media"                   # S3 bucket mounted via FUSE
