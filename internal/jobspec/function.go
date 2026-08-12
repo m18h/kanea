@@ -29,9 +29,10 @@ import (
 // DefaultFunctionPort is the wasi-http listen port when the block omits one.
 const DefaultFunctionPort = 8080
 
-// DefaultFunctionMemory is the memory default for functions, in MiB. Smaller
-// than a container's DefaultMemory because a wasm module's baseline is
-// kilobytes, and R11's point is a ceiling, not a grant.
+// DefaultFunctionMemory is the memory default for functions, in MiB. Small,
+// because a wasm module's baseline is kilobytes — and unlike services, which
+// default to unbounded since v1.58, a function keeps a real cap: R25 promises
+// the sandbox's limits are enforced, and an unbounded module would break it.
 const DefaultFunctionMemory = 64
 
 // Trigger kinds (R26).

@@ -374,7 +374,10 @@ function SpecPanel({ desired }: { desired: Service | undefined }) {
           {desired.Count}
         </KeyValue>
         <KeyValue label="Resources" mono>
-          {desired.Resources.CPUMillis}m · {formatBytes(desired.Resources.MemoryBytes)}
+          {/* Zero means unbounded (R11, v1.58) — "0m · 0 B" would read as
+              nothing allowed when it means everything available. */}
+          {desired.Resources.CPUMillis > 0 ? `${desired.Resources.CPUMillis}m` : "all cores"} ·{" "}
+          {desired.Resources.MemoryBytes > 0 ? formatBytes(desired.Resources.MemoryBytes) : "all memory"}
         </KeyValue>
         {desired.Expose ? (
           <KeyValue label="Expose" mono>

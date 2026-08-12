@@ -657,7 +657,9 @@ func convertTask(t *hclTask) *Task {
 		Capabilities:    t.Capabilities,
 		RegistryAuthRef: t.RegistryAuthRef,
 		Env:             map[string]string{},
-		Resources:       Resources{CPU: DefaultCPU, Memory: DefaultMemory},
+		// Resources stay zero unless declared: zero means unbounded (R11,
+		// v1.58) — the alloc gets no per-alloc quota and is bounded by the
+		// workload parent cgroup. No default is filled in, here or anywhere.
 	}
 	if t.User != nil {
 		// Carried as written. Range checking is validateUser's job, and it runs

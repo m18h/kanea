@@ -171,10 +171,9 @@ func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Conf
 		block.AppendNewline()
 	}
 
-	res := block.AppendNewBlock("resources", nil).Body()
-	res.SetAttributeValue("cpu", cty.NumberIntVal(int64(svc.Resources.CPUMillis)*NominalCoreMHz/1000))
-	res.SetAttributeValue("memory", cty.NumberIntVal(svc.Resources.MemoryBytes>>20))
-	block.AppendNewline()
+	if writeResources(block, svc) {
+		block.AppendNewline()
+	}
 
 	if svc.Function.HTTP {
 		tr := block.AppendNewBlock("trigger", []string{jobspec.TriggerHTTP}).Body()
@@ -375,6 +374,26 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 	return nil
 }
 
+// writeResources emits a resources block with only the declared limits. A
+// zero limit is unbounded (R11, v1.58) and regenerates as omission — emitting
+// `cpu = 0` would be legal but would read as a declaration nobody made.
+// Reports whether it wrote anything.
+func writeResources(block *hclwrite.Body, svc *reconciler.Desired) bool {
+	cpu := int64(svc.Resources.CPUMillis) * NominalCoreMHz / 1000
+	mem := svc.Resources.MemoryBytes >> 20
+	if cpu <= 0 && mem <= 0 {
+		return false
+	}
+	res := block.AppendNewBlock("resources", nil).Body()
+	if cpu > 0 {
+		res.SetAttributeValue("cpu", cty.NumberIntVal(cpu))
+	}
+	if mem > 0 {
+		res.SetAttributeValue("memory", cty.NumberIntVal(mem))
+	}
+	return true
+}
+
 func writeTask(block *hclwrite.Body, svc *reconciler.Desired) error {
 	task := block.AppendNewBlock("task", []string{"app"}).Body()
 	// The declared tag, never PinnedImage: the pin is server-owned bookkeeping
@@ -402,9 +421,7 @@ func writeTask(block *hclwrite.Body, svc *reconciler.Desired) error {
 		task.SetAttributeValue("env", cty.ObjectVal(pairs))
 	}
 
-	res := task.AppendNewBlock("resources", nil).Body()
-	res.SetAttributeValue("cpu", cty.NumberIntVal(int64(svc.Resources.CPUMillis)*NominalCoreMHz/1000))
-	res.SetAttributeValue("memory", cty.NumberIntVal(svc.Resources.MemoryBytes>>20))
+	writeResources(task, svc)
 
 	if u := svc.User; u != nil {
 		user := task.AppendNewBlock("user", nil).Body()

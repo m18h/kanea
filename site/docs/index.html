@@ -545,11 +545,13 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       </p>
     </div>
     <p>
-      Per-alloc limits are <b>mandatory; the declaration is optional</b>. Omit
-      <code>resources</code> and you get <code>cpu = 100</code>, <code>memory = 256</code>
-      plus a default <code>pids.max</code>. No container ever runs unlimited. Declared
-      resources are also the admission units: <code>kanea plan</code> renders the workload
-      budget and apply refuses a total above it unless the operator has explicitly enabled
+      Per-alloc limits are <b>enforced where declared</b>. Omit <code>resources</code>
+      (or a field of it) and the alloc is unbounded: all cores, all allocatable memory,
+      capped only by the workload parent's collective ceiling — which, with the
+      control-plane floor, is the isolation that actually protects the platform. A
+      default <code>pids.max</code> still applies to every alloc. Declared resources are
+      also the admission units: <code>kanea plan</code> renders the workload budget and
+      apply refuses a total above it unless the operator has explicitly enabled
       oversubscription.
     </p>
 
@@ -820,7 +822,7 @@ service "web" {
           <tr><td><code>command</code></td><td>list(string)</td><td>Overrides the image entrypoint. <b>An argument array, never a shell string</b> (R12).</td></tr>
           <tr><td><code>capabilities</code></td><td>list(string)</td><td>Grants added to the baseline set; <code>"none"</code> starts from nothing instead (R13).</td></tr>
           <tr><td><code>env</code></td><td>map</td><td>Values may be <code>secret:</code> references or <code>${service.…}</code> interpolations.</td></tr>
-          <tr><td><code>resources</code></td><td>block</td><td><code>cpu</code> in MHz, <code>memory</code> in MiB. Omitted → <code>cpu = 100</code>, <code>memory = 256</code>.</td></tr>
+          <tr><td><code>resources</code></td><td>block</td><td><code>cpu</code> in MHz (1000 = one core), <code>memory</code> in MiB. An omitted limit is unbounded: all cores / all allocatable memory.</td></tr>
           <tr><td><code>registry_auth_ref</code></td><td>string</td><td><code>secret:</code> reference to a docker <code>config.json</code> used to <b>pull</b> the image. Project-scoped like every other reference (R5).</td></tr>
           <tr><td><code>device</code></td><td>block</td><td>Requests a host device the operator granted, by name (R17). See below.</td></tr>
           <tr><td><code>socket</code></td><td>block</td><td>Requests a host unix socket the operator granted, by name (R18). See below.</td></tr>
@@ -1117,7 +1119,7 @@ restart {
     <div class="rule"><b>R8</b><div><p><b>The minimal service is image-only.</b> At least one of <code>task.image</code> or <code>build</code> must be present. When both are, the pipeline-built digest wins and <code>task.image</code> is the pre-first-build value.</p></div></div>
     <div class="rule"><b>R9</b><div><p><b>Service references are same-project in v1</b>, validated at plan against the whole applied set — the referenced service and port must exist, and file order is irrelevant. Resolved as DNS names, never IPs. <b>Cycles are rejected</b>, with the cycle shown in the diagnostic.</p></div></div>
     <div class="rule"><b>R10</b><div><p><b>Dependencies gate starts, not stops.</b> <code>depends_on</code> and every implicit reference edge mean a dependent will not start until its dependencies are healthy. If a dependency degrades afterwards, dependents keep running and events are emitted — no cascading stops.</p></div></div>
-    <div class="rule"><b>R11</b><div><p><b>Resource limits are mandatory; declaring them is optional.</b> Omitted → <code>cpu = 100</code>, <code>memory = 256</code>, plus a default <code>pids.max</code>. No alloc ever runs unlimited. A <code>memory.max</code> breach OOM-kills the alloc, emits an event, and the restart policy applies. Declared values are the admission units counted against the node's workload budget.</p></div></div>
+    <div class="rule"><b>R11</b><div><p><b>A declared limit is enforced; an omitted one is the node's capacity.</b> Omit <code>resources</code> and the alloc gets all cores and all allocatable memory, bounded by the workload parent cgroup — not by a per-alloc number nobody typed. A default <code>pids.max</code> applies regardless. A declared <code>memory.max</code> breach OOM-kills the alloc, emits an event, and the restart policy applies. Scaling on <code>cpu</code> or <code>memory</code> (percent-of-limit) requires the corresponding limit and is refused at plan without it. Declared values are the admission units counted against the node's workload budget. Functions keep small defaults (<code>cpu = 100</code>, <code>memory = 64</code>) — the wasm sandbox's caps are promises.</p></div></div>
     <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully — <code>redis-server --save ""</code> is how you disable snapshots.</p></div></div>
     <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> adds to a baseline, and <code>"none"</code> takes the baseline away.</b> Every runc alloc starts from the baseline set — <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>NET_BIND_SERVICE</code>, <code>SETGID</code>, <code>SETUID</code> — so PUID-style images start without a capability line. The effective grant is the union of baseline and declared list; <code>["none"]</code> is the full drop-ALL posture, <code>["none", "CAP_NET_RAW"]</code> exactly one grant. Declarable beyond the baseline: <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_RAW</code> (never baseline — the datapath's identity is the IP), <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. Privilege-equivalent ones — <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends — are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Effective capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
     <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; the datapath's ingress rules only ever union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b> — <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
@@ -1355,7 +1357,7 @@ spec_version = 1
     <h3 id="cli-deploy">Deploying</h3>
 
     <h4><code>kanea plan</code></h4>
-    <pre class="plain">kanea plan app.hcl [more.hcl …]
+    <pre class="plain">kanea plan app.hcl [more.hcl …] [selector …]
 kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
       A real dry run: the create/change/destroy diff, the resulting workload budget, and
@@ -1365,13 +1367,23 @@ kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     </p>
 
     <h4><code>kanea run</code></h4>
-    <pre class="plain">kanea run app.hcl [more.hcl …] [--wait=60s]
+    <pre class="plain">kanea run app.hcl [more.hcl …] [selector …] [--wait=60s]
 kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
       Applies the spec. <code>kanea apply</code> is an alias — same flags, same
       behaviour. <code>--wait</code> is how long to wait for allocs to reach running
       before returning; <code>0</code> returns immediately. Running it twice with an
       unchanged spec does nothing — a deploy is a spec-hash mismatch, not an invocation.
+    </p>
+    <p>
+      A <b>selector</b> scopes both commands to part of the file: <code>kanea run
+      app.hcl shop/web</code> applies one service, <code>shop</code> alone a whole
+      project, and several selectors union. An argument that exists on disk is a spec
+      file; only a non-existent one is read as a selector, and one that is neither is
+      refused by name. The whole file is still parsed and validated — a selector never
+      changes what a spec means, only how much of it is sent — and every selector must
+      match at least one service in the file. An apply is additive either way: services
+      not in the request are never touched, so a scoped run cannot delete anything.
     </p>
 
     <h4><code>kanea stop</code></h4>

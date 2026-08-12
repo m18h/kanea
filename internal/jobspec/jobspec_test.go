@@ -61,19 +61,20 @@ func TestMinimalImageOnlyService(t *testing.T) {
 	}
 }
 
-func TestResourceDefaultsAreAlwaysApplied(t *testing.T) {
-	// R11: limits are mandatory, the declaration is optional. No alloc unlimited.
+func TestOmittedResourcesAreUnbounded(t *testing.T) {
+	// R11 (v1.58): an omitted limit is the node's capacity. Zero means
+	// unbounded, and no default is filled in.
 	spec := parse(t, minimalSpec)
 	task := spec.ServiceByName("shop", "web").Task
 
-	if task.Resources.CPU != jobspec.DefaultCPU {
-		t.Errorf("cpu = %d, want default %d", task.Resources.CPU, jobspec.DefaultCPU)
+	if task.Resources.CPU != 0 {
+		t.Errorf("cpu = %d, want 0 (unbounded)", task.Resources.CPU)
 	}
-	if task.Resources.Memory != jobspec.DefaultMemory {
-		t.Errorf("memory = %d, want default %d", task.Resources.Memory, jobspec.DefaultMemory)
+	if task.Resources.Memory != 0 {
+		t.Errorf("memory = %d, want 0 (unbounded)", task.Resources.Memory)
 	}
 	if task.ResourcesDeclared {
-		t.Error("ResourcesDeclared = true for an omitted block; plan could not distinguish defaults")
+		t.Error("ResourcesDeclared = true for an omitted block; plan could not distinguish omission")
 	}
 
 	declared := parse(t, `
@@ -99,7 +100,9 @@ service "web" {
 	}
 }
 
-func TestPartialResourcesKeepDefaultsForTheRest(t *testing.T) {
+func TestPartialResourcesLeaveTheRestUnbounded(t *testing.T) {
+	// The two halves are independent (R11, v1.58): declaring memory does not
+	// conjure a CPU limit nobody typed.
 	spec := parse(t, `
 spec_version = 1
 project "shop" {}
@@ -117,8 +120,8 @@ service "web" {
 	if res.Memory != 1024 {
 		t.Errorf("memory = %d, want 1024", res.Memory)
 	}
-	if res.CPU != jobspec.DefaultCPU {
-		t.Errorf("cpu = %d, want default %d when only memory is declared", res.CPU, jobspec.DefaultCPU)
+	if res.CPU != 0 {
+		t.Errorf("cpu = %d, want 0 (unbounded) when only memory is declared", res.CPU)
 	}
 }
 
@@ -159,6 +162,28 @@ service "` + tc.svcName + `" {
 				t.Errorf("diagnostics = %q, want mention of %q", out, tc.wantErr)
 			}
 		})
+	}
+}
+
+// IsName is the parser's R1 rule exported for the CLI's selector grammar
+// (PRD v1.57) — one implementation, so the two cannot drift.
+func TestIsNameIsTheParserRule(t *testing.T) {
+	for name, want := range map[string]bool{
+		"web":                   true,
+		"web-2":                 true,
+		"w":                     true,
+		strings.Repeat("a", 63): true,
+		"Web":                   false,
+		"web_1":                 false,
+		"-web":                  false,
+		"web-":                  false,
+		"web.api":               false,
+		strings.Repeat("a", 64): false,
+		"":                      false,
+	} {
+		if got := jobspec.IsName(name); got != want {
+			t.Errorf("IsName(%q) = %v, want %v", name, got, want)
+		}
 	}
 }
 
@@ -1126,13 +1151,30 @@ func TestScalingValidation(t *testing.T) {
 	tests := []struct {
 		name    string
 		count   string
+		task    string
 		scaling string
 		wantErr string
 	}{
 		{
 			name:    "valid",
 			count:   "count = 3",
+			task:    "task \"app\" {\n image = \"nginx\"\n resources { cpu = 500 }\n}",
 			scaling: "scaling {\n min = 2\n max = 10\n metric \"cpu\" {\n target = 70\n }\n}",
+		},
+		{
+			// R11 (v1.58): cpu/memory targets are percent-of-limit, and a
+			// limitless alloc records no percent — the rule could never fire.
+			name:    "cpu metric with no cpu limit",
+			count:   "count = 3",
+			scaling: "scaling {\n min = 2\n max = 10\n metric \"cpu\" {\n target = 70\n }\n}",
+			wantErr: "Scaling metric needs a limit",
+		},
+		{
+			name:    "memory metric with no memory limit",
+			count:   "count = 3",
+			task:    "task \"app\" {\n image = \"nginx\"\n resources { cpu = 500 }\n}",
+			scaling: "scaling {\n min = 2\n max = 10\n metric \"memory\" {\n target = 70\n }\n}",
+			wantErr: "Scaling metric needs a limit",
 		},
 		{
 			name:    "min above max",
@@ -1161,13 +1203,17 @@ func TestScalingValidation(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			task := tc.task
+			if task == "" {
+				task = `task "app" { image = "nginx" }`
+			}
 			src := `
 spec_version = 1
 project "shop" {}
 service "web" {
   project = "shop"
   ` + tc.count + `
-  task "app" { image = "nginx" }
+  ` + task + `
   ` + tc.scaling + `
 }
 `

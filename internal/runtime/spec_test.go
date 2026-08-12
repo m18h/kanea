@@ -112,8 +112,8 @@ func TestHardeningDefaultsAreApplied(t *testing.T) {
 	}
 }
 
-func TestResourceLimitsAreAlwaysSet(t *testing.T) {
-	// AGENTS.md constraint #11: no container ever runs unlimited.
+func TestDeclaredResourceLimitsAreSet(t *testing.T) {
+	// R11: a declared limit is enforced exactly.
 	alloc := validAlloc()
 	alloc.CgroupPath = CgroupPath(WorkloadSlice, alloc.ID)
 	s := buildSpec(t, alloc)
@@ -148,6 +148,30 @@ func TestResourceLimitsAreAlwaysSet(t *testing.T) {
 
 	if s.Linux.CgroupsPath != "/kanea-workloads.slice/shop-web-1" {
 		t.Errorf("cgroup path = %q", s.Linux.CgroupsPath)
+	}
+}
+
+// R11 (v1.58): a zero limit is unbounded — no memory.max, no cpu.max — but the
+// pids cap stays on every alloc, because a fork bomb is not a resource to
+// serve to capacity.
+func TestUnboundedResourcesSetNoQuotaButKeepThePidsCap(t *testing.T) {
+	alloc := validAlloc()
+	alloc.Resources.CPUMillis = 0
+	alloc.Resources.MemoryBytes = 0
+	s := buildSpec(t, alloc)
+
+	res := s.Linux.Resources
+	if res == nil {
+		t.Fatal("no resources at all; the pids cap must survive unbounded cpu/memory")
+	}
+	if res.Memory != nil {
+		t.Errorf("memory = %+v, want none for an unbounded alloc", res.Memory)
+	}
+	if res.CPU != nil {
+		t.Errorf("cpu = %+v, want no quota for an unbounded alloc", res.CPU)
+	}
+	if res.Pids == nil || res.Pids.Limit == nil || *res.Pids.Limit != DefaultPidsLimit {
+		t.Fatal("pids cap missing on an unbounded alloc")
 	}
 }
 
@@ -394,8 +418,11 @@ func TestValidate(t *testing.T) {
 		{"short id", func(a *AllocSpec) { a.ID = "web" }, "at least 5"},
 		{"no project", func(a *AllocSpec) { a.Project = "" }, "no project"},
 		{"no image", func(a *AllocSpec) { a.Image = "" }, "no image"},
-		{"no cpu limit", func(a *AllocSpec) { a.Resources.CPUMillis = 0 }, "no CPU limit"},
-		{"no memory limit", func(a *AllocSpec) { a.Resources.MemoryBytes = 0 }, "no memory limit"},
+		// Zero limits are unbounded (R11, v1.58), not malformed.
+		{"unbounded cpu", func(a *AllocSpec) { a.Resources.CPUMillis = 0 }, ""},
+		{"unbounded memory", func(a *AllocSpec) { a.Resources.MemoryBytes = 0 }, ""},
+		{"negative cpu limit", func(a *AllocSpec) { a.Resources.CPUMillis = -1 }, "negative CPU limit"},
+		{"negative memory limit", func(a *AllocSpec) { a.Resources.MemoryBytes = -1 }, "negative memory limit"},
 		{
 			"relative mount source",
 			func(a *AllocSpec) { a.Mounts = []Mount{{Source: "data", Destination: "/data"}} },

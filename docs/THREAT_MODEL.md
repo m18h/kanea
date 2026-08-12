@@ -174,8 +174,11 @@ v1.56: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `KILL`, `NET_BIND_SERVICE`,
 at startup, confined by the alloc's own private PID namespace and netns;
 `capabilities = ["none"]` restores full drop-ALL per service), plus
 `no-new-privileges`, the default seccomp profile, private PID and IPC
-namespaces, and mandatory cpu/memory/pids limits — no container is ever
-unlimited, and **nothing a job spec can declare on its own** lifts past the
+namespaces, and an always-on pids cap. Cpu/memory limits are enforced where
+declared (§6.2 R11, v1.58: an omitted limit means the node's capacity — the
+containment is the workload parent cgroup's collective ceiling plus the
+control plane's `memory.min` floor, never a per-alloc number nobody typed),
+and **nothing a job spec can declare on its own** lifts past the
 permitted set: there is no `privileged` field, and the capability allowlist
 excludes every privilege-equivalent capability. `CAP_NET_RAW` is deliberately
 not baseline — the datapath's identity is the IP (PRD §5.2.5), and a raw

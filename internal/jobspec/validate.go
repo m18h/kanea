@@ -28,6 +28,13 @@ var dns1123Label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 // MaxNameLength is the DNS-1123 label limit.
 const MaxNameLength = 63
 
+// IsName reports whether s is a valid project or service name (R1): a
+// DNS-1123 label of at most MaxNameLength characters. Exported so the CLI's
+// selector grammar and the parser cannot hold two versions of the rule.
+func IsName(s string) bool {
+	return len(s) <= MaxNameLength && dns1123Label.MatchString(s)
+}
+
 // SecretPrefix marks a secret reference. Secrets are referenced, never inlined
 // (R3, PRD §12).
 const SecretPrefix = "secret:"
@@ -519,23 +526,23 @@ func validateTask(svc *Service) hcl.Diagnostics {
 		})
 	}
 
-	// R11 — limits are mandatory; the declaration is not. Defaults are already
-	// filled in, so a non-positive value here can only be an explicit one.
-	if task.Resources.CPU <= 0 {
+	// R11 (v1.58) — zero means unbounded (an omitted limit is the node's
+	// capacity), so only a negative value is an error.
+	if task.Resources.CPU < 0 {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid CPU limit",
-			Detail: fmt.Sprintf("Service %q declares resources.cpu = %d MHz; it must be positive. "+
-				"No alloc may run unlimited.", svc.Name, task.Resources.CPU),
+			Detail: fmt.Sprintf("Service %q declares resources.cpu = %d MHz; it cannot be negative. "+
+				"Omit the field (or declare 0) for all cores.", svc.Name, task.Resources.CPU),
 			Subject: task.DefRange.Ptr(),
 		})
 	}
-	if task.Resources.Memory <= 0 {
+	if task.Resources.Memory < 0 {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid memory limit",
-			Detail: fmt.Sprintf("Service %q declares resources.memory = %d MiB; it must be positive. "+
-				"No alloc may run unlimited.", svc.Name, task.Resources.Memory),
+			Detail: fmt.Sprintf("Service %q declares resources.memory = %d MiB; it cannot be negative. "+
+				"Omit the field (or declare 0) for all allocatable memory.", svc.Name, task.Resources.Memory),
 			Subject: task.DefRange.Ptr(),
 		})
 	}
@@ -852,6 +859,29 @@ func validateScaling(svc *Service) hcl.Diagnostics {
 				Summary:  "Invalid scaling metric",
 				Detail: fmt.Sprintf("Service %q: metric %q has target %d; it must be positive.",
 					svc.Name, m.Name, m.Target),
+				Subject: svc.DefRange.Ptr(),
+			})
+		}
+		// R11 (v1.58): cpu/memory scaling targets are percent-of-limit, and
+		// the scrapers record nothing for an alloc with no limit — a rule
+		// that could never fire is refused, not carried (R21's rule).
+		if m.Name == "cpu" && svc.Task != nil && svc.Task.Resources.CPU == 0 {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Scaling metric needs a limit",
+				Detail: fmt.Sprintf("Service %q scales on %q, a percent of the CPU limit, but declares "+
+					"no resources.cpu — the metric would never be recorded. Declare a CPU limit or "+
+					"scale on a different metric.", svc.Name, m.Name),
+				Subject: svc.DefRange.Ptr(),
+			})
+		}
+		if m.Name == "memory" && svc.Task != nil && svc.Task.Resources.Memory == 0 {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Scaling metric needs a limit",
+				Detail: fmt.Sprintf("Service %q scales on %q, a percent of the memory limit, but declares "+
+					"no resources.memory — the metric would never be recorded. Declare a memory limit or "+
+					"scale on a different metric.", svc.Name, m.Name),
 				Subject: svc.DefRange.Ptr(),
 			})
 		}
