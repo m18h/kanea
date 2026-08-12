@@ -241,7 +241,8 @@ type Task struct {
 	// image's own USER directive stands, which is what every spec written
 	// before R23 meant — so adding the field changes no running service.
 	User *User
-	// Resources are always enforced; an omitted block yields defaults (R11).
+	// Resources are enforced where declared; zero means unbounded (R11,
+	// v1.58) and no default is ever filled in.
 	Resources Resources
 	// ResourcesDeclared records whether the spec declared the block, so
 	// `kanea plan` can show defaults as defaults.
@@ -320,20 +321,23 @@ const MaxID = 1<<32 - 2
 // and every one of them is copied into every alloc's OCI spec.
 const MaxGroups = 64
 
-// Resources are the per-alloc limits. Never unlimited (R11, PRD §5.2.11).
+// Resources are the per-alloc limits. Zero means unbounded (R11, v1.58): an
+// omitted limit sets no per-alloc quota, and the alloc is bounded by the
+// workload parent cgroup (total RAM − reserve, PRD §5.2.11).
 type Resources struct {
-	// CPU in MHz.
+	// CPU in MHz. 0 = all cores.
 	CPU int
-	// Memory in MiB.
+	// Memory in MiB. 0 = all allocatable.
 	Memory int
 }
 
-// Defaults applied when `resources` is omitted (R11).
-const (
-	DefaultCPU    = 100
-	DefaultMemory = 256
-	DefaultCount  = 1
-)
+// DefaultCPU is the function CPU default in MHz (R25) — services default to
+// unbounded since v1.58, functions deliberately do not: the wasm sandbox's
+// caps are promises.
+const DefaultCPU = 100
+
+// DefaultCount is the alloc count when a spec declares none.
+const DefaultCount = 1
 
 // Network declares container ports by name, the node ports the edge publishes
 // on this service's behalf, and the service's ingress policy.

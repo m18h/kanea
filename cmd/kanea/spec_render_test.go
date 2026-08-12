@@ -229,6 +229,40 @@ func TestGeneratedSpecRoundTripsToTheSameDesired(t *testing.T) {
 	}
 }
 
+// R11 (v1.58): an omitted limit is unbounded (zero in the record), and it
+// must regenerate as omission — a generated `cpu = 0` would read as a
+// declaration nobody made, and a generated default would re-bound a service
+// the operator left unbounded.
+func TestUnboundedResourcesRoundTripAsOmission(t *testing.T) {
+	original, pipelines := renderText(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+}
+`)
+	if len(original) != 1 {
+		t.Fatalf("services = %d, want 1", len(original))
+	}
+	if original[0].Resources.CPUMillis != 0 || original[0].Resources.MemoryBytes != 0 {
+		t.Fatalf("resources = %+v, want zero (unbounded)", original[0].Resources)
+	}
+
+	text, err := toHCL(original, pipelines)
+	if err != nil {
+		t.Fatalf("toHCL: %v", err)
+	}
+	if strings.Contains(text, "resources") {
+		t.Fatalf("generated spec declares resources for an unbounded service:\n%s", text)
+	}
+
+	regenerated, _ := renderText(t, text)
+	if !reflect.DeepEqual(original[0], regenerated[0]) {
+		t.Errorf("unbounded service did not round-trip.\nwant: %+v\ngot:  %+v", original[0], regenerated[0])
+	}
+}
+
 const functionRoundTripSpec = `
 spec_version = 1
 

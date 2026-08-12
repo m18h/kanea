@@ -42,12 +42,13 @@ func (s AllocSpec) Validate() error {
 		return fmt.Errorf("%w: alloc %s has no project", ErrInvalidSpec, s.ID)
 	case s.Image == "":
 		return fmt.Errorf("%w: alloc %s has no image", ErrInvalidSpec, s.ID)
-	case s.Resources.CPUMillis <= 0:
-		return fmt.Errorf("%w: alloc %s has no CPU limit; no alloc may run unlimited (PRD §6.2 R11)",
-			ErrInvalidSpec, s.ID)
-	case s.Resources.MemoryBytes <= 0:
-		return fmt.Errorf("%w: alloc %s has no memory limit; no alloc may run unlimited (PRD §6.2 R11)",
-			ErrInvalidSpec, s.ID)
+	// Zero CPU/memory means unbounded (PRD §6.2 R11, v1.58): no per-alloc
+	// quota, bounded by the workload parent cgroup. Only negatives are
+	// malformed.
+	case s.Resources.CPUMillis < 0:
+		return fmt.Errorf("%w: alloc %s has a negative CPU limit", ErrInvalidSpec, s.ID)
+	case s.Resources.MemoryBytes < 0:
+		return fmt.Errorf("%w: alloc %s has a negative memory limit", ErrInvalidSpec, s.ID)
 	case s.Runtime != "" && s.Runtime != RuntimeWasmtime:
 		// A runtime name resolves to a binary containerd executes as root, so
 		// the set is closed rather than passed through (PRD §6.2 R25).
@@ -228,12 +229,18 @@ func withResources(spec AllocSpec) oci.SpecOpts {
 			s.Linux.Resources = &specs.LinuxResources{}
 		}
 
-		mem := spec.Resources.MemoryBytes
-		s.Linux.Resources.Memory = &specs.LinuxMemory{Limit: &mem, Swap: &mem}
-
-		quota := int64(spec.Resources.CPUMillis) * int64(cpuPeriod) / 1000
-		period := cpuPeriod
-		s.Linux.Resources.CPU = &specs.LinuxCPU{Quota: &quota, Period: &period}
+		// A zero limit is unbounded (R11, v1.58): no memory.max, no cpu.max —
+		// the workload parent cgroup is the ceiling. Swap is capped to the
+		// memory limit only when one exists, so a limited alloc cannot spill
+		// its pressure sideways.
+		if mem := spec.Resources.MemoryBytes; mem > 0 {
+			s.Linux.Resources.Memory = &specs.LinuxMemory{Limit: &mem, Swap: &mem}
+		}
+		if millis := spec.Resources.CPUMillis; millis > 0 {
+			quota := int64(millis) * int64(cpuPeriod) / 1000
+			period := cpuPeriod
+			s.Linux.Resources.CPU = &specs.LinuxCPU{Quota: &quota, Period: &period}
+		}
 
 		pids := spec.Resources.PidsLimit
 		if pids <= 0 {

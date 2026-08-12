@@ -32,11 +32,17 @@ func socketFlag(fs *flag.FlagSet) *string {
 // loadSpec parses the job spec files given on the command line, or builds a
 // one-service spec from the --image/--name/--project flags. PRD §6 calls the
 // image-only path first-class: `kanea run --image=nginx --name web` must work
-// with no file at all.
+// with no file at all. Selectors (PRD v1.57) narrow the converted desired
+// state to a project or a service — after parsing and validation, so the
+// filter can never change what the spec means, only how much of it is sent.
 func loadSpec(
-	files []string, image, name, project string, count int,
+	files []string, sels []selector, image, name, project string, count int,
 ) ([]reconciler.Desired, []gitops.Config, error) {
 	if image != "" {
+		if len(files) > 0 || len(sels) > 0 {
+			return nil, nil, errors.New(
+				"--image builds its one service from --name and --project; spec files and selectors do not combine with it")
+		}
 		if name == "" || project == "" {
 			return nil, nil, errors.New("--image also needs --name and --project")
 		}
@@ -45,14 +51,16 @@ func loadSpec(
 			Service: name,
 			Count:   count,
 			Image:   image,
-			Resources: runtime.Resources{
-				CPUMillis:   jobspec.DefaultCPU * 1000 / NominalCoreMHz,
-				MemoryBytes: int64(jobspec.DefaultMemory) << 20,
-				PidsLimit:   DefaultPidsLimit,
-			},
+			// CPU and memory stay zero — unbounded, like a spec with no
+			// resources block (R11, v1.58). Pids keeps its cap everywhere.
+			Resources: runtime.Resources{PidsLimit: DefaultPidsLimit},
 		}}, nil, nil
 	}
 	if len(files) == 0 {
+		if len(sels) > 0 {
+			return nil, nil, fmt.Errorf(
+				"selector %q needs a spec file to select from; give at least one file", sels[0].raw)
+		}
 		return nil, nil, errors.New("give a job spec file, or --image with --name and --project")
 	}
 
@@ -69,7 +77,14 @@ func loadSpec(
 	if err != nil {
 		return nil, nil, err
 	}
-	return desired, pipelineConfigs(spec), nil
+	pipelines := pipelineConfigs(spec)
+	if len(sels) > 0 {
+		if desired, err = filterDesired(desired, sels); err != nil {
+			return nil, nil, err
+		}
+		pipelines = filterPipelines(pipelines, desired)
+	}
+	return desired, pipelines, nil
 }
 
 // pipelineConfigs extracts the per-project pipeline configuration from a spec.
@@ -105,7 +120,11 @@ func runRun(args []string) error {
 		return err
 	}
 
-	desired, pipelines, err := loadSpec(fs.Args(), *image, *name, *project, *count)
+	files, sels, err := splitFilesAndSelectors(fs.Args())
+	if err != nil {
+		return err
+	}
+	desired, pipelines, err := loadSpec(files, sels, *image, *name, *project, *count)
 	if err != nil {
 		return err
 	}
@@ -198,7 +217,11 @@ func runPlan(args []string) error {
 		return err
 	}
 
-	desired, _, err := loadSpec(fs.Args(), *image, *name, *project, *count)
+	files, sels, err := splitFilesAndSelectors(fs.Args())
+	if err != nil {
+		return err
+	}
+	desired, _, err := loadSpec(files, sels, *image, *name, *project, *count)
 	if err != nil {
 		return err
 	}
@@ -214,6 +237,15 @@ func runPlan(args []string) error {
 	}
 
 	o := newOut()
+	if len(sels) > 0 {
+		// A filtered "No changes" must not read as "the whole file is
+		// converged" (PRD v1.57).
+		raws := make([]string, len(sels))
+		for i, sel := range sels {
+			raws[i] = sel.raw
+		}
+		o.printf("Scope: %s\n\n", strings.Join(raws, ", "))
+	}
 	diff := reconciler.Diff(current, desired)
 	if len(diff) == 0 {
 		o.println("No changes. Desired state matches the declared spec.")
