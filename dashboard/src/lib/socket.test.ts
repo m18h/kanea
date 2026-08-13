@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { LiveSocket } from './socket'
+import { LiveSocket, lingerMs, pingInterval, staleAfter } from './socket'
 
 /** fakeWebSocket records what a LiveSocket sends and lets a test drive it. */
 class fakeWebSocket {
@@ -115,6 +115,163 @@ describe('LiveSocket', () => {
     ws.onmessage?.({ data: JSON.stringify({ type: 'data', topic: 'services', key: 'services' }) })
 
     expect(seen).toHaveLength(0)
+    live.close()
+  })
+})
+
+describe('LiveSocket keepalive', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const sentTypes = (ws: fakeWebSocket) =>
+    ws.sent.map((raw) => (JSON.parse(raw) as { type: string }).type)
+
+  it('pings an idle socket before the server would give up on it', () => {
+    const live = new LiveSocket('ws://test/v1/ws')
+    live.subscribe({ topic: 'services' }, () => {})
+    const ws = latest()
+    ws.open()
+    ws.onmessage?.({ data: JSON.stringify({ type: 'data', topic: 'services', key: 'services' }) })
+
+    vi.advanceTimersByTime(pingInterval)
+    expect(sentTypes(ws)).toContain('ping')
+    live.close()
+  })
+
+  it('closes a socket that has been silent past the stale window', () => {
+    const live = new LiveSocket('ws://test/v1/ws')
+    live.subscribe({ topic: 'services' }, () => {})
+    const first = latest()
+    first.open()
+
+    // Nothing ever arrives: after two silent ping rounds the socket is
+    // half-open and must be replaced rather than trusted.
+    vi.advanceTimersByTime(staleAfter + pingInterval)
+    expect(first.readyState).toBe(3)
+
+    // The close handler owns reconnection; a new socket appears on schedule.
+    vi.advanceTimersByTime(1_000)
+    expect(fakeWebSocket.instances.length).toBeGreaterThan(1)
+    live.close()
+  })
+
+  it('a frame resets the silence clock', () => {
+    const live = new LiveSocket('ws://test/v1/ws')
+    live.subscribe({ topic: 'services' }, () => {})
+    const ws = latest()
+    ws.open()
+
+    // Keep feeding frames just inside the window; the socket must stay up.
+    for (let i = 0; i < 4; i++) {
+      vi.advanceTimersByTime(pingInterval)
+      ws.onmessage?.({ data: JSON.stringify({ type: 'pong', topic: 'services' }) })
+    }
+    expect(ws.readyState).toBe(fakeWebSocket.OPEN)
+    live.close()
+  })
+})
+
+describe('LiveSocket reconnection', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('backs off with jitter inside [0.5x, 1x] of the nominal delay', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const live = new LiveSocket('ws://test/v1/ws')
+    live.subscribe({ topic: 'services' }, () => {})
+    const ws = latest()
+    ws.open()
+    ws.close()
+
+    // With random = 0 the jittered delay is exactly half the nominal 500 ms.
+    vi.advanceTimersByTime(249)
+    expect(fakeWebSocket.instances).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    expect(fakeWebSocket.instances).toHaveLength(2)
+
+    random.mockRestore()
+    live.close()
+  })
+
+  it('reconnects immediately when connectivity returns', () => {
+    const live = new LiveSocket('ws://test/v1/ws')
+    live.subscribe({ topic: 'services' }, () => {})
+    const ws = latest()
+    ws.open()
+    ws.close()
+
+    // The backoff timer is pending; the online event preempts it.
+    window.dispatchEvent(new Event('online'))
+    expect(fakeWebSocket.instances).toHaveLength(2)
+
+    // And the replaced subscription replays when the new socket opens.
+    const next = latest()
+    next.open()
+    const topics = next.sent.map((raw) => (JSON.parse(raw) as { topic: string }).topic)
+    expect(topics).toContain('services')
+    live.close()
+  })
+
+  it('close removes the connectivity listeners', () => {
+    const live = new LiveSocket('ws://test/v1/ws')
+    live.subscribe({ topic: 'services' }, () => {})
+    live.close()
+
+    const before = fakeWebSocket.instances.length
+    window.dispatchEvent(new Event('online'))
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(fakeWebSocket.instances.length).toBe(before)
+  })
+})
+
+describe('LiveSocket linger', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('holds a subscription through a quick unsubscribe/resubscribe', () => {
+    const live = new LiveSocket('ws://test/v1/ws')
+    const stop = live.subscribe({ topic: 'services' }, () => {})
+    const ws = latest()
+    ws.open()
+    ws.sent = []
+
+    // A route change: the old page unsubscribes, the new one resubscribes
+    // moments later. The server must never see the teardown.
+    stop()
+    vi.advanceTimersByTime(lingerMs / 2)
+    live.subscribe({ topic: 'services' }, () => {})
+    vi.advanceTimersByTime(lingerMs * 2)
+
+    const types = ws.sent.map((raw) => (JSON.parse(raw) as { type: string }).type)
+    expect(types).not.toContain('unsubscribe')
+    live.close()
+  })
+
+  it('tells the server once the linger window passes unclaimed', () => {
+    const live = new LiveSocket('ws://test/v1/ws')
+    const stop = live.subscribe({ topic: 'services' }, () => {})
+    const ws = latest()
+    ws.open()
+    ws.sent = []
+
+    stop()
+    expect(ws.sent).toHaveLength(0) // not yet
+    vi.advanceTimersByTime(lingerMs)
+
+    const types = ws.sent.map((raw) => (JSON.parse(raw) as { type: string }).type)
+    expect(types).toContain('unsubscribe')
     live.close()
   })
 })
