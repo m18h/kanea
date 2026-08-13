@@ -169,6 +169,13 @@ type fakeNetwork struct {
 	attachErr error
 	lbSyncs   [][]network.Service
 	lbErr     error
+
+	// repair state (v1.65)
+	repairs   []runtime.AllocSpec
+	repairErr error
+
+	// egress state (v1.65)
+	egressCalls int
 }
 
 func newFakeNetwork() *fakeNetwork {
@@ -306,6 +313,28 @@ func (n *fakeNetwork) eventLog() []string {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return slices.Clone(n.events)
+}
+
+// RepairIdentity makes fakeNetwork a reconciler.IdentityRepairer (v1.65): a
+// successful repair readies the attachment, exactly as re-writing the real
+// identity map entry does.
+func (n *fakeNetwork) RepairIdentity(_ context.Context, spec runtime.AllocSpec) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.repairErr != nil {
+		return n.repairErr
+	}
+	n.repairs = append(n.repairs, spec)
+	delete(n.notReady, spec.ID)
+	return nil
+}
+
+// EnsureEgress makes fakeNetwork a reconciler.EgressEnsurer (v1.65).
+func (n *fakeNetwork) EnsureEgress(context.Context) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.egressCalls++
+	return nil
 }
 
 // Attachments makes fakeNetwork a reconciler.NetworkInspector. The fake hands
@@ -1148,8 +1177,30 @@ func TestBackendsExcludeAllocsThatAreNotRunning(t *testing.T) {
 }
 
 // An endpoint whose identity has not resolved cannot receive traffic anyway —
-// advertising it just sends requests into a drop.
+// advertising it just sends requests into a drop. Since v1.65 the pass first
+// tries to repair such an endpoint, so this pins the un-repairable case: the
+// exclusion must hold when repair cannot help.
 func TestBackendsExcludeUnreadyEndpoints(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desiredWithPort(2))
+	h.reconcile(t)
+
+	h.network.mu.Lock()
+	h.network.notReady[reconciler.AllocID("shop", "web", 1)] = true
+	h.network.repairErr = errors.New("no attachment to repair")
+	h.network.mu.Unlock()
+	h.reconcile(t)
+
+	if got := h.network.backendsOf("shop", "web"); len(got) != 1 {
+		t.Fatalf("backends = %v, want only the ready endpoint", got)
+	}
+}
+
+// A not-Ready attachment whose alloc the Store still declares is repaired
+// map-only and advertised again in the same pass (v1.65) — the state a
+// pinned-map schema wipe leaves behind must not persist until the alloc is
+// replaced.
+func TestUnreadyAttachmentsAreRepairedAndReadvertised(t *testing.T) {
 	h := newHarness(t)
 	h.setDesired(t, desiredWithPort(2))
 	h.reconcile(t)
@@ -1159,8 +1210,30 @@ func TestBackendsExcludeUnreadyEndpoints(t *testing.T) {
 	h.network.mu.Unlock()
 	h.reconcile(t)
 
-	if got := h.network.backendsOf("shop", "web"); len(got) != 1 {
-		t.Fatalf("backends = %v, want only the ready endpoint", got)
+	if got := h.network.backendsOf("shop", "web"); len(got) != 2 {
+		t.Fatalf("backends = %v, want both after the repair", got)
+	}
+	h.network.mu.Lock()
+	defer h.network.mu.Unlock()
+	if len(h.network.repairs) != 1 {
+		t.Fatalf("repairs = %+v, want exactly one", h.network.repairs)
+	}
+	if r := h.network.repairs[0]; r.Project != "shop" || r.Service != "web" {
+		t.Fatalf("repair spec = %+v, want the record's project/service", r)
+	}
+}
+
+// The egress plumbing is re-asserted from the pass (v1.65): a firewall reload
+// that flushed the masquerade rule must cost seconds, not a kanead restart.
+func TestEgressIsEnsuredEveryPass(t *testing.T) {
+	h := newHarness(t)
+	h.setDesired(t, desired(1))
+	h.reconcile(t)
+
+	h.network.mu.Lock()
+	defer h.network.mu.Unlock()
+	if h.network.egressCalls == 0 {
+		t.Fatal("EnsureEgress was never called from the pass")
 	}
 }
 

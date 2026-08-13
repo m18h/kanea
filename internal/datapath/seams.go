@@ -93,6 +93,12 @@ type Maps interface {
 	// v6 enable switch and a node whose v6 was turned off must overwrite
 	// whatever an earlier process pinned.
 	SetConfig6(cfg dpmap.Config6) error
+	// SetClusterCIDR and SetClusterCIDR6 write the cluster maps (v1.65):
+	// what to_container treats as internal for the source-identity deny and
+	// from_container refuses to see forged past. SetClusterCIDR6 is written
+	// unconditionally like SetConfig6, and for the same reason.
+	SetClusterCIDR(cfg dpmap.CIDR) error
+	SetClusterCIDR6(cfg dpmap.CIDR6) error
 }
 
 // Firewall owns the one nftables rule the datapath needs: masquerade for

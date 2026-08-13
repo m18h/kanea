@@ -4,6 +4,7 @@ import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { TableSkeleton } from '@/components/Skeletons'
 import { Input } from '@/components/ui/input'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
@@ -122,7 +123,7 @@ export function Functions() {
       {functions.error ? (
         <Card className="p-4 text-sm text-destructive">{String(functions.error)}</Card>
       ) : functions.isPending ? (
-        <Card className="p-4 text-sm text-muted-foreground">Loading…</Card>
+        <TableSkeleton rows={5} cols={6} />
       ) : list.length === 0 ? (
         <Card className="p-4 text-sm text-muted-foreground">
           No functions yet. A <code className="font-mono">function</code> block in a job spec

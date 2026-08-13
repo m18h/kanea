@@ -58,6 +58,121 @@ export function mergeSeed(
   return [...seed, ...live].slice(-SparklineLength)
 }
 
+/** TimedSeries is a series over real time: aligned unix-seconds and values,
+ * null marking a gap — uPlot's native vocabulary. */
+export interface TimedSeries {
+  times: number[]
+  values: (number | null)[]
+}
+
+/** How many timed points a chart keeps — the 15 m history window at the 5 s
+ * cadence, with headroom for a long-open page. */
+const maxTimedPoints = 400
+
+/** A silence longer than this breaks the line: the samples on either side are
+ * real, the time between them was never measured. */
+const gapSeconds = 30
+
+/**
+ * timedSeedFromHistory turns one /v1/stats/history series into TimedSeries
+ * points at their real timestamps, inserting a null wherever the record goes
+ * quiet for longer than gapSeconds — a sparse history must not draw a line
+ * across an hour nobody measured.
+ */
+export function timedSeedFromHistory(
+  history: StatsHistory,
+  series: string,
+): (TimedSeries & { asOf: string }) | undefined {
+  const points = history.series[series]
+  if (!points || points.length === 0) return undefined
+
+  const parsed = points
+    .map((p) => ({ t: Date.parse(p.at) / 1000, v: p.value, at: p.at }))
+    .filter((p) => Number.isFinite(p.t))
+    .sort((a, b) => a.t - b.t)
+  if (parsed.length === 0) return undefined
+
+  const times: number[] = []
+  const values: (number | null)[] = []
+  let asOf = ''
+  for (const p of parsed) {
+    const prev = times.at(-1)
+    if (prev !== undefined && p.t - prev > gapSeconds) {
+      times.push(prev + 1)
+      values.push(null)
+    }
+    times.push(p.t)
+    values.push(p.v)
+    if (p.at > asOf) asOf = p.at
+  }
+  return { times, values, asOf }
+}
+
+/**
+ * useTimedSeries accumulates live samples onto their real timestamps,
+ * optionally seeded from /v1/stats/history. Because x is actual time, mixed
+ * cadences (a 5 s history under a 10 s poll) lay out correctly by
+ * construction — there is no slot grid to disagree about.
+ *
+ * Same discipline as useSeries below: an undefined value is a gap (null),
+ * samples dedupe on their timestamp, and the returned object's identity
+ * changes exactly when a point lands — which is what lets a chart call
+ * setData only when there is new data.
+ */
+export function useTimedSeries(
+  value: number | undefined,
+  at: string,
+  history?: StatsHistory | null,
+  series?: string,
+): TimedSeries {
+  /* eslint-disable react-hooks/refs -- the accumulation below runs during
+     render on purpose: every step is guarded to be idempotent (the seeded
+     flag, the lastAt dedupe), so a StrictMode double render records nothing
+     twice, and the snapshot returned is never one sample stale the way an
+     effect-time append would make it. */
+  const times = useRef<number[]>([])
+  const values = useRef<(number | null)[]>([])
+  const snapshot = useRef<TimedSeries>({ times: [], values: [] })
+  const lastAt = useRef<string>('')
+  const seeded = useRef(false)
+
+  if (!seeded.current && history && series) {
+    seeded.current = true
+    const seed = timedSeedFromHistory(history, series)
+    if (seed) {
+      times.current = [...seed.times, ...times.current].slice(-maxTimedPoints)
+      values.current = [...seed.values, ...values.current].slice(-maxTimedPoints)
+      if (lastAt.current === '' || lastAt.current <= seed.asOf) lastAt.current = seed.asOf
+      snapshot.current = { times: [...times.current], values: [...values.current] }
+    }
+  }
+
+  const fresh = at !== '' && at !== lastAt.current && !(lastAt.current !== '' && at < lastAt.current)
+  if (fresh) {
+    const t = Date.parse(at) / 1000
+    if (Number.isFinite(t)) {
+      lastAt.current = at
+      const prev = times.current.at(-1)
+      if (prev === undefined || t > prev) {
+        if (prev !== undefined && t - prev > gapSeconds) {
+          times.current.push(prev + 1)
+          values.current.push(null)
+        }
+        times.current.push(t)
+        values.current.push(value ?? null)
+        if (times.current.length > maxTimedPoints) {
+          times.current = times.current.slice(-maxTimedPoints)
+          values.current = values.current.slice(-maxTimedPoints)
+        }
+        snapshot.current = { times: [...times.current], values: [...values.current] }
+      }
+    }
+  }
+
+  return snapshot.current
+  /* eslint-enable react-hooks/refs */
+}
+
 /**
  * useSeries accumulates a live value into a bounded history, optionally
  * seeded from /v1/stats/history so a fresh page is not blank (v1.38).

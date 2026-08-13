@@ -106,9 +106,30 @@ type ApplyResponse struct {
 	Index uint64 `json:"index"`
 }
 
+// ServiceView is a Desired as the API serves it, with fields computed at
+// projection time. SpecHash is reconciler.SpecHash over the record — never
+// stored, so the hash material and the Store shape are untouched. A client
+// compares it against AllocRecord.SpecHash (the planner's own staleness
+// rule) to tell whether a deploy is in flight.
+type ServiceView struct {
+	reconciler.Desired
+	SpecHash string `json:"spec_hash"`
+}
+
 // ServicesResponse lists the declared services.
 type ServicesResponse struct {
-	Services []reconciler.Desired `json:"services"`
+	Services []ServiceView `json:"services"`
+}
+
+// serviceViews projects desired records for a response. Both the REST list
+// and the websocket services feed go through it, so the two surfaces cannot
+// disagree about what a service looks like on the wire.
+func serviceViews(services []reconciler.Desired) []ServiceView {
+	views := make([]ServiceView, len(services))
+	for i, d := range services {
+		views[i] = ServiceView{Desired: d, SpecHash: reconciler.SpecHash(d)}
+	}
+	return views
 }
 
 // AllocsResponse lists alloc records, newest state first.

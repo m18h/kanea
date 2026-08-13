@@ -141,6 +141,56 @@ func (d *Datapath) plumb(spec runtime.AllocSpec, host string, ip, ip6 netip.Addr
 	return nil
 }
 
+// RepairIdentity re-writes the identity entries for an attachment that exists
+// but is not Ready — the state a pinned-map schema wipe leaves behind at
+// upgrade (§15.4, PRD v1.65). Map-only, deliberately: the veth, netns,
+// addresses and routes are untouched, because re-plumbing a live workload's
+// interface is a teardown wearing a repair's name. The reconciler calls this
+// for records whose attachment reports Ready=false.
+func (d *Datapath) RepairIdentity(ctx context.Context, spec runtime.AllocSpec) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	projectID, err := d.ids.ProjectID(ctx, spec.Project)
+	if err != nil {
+		return err
+	}
+	serviceID, err := d.ids.ServiceID(ctx, spec.Project, spec.Service)
+	if err != nil {
+		return err
+	}
+	identity := dpmap.Identity{ProjectID: projectID, ServiceID: serviceID}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	links, err := d.nl.List()
+	if err != nil {
+		return fmt.Errorf("datapath: list links: %w", err)
+	}
+	host := hostDevName(spec.ID)
+	for i := range links {
+		if links[i].Name != host {
+			continue
+		}
+		id, ip, ip6, ok := parseAlias(links[i].Alias)
+		if !ok || id != spec.ID {
+			break // a foreign alias is not ours to repair
+		}
+		if err := d.maps.PutIdentity(ip, identity); err != nil {
+			return fmt.Errorf("datapath: repair identity for %s: %w", spec.ID, err)
+		}
+		if ip6.IsValid() && d.v6Enabled() {
+			if err := d.maps.PutIdentity(ip6, identity); err != nil {
+				return fmt.Errorf("datapath: repair v6 identity for %s: %w", spec.ID, err)
+			}
+		}
+		d.log.Info("alloc identity repaired", "alloc", spec.ID, "ip", ip)
+		return nil
+	}
+	return fmt.Errorf("datapath: no attachment to repair for %s", spec.ID)
+}
+
 // reuseExisting handles the retry case: a marked link that already exists. A
 // matching alias with the v4 identity present means the attach completed —
 // InstallRoute is the last step, so an existing *complete* attach is exactly

@@ -469,7 +469,13 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       The tc program on each alloc's host-side veth admits a source carrying the host identity
       (the edge's upstream dials, <code>kanead</code>'s DNS replies and probes), a source in
       the same project, or a source named by an <code>allow_from</code> edge (R14) — and drops
-      everything else, including any source the identity map does not know. There is no policy
+      every <i>cluster-internal</i> source the identity map does not know. A source outside
+      the cluster CIDR carries no identity by construction — it is the internet answering a
+      connection the alloc opened, un-NATed by conntrack on the way back in — and passes
+      (v1.65); nothing unsolicited arrives that way, because the pod CIDR is unroutable from
+      off-node and published ports terminate at the edge. The mirror-image rule guards the
+      other direction: a packet <i>leaving</i> an alloc must carry a cluster source, so a
+      forged external address cannot ride that pass. There is no policy
       file, no selector language and no translation step that could make a rule silently match
       nothing; policy <i>is</i> map entries the datapath enforces directly, and rules only ever
       union, so <code>allow_from</code> can never weaken the project default-deny.
@@ -489,9 +495,33 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       range <code>169.254.0.0/16</code> in the kernel with a per-alloc drop counter — not
       asserted in a policy file — along with any service-CIDR destination that escaped
       connect-time rewrite, and it counts per-endpoint traffic. Masquerade for routed pod
-      traffic is one nftables rule in an owned <code>kanea</code> table; a FORWARD-drop policy
-      another tool installs can eat that traffic, and <code>kanea doctor</code> detects and
-      names it.
+      traffic is one nftables rule in an owned <code>kanea</code> table, and since v1.65 the
+      rule and <code>net.ipv4.ip_forward</code> are <b>re-asserted every thirty seconds</b> —
+      a firewall reload that flushes the ruleset costs seconds, not a daemon restart. A
+      FORWARD-drop policy another tool installs can still eat that traffic, and
+      <code>kanea doctor</code> detects and names it, along with a missing
+      <code>kanea</code> table and forwarding turned off.
+    </p>
+
+    <h4>Internal DNS</h4>
+    <p>
+      Allocs resolve through <code>kanead</code>'s own resolver, bound to the datapath's host
+      anchor (the node CIDR's <code>.1</code>) and never a wildcard. It answers
+      <code>&lt;service&gt;.&lt;project&gt;.kanea</code> names authoritatively and forwards
+      everything else upstream. The upstream list is, in order of precedence: the
+      <code>--dns-upstream</code> flag; the server config's <code>dns</code> stanza
+      (v1.66); the host's own <code>/etc/resolv.conf</code>, read once at startup. The
+      stanza is how you pin resolvers on a node whose resolv.conf is DHCP's to rewrite:
+    </p>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">dns</span> {
+  <span class="k">upstreams</span> = [<span class="s">"1.1.1.1"</span>, <span class="s">"10.0.0.53:5353"</span>]  <span class="c"># a bare address gets :53</span>
+}</code></pre>
+    <p>
+      Entries are validated when the file parses; an empty list is refused by name — a
+      stanza that meant "no upstreams" would silently turn external resolution into
+      SERVFAIL. An explicit <code>--dns-upstream</code> wins over the stanza and the daemon
+      says so in its log, the same precedence every half of the server config follows.
     </p>
     <p>
       Datapath state is <b>derived state</b>. Programs, maps and the cgroup link are pinned
@@ -640,10 +670,17 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     </p>
     <p>
       The dashboard is a React SPA embedded in the binary with <code>go:embed</code> and served
-      by the daemon. Its Settings page shows the node's configuration and lets an admin change
+      by the daemon. A service page charts CPU, memory, request rate and p95 over a real
+      time axis, streams logs live (virtualized, filterable, copy and download), shows a
+      restart or deploy as rollout progress — the same spec-hash rule the planner uses,
+      served on the wire since v1.64 — and gives an admin a <b>shell into any running
+      alloc</b>, over the same exec websocket the CLI uses: the CSRF token rides the
+      handshake as a subprotocol, since a browser cannot set the header there. Its Settings
+      page shows the node's configuration and lets an admin change
       what changes at runtime — the backup destination and the notification channels
       (node-wide defaults and per-project, each with a test button) — plus accounts, API
-      tokens and the audit log; what belongs to the unit (listen address, subnets, DNS, the
+      tokens and the audit log, one tab each; what belongs to the unit (listen address,
+      subnets, DNS, the
       port policy) is shown read-only with a note saying so. The MCP server exposes 20 tools
       in three tiers (read, mutate, destructive) over stdio and streamable HTTP.
     </p>

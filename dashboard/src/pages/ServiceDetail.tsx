@@ -1,22 +1,25 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Pencil, Play, RotateCw, Square } from 'lucide-react'
+import { Loader2, Pencil, Play, RotateCw, Square, SquareTerminal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog } from '@/components/ui/dialog'
+import { ChartSkeleton, TableSkeleton } from '@/components/Skeletons'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { BackChip } from '@/components/BackChip'
 import { EventRow } from '@/components/EventRow'
+import { ExecTerminal } from '@/components/ExecTerminal'
 import { KeyValue } from '@/components/KeyValue'
 import { LogViewer } from '@/components/LogViewer'
-import { MetricPanel } from '@/components/MetricPanel'
+import { MetricChartPanel } from '@/components/MetricChartPanel'
 import { PageHeader } from '@/components/PageHeader'
 import { Sparkline } from '@/components/Sparkline'
 import { StatusDot } from '@/components/StatusDot'
 import { useLiveLog, MaxLogLines } from '@/hooks/useLiveLog'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { useSession } from '@/hooks/useSession'
-import { seedFromHistory, useSeries } from '@/hooks/useSeries'
+import { useSeries, useTimedSeries } from '@/hooks/useSeries'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { Link } from '@/lib/router'
@@ -38,6 +41,7 @@ import {
   type StatsSample,
 } from '@/lib/api'
 import { parseScaleDecision } from '@/lib/events'
+import { rolloutStatus, type RolloutStatus } from '@/lib/rollout'
 import {
   allocStateVariant,
   formatBytes,
@@ -48,6 +52,9 @@ import {
   serviceHealth,
   serviceStatusTone,
 } from '@/lib/state'
+
+/** How long a live "no such service" answer must hold before it is believed. */
+const notFoundGraceMs = 750
 
 export function ServiceDetail({ project, service }: { project: string; service: string }) {
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
@@ -76,7 +83,22 @@ export function ServiceDetail({ project, service }: { project: string; service: 
   const mine = groupAllocs(allocs.data?.allocs ?? []).get(key) ?? []
   const allocPager = usePagination(mine)
 
-  if (services.connected && !desired) {
+  // "Not found" only after the absence has held for a moment on a live
+  // connection. A reconnect's first frames can briefly disagree with the
+  // store, and flashing a Not-found card over a service that exists reads as
+  // an outage.
+  const missing = services.connected && services.data !== null && !desired
+  const [notFound, setNotFound] = useState(false)
+  // Render-time reset (the documented derived-state pattern): the moment the
+  // service is back, the verdict is void.
+  if (!missing && notFound) setNotFound(false)
+  useEffect(() => {
+    if (!missing) return
+    const timer = setTimeout(() => setNotFound(true), notFoundGraceMs)
+    return () => clearTimeout(timer)
+  }, [missing])
+
+  if (notFound) {
     return (
       <Card>
         <CardHeader>
@@ -89,8 +111,30 @@ export function ServiceDetail({ project, service }: { project: string; service: 
     )
   }
 
+  // Still connecting: hold the page's shape with skeletons rather than
+  // rendering four empty panels that pop full a beat later.
+  if (!services.data && !desired) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <BackChip to="/services">Services</BackChip>
+          <PageHeader title={<span className="font-mono">{service}</span>} subtitle={key} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <Card key={i} className="p-4">
+              <ChartSkeleton big />
+            </Card>
+          ))}
+        </div>
+        <TableSkeleton rows={3} cols={6} />
+      </div>
+    )
+  }
+
   const health = desired ? serviceHealth(desired, mine) : null
   const status = health ? serviceStatusTone(health) : null
+  const rollout = desired ? rolloutStatus(desired, mine) : null
   const myEvents = (events.data?.events ?? []).filter(
     (e) => !e.service || e.service === service,
   )
@@ -104,12 +148,20 @@ export function ServiceDetail({ project, service }: { project: string; service: 
           subtitle={
             <span className="inline-flex items-center gap-3">
               {status ? <StatusDot tone={status.tone} label={status.word} /> : null}
+              {rollout?.deploying ? <Badge variant="info">deploying</Badge> : null}
               <span>{desired?.Image ?? ''}</span>
             </span>
           }
         />
         <div className="ml-auto">
-          {desired ? <ServiceActions project={project} service={service} desired={desired} /> : null}
+          {desired && rollout ? (
+            <ServiceActions
+              project={project}
+              service={service}
+              desired={desired}
+              rollout={rollout}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -134,6 +186,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                       <TH>Mem</TH>
                       <TH>Restarts</TH>
                       <TH>Age</TH>
+                      <TH className="pr-0" aria-label="Actions" />
                     </tr>
                   </THead>
                   <TBody>
@@ -187,14 +240,19 @@ export function ServiceDetail({ project, service }: { project: string; service: 
  * but disabled: a viewer who does not know they are a viewer reads a missing
  * button as a broken dashboard.
  */
-function ServiceActions({
+/** How long a rollout may hold the buttons before honesty re-enables them. */
+const rolloutLockMs = 5 * 60 * 1000
+
+export function ServiceActions({
   project,
   service,
   desired,
+  rollout,
 }: {
   project: string
   service: string
   desired: Service
+  rollout: RolloutStatus
 }) {
   const { session, csrf } = useSession()
   const admin = session?.role === 'admin'
@@ -202,6 +260,12 @@ function ServiceActions({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmStop, setConfirmStop] = useState(false)
+  // Which action kicked off the rollout the page is now watching. Cleared
+  // when convergence lands; the spinner rides it.
+  const [initiated, setInitiated] = useState<string | null>(null)
+  // The honesty valve: a rollout that has not converged in rolloutLockMs
+  // gives the buttons back rather than wedging the page on a stuck deploy.
+  const [lockExpired, setLockExpired] = useState(false)
 
   // What "start" should scale back to: the last non-zero count this page saw.
   // The daemon does not remember it — a stopped service's record says zero —
@@ -219,23 +283,48 @@ function ServiceActions({
     return () => clearTimeout(timer)
   }, [confirmStop])
 
+  const converging = rollout.deploying && !lockExpired
+  // Render-time reset (the derived-state pattern): convergence voids both the
+  // initiating-action marker and the honesty valve.
+  if (!rollout.deploying && (initiated !== null || lockExpired)) {
+    setInitiated(null)
+    setLockExpired(false)
+  }
+  useEffect(() => {
+    if (!rollout.deploying) return
+    const timer = setTimeout(() => setLockExpired(true), rolloutLockMs)
+    return () => clearTimeout(timer)
+  }, [rollout.deploying])
+
   const run = (name: string, action: () => Promise<void>) => {
     setBusy(name)
     setError(null)
     action()
+      .then(() => setInitiated(name))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setBusy(null))
   }
 
   const stopped = desired.Count === 0
-  const disabled = !admin || busy !== null
+  const disabled = !admin || busy !== null || converging
   const title = admin ? undefined : 'Requires the admin role'
+  const spinner = (name: string) =>
+    busy === name || (initiated === name && converging) ? (
+      <Loader2 size={14} className="animate-spin" />
+    ) : null
 
   return (
     <div className="flex items-center gap-2">
       {error ? (
         <span className="max-w-64 truncate text-xs text-destructive" title={error}>
           {error}
+        </span>
+      ) : null}
+      {rollout.deploying ? (
+        <span className="font-mono text-xs text-muted-foreground">
+          {lockExpired
+            ? 'still converging — actions re-enabled'
+            : `rolling out · ${rollout.updated}/${rollout.total} updated`}
         </span>
       ) : null}
       <Link to={`/services/${project}/${service}/edit`}>
@@ -251,7 +340,7 @@ function ServiceActions({
           title={title}
           onClick={() => run('start', () => scaleService(project, service, lastCount.current, csrf))}
         >
-          <Play size={14} />
+          {spinner('start') ?? <Play size={14} />}
           {busy === 'start' ? 'Starting…' : 'Start'}
         </Button>
       ) : (
@@ -263,8 +352,10 @@ function ServiceActions({
             title={title}
             onClick={() => run('restart', () => restartService(project, service, csrf))}
           >
-            <RotateCw size={14} />
-            {busy === 'restart' ? 'Restarting…' : 'Restart'}
+            {spinner('restart') ?? <RotateCw size={14} />}
+            {busy === 'restart' || (initiated === 'restart' && converging)
+              ? 'Restarting…'
+              : 'Restart'}
           </Button>
           <Button
             size="sm"
@@ -281,7 +372,7 @@ function ServiceActions({
               run('stop', () => scaleService(project, service, 0, csrf))
             }}
           >
-            <Square size={14} />
+            {spinner('stop') ?? <Square size={14} />}
             {busy === 'stop' ? 'Stopping…' : confirmStop ? 'Confirm stop?' : 'Stop'}
           </Button>
         </>
@@ -471,18 +562,10 @@ function StatsPanel({
   history: StatsHistory | null
 }) {
   const at = sample?.at ?? ''
-  const cpu = useSeries(sample?.cpu, at, history ? seedFromHistory(history, 'cpu') : undefined)
-  const memory = useSeries(
-    sample?.memory,
-    at,
-    history ? seedFromHistory(history, 'memory') : undefined,
-  )
-  const rps = useSeries(sample?.rps, at, history ? seedFromHistory(history, 'rps') : undefined)
-  const p95 = useSeries(
-    sample?.p95_latency_ms,
-    at,
-    history ? seedFromHistory(history, 'p95_latency_ms') : undefined,
-  )
+  const cpu = useTimedSeries(sample?.cpu, at, history, 'cpu')
+  const memory = useTimedSeries(sample?.memory, at, history, 'memory')
+  const rps = useTimedSeries(sample?.rps, at, history, 'rps')
+  const p95 = useTimedSeries(sample?.p95_latency_ms, at, history, 'p95_latency_ms')
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -491,16 +574,16 @@ function StatsPanel({
           the same. Rate and latency have no natural ceiling and scale to
           their own range. */}
       <Card className="p-4">
-        <MetricPanel label="CPU" unit="%" points={cpu} max={100} latest={sample?.cpu} tone={1} big />
+        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={sample?.cpu} tone={1} big />
       </Card>
       <Card className="p-4">
-        <MetricPanel label="Memory" unit="%" points={memory} max={100} latest={sample?.memory} tone={2} big />
+        <MetricChartPanel label="Memory" unit="%" series={memory} scale="percent" latest={sample?.memory} tone={2} big />
       </Card>
       <Card className="p-4">
-        <MetricPanel label="Requests / s" unit="/s" points={rps} latest={sample?.rps} tone={3} big />
+        <MetricChartPanel label="Requests / s" unit="/s" series={rps} scale="auto" latest={sample?.rps} tone={3} big />
       </Card>
       <Card className="p-4">
-        <MetricPanel label="p95 latency" unit=" ms" points={p95} latest={sample?.p95_latency_ms} tone={4} big />
+        <MetricChartPanel label="p95 latency" unit=" ms" series={p95} scale="auto" latest={sample?.p95_latency_ms} tone={4} big />
       </Card>
     </div>
   )
@@ -519,6 +602,9 @@ function AllocRow({
   const cpu = useSeries(stats?.cpu, at)
   const memory = useSeries(stats?.memory, at)
   const tone = allocStateVariant(alloc.state)
+  const { session } = useSession()
+  const admin = session?.role === 'admin'
+  const [shellOpen, setShellOpen] = useState(false)
 
   return (
     <TR>
@@ -542,6 +628,35 @@ function AllocRow({
         ) : null}
       </TD>
       <TD className="font-mono tabular-nums">{relativeAge(alloc.created_at)}</TD>
+      <TD className="pr-0 text-right">
+        {/* The most privileged verb on the page: admin-only like the API, and
+            only against a running alloc — a shell into a stopped one is a
+            worse error message than this button's absence. */}
+        {admin && alloc.state === 'running' ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5 px-2 text-xs"
+              onClick={() => setShellOpen(true)}
+            >
+              <SquareTerminal size={13} />
+              Shell
+            </Button>
+            <Dialog
+              open={shellOpen}
+              onClose={() => setShellOpen(false)}
+              dismissable={false}
+              title={<span className="font-mono">{alloc.id} · sh</span>}
+              className="h-[70vh] w-[90vw] max-w-4xl"
+            >
+              {/* Mounted only while open: the terminal (and xterm's lazy
+                  chunk) exist exactly while someone is looking at them. */}
+              {shellOpen ? <ExecTerminal project={alloc.project} alloc={alloc.id} /> : null}
+            </Dialog>
+          </>
+        ) : null}
+      </TD>
     </TR>
   )
 }
@@ -552,9 +667,22 @@ function LogPanel({ project, service }: { project: string; service: string }) {
   const [filter, setFilter] = useState('')
   const [follow, setFollow] = useState(true)
 
-  const shown = filter
-    ? lines.filter((l) => l.line.toLowerCase().includes(filter.toLowerCase()))
-    : lines
+  // Memoized: at ten thousand buffered lines the filter is no longer free,
+  // and this re-runs on every stats frame otherwise.
+  const shown = useMemo(() => {
+    if (!filter) return lines
+    const needle = filter.toLowerCase()
+    return lines.filter((l) => l.line.toLowerCase().includes(needle))
+  }, [lines, filter])
+  const viewerLines = useMemo(
+    () =>
+      shown.map((entry, i) => ({
+        key: `${entry.alloc_id}-${i}`,
+        prefix: allocSuffix(entry.alloc_id),
+        text: entry.line,
+      })),
+    [shown],
+  )
 
   return (
     <Card>
@@ -581,13 +709,11 @@ function LogPanel({ project, service }: { project: string; service: string }) {
       <CardContent>
         {error ? <p className="pb-2 text-sm text-destructive">{error}</p> : null}
         <LogViewer
-          lines={shown.map((entry, i) => ({
-            key: `${entry.alloc_id}-${i}`,
-            prefix: allocSuffix(entry.alloc_id),
-            text: entry.line,
-          }))}
+          lines={viewerLines}
           live
           follow={follow}
+          tintSeverity
+          toolbar={{ copy: true, download: { filename: `${project}-${service}.log` } }}
           emptyText={lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
           notice={
             dropped > 0 ? (

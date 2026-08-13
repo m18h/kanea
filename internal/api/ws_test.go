@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/reconciler"
 )
 
 // dialWS opens the live-data socket over the harness's unix socket.
@@ -183,6 +184,11 @@ func TestWebSocketServicesFeedCarriesTheStore(t *testing.T) {
 	}
 	if payload.Services[0].Count != 3 {
 		t.Errorf("count = %d, want 3", payload.Services[0].Count)
+	}
+	// The live surface carries the projected hash too (v1.64) — a dashboard
+	// watching the feed must not need a REST round-trip to see a deploy.
+	if got, want := payload.Services[0].SpecHash, reconciler.SpecHash(payload.Services[0].Desired); got != want {
+		t.Errorf("spec_hash on the feed = %q, want %q", got, want)
 	}
 }
 

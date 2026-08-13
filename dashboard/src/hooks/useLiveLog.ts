@@ -8,9 +8,11 @@ import { Topic, logLineSchema, type LogLine } from '@/lib/api'
  * A dashboard left open on a chatty service would otherwise grow without limit
  * — the daemon streams as fast as the workload writes, and the browser has
  * nowhere to put it. Dropping the oldest is the same trade §17 makes for the
- * log pipeline: recent output is what anyone is looking at.
+ * log pipeline: recent output is what anyone is looking at. Ten thousand
+ * because the viewer virtualizes: render cost is the viewport's, so the
+ * buffer's price is memory alone.
  */
-export const MaxLogLines = 2000
+export const MaxLogLines = 10_000
 
 export interface LogState {
   lines: LogLine[]

@@ -91,7 +91,13 @@ A caller is one of three things:
 2. **A session cookie** — `HttpOnly`, `Secure` by default, `SameSite=Lax`,
    12-hour absolute expiry, revocable server-side. Mutations additionally
    require a double-submit CSRF token, because SameSite is a property of the
-   browser rather than of this server.
+   browser rather than of this server. The token has two carriers (v1.64): the
+   `X-Kanea-CSRF` header, or — on an `Upgrade: websocket` request only — a
+   `Sec-WebSocket-Protocol` entry `kanea-csrf.<token>`, because the browser's
+   `WebSocket` constructor cannot set custom headers. The second carrier cannot
+   be produced cross-site (`Upgrade` and `Sec-*` are browser-forbidden
+   headers), the server never echoes the token entry, and the Origin check
+   runs regardless.
 3. **The local unix socket** — 0600, owned by the daemon's user; root:`kanea`
    0660 when the operator has created that group (v1.48). Reaching it means
    being someone who can already replace the binary and read the master key —
@@ -194,7 +200,15 @@ edge, and it is bounded the same way: by the node, not by the spec.
 Network policy is deny-by-default per project, and the deny is structural,
 not temporal: the datapath's policy program is attached and
 the alloc's identity written *before* its interface can carry a packet, and a
-source the identity map does not know is dropped (PRD §5.2.5). There is no
+**cluster-internal** source the identity map does not know is dropped
+(PRD §5.2.5, scoped in v1.65). A source outside the cluster CIDR carries no
+identity by construction — it is the world answering a connection an alloc
+opened, un-NATed by conntrack — and passes to a destination that must still
+hold a local identity. Nothing unsolicited arrives that way: the pod CIDR is
+private and unroutable from off-node, published ports terminate at the edge,
+and conntrack un-NATs only established flows. An operator who deliberately
+routes the cluster CIDR to the node has granted direct reachability, and that
+grant is theirs to make. There is no
 unlabelled window to defend, and a skipped attach step fails closed.
 
 One honest weakening, stated here because hiding it would be worse: policy is
@@ -874,7 +888,10 @@ Kanea clones with its own credential, not from the request body.
 cookie (`HttpOnly`), cannot set the CSRF header cross-origin without a preflight
 the browser refuses, and cannot open the live socket (`Origin`). A cross-site
 form post carries the cookie and nothing else — exactly the request the CSRF
-check rejects.
+check rejects. The v1.64 websocket carrier changes none of this: a cross-site
+page *can* open a `WebSocket` with subprotocols, but it cannot know the token
+to put in one (same-origin policy guards `GET /v1/auth/session`), and the
+Origin check refuses the handshake before the token is compared anyway.
 
 **A workload is compromised.** The R13 baseline capabilities only (file
 ownership and uid-switching inside its own namespaces — no `NET_RAW`, no

@@ -60,6 +60,10 @@ export const serviceSchema = z.object({
   // shown on exactly one page. Both fields carry lowercase json tags.
   runtime: z.string().optional(),
   function: z.unknown().nullish(),
+  // v1.64: the desired record's hash, computed at projection time. Compared
+  // against alloc spec_hash to see a deploy in flight. Optional: an older
+  // daemon simply never shows rollout progress.
+  spec_hash: z.string().optional(),
 })
 
 export const servicesResponseSchema = z.object({
@@ -84,6 +88,9 @@ export const allocSchema = z.object({
   last_probe_at: z.string().optional(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
+  // The hash of the spec this alloc was created from (empty on adopted
+  // records). The planner's staleness rule reads it; so does lib/rollout.
+  spec_hash: z.string().optional(),
 })
 
 export const allocsResponseSchema = z.object({

@@ -54,3 +54,82 @@ describe('mergeSeed', () => {
     expect(mergeSeed([1, undefined], [undefined, 2])).toEqual([1, undefined, undefined, 2])
   })
 })
+
+// ---- useTimedSeries / timedSeedFromHistory (v1.64 charts) ----
+
+import { renderHook } from '@testing-library/react'
+import { timedSeedFromHistory, useTimedSeries, type TimedSeries } from './useSeries'
+
+function historyOf(points: { at: string; value: number }[]): StatsHistory {
+  return {
+    subject: 'node',
+    from: points[0]?.at ?? '',
+    to: points.at(-1)?.at ?? '',
+    interval_seconds: 5,
+    series: { cpu: points },
+  }
+}
+
+describe('timedSeedFromHistory', () => {
+  it('keeps real timestamps and inserts a null across a silence', () => {
+    const seed = timedSeedFromHistory(
+      historyOf([
+        { at: '2026-08-13T10:00:00Z', value: 10 },
+        { at: '2026-08-13T10:00:05Z', value: 20 },
+        // A minute of nothing: the line must break, not bridge.
+        { at: '2026-08-13T10:01:10Z', value: 30 },
+      ]),
+      'cpu',
+    )
+    expect(seed).toBeDefined()
+    expect(seed?.values).toEqual([10, 20, null, 30])
+    expect(seed?.times).toHaveLength(4)
+    expect(seed?.asOf).toBe('2026-08-13T10:01:10Z')
+  })
+
+  it('answers undefined for a series the history does not carry', () => {
+    expect(timedSeedFromHistory(historyOf([]), 'cpu')).toBeUndefined()
+    expect(
+      timedSeedFromHistory(historyOf([{ at: '2026-08-13T10:00:00Z', value: 1 }]), 'rps'),
+    ).toBeUndefined()
+  })
+})
+
+describe('useTimedSeries', () => {
+  it('accumulates samples at their timestamps and dedupes repeats', () => {
+    const { result, rerender } = renderHook<TimedSeries, { v: number | undefined; at: string }>(
+      ({ v, at }) => useTimedSeries(v, at),
+      { initialProps: { v: 10, at: '2026-08-13T10:00:00Z' } },
+    )
+    rerender({ v: 10, at: '2026-08-13T10:00:00Z' }) // repeat: must not double
+    rerender({ v: 20, at: '2026-08-13T10:00:05Z' })
+    rerender({ v: undefined, at: '2026-08-13T10:00:10Z' }) // a gap, not a zero
+    rerender({ v: 40, at: '2026-08-13T10:00:15Z' })
+
+    expect(result.current.values).toEqual([10, 20, null, 40])
+    expect(result.current.times).toHaveLength(4)
+  })
+
+  it('seeds from history without recording the overlap twice', () => {
+    const history = historyOf([
+      { at: '2026-08-13T10:00:00Z', value: 10 },
+      { at: '2026-08-13T10:00:05Z', value: 20 },
+    ])
+    const { result, rerender } = renderHook<TimedSeries, { v: number | undefined; at: string }>(
+      ({ v, at }) => useTimedSeries(v, at, history, 'cpu'),
+      { initialProps: { v: 20, at: '2026-08-13T10:00:05Z' } },
+    )
+    // The live sample at the seed's newest timestamp is the overlap.
+    rerender({ v: 30, at: '2026-08-13T10:00:10Z' })
+    expect(result.current.values).toEqual([10, 20, 30])
+  })
+
+  it('breaks the line when live samples resume after a silence', () => {
+    const { result, rerender } = renderHook<TimedSeries, { v: number | undefined; at: string }>(
+      ({ v, at }) => useTimedSeries(v, at),
+      { initialProps: { v: 10, at: '2026-08-13T10:00:00Z' } },
+    )
+    rerender({ v: 20, at: '2026-08-13T10:02:00Z' }) // tab was hidden
+    expect(result.current.values).toEqual([10, null, 20])
+  })
+})

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { CardSkeleton } from '@/components/Skeletons'
 import { ChannelEditor } from '@/components/settings/ChannelEditor'
 import {
   fetchProjectNotifications,
@@ -274,7 +275,7 @@ function ProjectEditor({
     return <p className="text-sm text-destructive">Cannot read this project's channels.</p>
   }
   if (!config.data) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>
+    return <CardSkeleton lines={5} title={false} />
   }
 
   const view = config.data

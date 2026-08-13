@@ -433,3 +433,63 @@ func TestParseAbsentVariablesStanzaIsNil(t *testing.T) {
 		t.Errorf("Variables = %v, want nil for an absent stanza", cfg.Variables)
 	}
 }
+
+// ---- the dns stanza (v1.66) ----
+
+func TestParseReadsTheDNSStanza(t *testing.T) {
+	cfg, err := Parse("kanea.hcl", []byte(`
+dns {
+  upstreams = ["1.1.1.1", "10.0.0.53:5353", " 9.9.9.9 "]
+}
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"1.1.1.1", "10.0.0.53:5353", "9.9.9.9"}
+	if len(cfg.DNSUpstreams) != len(want) {
+		t.Fatalf("upstreams = %v, want %v", cfg.DNSUpstreams, want)
+	}
+	for i, u := range want {
+		if cfg.DNSUpstreams[i] != u {
+			t.Fatalf("upstreams = %v, want %v", cfg.DNSUpstreams, want)
+		}
+	}
+}
+
+func TestParseWithoutADNSStanzaMeansTheHostsResolvers(t *testing.T) {
+	cfg, err := Parse("kanea.hcl", []byte(`storage { allowed_host_paths = ["/srv"] }`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.DNSUpstreams != nil {
+		t.Fatalf("upstreams = %v, want nil when the stanza is absent", cfg.DNSUpstreams)
+	}
+}
+
+func TestParseRefusesADNSUpstreamThatIsNotAnAddress(t *testing.T) {
+	_, err := Parse("kanea.hcl", []byte(`dns { upstreams = ["not an address"] }`))
+	if err == nil {
+		t.Fatal("a non-address upstream must be an error at parse, not at the daemon")
+	}
+}
+
+// An empty list configures nothing: a stanza that meant "no upstreams" would
+// silently turn external resolution into SERVFAIL — the R21 dropped control.
+func TestParseRefusesAnEmptyDNSUpstreamList(t *testing.T) {
+	for _, src := range []string{
+		`dns { upstreams = [] }`,
+		`dns { upstreams = ["", "  "] }`,
+		`dns { }`,
+	} {
+		if _, err := Parse("kanea.hcl", []byte(src)); err == nil {
+			t.Fatalf("%s: an upstreams list that names nothing must be refused", src)
+		}
+	}
+}
+
+func TestParseRefusesAnUnknownAttributeInsideDNS(t *testing.T) {
+	_, err := Parse("kanea.hcl", []byte(`dns { upstream = ["1.1.1.1"] }`))
+	if err == nil {
+		t.Fatal("a typo inside a read stanza must be an error, not a warning")
+	}
+}

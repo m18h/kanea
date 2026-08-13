@@ -80,6 +80,8 @@ function Page({ path }: { path: string }) {
 
   if (matchPath('/events', path)) return <Events />
   if (matchPath('/backups', path)) return <Backups />
+  const settings = matchPath('/settings/:tab', path)
+  if (settings?.tab !== undefined) return <Settings tab={settings.tab} />
   if (matchPath('/settings', path)) return <Settings />
 
   // A deep link the server handed to the app but the app does not know: say so
