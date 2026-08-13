@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Pencil, Play, RotateCw, Square } from 'lucide-react'
+import { Loader2, Pencil, Play, RotateCw, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -39,6 +39,7 @@ import {
   type StatsSample,
 } from '@/lib/api'
 import { parseScaleDecision } from '@/lib/events'
+import { rolloutStatus, type RolloutStatus } from '@/lib/rollout'
 import {
   allocStateVariant,
   formatBytes,
@@ -131,6 +132,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
 
   const health = desired ? serviceHealth(desired, mine) : null
   const status = health ? serviceStatusTone(health) : null
+  const rollout = desired ? rolloutStatus(desired, mine) : null
   const myEvents = (events.data?.events ?? []).filter(
     (e) => !e.service || e.service === service,
   )
@@ -144,12 +146,20 @@ export function ServiceDetail({ project, service }: { project: string; service: 
           subtitle={
             <span className="inline-flex items-center gap-3">
               {status ? <StatusDot tone={status.tone} label={status.word} /> : null}
+              {rollout?.deploying ? <Badge variant="info">deploying</Badge> : null}
               <span>{desired?.Image ?? ''}</span>
             </span>
           }
         />
         <div className="ml-auto">
-          {desired ? <ServiceActions project={project} service={service} desired={desired} /> : null}
+          {desired && rollout ? (
+            <ServiceActions
+              project={project}
+              service={service}
+              desired={desired}
+              rollout={rollout}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -227,14 +237,19 @@ export function ServiceDetail({ project, service }: { project: string; service: 
  * but disabled: a viewer who does not know they are a viewer reads a missing
  * button as a broken dashboard.
  */
-function ServiceActions({
+/** How long a rollout may hold the buttons before honesty re-enables them. */
+const rolloutLockMs = 5 * 60 * 1000
+
+export function ServiceActions({
   project,
   service,
   desired,
+  rollout,
 }: {
   project: string
   service: string
   desired: Service
+  rollout: RolloutStatus
 }) {
   const { session, csrf } = useSession()
   const admin = session?.role === 'admin'
@@ -242,6 +257,12 @@ function ServiceActions({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmStop, setConfirmStop] = useState(false)
+  // Which action kicked off the rollout the page is now watching. Cleared
+  // when convergence lands; the spinner rides it.
+  const [initiated, setInitiated] = useState<string | null>(null)
+  // The honesty valve: a rollout that has not converged in rolloutLockMs
+  // gives the buttons back rather than wedging the page on a stuck deploy.
+  const [lockExpired, setLockExpired] = useState(false)
 
   // What "start" should scale back to: the last non-zero count this page saw.
   // The daemon does not remember it — a stopped service's record says zero —
@@ -259,23 +280,46 @@ function ServiceActions({
     return () => clearTimeout(timer)
   }, [confirmStop])
 
+  const converging = rollout.deploying && !lockExpired
+  useEffect(() => {
+    if (!rollout.deploying) {
+      setInitiated(null)
+      setLockExpired(false)
+      return
+    }
+    const timer = setTimeout(() => setLockExpired(true), rolloutLockMs)
+    return () => clearTimeout(timer)
+  }, [rollout.deploying])
+
   const run = (name: string, action: () => Promise<void>) => {
     setBusy(name)
     setError(null)
     action()
+      .then(() => setInitiated(name))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setBusy(null))
   }
 
   const stopped = desired.Count === 0
-  const disabled = !admin || busy !== null
+  const disabled = !admin || busy !== null || converging
   const title = admin ? undefined : 'Requires the admin role'
+  const spinner = (name: string) =>
+    busy === name || (initiated === name && converging) ? (
+      <Loader2 size={14} className="animate-spin" />
+    ) : null
 
   return (
     <div className="flex items-center gap-2">
       {error ? (
         <span className="max-w-64 truncate text-xs text-destructive" title={error}>
           {error}
+        </span>
+      ) : null}
+      {rollout.deploying ? (
+        <span className="font-mono text-xs text-muted-foreground">
+          {lockExpired
+            ? 'still converging — actions re-enabled'
+            : `rolling out · ${rollout.updated}/${rollout.total} updated`}
         </span>
       ) : null}
       <Link to={`/services/${project}/${service}/edit`}>
@@ -291,7 +335,7 @@ function ServiceActions({
           title={title}
           onClick={() => run('start', () => scaleService(project, service, lastCount.current, csrf))}
         >
-          <Play size={14} />
+          {spinner('start') ?? <Play size={14} />}
           {busy === 'start' ? 'Starting…' : 'Start'}
         </Button>
       ) : (
@@ -303,8 +347,10 @@ function ServiceActions({
             title={title}
             onClick={() => run('restart', () => restartService(project, service, csrf))}
           >
-            <RotateCw size={14} />
-            {busy === 'restart' ? 'Restarting…' : 'Restart'}
+            {spinner('restart') ?? <RotateCw size={14} />}
+            {busy === 'restart' || (initiated === 'restart' && converging)
+              ? 'Restarting…'
+              : 'Restart'}
           </Button>
           <Button
             size="sm"
@@ -321,7 +367,7 @@ function ServiceActions({
               run('stop', () => scaleService(project, service, 0, csrf))
             }}
           >
-            <Square size={14} />
+            {spinner('stop') ?? <Square size={14} />}
             {busy === 'stop' ? 'Stopping…' : confirmStop ? 'Confirm stop?' : 'Stop'}
           </Button>
         </>
