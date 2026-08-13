@@ -10,6 +10,9 @@ import { vi } from 'vitest'
 vi.mock('uplot', () => {
   class FakeUPlot {
     static instances: FakeUPlot[] = []
+    // The path builders UPlotChart reaches for (spline). A factory returning
+    // a no-op builder is enough — nothing draws in jsdom.
+    static paths = { spline: () => () => null }
     opts: unknown
     data: unknown
     sizes: unknown[] = []

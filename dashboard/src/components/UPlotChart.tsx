@@ -60,6 +60,9 @@ export function UPlotChart({ times, values, unit, label, tone, scale, className 
         scale,
         theme: chartColors(),
         formatValue: (v) => formatMetric(v, unit),
+        // Spline, not linear: at a 5s cadence a straight segment per sample
+        // reads as jitter; the curve reads as the trend it is.
+        paths: uPlot.paths.spline?.(),
       }),
       dataRef.current,
       host,

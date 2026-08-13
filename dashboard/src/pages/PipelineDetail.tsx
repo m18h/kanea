@@ -159,7 +159,7 @@ export function PipelineDetail({
               lines={logLines.map((text, i) => ({ key: String(i), text }))}
               live={live}
               showLineNumbers
-              maxHeightClass="max-h-[28rem]"
+              heightClass="h-[28rem]"
               emptyText={live ? 'Waiting for the build to start…' : 'No log for this run.'}
             />
           </CardContent>

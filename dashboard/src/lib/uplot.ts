@@ -66,11 +66,16 @@ export interface ChartOptions {
   theme: ChartTheme
   /** formatValue renders the y value in the axis and cursor readout. */
   formatValue: (v: number) => string
+  /** paths draws the series — the caller passes uPlot.paths.spline() so the
+   * 5s samples read as a curve rather than a jag per sample. Injected rather
+   * than imported here, keeping this module value-free of uPlot (testable
+   * without a canvas). */
+  paths?: uPlot.Series.PathBuilder | undefined
 }
 
 /** buildOptions assembles the uPlot options for one metric series. */
 export function buildOptions(opts: ChartOptions): uPlot.Options {
-  const { width, height, tone, scale, theme, formatValue } = opts
+  const { width, height, tone, scale, theme, formatValue, paths } = opts
   return {
     width,
     height,
@@ -116,6 +121,7 @@ export function buildOptions(opts: ChartOptions): uPlot.Options {
         // never a line drawn through time nobody measured (PRD §9.2).
         spanGaps: false,
         points: { show: false },
+        ...(paths !== undefined ? { paths } : {}),
       },
     ],
   }

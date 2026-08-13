@@ -21,7 +21,9 @@ export interface LogViewerProps {
   follow?: boolean | undefined
   notice?: React.ReactNode | undefined
   emptyText: string
-  maxHeightClass?: string | undefined
+  /** heightClass fixes the box's size — the viewer never grows with its
+   * content, so a filling buffer cannot push the page around. */
+  heightClass?: string | undefined
   /** toolbar adds copy/download actions over the whole buffer. */
   toolbar?: { copy?: boolean; download?: { filename: string } } | undefined
   /** tintSeverity colors lines matching error/warn heuristics. Text nodes
@@ -66,7 +68,7 @@ export function LogViewer({
   follow,
   notice,
   emptyText,
-  maxHeightClass,
+  heightClass,
   toolbar,
   tintSeverity,
 }: LogViewerProps) {
@@ -174,7 +176,7 @@ export function LogViewer({
         }}
         className={cn(
           'overflow-auto rounded-md bg-muted/40 p-2.5 font-mono text-xs leading-relaxed',
-          maxHeightClass ?? 'max-h-96',
+          heightClass ?? 'h-96',
         )}
       >
         {lines.length === 0 ? (
