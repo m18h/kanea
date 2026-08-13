@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { KeyValueSkeleton } from '@/components/Skeletons'
 import { KeyValue } from '@/components/KeyValue'
 import { fetchEdgePolicy, fetchSecretProviders, type NodeConfig } from '@/lib/api'
 import { timeOrNever } from '@/lib/settings'
@@ -116,7 +117,7 @@ export function NodeSection({ node }: { node: NodeConfig }) {
             ) : policy.isError ? (
               <p className="text-sm text-muted-foreground">Cannot read the port policy.</p>
             ) : (
-              <p className="text-sm text-muted-foreground">Loading…</p>
+              <KeyValueSkeleton rows={3} />
             )}
           </CardContent>
         </Card>

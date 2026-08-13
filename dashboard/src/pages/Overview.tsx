@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@/lib/router'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { KeyValueSkeleton } from '@/components/Skeletons'
 import { EventRow } from '@/components/EventRow'
 import { KeyValue } from '@/components/KeyValue'
 import { MetricPanel } from '@/components/MetricPanel'
@@ -235,7 +236,7 @@ export function Overview() {
                 </KeyValue>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">Loading…</p>
+              <KeyValueSkeleton rows={4} />
             )}
           </CardContent>
         </Card>
