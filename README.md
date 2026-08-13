@@ -302,14 +302,21 @@ always wins, and the rate limiter runs before any bind, so Kanea cannot be used
 to brute-force the directory. Directory identities are ephemeral: no account
 record, just a session.
 
-### Settings, from the dashboard
+### The dashboard
 
-The dashboard's **Settings** page shows the node's configuration and lets an
+A service page charts CPU, memory, request rate and p95 on a real time axis,
+streams logs live (filterable, with copy and download), shows every restart or
+deploy as **rollout progress** — the planner's own spec-hash rule, on the
+wire — and opens a **shell into any running alloc** from the browser, over the
+same exec websocket the CLI uses.
+
+The **Settings** page shows the node's configuration and lets an
 admin change what changes at runtime: the **backup destination** (directory or
 S3 — a new destination is probed with a test write before anything commits, so
 a typo cannot silently stop working replication) and **notification channels**
 (node-wide defaults plus per-project overrides, each with a test button).
-Accounts, API tokens and the audit log live there too. What stays read-only is
+Accounts, API tokens and the audit log live there too, one tab each. What
+stays read-only is
 what belongs to the unit — listen address, subnets, DNS, the published-port
 policy — shown with a note saying so.
 

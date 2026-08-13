@@ -640,10 +640,17 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     </p>
     <p>
       The dashboard is a React SPA embedded in the binary with <code>go:embed</code> and served
-      by the daemon. Its Settings page shows the node's configuration and lets an admin change
+      by the daemon. A service page charts CPU, memory, request rate and p95 over a real
+      time axis, streams logs live (virtualized, filterable, copy and download), shows a
+      restart or deploy as rollout progress — the same spec-hash rule the planner uses,
+      served on the wire since v1.64 — and gives an admin a <b>shell into any running
+      alloc</b>, over the same exec websocket the CLI uses: the CSRF token rides the
+      handshake as a subprotocol, since a browser cannot set the header there. Its Settings
+      page shows the node's configuration and lets an admin change
       what changes at runtime — the backup destination and the notification channels
       (node-wide defaults and per-project, each with a test button) — plus accounts, API
-      tokens and the audit log; what belongs to the unit (listen address, subnets, DNS, the
+      tokens and the audit log, one tab each; what belongs to the unit (listen address,
+      subnets, DNS, the
       port policy) is shown read-only with a note saying so. The MCP server exposes 20 tools
       in three tiers (read, mutate, destructive) over stdio and streamable HTTP.
     </p>
