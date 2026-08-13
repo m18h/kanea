@@ -45,7 +45,7 @@ const DefaultPath = "/etc/kanea/kanea.hcl"
 // readBlocks are the top-level block types some decoder consumes: storage,
 // bind and variables here, device/socket by internal/passthrough over the
 // same file.
-var readBlocks = map[string]bool{"storage": true, "device": true, "socket": true, "bind": true, "variables": true}
+var readBlocks = map[string]bool{"storage": true, "device": true, "socket": true, "bind": true, "variables": true, "dns": true}
 
 // Config is the subset of PRD §15.1 this version reads.
 type Config struct {
@@ -60,6 +60,11 @@ type Config struct {
 	// as strings, never secrets — the map is served to any authenticated
 	// caller over GET /v1/vars. nil when the file or the stanza is absent.
 	Variables map[string]string
+	// DNSUpstreams is the dns stanza's upstream list (v1.66): the resolvers
+	// the internal DNS forwards external queries to. An explicit
+	// --dns-upstream wins (the v1.51 doctrine); nil when the file or the
+	// stanza is absent, which means the host's own resolv.conf.
+	DNSUpstreams []string
 	// Ignored names the top-level blocks and attributes the file carries
 	// and no decoder reads, for the startup warning.
 	Ignored []string
@@ -107,7 +112,14 @@ type hclRoot struct {
 	Storage   *hclStorage   `hcl:"storage,block"`
 	Bind      *hclBind      `hcl:"bind,block"`
 	Variables *hclVariables `hcl:"variables,block"`
+	DNS       *hclDNS       `hcl:"dns,block"`
 	Remain    hcl.Body      `hcl:",remain"`
+}
+
+// hclDNS reads the dns stanza (v1.66). No remain body: an unknown attribute
+// inside a read stanza is an error, like storage's and bind's.
+type hclDNS struct {
+	Upstreams []string `hcl:"upstreams,optional"`
 }
 
 // hclVariables carries the variables stanza's body raw: its attribute names
@@ -116,6 +128,34 @@ type hclRoot struct {
 // no-remain rule's spirit: nothing inside the stanza can be silently ignored.
 type hclVariables struct {
 	Body hcl.Body `hcl:",remain"`
+}
+
+// validateDNSUpstreams applies the daemon's own rule (network.DNS's
+// normalizeUpstream) at parse time, where the diagnostic carries a file name:
+// an entry is an address, or a host:port pair. An empty list is refused by
+// name — it configures nothing, and a stanza that meant "no upstreams" would
+// silently turn external resolution into SERVFAIL.
+func validateDNSUpstreams(raw []string) ([]string, error) {
+	out := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(entry); err == nil {
+			out = append(out, entry)
+			continue
+		}
+		if _, err := netip.ParseAddr(entry); err != nil {
+			return nil, fmt.Errorf("dns: upstream %q is not an address or host:port pair", entry)
+		}
+		out = append(out, entry)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("dns: an empty upstreams list configures nothing — " +
+			"name at least one resolver, or remove the stanza to use the host's resolv.conf")
+	}
+	return out, nil
 }
 
 // hclStorage has no remain body on purpose: an unknown attribute inside a
@@ -200,6 +240,13 @@ func Parse(filename string, src []byte) (*Config, error) {
 			paths = append(paths, p)
 		}
 		cfg.AllowedHostPaths = paths
+	}
+	if root.DNS != nil {
+		upstreams, err := validateDNSUpstreams(root.DNS.Upstreams)
+		if err != nil {
+			return nil, fmt.Errorf("nodeconfig: %s: %w", filename, err)
+		}
+		cfg.DNSUpstreams = upstreams
 	}
 	if root.Bind != nil {
 		bind := &BindConfig{
