@@ -61,6 +61,10 @@ bpf-verify: ## Regenerate BPF artifacts and diff — CI gate (requires docker)
 	$(MAKE) bpf
 	git diff --exit-code internal/datapath/bpf/
 
+.PHONY: dashboard-dev
+dashboard-dev: ## Run the dashboard dev server (vite; proxies /v1 to 127.0.0.1:8600)
+	cd dashboard && npm install && npm run dev
+
 .PHONY: dashboard
 dashboard: ## Dashboard gates: lint, typecheck, test, build, audit
 	@if [ -f dashboard/package.json ]; then \
