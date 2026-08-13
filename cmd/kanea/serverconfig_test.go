@@ -22,7 +22,7 @@ func writeServerConfig(t *testing.T, content string) string {
 
 func TestServerConfigProbesTheWellKnownPath(t *testing.T) {
 	path := writeServerConfig(t, `storage { allowed_host_paths = ["/srv"] }`)
-	cfg, err := serverConfigForRun("", "", "", "", path)
+	cfg, err := serverConfigForRun("", path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestServerConfigProbesTheWellKnownPath(t *testing.T) {
 }
 
 func TestServerConfigAbsentIsOff(t *testing.T) {
-	cfg, err := serverConfigForRun("", "", "", "", filepath.Join(t.TempDir(), "kanea.hcl"))
+	cfg, err := serverConfigForRun("", filepath.Join(t.TempDir(), "kanea.hcl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestServerConfigAbsentIsOff(t *testing.T) {
 
 func TestServerConfigOffIgnoresAPresentFile(t *testing.T) {
 	path := writeServerConfig(t, `this is not hcl at all {{{`)
-	cfg, err := serverConfigForRun("off", "", "", "", path)
+	cfg, err := serverConfigForRun("off", path)
 	if err != nil {
 		t.Fatalf("--config off must not read the file: %v", err)
 	}
@@ -53,43 +53,39 @@ func TestServerConfigOffIgnoresAPresentFile(t *testing.T) {
 }
 
 func TestServerConfigExplicitPathMustExist(t *testing.T) {
-	if _, err := serverConfigForRun(filepath.Join(t.TempDir(), "x.hcl"), "", "", "", ""); err == nil {
+	if _, err := serverConfigForRun(filepath.Join(t.TempDir(), "x.hcl"), ""); err == nil {
 		t.Fatal("--config naming a missing file must be fatal")
 	}
 }
 
 func TestServerConfigMalformedProbedFileIsFatal(t *testing.T) {
 	path := writeServerConfig(t, `storage {`)
-	if _, err := serverConfigForRun("", "", "", "", path); err == nil {
+	if _, err := serverConfigForRun("", path); err == nil {
 		t.Fatal("a malformed probed file must refuse startup, not half-load")
 	}
 }
 
-// The upgrade-with-flags promise: a unit carrying every policy flag today must
-// behave byte-identically after the upgrade, whatever sits at the well-known
-// path — nothing would read the file, so it cannot be allowed to refuse boot.
-// Since v1.61 the halves are three: the listen flag joined the condition, so
-// two-of-three now probes (the file's bind stanza would be read).
-func TestServerConfigSkipsTheProbeWhenEveryHalfIsFlagged(t *testing.T) {
-	path := writeServerConfig(t, `garbage {{{`)
-	cfg, err := serverConfigForRun("", "/srv", "/etc/pt.hcl", "127.0.0.1:8600", path)
+// The v1.51/v1.61 all-halves probe-skip is retired (v1.63): the variables
+// stanza is a file-only half with no flag, so the file is probed whenever
+// --config does not say off — flags or no flags. A node that never wanted the
+// file read says --config off, the whole-file switch it has always been.
+func TestServerConfigProbesTheFileEvenWhenEveryFlaggedHalfIsFlagged(t *testing.T) {
+	path := writeServerConfig(t, `variables { domain = "home.lan" }`)
+	cfg, err := serverConfigForRun("", path)
 	if err != nil {
-		t.Fatalf("a file nothing reads refused startup: %v", err)
+		t.Fatalf("probe: %v", err)
 	}
-	if cfg.Path != "" {
-		t.Fatalf("the file was read: %+v", cfg)
+	if cfg.Variables["domain"] != "home.lan" {
+		t.Fatalf("the variables stanza was not read: %+v", cfg)
 	}
-	// "none" is an explicit flag too — the socket-only spelling.
-	if cfg, err := serverConfigForRun("", "/srv", "/etc/pt.hcl", "none", path); err != nil || cfg.Path != "" {
-		t.Fatalf("--listen none must count as flagged: %+v %v", cfg, err)
+	// A malformed file is fatal on the probe — there is no flag set that
+	// makes it unread short of --config off.
+	bad := writeServerConfig(t, `garbage {{{`)
+	if _, err := serverConfigForRun("", bad); err == nil {
+		t.Fatal("a malformed probed file must refuse startup")
 	}
-	// Two of three flagged means the file still feeds the third half.
-	if _, err := serverConfigForRun("", "/srv", "/etc/pt.hcl", "", path); err == nil {
-		t.Fatal("with --listen unset the bind half is the file's; a malformed file must be fatal")
-	}
-	// An explicit --config, though, is an instruction to read it.
-	if _, err := serverConfigForRun(path, "/srv", "/etc/pt.hcl", "127.0.0.1:8600", path); err == nil {
-		t.Fatal("--config is explicit; a malformed file must still be fatal")
+	if cfg, err := serverConfigForRun("off", bad); err != nil || cfg.Path != "" {
+		t.Fatalf("--config off must skip the file entirely: %+v %v", cfg, err)
 	}
 }
 

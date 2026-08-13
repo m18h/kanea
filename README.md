@@ -43,7 +43,7 @@ Prefer to do it by hand? Every release publishes
 signature over the checksums:
 
 ```bash
-VERSION=v0.15.0; ARCH=amd64
+VERSION=v0.16.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -202,6 +202,30 @@ have written. A spec then mounts with `storage "x" { type = "host" path = … }`
 and claims the GPU with `device "dri" { grant = "gpu" }`; a grant the node does
 not hold fails the alloc rather than starting without it.
 
+### Shared variables
+
+Declare a value once and reference it anywhere in a spec as `${name}` — or as a
+bare identifier where HCL takes an expression:
+
+```hcl
+variables {
+  domain   = "shop.example.com"
+  replicas = 3
+}
+
+service "web" {
+  project = "shop"
+  count   = replicas
+  expose { domains = ["${domain}", "www.${domain}"] }
+}
+```
+
+The same `kanea.hcl` above may carry a `variables` stanza of node-wide defaults
+(a LAN domain, a registry host); the spec's own block wins on a collision, and
+pipeline-supplied values like `${GIT_SHA_SHORT}` sit above both. Variables are
+never secrets — the node's stanza is readable by any signed-in caller over
+`GET /v1/vars`, so credentials stay `secret:` references.
+
 ### Functions
 
 A wasm module can run as a service — a **function** (PRD §6.2 R25): always-on,
@@ -357,7 +381,7 @@ one place to update.
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.61) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.62) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |

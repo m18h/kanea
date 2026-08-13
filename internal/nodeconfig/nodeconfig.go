@@ -10,9 +10,9 @@
 // path is well-known, the file is trust-checked before parsing (CheckTrusted)
 // so a policy nobody but the node's owner could have written stays true.
 //
-// This version reads the storage stanza and the bind stanza's API listener
-// half (v1.61). The device/socket grant blocks in the same file are decoded
-// by internal/passthrough over the same bytes —
+// This version reads the storage stanza, the bind stanza's API listener half
+// (v1.61) and the variables stanza (v1.63). The device/socket grant blocks in
+// the same file are decoded by internal/passthrough over the same bytes —
 // two decoders, each owning its blocks. Stanzas neither reads are collected
 // into Config.Ignored for a startup warning naming them: not silently
 // swallowed (a typo that vanishes is the trap), not refused (PRD §15.1
@@ -34,15 +34,18 @@ import (
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/convert"
 )
 
 // DefaultPath is where the server config is probed when --config does not
 // name one. The value is provision.DefaultConfDir's; a test pins agreement.
 const DefaultPath = "/etc/kanea/kanea.hcl"
 
-// readBlocks are the top-level block types some decoder consumes: storage
-// and bind here, device/socket by internal/passthrough over the same file.
-var readBlocks = map[string]bool{"storage": true, "device": true, "socket": true, "bind": true}
+// readBlocks are the top-level block types some decoder consumes: storage,
+// bind and variables here, device/socket by internal/passthrough over the
+// same file.
+var readBlocks = map[string]bool{"storage": true, "device": true, "socket": true, "bind": true, "variables": true}
 
 // Config is the subset of PRD §15.1 this version reads.
 type Config struct {
@@ -52,6 +55,11 @@ type Config struct {
 	// Bind is the bind stanza's API listener half (v1.61).
 	// nil when the file or the stanza is absent.
 	Bind *BindConfig
+	// Variables is the variables stanza (R30, v1.63): node-wide spec-variable
+	// defaults, the lowest-precedence R2 source. Values are primitives carried
+	// as strings, never secrets — the map is served to any authenticated
+	// caller over GET /v1/vars. nil when the file or the stanza is absent.
+	Variables map[string]string
 	// Ignored names the top-level blocks and attributes the file carries
 	// and no decoder reads, for the startup warning.
 	Ignored []string
@@ -96,9 +104,18 @@ type BindConfig struct {
 }
 
 type hclRoot struct {
-	Storage *hclStorage `hcl:"storage,block"`
-	Bind    *hclBind    `hcl:"bind,block"`
-	Remain  hcl.Body    `hcl:",remain"`
+	Storage   *hclStorage   `hcl:"storage,block"`
+	Bind      *hclBind      `hcl:"bind,block"`
+	Variables *hclVariables `hcl:"variables,block"`
+	Remain    hcl.Body      `hcl:",remain"`
+}
+
+// hclVariables carries the variables stanza's body raw: its attribute names
+// are the operator's to choose, so there is no fixed schema to decode against.
+// Every attribute is read (decodeVariables), which is what keeps the
+// no-remain rule's spirit: nothing inside the stanza can be silently ignored.
+type hclVariables struct {
+	Body hcl.Body `hcl:",remain"`
 }
 
 // hclStorage has no remain body on purpose: an unknown attribute inside a
@@ -207,7 +224,60 @@ func Parse(filename string, src []byte) (*Config, error) {
 		}
 		sort.Strings(cfg.Ignored)
 	}
+	if root.Variables != nil {
+		vars, err := decodeVariables(root.Variables.Body)
+		if err != nil {
+			return nil, fmt.Errorf("nodeconfig: %s: %w", filename, err)
+		}
+		cfg.Variables = vars
+	}
 	return cfg, nil
+}
+
+// reservedVarNames may not be declared as variables (R30): the R2 built-ins,
+// whose values belong to the pipeline, and `service`, the spec's
+// service-reference namespace. Deliberately duplicated from internal/jobspec
+// (the ownershipRefusedBy precedent): a dependency between the node's config
+// reader and the spec parser would point no right way, and the list is five
+// entries.
+var reservedVarNames = map[string]bool{
+	"GIT_SHA": true, "GIT_SHA_SHORT": true, "GIT_BRANCH": true,
+	"KANEA_PROJECT": true, "service": true,
+}
+
+// decodeVariables reads the variables stanza. Values are literals — a node
+// default has no context to reference, so an expression that needs one is the
+// unknown-variable error HCL already gives it. Primitives only, carried as
+// strings; a list or object is refused by name, like a reserved name
+// (present-but-malformed is fatal, the v1.51 rule).
+func decodeVariables(body hcl.Body) (map[string]string, error) {
+	attrs, diags := body.JustAttributes()
+	if diags.HasErrors() {
+		return nil, errors.New(diags.Error())
+	}
+	vars := make(map[string]string, len(attrs))
+	for name, attr := range attrs {
+		if reservedVarNames[name] {
+			return nil, fmt.Errorf("variables: %q is a reserved name (R30)", name)
+		}
+		v, diags := attr.Expr.Value(nil)
+		if diags.HasErrors() {
+			return nil, fmt.Errorf("variables: %s", diags.Error())
+		}
+		if v.IsNull() {
+			return nil, fmt.Errorf("variables: %q is null", name)
+		}
+		if !v.Type().IsPrimitiveType() {
+			return nil, fmt.Errorf("variables: %q is a %s; a variable is a string, number or bool (R30)",
+				name, v.Type().FriendlyName())
+		}
+		s, err := convert.Convert(v, cty.String)
+		if err != nil {
+			return nil, fmt.Errorf("variables: %q: %w", name, err)
+		}
+		vars[name] = s.AsString()
+	}
+	return vars, nil
 }
 
 // validateBind refuses every bind contradiction parse can see (PRD §15.1,

@@ -14,9 +14,15 @@ import (
 
 // Options configures parsing.
 type Options struct {
-	// Vars are ${VAR} substitutions from -var-file and built-ins such as
-	// GIT_SHA_SHORT and KANEA_PROJECT (R2).
+	// Vars are caller-supplied ${VAR} substitutions — a pipeline's checkout
+	// values and built-ins such as GIT_SHA_SHORT (R2). Highest precedence:
+	// they win over the spec's own variables block and the node's stanza.
 	Vars map[string]string
+	// NodeVars are the node's `variables { }` stanza from /etc/kanea/kanea.hcl
+	// (R30, v1.63) — the lowest-precedence source: defaults the spec's own
+	// variables block specializes and Vars overrides. Client-side callers fill
+	// this from GET /v1/vars; server-side callers from the loaded nodeconfig.
+	NodeVars map[string]string
 	// BaseDomain is the server's `base_domain` (§15.1). An expose block that
 	// omits `domains` gets <service>.<project>.<base_domain> (§7.2).
 	//
@@ -43,7 +49,17 @@ type hclRoot struct {
 	// lowering live in function.go.
 	Functions []hclFunction `hcl:"function,block"`
 	Storages  []hclStorage  `hcl:"storage,block"`
-	Remain    hcl.Body      `hcl:",remain"`
+	// Variables is the shared-variables block (R30). Its attribute names are
+	// the spec author's to choose, so the body is captured raw and evaluated
+	// by specVariables (variables.go) *before* this struct is decoded — the
+	// field exists so the schema owns the block rather than the remain
+	// catch-all swallowing it.
+	Variables []hclVariables `hcl:"variables,block"`
+	Remain    hcl.Body       `hcl:",remain"`
+}
+
+type hclVariables struct {
+	Body hcl.Body `hcl:",remain"`
 }
 
 type hclStorage struct {
@@ -411,10 +427,22 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 		})
 	}
 
+	body := hcl.MergeFiles(files)
+
+	// Pass 0 — the spec's own variables blocks (R30), evaluated before the
+	// structural decode so their values are in scope for it. From here on
+	// opts.Vars is the one merged view (node < spec < caller) both passes
+	// evaluate against.
+	specVars, varDiags := specVariables(body, opts)
+	diags = append(diags, varDiags...)
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	opts.Vars = overlayVars(opts.NodeVars, specVars, opts.Vars)
+
 	// Pass 1 — structure. Only variables are in scope, so a ${service.*}
 	// reference stays an unevaluated expression (Env is typed hcl.Expression).
 	var root hclRoot
-	body := hcl.MergeFiles(files)
 	structDiags := gohcl.DecodeBody(body, varContext(opts.Vars), &root)
 	diags = append(diags, structDiags...)
 	if diags.HasErrors() {

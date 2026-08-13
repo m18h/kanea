@@ -291,7 +291,7 @@ service "postgres" {
 
 func TestSelectorsRefuseTheImagePath(t *testing.T) {
 	_, _, err := loadSpec(nil, []selector{{raw: "shop/web", project: "shop", service: "web"}},
-		"nginx", "web", "demo", 1)
+		"nginx", "web", "demo", 1, nodeVarsResult{})
 	if err == nil || !strings.Contains(err.Error(), "do not combine") {
 		t.Fatalf("err = %v, want the --image refusal", err)
 	}
@@ -299,7 +299,7 @@ func TestSelectorsRefuseTheImagePath(t *testing.T) {
 
 func TestASelectorWithoutASpecFileIsRefused(t *testing.T) {
 	_, _, err := loadSpec(nil, []selector{{raw: "shop/web", project: "shop", service: "web"}},
-		"", "", "", 1)
+		"", "", "", 1, nodeVarsResult{})
 	if err == nil || !strings.Contains(err.Error(), "needs a spec file") {
 		t.Fatalf("err = %v, want the no-spec-file refusal", err)
 	}

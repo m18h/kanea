@@ -16,6 +16,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
+
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/jobspec"
@@ -37,6 +39,7 @@ func socketFlag(fs *flag.FlagSet) *string {
 // filter can never change what the spec means, only how much of it is sent.
 func loadSpec(
 	files []string, sels []selector, image, name, project string, count int,
+	nodeVars nodeVarsResult,
 ) ([]reconciler.Desired, []gitops.Config, error) {
 	if image != "" {
 		if len(files) > 0 || len(sels) > 0 {
@@ -64,12 +67,20 @@ func loadSpec(
 		return nil, nil, errors.New("give a job spec file, or --image with --name and --project")
 	}
 
-	spec, diags := jobspec.ParseFiles(jobspec.Options{}, files...)
+	spec, diags := jobspec.ParseFiles(jobspec.Options{NodeVars: nodeVars.vars}, files...)
 	if diags.HasErrors() {
 		// Diagnostics carry file:line:column; print them as-is and fail without
 		// adding a second, vaguer error on top.
 		if _, werr := fmt.Fprint(os.Stderr, jobspec.FormatDiagnostics(diags)); werr != nil {
 			return nil, nil, werr
+		}
+		// An unknown variable after a failed vars fetch may just be the
+		// daemon being unreachable — say so instead of leaving the two
+		// failures indistinguishable (R30).
+		if nodeVars.err != nil && hasUnknownVariable(diags) {
+			fmt.Fprintf(os.Stderr,
+				"note: the node's shared variables were unavailable (%v); a variable defined in /etc/kanea/kanea.hcl would report as unknown here\n",
+				nodeVars.err)
 		}
 		return nil, nil, fmt.Errorf("%d problem(s) in the job spec", len(diags))
 	}
@@ -85,6 +96,35 @@ func loadSpec(
 		pipelines = filterPipelines(pipelines, desired)
 	}
 	return desired, pipelines, nil
+}
+
+// nodeVarsResult is a best-effort GET /v1/vars: the map when the daemon
+// answered, the error when it did not. A fetch failure is never fatal on its
+// own — a spec whose variables all resolve locally parses exactly as offline
+// as it did before v1.63 — but it is remembered, so an unknown-variable
+// diagnostic can say the defaults were missing rather than wrong.
+type nodeVarsResult struct {
+	vars map[string]string
+	err  error
+}
+
+// fetchNodeVars reads the node's shared variables (R30), best-effort — the
+// checkPublishedPorts discipline: an older daemon without the route, or no
+// daemon at all, degrades the parse rather than failing it.
+func fetchNodeVars(ctx context.Context, client *api.Client) nodeVarsResult {
+	vars, err := client.Vars(ctx)
+	return nodeVarsResult{vars: vars, err: err}
+}
+
+// hasUnknownVariable reports whether any diagnostic is HCL's unknown-variable
+// error — the one a missing node default presents as.
+func hasUnknownVariable(diags hcl.Diagnostics) bool {
+	for _, d := range diags {
+		if d.Summary == "Unknown variable" {
+			return true
+		}
+	}
+	return false
 }
 
 // pipelineConfigs extracts the per-project pipeline configuration from a spec.
@@ -124,13 +164,16 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	desired, pipelines, err := loadSpec(files, sels, *image, *name, *project, *count)
+	// The client exists before the parse (v1.63): the spec may lean on the
+	// node's shared variables, fetched best-effort like the port pre-check.
+	ctx := context.Background()
+	client := api.NewClient(*socket)
+	desired, pipelines, err := loadSpec(files, sels, *image, *name, *project, *count,
+		fetchNodeVars(ctx, client))
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
-	client := api.NewClient(*socket)
 	if err := checkPublishedPorts(ctx, client, desired); err != nil {
 		return err
 	}
@@ -277,13 +320,15 @@ func runPlan(args []string) error {
 	if err != nil {
 		return err
 	}
-	desired, _, err := loadSpec(files, sels, *image, *name, *project, *count)
+	// The client exists before the parse (v1.63), for the node-vars fetch.
+	ctx := context.Background()
+	client := api.NewClient(*socket)
+	desired, _, err := loadSpec(files, sels, *image, *name, *project, *count,
+		fetchNodeVars(ctx, client))
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
-	client := api.NewClient(*socket)
 	current, err := client.Services(ctx)
 	if err != nil {
 		return err

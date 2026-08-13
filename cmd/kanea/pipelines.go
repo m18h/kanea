@@ -38,7 +38,10 @@ type pipelineSettings struct {
 	logDir     string
 	interval   time.Duration
 	baseDomain string
-	insecure   bool
+	// nodeVars is the node's variables stanza (R30): the sync parses synced
+	// specs with the same defaults every other door uses.
+	nodeVars map[string]string
+	insecure bool
 
 	store   store.Store
 	secrets gitops.Resolver
@@ -136,7 +139,7 @@ func buildPipelines(cfg pipelineSettings, logger *slog.Logger) (*gitops.Service,
 		Applier:  storeApplier{store: cfg.store, notify: cfg.notify, log: logger},
 		// The same options `kanea deploy` parses with, so a spec means the same
 		// thing whether it arrives over the API or out of a repository.
-		SpecOptions: jobspec.Options{BaseDomain: cfg.baseDomain},
+		SpecOptions: jobspec.Options{BaseDomain: cfg.baseDomain, NodeVars: cfg.nodeVars},
 		Insecure:    cfg.insecure,
 		Logger:      logger,
 	})

@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/logging"
@@ -48,11 +49,20 @@ func runMCP(args []string) error {
 		}
 	}()
 
+	// The node's shared variables (R30), fetched once — the file behind them
+	// is load-once, so a session-long value is the daemon's own behaviour. A
+	// failed fetch (older daemon, unreachable socket) parses without them:
+	// the unknown-variable diagnostic reaches the agent as the tool's error.
+	nodeVars, varsErr := api.NewClient(*socket).Vars(context.Background())
+	if varsErr != nil {
+		log.Debug("node variables unavailable; specs parse without them", "error", varsErr)
+	}
+
 	server, err := mcp.New(mcp.Config{
 		Backend:   mcp.NewSocketBackend(*socket),
 		Logger:    log,
 		Version:   version,
-		ParseSpec: parseSpecSource,
+		ParseSpec: specParser(nodeVars),
 	})
 	if err != nil {
 		return err
@@ -71,21 +81,24 @@ func runMCP(args []string) error {
 	return nil
 }
 
-// parseSpecSource turns job-spec source into desired state, for the plan_spec
-// and apply_spec tools.
+// specParser turns job-spec source into desired state, for the plan_spec and
+// apply_spec tools, with the node's shared variables (R30) in scope — handed
+// over directly on the daemon, fetched over the API by `kanea mcp`.
 //
 // The same parse and the same conversion the CLI performs, so a spec an agent
 // applies and a spec a person applies mean the same thing. The diagnostics are
 // returned rather than printed: an agent reads them as the tool's error text,
 // and they are what tells it which line to fix.
-func parseSpecSource(source []byte) ([]reconciler.Desired, []gitops.Config, error) {
-	spec, diags := jobspec.ParseSource(jobspec.Options{}, "spec.hcl", source)
-	if diags.HasErrors() {
-		return nil, nil, errors.New(jobspec.FormatDiagnostics(diags))
+func specParser(nodeVars map[string]string) func([]byte) ([]reconciler.Desired, []gitops.Config, error) {
+	return func(source []byte) ([]reconciler.Desired, []gitops.Config, error) {
+		spec, diags := jobspec.ParseSource(jobspec.Options{NodeVars: nodeVars}, "spec.hcl", source)
+		if diags.HasErrors() {
+			return nil, nil, errors.New(jobspec.FormatDiagnostics(diags))
+		}
+		desired, err := toDesired(spec)
+		if err != nil {
+			return nil, nil, err
+		}
+		return desired, pipelineConfigs(spec), nil
 	}
-	desired, err := toDesired(spec)
-	if err != nil {
-		return nil, nil, err
-	}
-	return desired, pipelineConfigs(spec), nil
 }
