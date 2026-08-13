@@ -69,6 +69,7 @@ log.
 
 ```bash
 brew tap m18h/kanea https://github.com/m18h/kanea
+brew trust m18h/kanea   # brew ≥ 6 refuses formulae from untrusted third-party taps
 brew install kanea
 ```
 

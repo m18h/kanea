@@ -85,6 +85,7 @@ cat > "$OUT" <<EOF
 #
 # Install:
 #     brew tap ${REPO%%/*}/kanea https://github.com/${REPO}
+#     brew trust ${REPO%%/*}/kanea
 #     brew install kanea
 class Kanea < Formula
   desc "Container orchestration in one binary"

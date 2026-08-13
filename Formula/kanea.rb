@@ -3,6 +3,7 @@
 #
 # Install:
 #     brew tap m18h/kanea https://github.com/m18h/kanea
+#     brew trust m18h/kanea
 #     brew install kanea
 class Kanea < Formula
   desc "Container orchestration in one binary"
