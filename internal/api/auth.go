@@ -37,8 +37,17 @@ const SessionCookie = "kanea_session"
 // CSRFHeader carries the double-submit token on cookie-authenticated mutations
 // (PRD §13.3). A header is the whole point: a cross-site form post can carry a
 // cookie but cannot set a custom header without a preflight the browser will
-// refuse.
+// refuse. On a WebSocket upgrade the constructor cannot set this header either,
+// which is what CSRFProtocolPrefix exists for.
 const CSRFHeader = "X-Kanea-CSRF" // #nosec G101 — a header name, not a credential
+
+// CSRFProtocolPrefix carries the CSRF token on a WebSocket upgrade, where the
+// browser cannot set a custom header (PRD v1.64): the client offers a
+// Sec-WebSocket-Protocol entry "kanea-csrf.<token>" beside the route's
+// negotiable subprotocol. Honored only on an Upgrade request — Upgrade and
+// Sec-* are browser-forbidden headers, so no cross-site fetch or form can
+// produce that shape — and the server never echoes the token entry back.
+const CSRFProtocolPrefix = "kanea-csrf." // #nosec G101 — a prefix, not a credential
 
 // Authenticator is the slice of the auth store the API needs.
 //
@@ -262,7 +271,7 @@ func (s *Server) checkCSRF(r *http.Request, id auth.Identity) error {
 	if err != nil {
 		return err
 	}
-	presented := r.Header.Get(CSRFHeader)
+	presented := presentedCSRF(r)
 	if presented == "" {
 		return fmt.Errorf("%w: missing %s header", auth.ErrForbidden, CSRFHeader)
 	}
@@ -270,6 +279,30 @@ func (s *Server) checkCSRF(r *http.Request, id auth.Identity) error {
 		return fmt.Errorf("%w: bad CSRF token", auth.ErrForbidden)
 	}
 	return nil
+}
+
+// presentedCSRF finds the token the request carries: the header, or — on a
+// WebSocket upgrade only — a Sec-WebSocket-Protocol entry with the
+// CSRFProtocolPrefix. The Upgrade gate is the security property: off a
+// websocket handshake the subprotocol header is attacker-settable by any
+// same-machine client, and honoring it there would widen every cookie-auth
+// mutation. On the handshake it is exactly as unforgeable cross-site as the
+// custom header is.
+func presentedCSRF(r *http.Request) string {
+	if t := r.Header.Get(CSRFHeader); t != "" {
+		return t
+	}
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return ""
+	}
+	for _, value := range r.Header.Values("Sec-Websocket-Protocol") {
+		for _, entry := range strings.Split(value, ",") {
+			if token, ok := strings.CutPrefix(strings.TrimSpace(entry), CSRFProtocolPrefix); ok {
+				return token
+			}
+		}
+	}
+	return ""
 }
 
 // refuse answers a rejected request and records it.

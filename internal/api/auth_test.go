@@ -389,6 +389,23 @@ func TestCookieMutationRequiresACSRFToken(t *testing.T) {
 	}
 }
 
+func TestTheSubprotocolCarrierIsIgnoredOffWebsocket(t *testing.T) {
+	// The v1.64 carrier exists only on an Upgrade request. Off one, a
+	// Sec-WebSocket-Protocol header is just a header any client can set — so a
+	// mutation carrying the *valid* token there, without Upgrade, must still be
+	// refused, or the carrier would have weakened CSRF for every cookie-auth
+	// route rather than moved the envelope for websockets.
+	h := newAuthHarness(t)
+	cookie, csrf := h.login(t, adminUser, adminPass)
+
+	req := h.request(t, http.MethodPut, api.PathServices, api.ApplyRequest{})
+	req.AddCookie(cookie)
+	req.Header.Set("Sec-Websocket-Protocol", api.CSRFProtocolPrefix+csrf)
+	if resp, body := h.do(t, req); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("subprotocol token off-websocket = %d, want 403: %s", resp.StatusCode, body)
+	}
+}
+
 func TestCookieReadsNeedNoCSRFToken(t *testing.T) {
 	h := newAuthHarness(t)
 	cookie, _ := h.login(t, adminUser, adminPass)

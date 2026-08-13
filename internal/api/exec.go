@@ -38,10 +38,23 @@ const PathExec = "/v1/exec"
 //	server → client   binary: [stream byte][data], stream 1 = stdout, 2 = stderr
 //	                  text:   {"type":"exit","code":N}
 //	                          {"type":"error","message":"…"}
+//
+// The handshake, for a browser client (PRD v1.64): the WebSocket constructor
+// cannot set X-Kanea-CSRF, so a cookie-authenticated dashboard offers
+// ["kanea.exec.v1", "kanea-csrf.<token>"] as its subprotocols — the token from
+// GET /v1/auth/session. The server echoes only ExecSubprotocol, never the
+// token entry; a CLI client over the socket offers nothing and nothing is
+// echoed, byte-for-byte the pre-v1.64 handshake.
 const (
 	streamStdout byte = 1
 	streamStderr byte = 2
 )
+
+// ExecSubprotocol is the negotiable subprotocol name. A browser client must
+// offer it beside its kanea-csrf.<token> entry: the server echoes only this
+// one, so the token never reflects into the response — and a browser whose
+// offer contains no entry the server echoes fails the connection itself.
+const ExecSubprotocol = "kanea.exec.v1"
 
 // ExecFrame is a control message in either direction.
 type ExecFrame struct {
@@ -107,6 +120,10 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		// socket uses. This disables the library's own check because ours has
 		// already run and produced a better error.
 		InsecureSkipVerify: true,
+		// Echo the protocol name to a browser that offered it (the CSRF token
+		// rides Sec-WebSocket-Protocol beside it — see the handshake note
+		// above). The token entry is never selected, so it never reflects.
+		Subprotocols: []string{ExecSubprotocol},
 	})
 	if err != nil {
 		s.log.Warn("exec upgrade failed", "alloc", alloc, "error", err)

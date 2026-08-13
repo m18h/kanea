@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/audit"
 	"github.com/m18h/kanea/internal/auth"
@@ -234,6 +236,108 @@ func TestExecRefusesIncompleteRequests(t *testing.T) {
 	}
 	if calls := fake.calls(); len(calls) != 0 {
 		t.Errorf("the driver was reached %d times by an invalid request", len(calls))
+	}
+}
+
+// dialExecWS opens the exec websocket against the auth harness as a browser
+// would: cookie for identity, subprotocol entries for whatever else rides the
+// handshake. It returns the connection (nil on a refused handshake) and the
+// HTTP status of the upgrade response.
+func dialExecWS(
+	t *testing.T, h *authHarness, cookie *http.Cookie, subprotocols []string,
+) (*websocket.Conn, int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	header := http.Header{}
+	header.Set("Cookie", cookie.Name+"="+cookie.Value)
+	url := h.server.URL + api.PathExec + "?" +
+		api.ExecQuery("shop", "shop-web-0", []string{"/bin/sh"}, false, "")
+	conn, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPClient:   h.client,
+		HTTPHeader:   header,
+		Subprotocols: subprotocols,
+	})
+	status := 0
+	if resp != nil {
+		status = resp.StatusCode
+	}
+	if err != nil {
+		return nil, status
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	return conn, status
+}
+
+func TestExecWithACookieAloneIsRefused(t *testing.T) {
+	// A cookie is what a cross-site page can ride. Without the CSRF token the
+	// handshake must die exactly as a headerless PUT does — this pins the
+	// pre-v1.64 behavior as intended for token-less browsers, not as a bug.
+	fake := &fakeExecer{}
+	h := newAuthHarness(t, withExec(fake))
+	cookie, _ := h.login(t, adminUser, adminPass)
+
+	conn, status := dialExecWS(t, h, cookie, nil)
+	if conn != nil || status != http.StatusForbidden {
+		t.Fatalf("cookie-only exec handshake = %d, want a 403 refusal", status)
+	}
+	if calls := fake.calls(); len(calls) != 0 {
+		t.Errorf("the driver was reached %d times without a CSRF token", len(calls))
+	}
+}
+
+func TestExecWithTheSubprotocolTokenRuns(t *testing.T) {
+	// The browser carrier (PRD v1.64): the token rides Sec-WebSocket-Protocol
+	// beside the negotiable name. The server must echo only the name — an
+	// echoed token entry would reflect the credential into the response.
+	fake := &fakeExecer{code: 7}
+	h := newAuthHarness(t, withExec(fake))
+	cookie, csrf := h.login(t, adminUser, adminPass)
+
+	conn, status := dialExecWS(t, h, cookie,
+		[]string{api.ExecSubprotocol, api.CSRFProtocolPrefix + csrf})
+	if conn == nil {
+		t.Fatalf("handshake refused with %d, want it accepted", status)
+	}
+	if got := conn.Subprotocol(); got != api.ExecSubprotocol {
+		t.Errorf("negotiated subprotocol = %q, want %q (and never the token)", got, api.ExecSubprotocol)
+	}
+
+	// The session actually runs: the driver exits 7 and the frame arrives.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		kind, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if kind != websocket.MessageText {
+			continue // stream data, not control
+		}
+		var frame api.ExecFrame
+		if err := json.Unmarshal(data, &frame); err != nil {
+			t.Fatalf("decode %q: %v", data, err)
+		}
+		if frame.Type != "exit" || frame.Code != 7 {
+			t.Fatalf("frame = %+v, want exit 7", frame)
+		}
+		return
+	}
+}
+
+func TestExecWithAWrongSubprotocolTokenIsRefused(t *testing.T) {
+	fake := &fakeExecer{}
+	h := newAuthHarness(t, withExec(fake))
+	cookie, _ := h.login(t, adminUser, adminPass)
+
+	conn, status := dialExecWS(t, h, cookie,
+		[]string{api.ExecSubprotocol, api.CSRFProtocolPrefix + "not-the-token"})
+	if conn != nil || status != http.StatusForbidden {
+		t.Fatalf("wrong-token handshake = %d, want a 403 refusal", status)
+	}
+	if calls := fake.calls(); len(calls) != 0 {
+		t.Errorf("the driver was reached %d times with a bad token", len(calls))
 	}
 }
 

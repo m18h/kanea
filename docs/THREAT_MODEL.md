@@ -91,7 +91,13 @@ A caller is one of three things:
 2. **A session cookie** — `HttpOnly`, `Secure` by default, `SameSite=Lax`,
    12-hour absolute expiry, revocable server-side. Mutations additionally
    require a double-submit CSRF token, because SameSite is a property of the
-   browser rather than of this server.
+   browser rather than of this server. The token has two carriers (v1.64): the
+   `X-Kanea-CSRF` header, or — on an `Upgrade: websocket` request only — a
+   `Sec-WebSocket-Protocol` entry `kanea-csrf.<token>`, because the browser's
+   `WebSocket` constructor cannot set custom headers. The second carrier cannot
+   be produced cross-site (`Upgrade` and `Sec-*` are browser-forbidden
+   headers), the server never echoes the token entry, and the Origin check
+   runs regardless.
 3. **The local unix socket** — 0600, owned by the daemon's user; root:`kanea`
    0660 when the operator has created that group (v1.48). Reaching it means
    being someone who can already replace the binary and read the master key —
@@ -874,7 +880,10 @@ Kanea clones with its own credential, not from the request body.
 cookie (`HttpOnly`), cannot set the CSRF header cross-origin without a preflight
 the browser refuses, and cannot open the live socket (`Origin`). A cross-site
 form post carries the cookie and nothing else — exactly the request the CSRF
-check rejects.
+check rejects. The v1.64 websocket carrier changes none of this: a cross-site
+page *can* open a `WebSocket` with subprotocols, but it cannot know the token
+to put in one (same-origin policy guards `GET /v1/auth/session`), and the
+Origin check refuses the handshake before the token is compared anyway.
 
 **A workload is compromised.** The R13 baseline capabilities only (file
 ownership and uid-switching inside its own namespaces — no `NET_RAW`, no
