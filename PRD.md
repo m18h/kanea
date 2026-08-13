@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Adopted v1.61 |
+| **Status** | Adopted v1.63 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-08-12 (v1.61) |
+| **Last updated** | 2026-08-13 (v1.63) |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments** — incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,10 @@
 > **v1.2 amendments** — adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block — IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments** — **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9–R10, §7.1.1, §4.3).
+
+> **v1.63 amendments** — **shared variables: R2 finally gets its declaration sites** (§6.1, §6.2 R2/R30, §15.1, §16.1). A top-level `variables { }` block in the spec and a `variables { }` stanza in `/etc/kanea/kanea.hcl` both feed the one flat `${VAR}` vocabulary R2 has promised since v1.0 — one namespace with the built-ins, because the machinery (`Options.Vars` → the decode's EvalContext) has evaluated every attribute against it all along, and a second `var.`-prefixed vocabulary would be two spellings for one concept. Precedence is defaults-then-specialize, the R20 shape: node stanza under spec block under caller-supplied values (a pipeline's `GIT_*`); the reserved names — the R2 built-ins and `service` — are refused as declarations at every level. **R30** states the rules: values are primitives (string, number, bool — a list or object is refused by name), a variable's value may reference node variables and built-ins but never another spec variable (one rule instead of an ordering-and-cycles story), duplicate declarations across a spec's files are refused, and an undefined reference stays what it has always been — an unknown-variable parse error with file and line. **Variables are not secrets, stated plainly**: they are plaintext in files whose trust model is policy, not confidentiality, and the new authenticated read-only **`GET /v1/vars`** serves the node's stanza to any signed-in caller — a secret stays `secret:<path>` (R3), and a variable whose value *contains* such a reference is fine, because R5 scoping validates the substituted result. Substitution happens at parse, so a changed value is an ordinary spec-hash mismatch rolling through the normal deploy path — nothing new in the SpecHash material — and generation (`GET /v1/spec/source`) emits resolved literals, which the generated-file marker has always said it does. Client-side parses (`kanea plan`/`run`, MCP's spec tools) fetch the node's variables over the API best-effort: a spec whose variables all resolve locally parses exactly as offline as it does today, and an unknown-variable error after a failed fetch says the fetch failed. One casualty, taken honestly: **the v1.51/v1.61 probe-skip is gone** — `variables` is a file-only half with no flag, so a version that reads it must probe the file even when every flagged half is flagged; `--config off` remains the whole-file switch it has always been.
+
+> **v1.62 amendments** — **the default control-plane reserve drops from 1 GiB to 256 MiB** (§5.2.11, §15.1, §17 R12, §21). The floor itself was never the cost: `memory.min` is a reclaim protection, not an allocation — it protects pages that exist and sets aside none that don't, which is the same property that let v1.4 reject `mlock`. The cost lives entirely in the other half of §5.2.11, the workload ceiling (`memory.max = total RAM − system_reserve_memory`), where a full gigabyte was withheld from workloads on every node — including the majority whose control plane resides in a fraction of it. The new default covers the control plane of a node that does not build: kanead (idle RSS ≤ 150 MiB, §21), `kanea-edge`, and containerd (~42 MiB, spike measurements). It deliberately does **not** cover `buildkitd`, whose ~157 MiB permanent residency (spike ④) belongs only to nodes that run pipelines: **a build node raises `kanea init --reserve`** (512 MiB is the honest build-node number), because a floor below actual control-plane RSS protects only what fits under it and leaves the rest to OOM-killer odds — the failure R12 exists to prevent. §21's ≤ 1 GiB total-platform budget is unchanged and now explicitly decoupled from the default reserve: the budget is a ceiling on what the platform may consume, the reserve is a floor the node sets aside for it, and they were one number only by v1.4's coincidence. The knob is unchanged, and nothing migrates in place — existing nodes keep the units they have until a re-init rewrites them.
 
 > **v1.61 amendments** — **`bind.api_addr` becomes the second thing `kanea.hcl` really carries, and the listener's TLS speaks §7.3's vocabulary** (§15.1, §13.1, §7.3, §16.2). The stanza has been in this document's sketch since v1.0 — v1.18 said "where the API listens" is what config should decide, and then every implementation put it in argv: `kanea init` renders `--listen` into the kanead unit, so moving the dashboard to a network address means a re-init or a hand-edited `ExecStart` that the next init regenerates — exactly the failure v1.51 built the file to end, on exactly the kind of setting it named as the file's future. So `kanead` now reads the **`bind`** stanza: `api_addr`, **`api_tls`**, `api_domain`, and `api_cert`/`api_key`. **`api_tls` is R20's mode set applied to the node's own listener** — the platform already knows four ways to hold a certificate, and inventing a fifth spelling for the dashboard would be two vocabularies for one concept: **`acme`** requires `api_domain` (an IP cannot hold an ACME certificate) and rides the ordinary §7.3 pass as a synthetic request no spec wrote — the same account, the same HTTP-01-through-the-edge or DNS-01, the same renewal loop — with one structural difference: this is the one listener whose material renews behind its own socket, so it is served through a certificate the pass hot-swaps rather than one loaded at construction, and no SNI is required (a dashboard is dialled by IP; the edge's unknown-SNI refusal is about picking among many certificates, and this listener has one). **`self-signed`** issues from the node's own CA — the same one `kanea ca show` installs on devices, so a dashboard at a bare IP gets a real green padlock on every device that already trusts the node; the certificate names `api_domain` when given, else the host of `api_addr`, **as an IP SAN when that host is an IP** (the CA previously only ever named DNS SANs, because service domains are DNS-1123 by construction), and an unspecified host (`0.0.0.0`, `::`, none) requires `api_domain`, because a certificate needs a name and "every interface" is not one. **`provided`** is the pair of files, loaded once at construction exactly as before — a certbot renewal restarts kanead, stated rather than discovered. **`plaintext`** is allowed beyond loopback *because it was typed*: logged loudly at startup, and it implies the insecure-cookie posture on a non-loopback listener, because a Secure cookie over plain HTTP is a login that silently fails — a control that cannot act, carried, which R21 exists to refuse. An **unset `api_tls` resolves**: a declared pair means `provided`, a loopback address means `plaintext`, and anything else refuses — v1.45's posture byte for byte. Contradictions are parse errors with file and line: `plaintext` beside a pair (a dropped control), `provided` without one, `acme` without `api_domain`, a pair beside a managed mode; `acme` on a node with no `--acme-email` refuses at startup, where the subsystem's absence is known. The listener's certificate **never enters the edge bundle** — the edge serves services, and a bundle entry no route names would be dead weight with a private key in it. The v1.51 doctrine applies unchanged, half by half: **an explicit `--listen` wins and the stanza is not consulted**; the new spelling **`--listen none`** is the explicit socket-only (init's own vocabulary, chosen over the other flags' `off` because `none` is what the init prompt has always accepted), and the listen half is atomic — whichever source supplies the address supplies its TLS story; the flags keep their pre-v1.61 vocabulary (a pair or loopback), because four modes as five flags is the config file's job. No flag and no stanza is socket-only, byte for byte today's posture, and the beyond-loopback refusal for the flag path does not move from the daemon's listener construction. The sketch's `edge_http`/`edge_https` stay sketch: schema-accepted, **warned by name when set** — inside a read stanza the not-silently-swallowed rule needs the warning, since erroring on the document's own sketch would refuse v1.51's stated contract. **`kanea init` consults the file before it prompts**: a `bind.api_addr` in `kanea.hcl` (no explicit `--listen` on init's own argv) skips the listen question, renders **no** listen flags into the unit — the file owns the listener, and a unit that repeated it would turn the file off — and says so in the summary. And the v1.51 probe-skip narrows honestly: skipping the file now requires **all three** halves flagged; a node carrying only the two v1.51 flags beside a `kanea.hcl` it never wanted read should say `--config off`, which has always been the whole-file switch.
 
@@ -354,7 +358,7 @@ The control plane must survive anything workloads do — a runaway container can
 ```
 /sys/fs/cgroup
 ├── kanea.slice                 # kanead + kanea-edge (+ containerd and buildkitd, via their own units)
-│     memory.min       = system_reserve_memory   # kernel-protected floor; reclaim never touches it (default 1 GiB, §15.1)
+│     memory.min       = system_reserve_memory   # kernel-protected floor; reclaim never touches it (default 256 MiB, §15.1; build nodes raise it — v1.62)
 │     memory.swap.max  = 0                       # the floor is RAM, not swap
 │     cpu.weight       = 10000                   # wins CPU contention (CPU is compressible; weight suffices)
 │     OOMScoreAdjust   = -900                    # global OOM picks workload containers first, never kanea
@@ -412,6 +416,14 @@ Job specs use **HCL v2** (`github.com/hashicorp/hcl/v2`) — deliberately near-N
 # shop.hcl — everything for one project
 spec_version = 1
 
+# Shared values, referenced as ${name} — or bare `name` where HCL takes an
+# expression — anywhere below (R2, R30). The node may supply defaults from
+# /etc/kanea/kanea.hcl's own variables stanza; the spec's block wins.
+variables {
+  domain   = "shop.example.com"
+  replicas = 3
+}
+
 project "shop" {
   description = "E-commerce storefront stack"
 
@@ -454,7 +466,7 @@ service "web" {
   project     = "shop"
   description = "Storefront frontend (Next.js)"
 
-  count = 3
+  count = replicas                        # a shared variable (R30)
 
   # Build from source instead of pulling (see §10)
   build {
@@ -509,7 +521,7 @@ service "web" {
   # domains, and blocks that declare auth must declare the same auth (R16).
   expose {
     # domains optional — defaults to web.shop.<base_domain>
-    domains = ["shop.example.com", "www.shop.example.com"]
+    domains = ["${domain}", "www.${domain}"]
 
     # Which declared network { port } the route proxies to (R16, v1.49).
     # Optional: omit and the port named "http" (or the sole port) is chosen.
@@ -734,6 +746,7 @@ function "resize-avatar" {
 
   health_check "http" {
     type = "http"
+    port = "http"               # the lowered service's sole port (R25)
     path = "/healthz"
   }
 }
@@ -742,7 +755,7 @@ function "resize-avatar" {
 ### 6.2 Spec rules
 
 - **R1** — `project` and `service` names validated as DNS-1123 labels (§4.2); parse errors abort the run with line/column diagnostics.
-- **R2** — Variables: `kanea run -var-file=env.hcl`, `${VAR}` interpolation from CLI-provided vars and built-ins (`GIT_SHA_SHORT`, `KANEA_PROJECT`, …).
+- **R2** — Variables: flat `${VAR}` interpolation in any attribute, fed from (lowest to highest precedence) the node's `variables { }` stanza in `/etc/kanea/kanea.hcl`, the spec's own top-level `variables { }` block, caller-provided vars (a pipeline's checkout values), and the built-ins (`GIT_SHA_SHORT`, `KANEA_PROJECT`, …). Declaration rules are R30's (v1.63).
 - **R3** — Secrets are referenced (`secret:<path>`), never inlined; the reconciler resolves them at alloc start. **Primary injection mechanism is tmpfs files** (`/run/kanea/secrets/<alloc>/<name>`); env-var injection is supported but documented as weaker (visible via `/proc/<pid>/environ`, runtime inspect APIs, inherited by child processes).
 - **R4** — `kanea plan` (dry-run) shows create/change/destroy diff before apply, Nomad-style.
 - **R5** — **Secret references are project-scoped:** a service may only reference `secret:<own-project>/…` or `secret:shared/…`; validation rejects cross-project references (IDOR-class exfiltration defense — §14, A01). Git, registry, storage, and notification credentials follow the same scoping. *Where* a secret's value comes from is invisible at this layer by design: a path may be operator-written or synced from an external provider (§5.2.13, v1.44), and the spec cannot tell — which is why v1.44 adds no R-rule.
@@ -786,6 +799,7 @@ function "resize-avatar" {
 - **R28** — **`protocol` names how the edge dials the upstream, and it is refused where it cannot work** (v1.41). `expose.protocol` is one of: absent, `"http"` (the default, normalized away), or `"grpc"` — the marker means "dial this route's VIP over plaintext HTTP/2 (h2c)"; it is named for the operator's intent, and a plain-h2c REST upstream works under it too (documented, not policed). Anything else is a parse error. With `protocol = "grpc"`, the exposed port is the one named **`grpc`** if the service declares it, then R16's rule as before (named `http`, else the sole port) — deterministic when both exist, `grpc` wins because the spec said so. **Refused at `plan`, fail-closed:** `protocol = "grpc"` beside a declared `tls { mode = "plaintext" }` (the plaintext path is HTTP/1.1 cleartext on :80 — the edge serves no inbound h2c — so the route could never carry a real gRPC client; a declared contradiction is a plan error, not a warning), and `protocol = "grpc"` beside a `publish` of the same port in `http` mode, including the defaulted mode (that listener would serve HTTP/1.1 on the LAN — R21's silently dropped control; `mode = "tcp"` is the correct spelling and the diagnostic says so). An **undeclared** TLS mode that resolves to plaintext on a `--tls-default plaintext` node is an agent-side warning at resolution time, never a plan error — R20 makes that resolution node-side, and plan cannot see it. **Functions cannot declare it, structurally**: `trigger "http"` has no `protocol` field and must not gain one (wasi-http is HTTP/1.1) — R25's pattern, where the absence of the field is the refusal. `Expose.Protocol` is not SpecHash material: nothing about the upstream dial is baked into a container, so changing it republishes routes and never rolls an alloc.
 
 - **R29** — **`restart` bounds crash restarts, and its schedule is validated where it is written** (v1.55). The block carries `attempts` — a non-negative integer, where zero or an absent block means the platform default of 5 — and `backoff`, a comma-separated list of positive durations (`"10s,30s,1m,5m"`; empty means the default schedule). A negative `attempts`, an empty schedule entry, a token that is not a duration, or a non-positive duration is a `plan` error carrying the service's own position, not a conversion failure downstream of it. The semantics are the reconciler's, stated here so they are normative: each restart waits the next schedule entry, and **the last entry repeats**, so a chronically failing alloc settles at the longest delay rather than falling off the end; an alloc that exhausts its budget is marked **failed and left alone** — the fix is a spec change or a `kanea restart`, and either works because both produce a new spec hash and **the restart budget belongs to the spec hash that spent it**: history is never carried onto an alloc created from a different hash, so deploying a fix resets the count. The policy itself is deliberately **not SpecHash material** — tightening a backoff schedule must not roll every healthy alloc — while the counters are durable in the alloc record (v1.37's transition rule), or `attempts = 5` would reset every time `kanead` was upgraded. Exit code zero is not exempt: `count` is a promise, and a process exiting cleanly still leaves it broken — run-to-completion workloads are §19's parked batch feature, not a restart mode.
+- **R30** — **Shared variables declare once and substitute at parse** (v1.63). A top-level `variables { }` block names values the rest of the spec references as `${name}` — or bare `name` where HCL takes an expression — and the node's `/etc/kanea/kanea.hcl` may carry a `variables { }` stanza whose entries sit **under** the spec's own (defaults-then-specialize, the R20 shape); caller-supplied values (a pipeline's checkout `GIT_*`) sit above both. Values are primitives — string, number or bool, carried as strings; a list or object is refused by name. A variable's value may reference node variables and built-ins, **never another spec variable** — one rule instead of an ordering-and-cycles story. Declaring a reserved name — the built-ins (`GIT_SHA`, `GIT_SHA_SHORT`, `GIT_BRANCH`, `KANEA_PROJECT`) or `service` — is refused at every level, as is declaring the same name twice across a spec's files. An undefined reference is the unknown-variable parse error it has always been, with file and line. **Variables are never secrets**: the node's stanza is served read-only to any authenticated caller (`GET /v1/vars`), so a secret stays a `secret:` reference (R3) — a variable whose value contains one is validated by R5 on the substituted result. Substitution is parse-time: a changed value deploys as an ordinary spec-hash mismatch (nothing new in the SpecHash material), and spec generation emits resolved literals, the generated marker's standing caveat.
 
 ---
 
@@ -1175,8 +1189,12 @@ OWASP Top 10 (2021) compliance is a **release gate**: every milestone's definiti
 Since v1.51 the file is real: `kanead` probes this path once at startup (override
 the location with `--config <path>`, disable the file with `--config off`). Absent
 means every stanza's zero value — the posture of a node that never wrote it. This
-version reads the `storage` stanza, the `device`/`socket` grant blocks, and (since
-v1.61) the `bind` stanza's API listener half; every
+version reads the `storage` stanza, the `device`/`socket` grant blocks, (since
+v1.61) the `bind` stanza's API listener half, and (since v1.63) the `variables`
+stanza — node-wide spec variables, R2/R30's lowest-precedence source, served
+read-only over `GET /v1/vars`. Because `variables` is a file-only half with no
+flag, the v1.61 all-halves probe-skip is retired: a version that reads it must
+probe the file, and `--config off` remains the whole-file switch. Every
 other stanza below is the design sketch it has always been, and a file that
 carries one is loaded with a startup warning naming what was not read — never
 silently swallowed, never refused. A present-but-malformed file, or one that is
@@ -1193,6 +1211,14 @@ cluster_id  = ""
 data_dir    = "/var/lib/kanea"
 log_level   = "info"
 base_domain = "apps.example.com"        # enables service.project.apps.example.com
+
+# Node-wide spec variables (§6.2 R2/R30, v1.63): defaults every spec on this
+# node may reference as ${name}; a spec's own variables block wins. Primitives
+# only, never secrets — the stanza is served to any authenticated caller
+# (GET /v1/vars). Reserved names (the built-ins, `service`) are refused.
+variables {
+  domain = "home.lan"
+}
 
 bind {
   # api_addr and its TLS are read since v1.61: the API/dashboard listener
@@ -1219,7 +1245,7 @@ bind {
 }
 
 resources {                              # node resource isolation (§5.2.11)
-  system_reserve_memory = "1GiB"         # protected floor: kanead, edge, containerd, buildkitd
+  system_reserve_memory = "256MiB"       # protected floor: kanead, edge, containerd — raise on build nodes (buildkitd is +157 MiB, v1.62)
   oversubscribe         = false          # refuse apply when Σ declared memory > (total RAM − reserve)
 }
 
@@ -1406,7 +1432,7 @@ backup {
 storage "local-ssd" { type = "local" }
 ```
 
-- **Resource guards:** `resources.system_reserve_memory` is the cgroup-protected floor for everything except workload containers (§5.2.11); the workload budget is total RAM − reserve. `kanea init` warns when the reserve exceeds 30% of total RAM (small hosts) or falls below 512 MiB (under-protection); `kanea doctor` verifies the cgroup hierarchy is in place. With `oversubscribe = false` (default), `apply` refuses specs whose Σ declared memory exceeds the workload budget.
+- **Resource guards:** `resources.system_reserve_memory` is the cgroup-protected floor for everything except workload containers (§5.2.11); the workload budget is total RAM − reserve. `kanea init` warns when the reserve exceeds 30% of total RAM (small hosts) or falls below 256 MiB (under-protection: beneath the default, the floor no longer covers even a non-building control plane — v1.62; a node running pipelines should set 512 MiB, §5.2.11); `kanea doctor` verifies the cgroup hierarchy is in place. With `oversubscribe = false` (default), `apply` refuses specs whose Σ declared memory exceeds the workload budget.
 
 ### 15.2 State model
 
@@ -1468,6 +1494,7 @@ DELETE /api/v1/secrets/{path}
 GET    /api/v1/secrets/providers               # sync status per provider (§5.2.13, v1.44) — metadata only
 GET    /api/v1/certs/ca                        # this node's self-signed CA certificate (never the key)
 GET    /api/v1/edge/policy                     # permitted publish range + reserved ports (§7.2.2)
+GET    /api/v1/vars                            # the node's variables stanza (R30, v1.63) — never secrets
 POST   /api/v1/webhooks/git/{project}          # HMAC-validated
 GET    /api/v1/notifications/channels | POST …/test
 ```
@@ -1607,7 +1634,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 | Category | Requirement |
 |---|---|
 | **Platform** | Linux amd64/arm64; kernel ≥ 5.10 (Kanea's own eBPF datapath, §5.2.5 — the floor is spike-validated, not inherited); cgroups v2; bpffs; systemd; NTP-synced clock (ACME/OIDC/HMAC validity) — checked at `init`, and this is the whole list. containerd, `runc`, rootless `buildkitd` and the wasmtime shim (v1.39) are **installed by `kanea init` at pinned versions** (§5.2.12), online or from an offline bundle; they are no longer prerequisites the operator supplies |
-| **Footprint** | kanea idle RSS ≤ 150 MiB, **total platform ≤ 1 GiB including containerd and kanea-edge** — the 1 GiB budget is the default `system_reserve_memory` (§5.2.11); dashboard bundle ≤ 1.5 MiB gzipped. Resident components since v1.36: **rootless `buildkitd` 157 MiB (spike ④)** + containerd 42 MiB ≈ 199 MiB before Kanea's own processes — v1.36 removed the two next-largest tenants (cilium-agent 153 MiB and etcd 23 MiB, the M0 measurements) and replaced them with pinned BPF maps, which are kernel memory bounded by construction (< 5 MiB at the §21 scale targets, sized from the CIDRs at startup) and no resident process at all. **Published ports (§7.2.2) add a bounded, operator-set term:** `--max-published-conns` × ~24 KiB, which is ~24 MiB at the default 1024 and is why the default is not larger — a ceiling nobody has turned on must not pre-spend a tenth of the budget. **The edge's labelled metrics (§9.1.1) add a second bounded term:** services × per-service series ceiling × ~200 B, ~4 MiB at 500 services with every ceiling saturated. It is bounded *because of* the ceiling, not because traffic is well-behaved, so the ceiling carries a footprint test of its own |
+| **Footprint** | kanea idle RSS ≤ 150 MiB, **total platform ≤ 1 GiB including containerd and kanea-edge** — a footprint ceiling, decoupled since v1.62 from the default `system_reserve_memory` (256 MiB, §5.2.11), which floors only the non-building control plane; dashboard bundle ≤ 1.5 MiB gzipped. Resident components since v1.36: **rootless `buildkitd` 157 MiB (spike ④)** + containerd 42 MiB ≈ 199 MiB before Kanea's own processes — v1.36 removed the two next-largest tenants (cilium-agent 153 MiB and etcd 23 MiB, the M0 measurements) and replaced them with pinned BPF maps, which are kernel memory bounded by construction (< 5 MiB at the §21 scale targets, sized from the CIDRs at startup) and no resident process at all. **Published ports (§7.2.2) add a bounded, operator-set term:** `--max-published-conns` × ~24 KiB, which is ~24 MiB at the default 1024 and is why the default is not larger — a ceiling nobody has turned on must not pre-spend a tenth of the budget. **The edge's labelled metrics (§9.1.1) add a second bounded term:** services × per-service series ceiling × ~200 B, ~4 MiB at 500 services with every ceiling saturated. It is bounded *because of* the ceiling, not because traffic is well-behaved, so the ceiling carries a footprint test of its own |
 | **Storage** | S3 volumes cost **one object-store round trip per file operation** (~30 ms typical): creating or listing a 200-file directory takes tens of seconds, and a FUSE call with a dead backend blocks for tens of seconds uninterruptibly — S3 volumes are for bulk/read-mostly data, never for hot paths or many small files (M0 spike ③) |
 | **Scale** | ≥ 500 services / ≥ 2000 allocs per node; reconcile loop ≤ 1 s at that scale |
 | **Performance** | API p95 ≤ 100 ms (local); log stream latency ≤ 500 ms; **scale decision ≤ 20 s from a sustained metric breach** (v1.21: a 15 s averaging window — three samples at the 5 s scrape resolution — plus one 5 s evaluation tick; a large spike decides sooner) |
@@ -1635,7 +1662,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry · canary 
 | R9 | Master-key loss = total backup loss | High → mitigated | Key escrow ceremony at `init` (print-once / passphrase-derived KEK); DR runbook starts with key recovery (§15.3) |
 | R10 | Log-pipeline backpressure blocks workloads | Medium | Non-blocking drains + drop policy + drop counters (§17) |
 | R11 | AI agents (MCP) misused → destructive ops or secret exfiltration | Medium | Role-tiered tools, destructive ops require `confirm`, secrets write-only, full audit, rate limits, payload caps (§16.3) |
-| R12 | Workload resource exhaustion (memory/CPU/PIDs) starving or OOM-killing the control plane | High → mitigated | cgroups v2 reservation (`memory.min` floor, default 1 GiB) + collective workload ceiling + per-alloc limits where declared, always-on `pids.max` + admission control (§5.2.11, §6.2 R11, §15.1); `mlock` rejected for the Go control plane |
+| R12 | Workload resource exhaustion (memory/CPU/PIDs) starving or OOM-killing the control plane | High → mitigated | cgroups v2 reservation (`memory.min` floor, default 256 MiB since v1.62; build nodes raise it — buildkitd alone is ~157 MiB resident) + collective workload ceiling + per-alloc limits where declared, always-on `pids.max` + admission control (§5.2.11, §6.2 R11, §15.1); `mlock` rejected for the Go control plane |
 | R13 | **Wasmtime shim behaviour under Kanea's OCI spec** (v1.39 — hardening opts, netns join, cgroup caps on a runtime that is not runc) | Medium | **Spike-gated** (`spikes/wasm-functions/`, §20 M11): the compat matrix is findings before the PRD's claims freeze, the discipline spikes ① and ⑤ set. Residual: runwasi release cadence and artifact naming drift — pinned by SHA-256, `manifest-verify` CI catches re-tags, and a bump re-runs the spike checklist |
 | R14 | **Hand-written secret-provider clients drift with provider APIs** (v1.44 — five external services, no SDKs) | Medium | Fixed-verb clients against versioned/stable endpoints (Doppler v3 download, Vault KV v2, ASM `GetSecretValue`, Key Vault 7.4, GCP SM v1); httptest fakes that verify auth server-side (the ASM fake recomputes SigV4 — the MinIO lesson); a drift presents as a named `secret.sync_failed`, never a silent stale value, and the local store keeps serving the last good one |
 | R15 | **A provider credential file on the node reads every mapped external secret** (v1.44) | Medium | 0600-checked (`master.key`'s rule), root-owned under `/etc/kanea`; docs prescribe scoped credentials (Doppler service token per config, Vault token with a read-only policy on the mapped paths, IAM/SP/SA limited to the named secrets); the `allow` list bounds what a compromised *config* could overwrite locally; tokens never enter the Store, status output or logs |

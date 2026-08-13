@@ -329,7 +329,7 @@ func runAgent(args []string) error {
 	// explicit with --config, "off" to refuse a stray file. Everything it can
 	// grant is an operator input and empty by default — no file, no flags, no
 	// host volumes and no passthrough.
-	nodeCfg, err := serverConfigForRun(*serverConfig, *hostPaths, *passthroughConfig, *listen, nodeconfig.DefaultPath)
+	nodeCfg, err := serverConfigForRun(*serverConfig, nodeconfig.DefaultPath)
 	if err != nil {
 		return err
 	}
@@ -685,6 +685,7 @@ func runAgent(args []string) error {
 		logDir:     resolveBuildLogDir(*buildLogDir, *dataDir),
 		interval:   *syncInterval,
 		baseDomain: *baseDomain,
+		nodeVars:   nodeCfg.Variables,
 		insecure:   *insecureRegistry,
 		store:      st,
 		secrets:    secretStore,
@@ -711,7 +712,7 @@ func runAgent(args []string) error {
 		}},
 		Logger:    logger,
 		Version:   version,
-		ParseSpec: parseSpecSource,
+		ParseSpec: specParser(nodeCfg.Variables),
 	})
 	if err != nil {
 		return err
@@ -795,14 +796,15 @@ func runAgent(args []string) error {
 		Backups: backups, Settings: settingsSvc, LDAPServer: ldapServerName(directory),
 		CA:           certificateAuthority(certs),
 		PublishPorts: portPolicy,
+		NodeVars:     nodeCfg.Variables,
 		OIDC:         provider, Sessions: users,
 		Metrics: metrics, EdgeMetrics: edgeExposition,
 		Invoker: invoker,
 		Breaker: breaker, Node: nodeReader,
-		// The editor's renderer parses with the node's own base domain — the
-		// same options the GitOps sync uses, so a spec means the same thing
-		// whichever door it arrives through (v1.38).
-		Spec:   specRenderer{opts: jobspec.Options{BaseDomain: *baseDomain}},
+		// The editor's renderer parses with the node's own base domain and
+		// variables — the same options the GitOps sync uses, so a spec means
+		// the same thing whichever door it arrives through (v1.38, v1.63).
+		Spec:   specRenderer{opts: jobspec.Options{BaseDomain: *baseDomain, NodeVars: nodeCfg.Variables}},
 		Exec:   driver,
 		Listen: apiL.addr, TLSCert: apiL.cert, TLSKey: apiL.key,
 		TLSGetCertificate: apiGetCert,

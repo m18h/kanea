@@ -92,7 +92,8 @@ func writeUnits(o *out, opts unitOptions) error {
 // MemoryMin is the load-bearing line. It is a *protection*, not a limit: the
 // kernel reclaims from other cgroups before it reclaims from this one, which is
 // what makes "kanead survives a workload eating the node" a guarantee rather
-// than a hope. §5.2.11 sets the default at 1 GiB.
+// than a hope. §5.2.11 sets the default at 256 MiB (v1.62) — enough for a
+// control plane that does not build; build nodes raise --reserve.
 func kaneaSlice(opts unitOptions) string {
 	return heredoc(`
 		[Unit]

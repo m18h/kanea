@@ -140,6 +140,10 @@
       <div class="window">
         <div class="bar"><i></i><i></i><i></i><span>shop.hcl</span></div>
 <pre><span class="c"># A service, its network policy, its TLS, and when to add replicas.</span>
+<span class="k">variables</span> {
+  domain = <span class="s">"shop.example.com"</span>   <span class="c"># declare once, reference anywhere</span>
+}
+
 <span class="k">service</span> <span class="s">"web"</span> {
   project = <span class="s">"shop"</span>
   count   = 3
@@ -165,7 +169,7 @@
   }
 
   <span class="k">expose</span> {
-    domains = [<span class="s">"shop.example.com"</span>]
+    domains = [<span class="s">"${domain}"</span>]
     <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
     <span class="k">rate_limit</span> {
       requests = 100
@@ -336,7 +340,7 @@ brew install kanea</pre>
       </p>
       <div class="window">
         <div class="bar"><i></i><i></i><i></i><span>manual install</span></div>
-<pre>VERSION=v0.15.0; ARCH=amd64
+<pre>VERSION=v0.16.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz

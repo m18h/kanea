@@ -382,3 +382,54 @@ func TestDefaultPathAgreesWithProvision(t *testing.T) {
 		t.Fatalf("DefaultPath = %q, want %q", DefaultPath, want)
 	}
 }
+
+func TestParseReadsTheVariablesStanza(t *testing.T) {
+	cfg, err := Parse("kanea.hcl", []byte(`
+variables {
+  domain   = "home.lan"
+  replicas = 3
+  debug    = true
+}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]string{"domain": "home.lan", "replicas": "3", "debug": "true"}
+	for k, v := range want {
+		if cfg.Variables[k] != v {
+			t.Errorf("Variables[%q] = %q, want %q", k, cfg.Variables[k], v)
+		}
+	}
+	for _, name := range cfg.Ignored {
+		if name == "variables" {
+			t.Error("a read stanza must not be reported ignored")
+		}
+	}
+}
+
+func TestParseVariablesRefusals(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"reserved built-in", `variables { GIT_SHA_SHORT = "x" }`},
+		{"reserved service", `variables { service = "x" }`},
+		{"list value", `variables { domains = ["a"] }`},
+		{"null value", `variables { domain = null }`},
+		{"expression needing context", `variables { domain = "${other}" }`},
+		{"two stanzas", "variables { a = \"1\" }\nvariables { b = \"2\" }"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse("kanea.hcl", []byte(tc.src)); err == nil {
+				t.Fatal("expected an error (present-but-malformed is fatal)")
+			}
+		})
+	}
+}
+
+func TestParseAbsentVariablesStanzaIsNil(t *testing.T) {
+	cfg, err := Parse("kanea.hcl", []byte(`storage { allowed_host_paths = ["/srv"] }`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Variables != nil {
+		t.Errorf("Variables = %v, want nil for an absent stanza", cfg.Variables)
+	}
+}

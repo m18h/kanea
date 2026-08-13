@@ -58,6 +58,7 @@
     <a class="sub" href="#arch-dashboard">Exposing the API and dashboard</a>
     <a class="part" href="#spec">Job spec reference</a>
     <a class="sub" href="#spec-top-level">Top level</a>
+    <a class="sub" href="#spec-variables">variables</a>
     <a class="sub" href="#spec-project">project</a>
     <a class="sub" href="#spec-storage">storage</a>
     <a class="sub" href="#spec-service">service</a>
@@ -536,7 +537,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
 
 <pre class="diagram">/sys/fs/cgroup
 ├── kanea.slice                # kanead, kanea-edge (+ containerd and buildkitd, via their own units)
-│     memory.min      = system_reserve_memory     # kernel-protected floor (default 1 GiB)
+│     memory.min      = system_reserve_memory     # kernel-protected floor (default 256 MiB; build nodes raise it)
 │     memory.swap.max = 0                         # the floor is RAM, not swap
 │     cpu.weight      = 10000
 │     OOMScoreAdjust  = -900                      # the global OOM killer picks workloads first
@@ -759,7 +760,8 @@ service "web" {
     <h3 id="spec-top-level">Top level</h3>
     <p>
       A spec file contains <code>spec_version</code> and any number of
-      <code>project</code>, <code>service</code> and <code>storage</code> blocks. Multiple
+      <code>project</code>, <code>service</code> and <code>storage</code> blocks, plus an
+      optional <code>variables</code> block of shared values. Multiple
       files applied together are parsed as one set, and <b>file order is irrelevant</b> — a
       service may reference a project declared in another file.
     </p>
@@ -771,9 +773,39 @@ service "web" {
           <tr><td><code>project "&lt;name&gt;"</code></td><td>block</td><td>Zero or more. Name is a DNS-1123 label.</td></tr>
           <tr><td><code>service "&lt;name&gt;"</code></td><td>block</td><td>Zero or more.</td></tr>
           <tr><td><code>storage "&lt;name&gt;"</code></td><td>block</td><td>Zero or more. May also be declared in the server config.</td></tr>
+          <tr><td><code>variables</code></td><td>block</td><td>Optional. Shared values the rest of the spec references as <code>${name}</code> (R30).</td></tr>
         </tbody>
       </table>
     </div>
+
+    <h3 id="spec-variables">variables</h3>
+    <p>
+      Declare a value once, reference it anywhere as <code>${name}</code> — or as a bare
+      identifier where HCL takes an expression, like <code>count</code>. The node may
+      supply defaults from a <code>variables</code> stanza in its own
+      <code>/etc/kanea/kanea.hcl</code>; the spec's block wins on a collision, and
+      pipeline-supplied values (<code>${GIT_SHA_SHORT}</code> and friends) sit above both.
+    </p>
+    <pre><code><span class="k">variables</span> {
+  <span class="k">domain</span>   = <span class="s">"shop.example.com"</span>
+  <span class="k">replicas</span> = <span class="s">3</span>
+}
+
+<span class="k">service</span> <span class="s">"web"</span> {
+  <span class="k">project</span> = <span class="s">"shop"</span>
+  <span class="k">count</span>   = replicas
+  <span class="k">expose</span> {
+    <span class="k">domains</span> = [<span class="s">"${domain}"</span>, <span class="s">"www.${domain}"</span>]
+  }
+}</code></pre>
+    <p>
+      Values are strings, numbers or bools — a list or object is refused by name, and so
+      is redeclaring a name or shadowing a built-in. A variable's value may reference node
+      variables and built-ins, never another spec variable. <b>Variables are not
+      secrets</b>: the node's stanza is served to any signed-in caller over
+      <code>GET /v1/vars</code>, so a secret stays a <code>secret:</code> reference — a
+      variable whose value <i>contains</i> one is fine.
+    </p>
 
     <h3 id="spec-project">project</h3>
     <p>A named group of services, and the isolation boundary for network policy, secrets, containerd namespaces and DNS.</p>
@@ -960,6 +992,10 @@ service "web" {
 <span class="k">bind</span> {                                  <span class="c"># the API/dashboard listener (v1.61)</span>
   <span class="k">api_addr</span> = <span class="s">"192.168.1.10:8600"</span>
   <span class="k">api_tls</span>  = <span class="s">"self-signed"</span>              <span class="c"># acme | self-signed | provided | plaintext</span>
+}
+
+<span class="k">variables</span> {                             <span class="c"># node-wide spec-variable defaults (v1.63) — never secrets</span>
+  <span class="k">domain</span> = <span class="s">"home.lan"</span>
 }
 
 <span class="k">device</span> <span class="s">"gpu"</span> {
@@ -1178,7 +1214,7 @@ restart {
       <table>
         <thead><tr><th>Form</th><th>Resolved</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>${VAR}</code></td><td>Parse time</td><td>From <code>-var-file</code> and built-ins such as <code>KANEA_PROJECT</code>.</td></tr>
+          <tr><td><code>${VAR}</code></td><td>Parse time</td><td>From the spec's <a href="#spec-variables"><code>variables</code> block</a>, the node's <code>variables</code> stanza in <code>/etc/kanea/kanea.hcl</code>, and built-ins such as <code>KANEA_PROJECT</code>. Node under spec under caller (R30).</td></tr>
           <tr><td><code>${GIT_SHA_SHORT}</code></td><td>Checkout time</td><td>Survives parsing as a literal reference — its value does not exist until a commit is checked out.</td></tr>
           <tr><td><code>${service.&lt;n&gt;.host}</code></td><td>Alloc start</td><td>Becomes <code>&lt;n&gt;.&lt;project&gt;.kanea</code>. Validated at plan time; resolved as a <b>DNS name, never an IP</b>, so load-balancer reprogramming cannot break it.</td></tr>
           <tr><td><code>${service.&lt;n&gt;.port.&lt;p&gt;}</code></td><td>Alloc start</td><td>The named port's frontend port.</td></tr>
@@ -1194,7 +1230,7 @@ restart {
     </p>
 
     <div class="rule"><b>R1</b><div><p><b>Names are DNS-1123 labels.</b> Project and service names: lowercase alphanumeric and <code>-</code>, alphanumeric at both ends, ≤ 63 characters. Parse errors abort the run.</p></div></div>
-    <div class="rule"><b>R2</b><div><p><b>Variables.</b> <code>${VAR}</code> interpolation from <code>-var-file</code> and built-ins.</p></div></div>
+    <div class="rule"><b>R2</b><div><p><b>Variables.</b> Flat <code>${VAR}</code> interpolation in any attribute, from the spec's <code>variables</code> block, the node's <code>variables</code> stanza and built-ins — node under spec under caller. Reserved names (the built-ins, <code>service</code>) cannot be declared, values are primitives, and a definition never references a sibling.</p></div></div>
     <div class="rule"><b>R3</b><div><p><b>Secrets are referenced, never inlined.</b> Resolved at alloc start. Primary injection is a tmpfs file at <code>/run/kanea/secrets/&lt;alloc&gt;/&lt;name&gt;</code>; env vars are supported and documented as weaker.</p></div></div>
     <div class="rule"><b>R4</b><div><p><b><code>kanea plan</code> is a real dry run</b> and shows the create/change/destroy diff before anything is applied.</p></div></div>
     <div class="rule"><b>R5</b><div><p><b>Secret references are project-scoped.</b> A service may name <code>secret:&lt;own-project&gt;/…</code> or <code>secret:shared/…</code> and nothing else. Cross-project references are rejected. Git, registry, storage and notification credentials follow the same scoping.</p></div></div>
@@ -2454,7 +2490,8 @@ journalctl -u kanead -f --since "15 min ago"</pre>
       Everything Kanea runs sits in one of two cgroup slices, and that split is the
       resource-isolation story (<a href="#arch-isolation">architecture</a>):
       <code>kanea.slice</code> holds the control plane — all four units above — with a
-      kernel-guaranteed memory <i>floor</i> (<code>MemoryMin</code>, default 1&nbsp;GiB), and
+      kernel-guaranteed memory <i>floor</i> (<code>MemoryMin</code>, default 256&nbsp;MiB —
+      raise it with <code>kanea init --reserve</code> on a node that runs builds), and
       <code>kanea-workloads.slice</code> holds every alloc under a collective
       <i>ceiling</i> of total RAM minus that reserve.
     </p>

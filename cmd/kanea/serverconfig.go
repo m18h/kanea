@@ -11,17 +11,13 @@ import (
 // all, and loads it. wellKnown is nodeconfig.DefaultPath in production; a
 // parameter so tests can point it at a temp file.
 //
-// When every half the file can feed is flag-overridden and no --config was
-// asked for, the probe is skipped entirely: nothing would read the file, so a
-// stray or malformed one must not be able to refuse startup — a node upgraded
-// with its unit flags intact behaves byte-identically to the release before
-// the file existed. Since v1.61 the halves are three: the listen flag joins
-// the skip condition, and its explicit socket-only spelling is "none".
-func serverConfigForRun(configFlag, hostPathsFlag, passthroughFlag, listenFlag, wellKnown string) (*nodeconfig.Config, error) {
+// The v1.51/v1.61 all-halves probe-skip is retired (v1.63): the variables
+// stanza is a file-only half with no flag, so a version that reads it must
+// probe the file even when every flagged half is flagged — skipping would
+// silently drop the node's variables. `--config off` remains the whole-file
+// switch for a node that never wanted the file read.
+func serverConfigForRun(configFlag, wellKnown string) (*nodeconfig.Config, error) {
 	configFlag = strings.TrimSpace(configFlag)
-	if configFlag == "" && hostPathsFlag != "" && passthroughFlag != "" && listenFlag != "" {
-		return &nodeconfig.Config{}, nil
-	}
 	switch configFlag {
 	case "off":
 		return &nodeconfig.Config{}, nil

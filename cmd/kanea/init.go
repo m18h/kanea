@@ -236,8 +236,10 @@ func runInit(args []string) error {
 // defaultUnitDir is where systemd looks for locally-installed units.
 const defaultUnitDir = "/etc/systemd/system"
 
-// defaultReserve is the control plane's memory floor (PRD §5.2.11).
-const defaultReserve = "1G"
+// defaultReserve is the control plane's memory floor (PRD §5.2.11, v1.62).
+// It covers a control plane that does not build — a node running pipelines
+// raises --reserve, because buildkitd alone holds ~157 MiB resident.
+const defaultReserve = "256M"
 
 // createLayout makes the directories, with the modes they need.
 func createLayout(o *out, dataDir, logDir, confDir string) error {

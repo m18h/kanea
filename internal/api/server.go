@@ -103,6 +103,11 @@ type ServerConfig struct {
 	// has no ranges, which means publishing is off — so a server built without
 	// it refuses rather than permitting everything.
 	PublishPorts PortPolicy
+	// NodeVars is the node's `variables { }` stanza (R30, v1.63), served over
+	// GET /v1/vars. Static after startup — the file is load-once (§15.1). Nil
+	// serves an empty map: a node with no stanza has no variables, which is an
+	// answer, not an error.
+	NodeVars map[string]string
 	// MCP is the Model Context Protocol transport (§16.3), mounted at PathMCP
 	// behind the same authentication every other route gets.
 	//
@@ -236,6 +241,7 @@ type Server struct {
 	ldapServer   string
 	ca           CertificateAuthority
 	publishPorts PortPolicy
+	nodeVars     map[string]string
 	publish      func(notify.Event)
 
 	spec SpecRenderer
@@ -323,6 +329,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		notifier: cfg.Notifier, backups: cfg.Backups, settings: cfg.Settings,
 		ldapServer: cfg.LDAPServer, ca: cfg.CA,
 		publishPorts: cfg.PublishPorts,
+		nodeVars:     cfg.NodeVars,
 		auth:         cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		spec:    cfg.Spec,
@@ -443,6 +450,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// in every handshake to every client that trusts it.
 	mux.Handle("GET "+PathEdgePolicy,
 		s.route(policy{action: "edge.policy"}, s.handleEdgePolicy))
+	// The node's shared spec variables (R30, v1.63). A read for any
+	// authenticated caller — R30's contract is that variables are never
+	// secrets, which is what makes this tier right.
+	mux.Handle("GET "+PathVars,
+		s.route(policy{action: "vars.read"}, s.handleVars))
 	mux.Handle("GET "+PathCerts+"/ca",
 		s.route(policy{action: "cert.ca"}, s.handleCACertificate))
 
