@@ -152,7 +152,10 @@ func runRun(args []string) error {
 }
 
 // waitForRunning polls until every desired alloc is running, so `kanea run`
-// exits meaning "it is up" rather than "it was requested".
+// exits meaning "it is up" rather than "it was requested". Progress is
+// reported as state transitions, and on failure or timeout the stragglers are
+// listed by name with the detail `kanea ps` would give — the answer the user
+// would otherwise have to go fetch.
 func waitForRunning(ctx context.Context, client *api.Client, desired []reconciler.Desired, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	want := 0
@@ -163,16 +166,23 @@ func waitForRunning(ctx context.Context, client *api.Client, desired []reconcile
 		return nil
 	}
 
+	o := newOut()
+	// The first poll is a silent baseline: a service that was already up must
+	// not re-announce itself on every converged re-apply.
+	last := map[string]reconciler.AllocState{}
+	seeded := false
 	for {
 		allocs, err := client.Allocs(ctx, "", "")
 		if err != nil {
 			return err
 		}
+		ours := allocs[:0]
 		running, failed := 0, 0
 		for _, a := range allocs {
 			if !isDesiredAlloc(desired, a) {
 				continue
 			}
+			ours = append(ours, a)
 			switch a.State {
 			case reconciler.AllocRunning:
 				running++
@@ -180,19 +190,65 @@ func waitForRunning(ctx context.Context, client *api.Client, desired []reconcile
 				failed++
 			}
 		}
+		for _, a := range ours {
+			if seeded && a.State != last[a.ID] {
+				switch a.State {
+				case reconciler.AllocRunning:
+					o.printf("%s running (%d/%d)\n", a.ID, running, want)
+				case reconciler.AllocBackoff, reconciler.AllocFailed:
+					o.printf("%s %s\n", a.ID, allocStateLabel(a))
+				}
+			}
+			last[a.ID] = a.State
+		}
+		seeded = true
 		if running >= want {
-			o := newOut()
 			o.printf("%d/%d allocs running\n", running, want)
 			return o.Err()
 		}
-		if failed > 0 {
-			return fmt.Errorf("%d alloc(s) failed; see `kanea logs` and `kanea ps`", failed)
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out after %s with %d/%d allocs running; see `kanea ps`",
-				timeout, running, want)
+		if failed > 0 || time.Now().After(deadline) {
+			printStragglers(o, desired, ours)
+			if err := o.Err(); err != nil {
+				return err
+			}
+			if failed > 0 {
+				return fmt.Errorf("%d alloc(s) failed with %d/%d running", failed, running, want)
+			}
+			return fmt.Errorf("timed out after %s with %d/%d allocs running", timeout, running, want)
 		}
 		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// printStragglers lists every desired slot that is not up, with the state
+// detail `kanea ps` would show — including declared slots the reconciler has
+// not created yet, which have no record to explain themselves with.
+func printStragglers(o *out, desired []reconciler.Desired, allocs []reconciler.AllocRecord) {
+	byID := map[string]reconciler.AllocRecord{}
+	for _, a := range allocs {
+		byID[a.ID] = a
+	}
+	crashed := false
+	o.println("\nstill not running:")
+	o.table()
+	for _, d := range desired {
+		for i := 0; i < d.Count; i++ {
+			id := reconciler.AllocID(d.Project, d.Service, i)
+			a, ok := byID[id]
+			switch {
+			case !ok:
+				o.printf("  %s\tpending (not created)\n", id)
+			case a.State != reconciler.AllocRunning:
+				o.printf("  %s\t%s\n", id, allocStateLabel(a))
+				crashed = crashed || a.State == reconciler.AllocBackoff || a.State == reconciler.AllocFailed
+			case !a.Healthy && !a.LastProbeAt.IsZero():
+				o.printf("  %s\trunning (unhealthy)\n", id)
+			}
+		}
+	}
+	o.endTable()
+	if crashed {
+		o.println("`kanea logs <project>/<service>` shows the crash output")
 	}
 }
 
@@ -308,31 +364,35 @@ func runPs(args []string) error {
 		if !a.CreatedAt.IsZero() {
 			age = shortDuration(time.Since(a.CreatedAt))
 		}
-		state := string(a.State)
-		// A failed or backing-off alloc must explain itself here: `ps` is where
-		// a user looks first when something is not running.
-		switch a.State {
-		case reconciler.AllocFailed:
-			state = fmt.Sprintf("failed (exit %d)", a.LastExitCode)
-		case reconciler.AllocBackoff:
-			state = fmt.Sprintf("backoff (exit %d, retry in %s)",
-				a.LastExitCode, shortDuration(time.Until(a.NextRestartAt)))
-		case reconciler.AllocRunning:
-			// A running-but-failing alloc is the case `ps` most needs to
-			// distinguish: the process is up, so "running" alone is misleading,
-			// and it is why anything depending on it has not started.
-			if !a.Healthy && !a.LastProbeAt.IsZero() {
-				state = "running (unhealthy)"
-			}
-		}
 		o.printf("%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
-			a.ID, a.Project, a.Service, state, a.Restarts, a.Image, age)
+			a.ID, a.Project, a.Service, allocStateLabel(a), a.Restarts, a.Image, age)
 	}
 	for _, g := range ghosts {
 		o.printf("%s\t%s\t%s\t%s\t-\t%s\t-\n",
 			g.id, g.project, g.service, g.state, g.image)
 	}
 	return o.Err()
+}
+
+// allocStateLabel renders an alloc's state with the detail a status line
+// needs: a failed or backing-off alloc must explain itself — `ps` and the
+// `run` wait are where a user looks first when something is not running —
+// and a running-but-failing alloc is the case that most needs distinguishing:
+// the process is up, so "running" alone is misleading, and it is why anything
+// depending on it has not started.
+func allocStateLabel(a reconciler.AllocRecord) string {
+	switch a.State {
+	case reconciler.AllocFailed:
+		return fmt.Sprintf("failed (exit %d)", a.LastExitCode)
+	case reconciler.AllocBackoff:
+		return fmt.Sprintf("backoff (exit %d, retry in %s)",
+			a.LastExitCode, shortDuration(time.Until(a.NextRestartAt)))
+	case reconciler.AllocRunning:
+		if !a.Healthy && !a.LastProbeAt.IsZero() {
+			return "running (unhealthy)"
+		}
+	}
+	return string(a.State)
 }
 
 // psGhost is a `ps -a` row for something declared with no alloc record.
