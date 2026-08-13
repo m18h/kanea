@@ -24,7 +24,15 @@ type nftFirewall struct{}
 // from the cluster CIDR to anywhere outside it is masqueraded on the way out.
 // Kernel conntrack does the NAT; the rule is idempotent because the owned
 // table is flushed and rewritten in one transaction.
+//
+// It also asserts net.ipv4.ip_forward (v1.65): masquerade without forwarding
+// is a rule that matches nothing, and the pre-v1.65 datapath inherited the
+// sysctl from "the node's existing configuration" — usually docker's, which
+// is exactly the dependency that broke the first node to drop docker.
 func (nftFirewall) EnsureMasquerade(clusterCIDR netip.Prefix, _ string) error {
+	if err := writeSysctl("/proc/sys/net/ipv4/ip_forward", "1"); err != nil {
+		return fmt.Errorf("ip_forward: %w", err)
+	}
 	conn, err := nftables.New()
 	if err != nil {
 		return fmt.Errorf("nftables: %w", err)

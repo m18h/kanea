@@ -43,6 +43,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define DROP_NO_BACKEND 3
 #define DROP_VIP_LEAK 4
 #define DROP_LINK_LOCAL 5
+#define DROP_SPOOF 6
 
 /* identity.flags bit 0: the address belongs to the host, not an alloc */
 #define IDENTITY_FLAG_HOST 1
@@ -103,6 +104,15 @@ struct dp_config {
 	__be32 service_cidr_mask;
 }; /* 8 bytes */
 
+/* One prefix as net+mask — cluster_v4's value (v1.65). Its own struct
+ * rather than a widened dp_config: widening a pinned map's value changes
+ * its ABI, and ErrMapIncompatible would wipe every node's pins at upgrade
+ * (the v1.41 rule). */
+struct dp_cidr {
+	__be32 net;
+	__be32 mask;
+}; /* 8 bytes */
+
 /* ---- the v6 twins (v1.41). svc_val, backend_key, identity and allow_key
  * are address-family-neutral and shared; only what carries an address gets
  * a wider sibling. */
@@ -127,6 +137,12 @@ struct drop_key6 {
 }; /* 20 bytes */
 
 struct dp_config6 {
+	__be32 net[4];
+	__be32 mask[4];
+}; /* 32 bytes */
+
+/* cluster_v6's value: dp_cidr's wide sibling. */
+struct dp_cidr6 {
 	__be32 net[4];
 	__be32 mask[4];
 }; /* 32 bytes */
@@ -191,6 +207,19 @@ struct {
 	__type(value, struct dp_config);
 } config SEC(".maps");
 
+/* The cluster CIDR (v1.65): what to_container treats as internal. A source
+ * inside it with no identity is an alloc mid-teardown — fail closed. One
+ * outside it is the world answering an egress connection the host un-NATed,
+ * and passes. The all-zero birth state reads as "no cluster configured",
+ * which drops: a program ahead of its configuration keeps the pre-v1.65
+ * behavior rather than opening up. */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, struct dp_cidr);
+} cluster_v4 SEC(".maps");
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 4096);
@@ -235,6 +264,14 @@ struct {
 	__type(key, __u32);
 	__type(value, struct dp_config6);
 } config6 SEC(".maps");
+
+/* cluster_v4's v6 sibling (v1.65). */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, struct dp_cidr6);
+} cluster_v6 SEC(".maps");
 
 /* ---- per-CPU counter bumps --------------------------------------------- */
 /* Pattern: lookup; if present (*v)++; else update with 1 (BPF_ANY). The
@@ -545,6 +582,27 @@ static __always_inline int to_container_v6(struct __sk_buff *skb, void *data,
 	struct identity *src = bpf_map_lookup_elem(&identity_v6, &ip6->saddr);
 
 	if (!src) {
+		/* The v4 rule's twin (v1.65): a source outside cluster_v6 has no
+		 * identity by construction and passes; inside it, fail closed.
+		 * Allocs have no v6 default route (no NAT66), so this is LAN v6
+		 * an operator routed, not internet return traffic — the same
+		 * grant either way. */
+		__u32 czero = 0;
+		struct dp_cidr6 *cluster =
+			bpf_map_lookup_elem(&cluster_v6, &czero);
+
+		if (cluster &&
+		    (cluster->mask[0] | cluster->mask[1] | cluster->mask[2] |
+		     cluster->mask[3]) &&
+		    ((ip6->saddr.s6_addr32[0] & cluster->mask[0]) !=
+			     cluster->net[0] ||
+		     (ip6->saddr.s6_addr32[1] & cluster->mask[1]) !=
+			     cluster->net[1] ||
+		     (ip6->saddr.s6_addr32[2] & cluster->mask[2]) !=
+			     cluster->net[2] ||
+		     (ip6->saddr.s6_addr32[3] & cluster->mask[3]) !=
+			     cluster->net[3]))
+			goto pass;
 		count_drop6(&ip6->daddr, DROP_POLICY);
 		return TC_ACT_SHOT;
 	}
@@ -620,6 +678,21 @@ int kanea_to_container(struct __sk_buff *skb)
 	struct identity *src = bpf_map_lookup_elem(&identity_v4, &ip->saddr);
 
 	if (!src) {
+		/* No identity: a cluster-internal source is an alloc mid-teardown
+		 * — fail closed, exactly the deny the attach order relies on. One
+		 * from OUTSIDE the cluster is the world answering a connection an
+		 * alloc opened (conntrack un-NATed it on the way in) and passes:
+		 * kanead's allocator writes every identity, so an external address
+		 * can never have one, and dropping it made egress send-only
+		 * (v1.65). The mask guard keeps the unwritten map (all-zero, an
+		 * ARRAY's birth state) dropping, never open. */
+		__u32 czero = 0;
+		struct dp_cidr *cluster =
+			bpf_map_lookup_elem(&cluster_v4, &czero);
+
+		if (cluster && cluster->mask &&
+		    (ip->saddr & cluster->mask) != cluster->net)
+			goto pass;
 		count_drop(ip->daddr, DROP_POLICY);
 		return TC_ACT_SHOT;
 	}
@@ -707,6 +780,28 @@ static __always_inline int from_container_v6(struct __sk_buff *skb, void *data,
 		return TC_ACT_SHOT;
 	}
 
+	/* Anti-spoof, the v4 rule's twin (v1.65). */
+	{
+		__u32 czero = 0;
+		struct dp_cidr6 *cluster =
+			bpf_map_lookup_elem(&cluster_v6, &czero);
+
+		if (cluster &&
+		    (cluster->mask[0] | cluster->mask[1] | cluster->mask[2] |
+		     cluster->mask[3]) &&
+		    ((ip6->saddr.s6_addr32[0] & cluster->mask[0]) !=
+			     cluster->net[0] ||
+		     (ip6->saddr.s6_addr32[1] & cluster->mask[1]) !=
+			     cluster->net[1] ||
+		     (ip6->saddr.s6_addr32[2] & cluster->mask[2]) !=
+			     cluster->net[2] ||
+		     (ip6->saddr.s6_addr32[3] & cluster->mask[3]) !=
+			     cluster->net[3])) {
+			count_drop6(&ip6->daddr, DROP_SPOOF);
+			return TC_ACT_SHOT;
+		}
+	}
+
 	__u32 zero = 0;
 	struct dp_config6 *cfg = bpf_map_lookup_elem(&config6, &zero);
 
@@ -749,6 +844,25 @@ int kanea_from_container(struct __sk_buff *skb)
 	if ((ip->daddr & __bpf_htonl(0xFFFF0000)) == __bpf_htonl(0xA9FE0000)) {
 		count_drop(ip->daddr, DROP_METADATA);
 		return TC_ACT_SHOT;
+	}
+
+	/* Anti-spoof (v1.65): an alloc's packets carry its own cluster
+	 * address, and nothing else — a forged EXTERNAL source would ride the
+	 * return-traffic pass in to_container straight past policy
+	 * (IP_FREEBIND needs no capability, so dropping CAP_NET_RAW does not
+	 * close this). Inside-the-cluster spoofing is the SYN-gate-grade
+	 * weakening the threat model already states. Mask guard as ever: an
+	 * unconfigured map checks nothing. */
+	{
+		__u32 czero = 0;
+		struct dp_cidr *cluster =
+			bpf_map_lookup_elem(&cluster_v4, &czero);
+
+		if (cluster && cluster->mask &&
+		    (ip->saddr & cluster->mask) != cluster->net) {
+			count_drop(ip->daddr, DROP_SPOOF);
+			return TC_ACT_SHOT;
+		}
 	}
 
 	/* A packet addressed to the service CIDR escaped connect-time rewrite

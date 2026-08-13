@@ -10,10 +10,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/m18h/kanea/internal/datapath/dpmap"
 	"github.com/m18h/kanea/internal/network"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/store"
 )
 
@@ -187,6 +189,8 @@ type fakeMaps struct {
 	allows   map[dpmap.AllowKey]struct{}
 	cfg      dpmap.Config
 	cfg6     dpmap.Config6
+	cluster  dpmap.CIDR
+	cluster6 dpmap.CIDR6
 	flips    [][]dpmap.Op
 	fail     map[string]error
 }
@@ -309,6 +313,22 @@ func (f *fakeMaps) SetConfig6(cfg dpmap.Config6) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.cfg6 = cfg
+	return nil
+}
+
+func (f *fakeMaps) SetClusterCIDR(cfg dpmap.CIDR) error {
+	f.log.rec("set-cluster")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cluster = cfg
+	return nil
+}
+
+func (f *fakeMaps) SetClusterCIDR6(cfg dpmap.CIDR6) error {
+	f.log.rec("set-cluster6")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cluster6 = cfg
 	return nil
 }
 
@@ -492,6 +512,10 @@ func TestInitBringsUpTheHostBeforeAnythingElse(t *testing.T) {
 		// v6 enable switch, and it must overwrite whatever an earlier
 		// dual-stack process left pinned.
 		"set-config6",
+		// The cluster maps (v1.65) land before any veth can carry traffic:
+		// until they are written the programs keep the fail-closed deny.
+		"set-cluster",
+		"set-cluster6",
 		"masquerade 10.200.0.0/16 via " + HostInterface,
 	}
 	if got := f.log.taken(); !slices.Equal(got, want) {
@@ -500,6 +524,14 @@ func TestInitBringsUpTheHostBeforeAnythingElse(t *testing.T) {
 	id, ok := f.maps.idents[netip.MustParseAddr("10.200.0.1")]
 	if !ok || id.Flags&dpmap.IdentityFlagHost == 0 {
 		t.Fatalf("host identity = %+v (present=%v), want the host flag set", id, ok)
+	}
+	// The written cluster value is the masked prefix, and the v6 half is the
+	// all-zero "not configured" deny on a v4-only node.
+	if got := f.maps.cluster; got != cidrFor(netip.MustParsePrefix("10.200.0.0/16")) {
+		t.Fatalf("cluster map = %+v, want the cluster CIDR", got)
+	}
+	if f.maps.cluster6 != (dpmap.CIDR6{}) {
+		t.Fatalf("cluster6 map = %+v, want all-zero on a v4-only node", f.maps.cluster6)
 	}
 }
 
@@ -582,4 +614,100 @@ func (z *zoneRecorder) SetZone(services []network.Service) {
 	z.mu.Lock()
 	defer z.mu.Unlock()
 	z.calls = append(z.calls, services)
+}
+
+// ---- v1.65: repair, program refresh, egress re-ensure ----
+
+// Init re-attaches the tc programs to every owned veth: without this, a
+// kanead upgrade's datapath fixes reach only allocs created afterwards.
+func TestInitRefreshesProgramsOnAdoptedVeths(t *testing.T) {
+	f := newFixture(t)
+	f.nl.addLink(hostDevName("shop-web-0"), aliasFor("shop-web-0", netip.MustParseAddr("10.200.0.2"), netip.Addr{}))
+	f.nl.addLink("eth0", "not ours")
+	if err := f.d.Init(t.Context()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	steps := f.log.taken()
+	want := "attach-programs " + hostDevName("shop-web-0")
+	if !slices.Contains(steps, want) {
+		t.Fatalf("init steps %v carry no %q", steps, want)
+	}
+	for _, s := range steps {
+		if s == "attach-programs eth0" {
+			t.Fatal("a foreign link had programs attached")
+		}
+	}
+}
+
+// RepairIdentity is map-only: the identity comes back, and no veth is
+// touched — a running workload's interface is not a thing a repair may yank.
+func TestRepairIdentityIsMapOnly(t *testing.T) {
+	f := newFixture(t)
+	ip := netip.MustParseAddr("10.200.0.2")
+	f.nl.addLink(hostDevName("shop-web-0"), aliasFor("shop-web-0", ip, netip.Addr{}))
+	if err := f.d.Init(t.Context()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	f.log.reset() // drop the init steps
+
+	spec := runtime.AllocSpec{ID: "shop-web-0", Project: "shop", Service: "web"}
+	if err := f.d.RepairIdentity(t.Context(), spec); err != nil {
+		t.Fatalf("RepairIdentity: %v", err)
+	}
+	id, ok := f.maps.idents[ip]
+	if !ok || id.Flags&dpmap.IdentityFlagHost != 0 {
+		t.Fatalf("identity = %+v (present=%v), want an alloc identity", id, ok)
+	}
+	for _, s := range f.log.taken() {
+		switch {
+		case strings.HasPrefix(s, "put-identity"):
+		default:
+			t.Fatalf("repair performed %q; only identity writes are allowed", s)
+		}
+	}
+}
+
+// A repair for an alloc with no attachment reports so rather than inventing
+// one — plumbing is Attach's job, on Attach's order.
+func TestRepairIdentityRefusesAMissingAttachment(t *testing.T) {
+	f := newFixture(t)
+	if err := f.d.Init(t.Context()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	err := f.d.RepairIdentity(t.Context(), runtime.AllocSpec{ID: "shop-web-0", Project: "shop", Service: "web"})
+	if err == nil {
+		t.Fatal("a repair with nothing to repair reported success")
+	}
+}
+
+// EnsureEgress is throttled: the reconciler calls it every pass, and only the
+// first inside the window reaches nftables.
+func TestEnsureEgressIsThrottled(t *testing.T) {
+	f := newFixture(t)
+	if err := f.d.EnsureEgress(t.Context()); err != nil {
+		t.Fatalf("EnsureEgress: %v", err)
+	}
+	if err := f.d.EnsureEgress(t.Context()); err != nil {
+		t.Fatalf("EnsureEgress: %v", err)
+	}
+	masq := 0
+	for _, s := range f.log.taken() {
+		if strings.HasPrefix(s, "masquerade") {
+			masq++
+		}
+	}
+	if masq != 1 {
+		t.Fatalf("masquerade ran %d times across two calls, want 1 (throttled)", masq)
+	}
+	f.log.reset()
+	// Aging the stamp re-arms it.
+	f.d.mu.Lock()
+	f.d.egressEnsured = time.Now().Add(-2 * egressEnsureInterval)
+	f.d.mu.Unlock()
+	if err := f.d.EnsureEgress(t.Context()); err != nil {
+		t.Fatalf("EnsureEgress: %v", err)
+	}
+	if got := f.log.taken(); !slices.Contains(got, "masquerade 10.200.0.0/16 via "+HostInterface) {
+		t.Fatalf("an aged stamp did not re-ensure: %v", got)
+	}
 }

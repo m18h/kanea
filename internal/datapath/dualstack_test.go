@@ -92,6 +92,8 @@ func TestDualStackInit(t *testing.T) {
 		"put-identity fd10:244::1",
 		"set-config",
 		"set-config6",
+		"set-cluster",
+		"set-cluster6",
 		"masquerade 10.200.0.0/16 via " + HostInterface,
 	}
 	if got := f.log.taken(); !slices.Equal(got, want) {
@@ -108,6 +110,16 @@ func TestDualStackInit(t *testing.T) {
 	}
 	if f.maps.cfg6 != wantCfg {
 		t.Errorf("config6 = %+v, want %+v", f.maps.cfg6, wantCfg)
+	}
+	// The v6 cluster map carries the real prefix on a dual-stack node
+	// (v1.65) — its zero value would deny LAN v6 return traffic an operator
+	// routed.
+	wantCluster6 := dpmap.CIDR6{
+		Net:  netip.MustParseAddr("fd10:244::").As16(),
+		Mask: maskFor16(netip.MustParsePrefix("fd10:244::/56")),
+	}
+	if f.maps.cluster6 != wantCluster6 {
+		t.Errorf("cluster6 = %+v, want %+v", f.maps.cluster6, wantCluster6)
 	}
 }
 

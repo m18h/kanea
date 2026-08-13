@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/m18h/kanea/internal/datapath/dpmap"
 	"github.com/m18h/kanea/internal/network"
@@ -110,10 +111,42 @@ type Datapath struct {
 	// record for both.
 	ipam6   *ipam
 	applied map[dpmap.SvcAddr]appliedService
+	// egressEnsured is when EnsureEgress last ran the real work; the
+	// reconciler calls it every pass and the throttle keeps that from
+	// becoming an nftables transaction per pass.
+	egressEnsured time.Time
 }
 
 // v6Enabled reports whether the dual-stack trio was configured.
 func (d *Datapath) v6Enabled() bool { return d.ipam6 != nil }
+
+// egressEnsureInterval throttles EnsureEgress: often enough that a firewall
+// reload's damage lasts seconds, rare enough that reconcile passes are free.
+const egressEnsureInterval = 30 * time.Second
+
+// EnsureEgress re-asserts the node-level egress plumbing that something else
+// on the node can destroy while kanead runs (PRD v1.65): a firewalld reload
+// or `ufw enable` flushes the ruleset — the `kanea` table and its masquerade
+// rule with it — and previously nothing noticed until the next kanead
+// restart. The reconciler calls this every pass; the rebuild is one atomic
+// nftables transaction, throttled here.
+func (d *Datapath) EnsureEgress(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	if time.Since(d.egressEnsured) < egressEnsureInterval {
+		d.mu.Unlock()
+		return nil
+	}
+	d.egressEnsured = time.Now()
+	d.mu.Unlock()
+
+	if err := d.fw.EnsureMasquerade(d.clusterCIDR, HostInterface); err != nil {
+		return fmt.Errorf("datapath: masquerade: %w", err)
+	}
+	return nil
+}
 
 // seams bundles the platform implementations a Datapath runs on. The real set
 // is built by New (linux); tests build recorders.
@@ -235,13 +268,38 @@ func (d *Datapath) Init(ctx context.Context) error {
 	if err := d.maps.SetConfig6(configFor6(d.serviceCIDR6)); err != nil {
 		return fmt.Errorf("datapath: config6 map: %w", err)
 	}
+	// The cluster maps (v1.65): until these are written the programs keep the
+	// pre-v1.65 deny — external return traffic drops — so they land here,
+	// before any veth exists to carry traffic.
+	if err := d.maps.SetClusterCIDR(cidrFor(d.clusterCIDR)); err != nil {
+		return fmt.Errorf("datapath: cluster map: %w", err)
+	}
+	if err := d.maps.SetClusterCIDR6(cidrFor6(d.clusterCIDR6)); err != nil {
+		return fmt.Errorf("datapath: cluster6 map: %w", err)
+	}
 	if err := d.fw.EnsureMasquerade(d.clusterCIDR, HostInterface); err != nil {
 		return fmt.Errorf("datapath: masquerade: %w", err)
 	}
+	d.mu.Lock()
+	d.egressEnsured = time.Now()
+	d.mu.Unlock()
 
 	links, err := d.nl.List()
 	if err != nil {
 		return fmt.Errorf("datapath: list links: %w", err)
+	}
+	// Re-attach the tc programs to every owned veth (v1.65): FilterReplace is
+	// atomic, so an upgraded kanead delivers its current programs to
+	// attachments the previous process made — without this, a datapath fix
+	// reaches only allocs created after the upgrade. Best effort per link: a
+	// veth mid-teardown must not fail Init.
+	for _, l := range links {
+		if _, _, _, ok := parseAlias(l.Alias); !ok {
+			continue
+		}
+		if err := d.nl.AttachPrograms(l.Name); err != nil {
+			d.log.Warn("refresh tc programs", "dev", l.Name, "error", err)
+		}
 	}
 	d.mu.Lock()
 	d.ipam.Rebuild(links)
@@ -271,6 +329,27 @@ func configFor(p netip.Prefix) dpmap.Config {
 	cfg.ServiceCIDRNet = p.Masked().Addr().As4()
 	mask := maskFor(p)
 	copy(cfg.ServiceCIDRMask[:], mask[:])
+	return cfg
+}
+
+// cidrFor renders a v4 prefix as a cluster-map value. Only ever called with
+// the validated cluster CIDR, which newDatapath refused if invalid.
+func cidrFor(p netip.Prefix) dpmap.CIDR {
+	var cfg dpmap.CIDR
+	cfg.Net = p.Masked().Addr().As4()
+	cfg.Mask = maskFor(p)
+	return cfg
+}
+
+// cidrFor6 renders the v6 cluster prefix, or the all-zero "not configured"
+// value when v6 is off — which the programs read as the fail-closed deny.
+func cidrFor6(p netip.Prefix) dpmap.CIDR6 {
+	var cfg dpmap.CIDR6
+	if !p.IsValid() {
+		return cfg
+	}
+	cfg.Net = p.Masked().Addr().As16()
+	cfg.Mask = maskFor16(p)
 	return cfg
 }
 

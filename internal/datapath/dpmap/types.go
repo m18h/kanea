@@ -32,6 +32,11 @@ const (
 	// With NODAD, static neighbors and no autoconf nothing legitimate sends
 	// either; the counter keeps the kernel's own MLD chatter visible.
 	DropReasonLinkLocal uint8 = 5
+	// DropReasonSpoof (v1.65): an alloc emitted a packet whose source is
+	// not a cluster address. A forged external source would ride the
+	// return-traffic pass in to_container straight past policy, so the
+	// egress guard refuses it at the veth.
+	DropReasonSpoof uint8 = 6
 )
 
 // IdentityFlagHost marks an address as the host's, not an alloc's
@@ -59,6 +64,13 @@ const (
 	MapStatsEp6     = "stats_ep6"
 	MapStatsDrops6  = "stats_drops6"
 	MapConfig6      = "config6"
+
+	// The cluster CIDR maps (v1.65): new maps beside config, never a widened
+	// dp_config — the same ABI rule that kept the v6 maps separate. Their
+	// all-zero birth state reads as "no cluster configured", which the
+	// programs treat as the pre-v1.65 deny.
+	MapClusterV4 = "cluster_v4"
+	MapClusterV6 = "cluster_v6"
 )
 
 // PinRoot is where the datapath pins its maps, programs and links.
@@ -89,6 +101,9 @@ const (
 	DropKey6Size    = 20
 	Config6Size     = 32
 	StatsEp6KeySize = 16 // struct in6_addr pod ip; also identity_v6's key
+
+	CIDRSize  = 8  // struct dp_cidr
+	CIDR6Size = 32 // struct dp_cidr6
 )
 
 func checkLen(what string, b []byte, want int) error {
@@ -342,6 +357,57 @@ func (v *Config) Unmarshal(b []byte) error {
 	}
 	copy(v.ServiceCIDRNet[:], b[0:4])
 	copy(v.ServiceCIDRMask[:], b[4:8])
+	return nil
+}
+
+// CIDR is cluster_v4's single value: struct dp_cidr in kanea.c — one prefix
+// as net+mask, both network order. A zero mask means "no cluster configured";
+// the programs read that as the pre-v1.65 deny, so the value an ARRAY map is
+// born with fails closed.
+type CIDR struct {
+	Net  [4]byte // network order
+	Mask [4]byte // network order
+}
+
+// Marshal encodes the value in the C struct's byte layout.
+func (v CIDR) Marshal() []byte {
+	b := make([]byte, CIDRSize)
+	copy(b[0:4], v.Net[:])
+	copy(b[4:8], v.Mask[:])
+	return b
+}
+
+// Unmarshal decodes the C struct's byte layout.
+func (v *CIDR) Unmarshal(b []byte) error {
+	if err := checkLen("dp_cidr", b, CIDRSize); err != nil {
+		return err
+	}
+	copy(v.Net[:], b[0:4])
+	copy(v.Mask[:], b[4:8])
+	return nil
+}
+
+// CIDR6 is cluster_v6's single value: struct dp_cidr6 in kanea.c.
+type CIDR6 struct {
+	Net  [16]byte // network order
+	Mask [16]byte // network order
+}
+
+// Marshal encodes the value in the C struct's byte layout.
+func (v CIDR6) Marshal() []byte {
+	b := make([]byte, CIDR6Size)
+	copy(b[0:16], v.Net[:])
+	copy(b[16:32], v.Mask[:])
+	return b
+}
+
+// Unmarshal decodes the C struct's byte layout.
+func (v *CIDR6) Unmarshal(b []byte) error {
+	if err := checkLen("dp_cidr6", b, CIDR6Size); err != nil {
+		return err
+	}
+	copy(v.Net[:], b[0:16])
+	copy(v.Mask[:], b[16:32])
 	return nil
 }
 
