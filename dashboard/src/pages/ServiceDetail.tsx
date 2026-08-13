@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Pencil, Play, RotateCw, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ChartSkeleton, TableSkeleton } from '@/components/Skeletons'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { BackChip } from '@/components/BackChip'
 import { EventRow } from '@/components/EventRow'
@@ -49,6 +50,9 @@ import {
   serviceStatusTone,
 } from '@/lib/state'
 
+/** How long a live "no such service" answer must hold before it is believed. */
+const notFoundGraceMs = 750
+
 export function ServiceDetail({ project, service }: { project: string; service: string }) {
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
@@ -76,7 +80,22 @@ export function ServiceDetail({ project, service }: { project: string; service: 
   const mine = groupAllocs(allocs.data?.allocs ?? []).get(key) ?? []
   const allocPager = usePagination(mine)
 
-  if (services.connected && !desired) {
+  // "Not found" only after the absence has held for a moment on a live
+  // connection. A reconnect's first frames can briefly disagree with the
+  // store, and flashing a Not-found card over a service that exists reads as
+  // an outage.
+  const missing = services.connected && services.data !== null && !desired
+  const [notFound, setNotFound] = useState(false)
+  // Render-time reset (the documented derived-state pattern): the moment the
+  // service is back, the verdict is void.
+  if (!missing && notFound) setNotFound(false)
+  useEffect(() => {
+    if (!missing) return
+    const timer = setTimeout(() => setNotFound(true), notFoundGraceMs)
+    return () => clearTimeout(timer)
+  }, [missing])
+
+  if (notFound) {
     return (
       <Card>
         <CardHeader>
@@ -86,6 +105,27 @@ export function ServiceDetail({ project, service }: { project: string; service: 
           No service <span className="font-mono">{key}</span> is deployed.
         </CardContent>
       </Card>
+    )
+  }
+
+  // Still connecting: hold the page's shape with skeletons rather than
+  // rendering four empty panels that pop full a beat later.
+  if (!services.data && !desired) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <BackChip to="/services">Services</BackChip>
+          <PageHeader title={<span className="font-mono">{service}</span>} subtitle={key} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <Card key={i} className="p-4">
+              <ChartSkeleton big />
+            </Card>
+          ))}
+        </div>
+        <TableSkeleton rows={3} cols={6} />
+      </div>
     )
   }
 
@@ -552,9 +592,22 @@ function LogPanel({ project, service }: { project: string; service: string }) {
   const [filter, setFilter] = useState('')
   const [follow, setFollow] = useState(true)
 
-  const shown = filter
-    ? lines.filter((l) => l.line.toLowerCase().includes(filter.toLowerCase()))
-    : lines
+  // Memoized: at ten thousand buffered lines the filter is no longer free,
+  // and this re-runs on every stats frame otherwise.
+  const shown = useMemo(() => {
+    if (!filter) return lines
+    const needle = filter.toLowerCase()
+    return lines.filter((l) => l.line.toLowerCase().includes(needle))
+  }, [lines, filter])
+  const viewerLines = useMemo(
+    () =>
+      shown.map((entry, i) => ({
+        key: `${entry.alloc_id}-${i}`,
+        prefix: allocSuffix(entry.alloc_id),
+        text: entry.line,
+      })),
+    [shown],
+  )
 
   return (
     <Card>
@@ -581,13 +634,11 @@ function LogPanel({ project, service }: { project: string; service: string }) {
       <CardContent>
         {error ? <p className="pb-2 text-sm text-destructive">{error}</p> : null}
         <LogViewer
-          lines={shown.map((entry, i) => ({
-            key: `${entry.alloc_id}-${i}`,
-            prefix: allocSuffix(entry.alloc_id),
-            text: entry.line,
-          }))}
+          lines={viewerLines}
           live
           follow={follow}
+          tintSeverity
+          toolbar={{ copy: true, download: { filename: `${project}-${service}.log` } }}
           emptyText={lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
           notice={
             dropped > 0 ? (

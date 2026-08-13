@@ -3,6 +3,7 @@ import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { TableSkeleton } from '@/components/Skeletons'
 import { Input } from '@/components/ui/input'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
@@ -100,8 +101,8 @@ export function Services() {
 
       {services.error ? (
         <Card className="p-4 text-sm text-destructive">{services.error}</Card>
-      ) : !services.connected ? (
-        <Card className="p-4 text-sm text-muted-foreground">Connecting…</Card>
+      ) : !services.connected && !services.data ? (
+        <TableSkeleton rows={6} cols={8} />
       ) : list.length === 0 ? (
         <Card className="p-4 text-sm text-muted-foreground">Nothing deployed yet.</Card>
       ) : (
