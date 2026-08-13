@@ -194,7 +194,15 @@ edge, and it is bounded the same way: by the node, not by the spec.
 Network policy is deny-by-default per project, and the deny is structural,
 not temporal: the datapath's policy program is attached and
 the alloc's identity written *before* its interface can carry a packet, and a
-source the identity map does not know is dropped (PRD §5.2.5). There is no
+**cluster-internal** source the identity map does not know is dropped
+(PRD §5.2.5, scoped in v1.65). A source outside the cluster CIDR carries no
+identity by construction — it is the world answering a connection an alloc
+opened, un-NATed by conntrack — and passes to a destination that must still
+hold a local identity. Nothing unsolicited arrives that way: the pod CIDR is
+private and unroutable from off-node, published ports terminate at the edge,
+and conntrack un-NATs only established flows. An operator who deliberately
+routes the cluster CIDR to the node has granted direct reachability, and that
+grant is theirs to make. There is no
 unlabelled window to defend, and a skipped attach step fails closed.
 
 One honest weakening, stated here because hiding it would be worse: policy is
