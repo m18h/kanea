@@ -17,6 +17,12 @@ import (
 // blackhole route somewhere to live.
 const HostInterface = "kanea0"
 
+// NFTableName is the one nftables table Kanea owns (the masquerade rule
+// lives in it). Exported for `kanea doctor`, which checks its presence — a
+// missing table on a running node means a firewall manager flushed the
+// ruleset (PRD v1.65).
+const NFTableName = "kanea"
+
 // Config configures the datapath driver.
 type Config struct {
 	// NodeCIDR is the pool alloc addresses are drawn from. The network

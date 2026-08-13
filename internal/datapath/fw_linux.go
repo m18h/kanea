@@ -15,7 +15,7 @@ import (
 // nftTable is the one table Kanea owns. Everything in it is ours to flush;
 // nothing outside it is ever touched — a foreign FORWARD-drop policy (docker,
 // ufw) is a `kanea doctor` finding, not something the datapath fights.
-const nftTable = "kanea"
+const nftTable = NFTableName
 
 // nftFirewall is the real Firewall over google/nftables.
 type nftFirewall struct{}

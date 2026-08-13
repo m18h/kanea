@@ -110,6 +110,7 @@ func componentChecks(opts preflightOptions) []checkResult {
 	}
 	if opts.networkMode != networkNetns {
 		results = append(results, checkBPF())
+		results = append(results, networkEgressChecks()...)
 	}
 	if opts.buildkitSocket != "off" {
 		results = append(results, checkBuildkit(opts.buildkitSocket, opts.layout))
