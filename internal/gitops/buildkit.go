@@ -36,12 +36,17 @@ import (
 //   - the digest comes from `--metadata-file`, since parsing it out of the
 //     progress output would be parsing a UI.
 
-// DefaultBuildkitSocket is where the rootless daemon listens.
+// DefaultBuildkitSocket is where the provisioned daemon listens: in its own
+// home under the data directory, *not* under `/run` — rootlesskit copy-ups
+// `/run` into a namespace-private tmpfs, so a socket there is invisible to
+// every client outside the namespace (M0 spike ④). Root-reachable only, by
+// the unit's 0750 home.
 //
-// Outside rootlesskit's copy-up'd `/run`, which is a namespace-private tmpfs:
-// a socket placed there is invisible to clients (M0 spike ④). Root-only by the
-// unit's 0750 home.
-const DefaultBuildkitSocket = "unix:///run/kanea-buildkit/buildkitd.sock"
+// Must equal provision.BuildkitSocket over the default layout, pinned by
+// test: the previous value here predated the installer, named a path under
+// `/run` that nothing creates, and left doctor warning about a healthy
+// daemon while kanead dialed a socket that could never answer.
+const DefaultBuildkitSocket = "unix:///var/lib/kanea/buildkit/run/buildkitd.sock"
 
 // Build timeouts.
 const (
