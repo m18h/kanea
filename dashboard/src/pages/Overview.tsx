@@ -4,11 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KeyValueSkeleton } from '@/components/Skeletons'
 import { EventRow } from '@/components/EventRow'
 import { KeyValue } from '@/components/KeyValue'
-import { MetricPanel } from '@/components/MetricPanel'
+import { MetricChartPanel } from '@/components/MetricChartPanel'
 import { PageHeader } from '@/components/PageHeader'
 import { StatTile } from '@/components/StatTile'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
-import { seedFromHistory, useSeries } from '@/hooks/useSeries'
+import { useTimedSeries } from '@/hooks/useSeries'
 import {
   Topic,
   allocsResponseSchema,
@@ -259,23 +259,11 @@ function UtilisationCard({
 }) {
   const machine = node?.node
   const at = machine?.at ?? node?.at ?? ''
-  const cpu = useSeries(
-    machine?.cpu_percent,
-    at,
-    history ? seedFromHistory(history, 'cpu') : undefined,
-  )
-  const memory = useSeries(
-    machine?.memory_percent,
-    at,
-    history ? seedFromHistory(history, 'memory') : undefined,
-  )
-  const load = useSeries(machine?.load1, at)
-  const runningSeries = useSeries(node?.running, node?.at ?? '')
-  const gpu = useSeries(
-    machine?.gpu_vram_percent,
-    at,
-    history ? seedFromHistory(history, 'gpu_vram') : undefined,
-  )
+  const cpu = useTimedSeries(machine?.cpu_percent, at, history, 'cpu')
+  const memory = useTimedSeries(machine?.memory_percent, at, history, 'memory')
+  const load = useTimedSeries(machine?.load1, at)
+  const runningSeries = useTimedSeries(node?.running, node?.at ?? '')
+  const gpu = useTimedSeries(machine?.gpu_vram_percent, at, history, 'gpu_vram')
 
   const memoryText =
     machine?.memory_total_bytes !== undefined && machine.memory_available_bytes !== undefined
@@ -285,7 +273,7 @@ function UtilisationCard({
   // The GPU panel exists only when a GPU is visible: a GPU-less node gets no
   // panel, not an empty one — absence is not a 0% card.
   const gpus = machine?.gpus ?? []
-  const hasGPU = gpus.length > 0 || gpu.some((v) => v !== undefined)
+  const hasGPU = gpus.length > 0 || gpu.values.some((v) => v !== null)
   const vramUsed = gpus.reduce((sum, g) => sum + (g.vram_used_bytes ?? 0), 0)
   const vramTotal = gpus.reduce((sum, g) => sum + (g.vram_total_bytes ?? 0), 0)
   const gpuText =
@@ -298,30 +286,31 @@ function UtilisationCard({
         <span className="font-mono text-xs text-muted-foreground">procfs · 10s poll</span>
       </CardHeader>
       <CardContent className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
-        <MetricPanel label="CPU" unit="%" points={cpu} max={100} latest={machine?.cpu_percent} tone={1} />
-        <MetricPanel
+        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={machine?.cpu_percent} tone={1} />
+        <MetricChartPanel
           label="Memory"
           unit="%"
-          points={memory}
-          max={100}
+          series={memory}
+          scale="percent"
           latest={machine?.memory_percent}
           {...(memoryText !== undefined ? { valueText: memoryText } : {})}
           tone={2}
         />
-        <MetricPanel label="Load 1m" unit="" points={load} latest={machine?.load1} tone={3} />
-        <MetricPanel
+        <MetricChartPanel label="Load 1m" unit="" series={load} scale="auto" latest={machine?.load1} tone={3} />
+        <MetricChartPanel
           label="Allocs running"
           unit=""
-          points={runningSeries}
+          series={runningSeries}
+          scale="auto"
           latest={node?.running}
           tone={4}
         />
         {hasGPU ? (
-          <MetricPanel
+          <MetricChartPanel
             label={gpus.length > 1 ? `GPU VRAM (${gpus.length} GPUs)` : 'GPU VRAM'}
             unit="%"
-            points={gpu}
-            max={100}
+            series={gpu}
+            scale="percent"
             latest={machine?.gpu_vram_percent}
             {...(gpuText !== undefined ? { valueText: gpuText } : {})}
             tone={2}

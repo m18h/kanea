@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 
 /**
  * Loading compositions matching the real layouts they stand in for. Heights
- * mirror the components they replace (KeyValue rows, table rows, MetricPanel
+ * mirror the components they replace (KeyValue rows, table rows, MetricChartPanel
  * charts) so the swap from skeleton to data does not shift the page.
  */
 
@@ -59,13 +59,13 @@ export function CardSkeleton({ lines = 3, title = true }: { lines?: number; titl
   )
 }
 
-/** ChartSkeleton matches a MetricPanel: label, big value, chart area. */
+/** ChartSkeleton matches a MetricChartPanel: label, big value, chart area. */
 export function ChartSkeleton({ big }: { big?: boolean }) {
   return (
     <div aria-hidden aria-busy className="space-y-2">
       <Skeleton className="h-3.5 w-20" />
       <Skeleton className={big ? 'h-8 w-24' : 'h-5 w-16'} />
-      <Skeleton className={big ? 'h-12 w-full' : 'h-9 w-full'} />
+      <Skeleton className={big ? 'h-24 w-full' : 'h-16 w-full'} />
     </div>
   )
 }

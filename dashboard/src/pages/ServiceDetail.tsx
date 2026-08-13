@@ -10,14 +10,14 @@ import { BackChip } from '@/components/BackChip'
 import { EventRow } from '@/components/EventRow'
 import { KeyValue } from '@/components/KeyValue'
 import { LogViewer } from '@/components/LogViewer'
-import { MetricPanel } from '@/components/MetricPanel'
+import { MetricChartPanel } from '@/components/MetricChartPanel'
 import { PageHeader } from '@/components/PageHeader'
 import { Sparkline } from '@/components/Sparkline'
 import { StatusDot } from '@/components/StatusDot'
 import { useLiveLog, MaxLogLines } from '@/hooks/useLiveLog'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { useSession } from '@/hooks/useSession'
-import { seedFromHistory, useSeries } from '@/hooks/useSeries'
+import { useSeries, useTimedSeries } from '@/hooks/useSeries'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { Link } from '@/lib/router'
@@ -511,18 +511,10 @@ function StatsPanel({
   history: StatsHistory | null
 }) {
   const at = sample?.at ?? ''
-  const cpu = useSeries(sample?.cpu, at, history ? seedFromHistory(history, 'cpu') : undefined)
-  const memory = useSeries(
-    sample?.memory,
-    at,
-    history ? seedFromHistory(history, 'memory') : undefined,
-  )
-  const rps = useSeries(sample?.rps, at, history ? seedFromHistory(history, 'rps') : undefined)
-  const p95 = useSeries(
-    sample?.p95_latency_ms,
-    at,
-    history ? seedFromHistory(history, 'p95_latency_ms') : undefined,
-  )
+  const cpu = useTimedSeries(sample?.cpu, at, history, 'cpu')
+  const memory = useTimedSeries(sample?.memory, at, history, 'memory')
+  const rps = useTimedSeries(sample?.rps, at, history, 'rps')
+  const p95 = useTimedSeries(sample?.p95_latency_ms, at, history, 'p95_latency_ms')
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -531,16 +523,16 @@ function StatsPanel({
           the same. Rate and latency have no natural ceiling and scale to
           their own range. */}
       <Card className="p-4">
-        <MetricPanel label="CPU" unit="%" points={cpu} max={100} latest={sample?.cpu} tone={1} big />
+        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={sample?.cpu} tone={1} big />
       </Card>
       <Card className="p-4">
-        <MetricPanel label="Memory" unit="%" points={memory} max={100} latest={sample?.memory} tone={2} big />
+        <MetricChartPanel label="Memory" unit="%" series={memory} scale="percent" latest={sample?.memory} tone={2} big />
       </Card>
       <Card className="p-4">
-        <MetricPanel label="Requests / s" unit="/s" points={rps} latest={sample?.rps} tone={3} big />
+        <MetricChartPanel label="Requests / s" unit="/s" series={rps} scale="auto" latest={sample?.rps} tone={3} big />
       </Card>
       <Card className="p-4">
-        <MetricPanel label="p95 latency" unit=" ms" points={p95} latest={sample?.p95_latency_ms} tone={4} big />
+        <MetricChartPanel label="p95 latency" unit=" ms" series={p95} scale="auto" latest={sample?.p95_latency_ms} tone={4} big />
       </Card>
     </div>
   )

@@ -32,8 +32,8 @@ describe('skeletons', () => {
 
   it('ChartSkeleton sizes its chart area by variant', () => {
     const big = render(<ChartSkeleton big />)
-    expect(big.container.innerHTML).toContain('h-12')
+    expect(big.container.innerHTML).toContain('h-24')
     const compact = render(<ChartSkeleton />)
-    expect(compact.container.innerHTML).toContain('h-9')
+    expect(compact.container.innerHTML).toContain('h-16')
   })
 })
