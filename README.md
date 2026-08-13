@@ -43,7 +43,7 @@ Prefer to do it by hand? Every release publishes
 signature over the checksums:
 
 ```bash
-VERSION=v0.14.0; ARCH=amd64
+VERSION=v0.15.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
