@@ -3,12 +3,18 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
+import { mockApi } from './mock/api'
+
+// MOCK_API=1 (npm run dev:mock) serves the whole /v1 surface from the
+// in-process mock daemon instead of proxying to a real kanead — dashboard
+// development with no Linux node in sight.
+const useMock = process.env.MOCK_API === '1'
 
 // The build output goes straight into the Go package that embeds it, so
 // `make build` after `make dashboard` produces a binary with the current UI
 // and there is no copy step to forget.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), ...(useMock ? [mockApi()] : [])],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },
@@ -22,9 +28,15 @@ export default defineConfig({
     chunkSizeWarningLimit: 700,
   },
   server: {
-    proxy: {
-      '/v1': { target: 'http://127.0.0.1:8600', ws: true },
-    },
+    // With the mock in place the proxy must be off: both want /v1, and the
+    // proxy's websocket upgrade handler would race the mock's.
+    ...(useMock
+      ? {}
+      : {
+          proxy: {
+            '/v1': { target: 'http://127.0.0.1:8600', ws: true },
+          },
+        }),
   },
   test: {
     environment: 'jsdom',

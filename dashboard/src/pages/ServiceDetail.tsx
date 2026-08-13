@@ -284,12 +284,14 @@ export function ServiceActions({
   }, [confirmStop])
 
   const converging = rollout.deploying && !lockExpired
+  // Render-time reset (the derived-state pattern): convergence voids both the
+  // initiating-action marker and the honesty valve.
+  if (!rollout.deploying && (initiated !== null || lockExpired)) {
+    setInitiated(null)
+    setLockExpired(false)
+  }
   useEffect(() => {
-    if (!rollout.deploying) {
-      setInitiated(null)
-      setLockExpired(false)
-      return
-    }
+    if (!rollout.deploying) return
     const timer = setTimeout(() => setLockExpired(true), rolloutLockMs)
     return () => clearTimeout(timer)
   }, [rollout.deploying])
