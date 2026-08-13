@@ -43,6 +43,56 @@ export function chartColors(): ChartTheme {
   }
 }
 
+/**
+ * smoothValues is a centered moving average for display: raw 5s samples of an
+ * instantaneous reading are honest but unreadable at two pixels per point.
+ * Null-aware — a gap stays a gap and never borrows neighbours across it, so
+ * "absent is never zero" survives the smoothing (§9.2). The readout beside
+ * the chart still shows the raw latest sample.
+ */
+export function smoothValues(values: (number | null)[], window: number): (number | null)[] {
+  if (window <= 1) return values
+  const half = Math.floor(window / 2)
+  return values.map((v, i) => {
+    if (v === null) return null
+    let sum = v
+    let n = 1
+    // Walk outward, stopping each direction at its first gap: skipping a null
+    // and continuing past it would average across a hole and drag the line
+    // toward whatever sits on the far side.
+    let left = true
+    let right = true
+    for (let d = 1; d <= half; d++) {
+      if (left) {
+        const w = values[i - d]
+        if (i - d < 0 || w === null || w === undefined) {
+          left = false
+        } else {
+          sum += w
+          n++
+        }
+      }
+      if (right) {
+        const w = values[i + d]
+        if (i + d >= values.length || w === null || w === undefined) {
+          right = false
+        } else {
+          sum += w
+          n++
+        }
+      }
+    }
+    return sum / n
+  })
+}
+
+/** timeLabel renders a tick as HH:MM — one line, unlike uPlot's stacked
+ * time-over-date default, which clips inside a compact panel. */
+export function timeLabel(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 /** percentRange pins a 0–100 metric so a flat 2% and a flat 90% line differ. */
 export function percentRange(): [number, number] {
   return [0, 100]
@@ -97,9 +147,12 @@ export function buildOptions(opts: ChartOptions): uPlot.Options {
         stroke: theme.axis,
         grid: { show: false },
         ticks: { show: false },
-        size: 24,
+        size: 18,
         font: '10px ui-monospace, monospace',
         space: 80,
+        // One line, HH:MM. The default stacks the date under the time and the
+        // second line clips inside a compact panel.
+        values: (_u: uPlot, ticks: number[]) => ticks.map(timeLabel),
       },
       {
         stroke: theme.axis,

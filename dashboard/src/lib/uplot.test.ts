@@ -1,5 +1,39 @@
 import { describe, expect, it } from 'vitest'
-import { buildOptions, chartColors, paddedRange, percentRange } from './uplot'
+import { buildOptions, chartColors, paddedRange, percentRange, smoothValues, timeLabel } from './uplot'
+
+describe('smoothValues', () => {
+  it('averages a centered window', () => {
+    expect(smoothValues([0, 10, 20], 3)).toEqual([5, 10, 15])
+  })
+
+  it('a gap stays a gap and never borrows across one', () => {
+    const out = smoothValues([10, 10, null, 90, 90], 3)
+    expect(out[2]).toBeNull()
+    // The neighbours of the gap only average their own side.
+    expect(out[1]).toBe(10)
+    expect(out[3]).toBe(90)
+  })
+
+  it('a wide window still stops at the gap, not merely skips it', () => {
+    // The regression: window 5 reaches two steps out, and a walk that skipped
+    // the null would pick up the 90s beyond it.
+    const out = smoothValues([10, 10, null, 90, 90], 5)
+    expect(out[0]).toBe(10)
+    expect(out[1]).toBe(10)
+    expect(out[3]).toBe(90)
+  })
+
+  it('window 1 is the identity', () => {
+    const values = [1, null, 3]
+    expect(smoothValues(values, 1)).toBe(values)
+  })
+})
+
+describe('timeLabel', () => {
+  it('renders one HH:MM line', () => {
+    expect(timeLabel(Date.UTC(2026, 7, 13, 0, 0, 0) / 1000)).toMatch(/^\d{2}:\d{2}$/)
+  })
+})
 
 describe('ranges', () => {
   it('percent is pinned 0–100', () => {

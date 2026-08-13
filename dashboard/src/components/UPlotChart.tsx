@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { buildOptions, chartColors, type ChartScale } from '@/lib/uplot'
+import { buildOptions, chartColors, smoothValues, type ChartScale } from '@/lib/uplot'
 import { formatMetric } from '@/lib/state'
 import { cn } from '@/lib/utils'
+
+/** The display smoothing window (samples). Five at the 5s cadence reads as a
+ * ~25s average — enough to turn per-sample jitter into a trend line without
+ * hiding a real spike. */
+const smoothWindow = 5
 
 export interface UPlotChartProps {
   /** Aligned arrays: unix seconds and values; a null value is a gap. */
@@ -29,11 +34,14 @@ export interface UPlotChartProps {
 export function UPlotChart({ times, values, unit, label, tone, scale, className }: UPlotChartProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
-  const dataRef = useRef<[number[], (number | null)[]]>([times, values])
+  // Smoothed for display only (see smoothValues); the panel readout beside
+  // the chart keeps showing the raw latest sample.
+  const drawn = smoothValues(values, smoothWindow)
+  const dataRef = useRef<[number[], (number | null)[]]>([times, drawn])
   // Latest-props-in-a-ref, so the create effect can seed a fresh instance
   // (e.g. after a theme flip) with current data without depending on it.
   // eslint-disable-next-line react-hooks/refs
-  dataRef.current = [times, values]
+  dataRef.current = [times, drawn]
 
   // Bumped when the `dark` class flips; the create effect depends on it.
   const [themeEpoch, setThemeEpoch] = useState(0)
@@ -87,7 +95,7 @@ export function UPlotChart({ times, values, unit, label, tone, scale, className 
   }, [tone, scale, unit, themeEpoch])
 
   useEffect(() => {
-    plotRef.current?.setData([times, values])
+    plotRef.current?.setData(dataRef.current)
   }, [times, values])
 
   return (

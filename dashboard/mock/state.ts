@@ -157,10 +157,15 @@ pushEvent({ name: 'alloc.restarted', severity: 'warning', project: 'media', serv
 
 // ---- metrics ----
 
-/** A wandering value: random walk inside [min, max], sinusoidal bias. */
+/** A wandering value inside [min, max]: two sines and a whisper of noise —
+ * time-coherent, because a real scrape does not teleport between samples. */
 function wander(base: number, spread: number, min: number, max: number, phase: number): number {
   const t = Date.now() / 1000
-  const v = base + Math.sin(t / 97 + phase) * spread + (Math.random() - 0.5) * spread * 0.6
+  const v =
+    base +
+    Math.sin(t / 97 + phase) * spread +
+    Math.sin(t / 17 + phase * 3) * spread * 0.3 +
+    (Math.random() - 0.5) * spread * 0.1
   return Math.min(max, Math.max(min, v))
 }
 

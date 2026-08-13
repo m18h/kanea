@@ -30,6 +30,9 @@ describe('UPlotChart', () => {
     // one that matters.
     const live = Fake.instances.filter((i) => !i.destroyed)
     expect(live).toHaveLength(1)
+    // Values are display-smoothed, but a gap survives smoothing untouched —
+    // and gap-adjacent points average only their own side, so this data is
+    // its own fixed point.
     expect(live[0]?.data).toEqual([
       [1, 2, 3],
       [10, null, 30],
@@ -47,10 +50,10 @@ describe('UPlotChart', () => {
     )
     const after = Fake.instances.filter((i) => !i.destroyed)
     expect(after).toHaveLength(before)
-    expect(lastInstance().data).toEqual([
-      [1, 2],
-      [10, 20],
-    ])
+    // setData received the new pair (values arrive display-smoothed).
+    const data = lastInstance().data as [number[], (number | null)[]]
+    expect(data[0]).toEqual([1, 2])
+    expect(data[1]).toHaveLength(2)
   })
 
   it('destroys the instance on unmount', () => {
