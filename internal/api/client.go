@@ -73,7 +73,11 @@ func (c *Client) Services(ctx context.Context) ([]reconciler.Desired, error) {
 	if err := c.do(ctx, http.MethodGet, PathServices, nil, &out); err != nil {
 		return nil, err
 	}
-	return out.Services, nil
+	services := make([]reconciler.Desired, len(out.Services))
+	for i, view := range out.Services {
+		services[i] = view.Desired
+	}
+	return services, nil
 }
 
 // Apply declares services. Services not named are left alone.

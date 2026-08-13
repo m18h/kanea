@@ -776,7 +776,7 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 		}
 		return services[i].Service < services[j].Service
 	})
-	writeJSON(w, http.StatusOK, ServicesResponse{Services: services})
+	writeJSON(w, http.StatusOK, ServicesResponse{Services: serviceViews(services)})
 }
 
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {

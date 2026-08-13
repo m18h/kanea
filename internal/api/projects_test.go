@@ -79,6 +79,43 @@ func TestRestartBumpsTheGenerationRatherThanTouchingContainers(t *testing.T) {
 	}
 }
 
+func TestServicesListCarriesTheComputedSpecHash(t *testing.T) {
+	// The served hash is a projection (v1.64): computed per response, never
+	// stored. Beside the hash alloc records carry, it is what lets a client
+	// see a deploy in flight — so it must match the planner's own computation
+	// exactly, and it must move when a restart bumps the generation.
+	h := newHarness(t)
+	h.putService(t, "shop", "web", 2)
+
+	fetch := func() string {
+		t.Helper()
+		status, body := h.raw(t, http.MethodGet, api.PathServices)
+		if status != http.StatusOK {
+			t.Fatalf("list services = %d: %s", status, body)
+		}
+		var resp api.ServicesResponse
+		if err := json.Unmarshal([]byte(body), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(resp.Services) != 1 {
+			t.Fatalf("services = %d, want 1: %s", len(resp.Services), body)
+		}
+		return resp.Services[0].SpecHash
+	}
+
+	before := fetch()
+	if want := reconciler.SpecHash(desiredFromStore(t, h, "shop/web")); before != want {
+		t.Errorf("served spec_hash = %q, want the planner's %q", before, want)
+	}
+
+	if status, body := h.raw(t, http.MethodPost, api.PathServices+"/shop/web/restart"); status != http.StatusOK {
+		t.Fatalf("restart = %d: %s", status, body)
+	}
+	if after := fetch(); after == before {
+		t.Error("the served spec_hash did not move on restart, so no client could see the deploy")
+	}
+}
+
 func TestRestartOfAnUnknownServiceIs404(t *testing.T) {
 	h := newHarness(t)
 	if status, _ := h.raw(t, http.MethodPost, api.PathServices+"/shop/web/restart"); status != http.StatusNotFound {
