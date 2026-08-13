@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, Pencil, Play, RotateCw, Square } from 'lucide-react'
+import { Loader2, Pencil, Play, RotateCw, Square, SquareTerminal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog } from '@/components/ui/dialog'
 import { ChartSkeleton, TableSkeleton } from '@/components/Skeletons'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { BackChip } from '@/components/BackChip'
 import { EventRow } from '@/components/EventRow'
+import { ExecTerminal } from '@/components/ExecTerminal'
 import { KeyValue } from '@/components/KeyValue'
 import { LogViewer } from '@/components/LogViewer'
 import { MetricChartPanel } from '@/components/MetricChartPanel'
@@ -184,6 +186,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                       <TH>Mem</TH>
                       <TH>Restarts</TH>
                       <TH>Age</TH>
+                      <TH className="pr-0" aria-label="Actions" />
                     </tr>
                   </THead>
                   <TBody>
@@ -597,6 +600,9 @@ function AllocRow({
   const cpu = useSeries(stats?.cpu, at)
   const memory = useSeries(stats?.memory, at)
   const tone = allocStateVariant(alloc.state)
+  const { session } = useSession()
+  const admin = session?.role === 'admin'
+  const [shellOpen, setShellOpen] = useState(false)
 
   return (
     <TR>
@@ -620,6 +626,35 @@ function AllocRow({
         ) : null}
       </TD>
       <TD className="font-mono tabular-nums">{relativeAge(alloc.created_at)}</TD>
+      <TD className="pr-0 text-right">
+        {/* The most privileged verb on the page: admin-only like the API, and
+            only against a running alloc — a shell into a stopped one is a
+            worse error message than this button's absence. */}
+        {admin && alloc.state === 'running' ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5 px-2 text-xs"
+              onClick={() => setShellOpen(true)}
+            >
+              <SquareTerminal size={13} />
+              Shell
+            </Button>
+            <Dialog
+              open={shellOpen}
+              onClose={() => setShellOpen(false)}
+              dismissable={false}
+              title={<span className="font-mono">{alloc.id} · sh</span>}
+              className="h-[70vh] w-[90vw] max-w-4xl"
+            >
+              {/* Mounted only while open: the terminal (and xterm's lazy
+                  chunk) exist exactly while someone is looking at them. */}
+              {shellOpen ? <ExecTerminal project={alloc.project} alloc={alloc.id} /> : null}
+            </Dialog>
+          </>
+        ) : null}
+      </TD>
     </TR>
   )
 }
