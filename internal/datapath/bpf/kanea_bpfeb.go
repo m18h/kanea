@@ -40,6 +40,18 @@ type kaneaBackendVal6 struct {
 	Pad  uint16
 }
 
+type kaneaDpCidr struct {
+	_    structs.HostLayout
+	Net  uint32
+	Mask uint32
+}
+
+type kaneaDpCidr6 struct {
+	_    structs.HostLayout
+	Net  [4]uint32
+	Mask [4]uint32
+}
+
 type kaneaDpConfig struct {
 	_               structs.HostLayout
 	ServiceCidrNet  uint32
@@ -114,6 +126,8 @@ type kaneaSvcVal struct {
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
 	kaneaMapAllowV4             = "allow_v4"
+	kaneaMapClusterV4           = "cluster_v4"
+	kaneaMapClusterV6           = "cluster_v6"
 	kaneaMapConfig              = "config"
 	kaneaMapConfig6             = "config6"
 	kaneaMapIdentityV4          = "identity_v4"
@@ -186,6 +200,8 @@ type kaneaProgramSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type kaneaMapSpecs struct {
 	AllowV4      *ebpf.MapSpec `ebpf:"allow_v4"`
+	ClusterV4    *ebpf.MapSpec `ebpf:"cluster_v4"`
+	ClusterV6    *ebpf.MapSpec `ebpf:"cluster_v6"`
 	Config       *ebpf.MapSpec `ebpf:"config"`
 	Config6      *ebpf.MapSpec `ebpf:"config6"`
 	IdentityV4   *ebpf.MapSpec `ebpf:"identity_v4"`
@@ -228,6 +244,8 @@ func (o *kaneaObjects) Close() error {
 // It can be passed to loadKaneaObjects or ebpf.CollectionSpec.LoadAndAssign.
 type kaneaMaps struct {
 	AllowV4      *ebpf.Map `ebpf:"allow_v4"`
+	ClusterV4    *ebpf.Map `ebpf:"cluster_v4"`
+	ClusterV6    *ebpf.Map `ebpf:"cluster_v6"`
 	Config       *ebpf.Map `ebpf:"config"`
 	Config6      *ebpf.Map `ebpf:"config6"`
 	IdentityV4   *ebpf.Map `ebpf:"identity_v4"`
@@ -246,6 +264,8 @@ type kaneaMaps struct {
 func (m *kaneaMaps) Close() error {
 	return _KaneaClose(
 		m.AllowV4,
+		m.ClusterV4,
+		m.ClusterV6,
 		m.Config,
 		m.Config6,
 		m.IdentityV4,

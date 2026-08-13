@@ -77,6 +77,23 @@ type PolicySyncer interface {
 	SyncPolicies(ctx context.Context, projects []network.ProjectPolicy) error
 }
 
+// IdentityRepairer is an optional Network capability: re-writing the identity
+// entries an attachment depends on, map-only, for attachments that exist but
+// are not Ready — the state a pinned-map schema wipe leaves behind at upgrade
+// (PRD v1.65). Repair is deliberately not Attach: an existing veth under a
+// running workload is never re-plumbed.
+type IdentityRepairer interface {
+	RepairIdentity(ctx context.Context, spec runtime.AllocSpec) error
+}
+
+// EgressEnsurer is an optional Network capability: re-asserting the
+// node-level egress plumbing (the masquerade rule, ip_forward) that a
+// firewall manager can destroy while kanead runs (PRD v1.65). Called every
+// pass; the implementation throttles itself.
+type EgressEnsurer interface {
+	EnsureEgress(ctx context.Context) error
+}
+
 // Mounter establishes and releases the volume mounts a service declares. It is
 // the seam onto internal/storage; a nil Mounter leaves only local volumes,
 // which need no mount at all.
@@ -405,6 +422,23 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		attachments = r.attachments(ctx)
 	}
 
+	// Egress plumbing before anything that depends on it: the masquerade rule
+	// and ip_forward are re-asserted (throttled inside) so a firewall reload
+	// mid-flight costs seconds, not a kanead restart (v1.65).
+	if ensurer, ok := r.network.(EgressEnsurer); ok {
+		if err := ensurer.EnsureEgress(ctx); err != nil {
+			r.log.Error("ensure egress plumbing", "error", err)
+		}
+	}
+
+	// Repair before the sweep and the backend sync: an attachment that exists
+	// but is not Ready is a running workload whose identity a pin wipe took —
+	// re-writing the map entry brings it back without touching the veth, and
+	// the re-read makes it eligible as a backend in this same pass (v1.65).
+	if repaired := r.repairNetwork(ctx, world, attachments); repaired > 0 {
+		attachments = r.attachments(ctx)
+	}
+
 	// Sweep before publishing backends, so an orphan cannot be advertised as
 	// somewhere to send traffic even for one settle window.
 	result.Reaped = r.reapNetwork(ctx, world, attachments)
@@ -606,6 +640,31 @@ func (r *Reconciler) syncPolicies(ctx context.Context, desired []Desired) error 
 		out = append(out, *policy)
 	}
 	return syncer.SyncPolicies(ctx, out)
+}
+
+// repairNetwork re-writes identities for attachments that exist but are not
+// Ready and whose alloc the Store still declares (v1.65). Only records the
+// planner keeps are repaired — an unknown attachment is the reaper's, and
+// repairing it would resurrect what a delete removed.
+func (r *Reconciler) repairNetwork(ctx context.Context, w World, attachments map[string]network.Attachment) int {
+	repairer, ok := r.network.(IdentityRepairer)
+	if !ok || len(attachments) == 0 {
+		return 0
+	}
+	repaired := 0
+	for id, record := range w.Records {
+		att, present := attachments[id]
+		if !present || att.Ready {
+			continue
+		}
+		spec := runtime.AllocSpec{ID: id, Project: record.Project, Service: record.Service}
+		if err := repairer.RepairIdentity(ctx, spec); err != nil {
+			r.log.Warn("repair attachment identity", "alloc", id, "error", err)
+			continue
+		}
+		repaired++
+	}
+	return repaired
 }
 
 // reapNetwork detaches network attachments belonging to no known alloc.

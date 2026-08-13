@@ -269,6 +269,22 @@ func (k *kernelMaps) SetConfig6(cfg dpmap.Config6) error {
 	return m.Update(uint32(0), cfg.Marshal(), ebpf.UpdateAny)
 }
 
+func (k *kernelMaps) SetClusterCIDR(cfg dpmap.CIDR) error {
+	m, err := k.mp(dpmap.MapClusterV4)
+	if err != nil {
+		return err
+	}
+	return m.Update(uint32(0), cfg.Marshal(), ebpf.UpdateAny)
+}
+
+func (k *kernelMaps) SetClusterCIDR6(cfg dpmap.CIDR6) error {
+	m, err := k.mp(dpmap.MapClusterV6)
+	if err != nil {
+		return err
+	}
+	return m.Update(uint32(0), cfg.Marshal(), ebpf.UpdateAny)
+}
+
 // --- Counters: per-CPU maps, summed across CPUs ---
 
 func (k *kernelMaps) ServiceConnects() (map[uint16]uint64, error) {

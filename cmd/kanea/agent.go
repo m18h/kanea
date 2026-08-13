@@ -320,11 +320,6 @@ func runAgent(args []string) error {
 		return fmt.Errorf("volume dir: %w", err)
 	}
 
-	dns, err := buildDNS(*networkMode, *dnsListen, *dnsUpstream, cidrs.node, logger)
-	if err != nil {
-		return err
-	}
-
 	// The §15.1 server config (PRD v1.51): probed once at its well-known path,
 	// explicit with --config, "off" to refuse a stray file. Everything it can
 	// grant is an operator input and empty by default — no file, no flags, no
@@ -339,6 +334,21 @@ func runAgent(args []string) error {
 	if len(nodeCfg.Ignored) > 0 {
 		logger.Warn("server config carries stanzas this version does not read",
 			"config", nodeCfg.Path, "ignored", nodeCfg.Ignored)
+	}
+
+	// The internal resolver, after the server config so the dns stanza can
+	// supply the upstreams (v1.66). Precedence is v1.51's: --dns-upstream
+	// wins, the stanza otherwise, the host's resolv.conf when neither.
+	if *dnsUpstream != "" && len(nodeCfg.DNSUpstreams) > 0 {
+		logger.Info("server config dns stanza is not consulted (--dns-upstream wins)",
+			"config", nodeCfg.Path)
+	} else if *dnsUpstream == "" && len(nodeCfg.DNSUpstreams) > 0 {
+		logger.Info("dns upstreams from server config",
+			"config", nodeCfg.Path, "upstreams", nodeCfg.DNSUpstreams)
+	}
+	dns, err := buildDNS(*networkMode, *dnsListen, *dnsUpstream, nodeCfg.DNSUpstreams, cidrs.node, logger)
+	if err != nil {
+		return err
 	}
 
 	// The API/dashboard listener (§15.1 bind, v1.61): --listen wins, "none" is
@@ -1139,7 +1149,7 @@ const (
 // determines the address either way. The socket itself is bound in Serve,
 // which runAgent starts only after buildNetwork's Init has created the
 // interface, so the address is bindable by then.
-func buildDNS(mode, listen, upstreams string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
+func buildDNS(mode, listen, upstreams string, fileUpstreams []string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
 	if listen == dnsOff {
 		logger.Warn("internal DNS is disabled; services are reachable only by address")
 		return nil, nil
@@ -1157,7 +1167,7 @@ func buildDNS(mode, listen, upstreams string, nodeCIDR netip.Prefix, logger *slo
 		listen = net.JoinHostPort(hostAddr.String(), strconv.Itoa(network.DefaultDNSPort))
 	}
 
-	resolvers, err := upstreamResolvers(upstreams)
+	resolvers, err := upstreamResolvers(upstreams, fileUpstreams)
 	if err != nil {
 		return nil, err
 	}
@@ -1176,14 +1186,22 @@ func nameserverOf(dns *network.DNS) string {
 	return dns.Listen()
 }
 
-// upstreamResolvers parses the forwarding targets, defaulting to the host's.
+// upstreamResolvers resolves the forwarding targets: the flag wins, the
+// server config's dns stanza otherwise (v1.66), and the host's own resolvers
+// when neither says anything.
 //
-// Forwarding to the host's own resolvers keeps a workload's view of the
-// internet identical to the node's, which is what an operator expects when they
-// configure DNS once in /etc/resolv.conf.
-func upstreamResolvers(configured string) ([]string, error) {
+// Forwarding to the host's own resolvers by default keeps a workload's view
+// of the internet identical to the node's, which is what an operator expects
+// when they configure DNS once in /etc/resolv.conf. The stanza exists for the
+// node where that stopped being what they wanted — resolv.conf is read once
+// at startup and held, so pinning belongs in config, not in whatever DHCP
+// last wrote.
+func upstreamResolvers(configured string, fromFile []string) ([]string, error) {
 	if configured != "" {
 		return splitList(configured), nil
+	}
+	if len(fromFile) > 0 {
+		return fromFile, nil
 	}
 	return network.HostResolvers()
 }
