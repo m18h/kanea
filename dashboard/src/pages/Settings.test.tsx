@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Settings } from '@/pages/Settings'
+import { Router } from '@/lib/router'
 import { SessionContext, type SessionState } from '@/lib/session-context'
 import type { Session } from '@/lib/session'
 
@@ -27,7 +28,7 @@ function routeFetch(handlers: Record<string, { status: number; body?: unknown }>
   )
 }
 
-function renderSettings(session: Session) {
+function renderSettings(session: Session, tab?: string) {
   const state: SessionState = {
     session,
     loading: false,
@@ -39,7 +40,9 @@ function renderSettings(session: Session) {
   return render(
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={state}>
-        <Settings />
+        <Router>
+          <Settings {...(tab !== undefined ? { tab } : {})} />
+        </Router>
       </SessionContext.Provider>
     </QueryClientProvider>,
   )
@@ -218,6 +221,28 @@ describe('Settings', () => {
     expect(screen.queryByText('Node')).toBeNull()
   })
 
+  it('the rail is real links, one per section, and node is the default tab', async () => {
+    renderSettings(admin)
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' })
+    const links = nav.querySelectorAll('a')
+    expect([...links].map((a) => a.getAttribute('href'))).toEqual([
+      '/settings/node',
+      '/settings/backup',
+      '/settings/notifications',
+      '/settings/accounts',
+      '/settings/audit',
+    ])
+    // Bare /settings renders the node tab, marked current on the rail.
+    expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe('Node')
+    expect(await screen.findByText('10.100.1.0/24')).toBeDefined()
+  })
+
+  it('an unknown tab gets a message under the rail, not a blank page', () => {
+    renderSettings(admin, 'nope')
+    expect(screen.getByText('No such settings tab.')).toBeDefined()
+    expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeDefined()
+  })
+
   it('renders the node facts, flag-decided and read-only', async () => {
     renderSettings(admin)
     expect(await screen.findByText('10.100.1.0/24')).toBeDefined()
@@ -228,7 +253,7 @@ describe('Settings', () => {
   })
 
   it('shows the backup source and seeds the form from the stored record', async () => {
-    renderSettings(admin)
+    renderSettings(admin, 'backup')
     expect(await screen.findByText('from settings')).toBeDefined()
     expect(screen.getByLabelText('Bucket URL')).toHaveProperty('value', 's3://kanea/backups')
     expect(screen.getByLabelText('Secret key reference')).toHaveProperty(
@@ -241,7 +266,7 @@ describe('Settings', () => {
   })
 
   it('refuses an empty directory destination before any round trip', async () => {
-    renderSettings(admin)
+    renderSettings(admin, 'backup')
     await screen.findByText('from settings')
     fireEvent.click(screen.getByRole('button', { name: 'Directory' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
@@ -249,7 +274,7 @@ describe('Settings', () => {
   })
 
   it('seeds the node channel editor from the Go-named wire record', async () => {
-    renderSettings(admin)
+    renderSettings(admin, 'notifications')
     expect(await screen.findByText('node defaults set')).toBeDefined()
     expect(screen.getByLabelText('URL')).toHaveProperty('value', 'https://example.com/hook')
     const on = screen.getByLabelText(/Send on/)
@@ -259,7 +284,7 @@ describe('Settings', () => {
   })
 
   it('opens a project override and shows the git-managed warning prominently', async () => {
-    renderSettings(admin)
+    renderSettings(admin, 'notifications')
     const row = await screen.findByRole('button', { name: /blog/ })
     fireEvent.click(row)
     expect(await screen.findByText(/synced from git/)).toBeDefined()
@@ -268,7 +293,7 @@ describe('Settings', () => {
   })
 
   it('lists accounts and tokens, rendering the zero time as never', async () => {
-    renderSettings(admin)
+    renderSettings(admin, 'accounts')
     expect(await screen.findByText('ci')).toBeDefined()
     expect(screen.getAllByText('never').length).toBeGreaterThanOrEqual(2)
     // Deleting yourself is greyed out, with the reason on the title.
@@ -277,7 +302,7 @@ describe('Settings', () => {
   })
 
   it('pages the audit log with the daemon-side filters', async () => {
-    renderSettings(admin)
+    renderSettings(admin, 'audit')
     expect(await screen.findByText('service.apply')).toBeDefined()
     expect(screen.getByText('denied')).toBeDefined()
     // No more pages: Older is disabled.
