@@ -108,7 +108,7 @@ sudo usermod -aG kanea $USER
 
 Init ends with the node summary: the dashboard URL, your admin account, the
 internal DNS address and the subnet layout. `--listen 0.0.0.0:8600` with
-`--listen-cert`/`--listen-key` serves the dashboard beyond loopback (TLS is
+`--listen-cert`/`--listen-key` serves the API and dashboard beyond loopback (TLS is
 required there, refused up front otherwise); `--admin-user` and a piped
 password make it scriptable; `--no-start` writes the files and stops, which is
 the pre-v0.5 behaviour.
@@ -119,18 +119,21 @@ with its TLS in the same vocabulary services use:
 ```hcl
 # /etc/kanea/kanea.hcl
 bind {
-  api_addr = "192.168.1.10:8600"
-  api_tls  = "self-signed"   # or: acme (with api_domain), provided, plaintext
+  api_addr   = "192.168.1.10:8600"
+  api_tls    = "self-signed"       # or: acme (with api_domain), provided, plaintext
+  # api_domain = "kanea.home.example"  # acme needs it; names a self-signed cert
+  # api_cert   = "/etc/kanea/api.pem"  # provided only — always with api_key
+  # api_key    = "/etc/kanea/api.key"
 }
 ```
 
-`self-signed` issues the dashboard's certificate from the node's own CA — the
+`self-signed` issues the listener's certificate from the node's own CA — the
 one `kanea ca show` installs on your devices — with a real IP SAN, renewed
 automatically; `acme` gets a Let's Encrypt certificate for `api_domain`
 through the same account and renewal loop your services use; `provided` is
 your own `api_cert`/`api_key` pair; `plaintext` is explicit HTTP, allowed
 beyond loopback because you typed it and logged loudly. Init then skips the
-listen question and renders no listen flags — moving the dashboard later is
+listen question and renders no listen flags — moving the API and dashboard later is
 an edit to the file plus `systemctl restart kanead`, never a re-init. An
 explicit `--listen` always wins, and `--listen none` keeps the node
 socket-only regardless.

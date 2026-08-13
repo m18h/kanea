@@ -55,6 +55,7 @@
     <a class="sub" href="#arch-metrics">Metrics and autoscaling</a>
     <a class="sub" href="#arch-backup">State replication and restore</a>
     <a class="sub" href="#arch-mcp">API, dashboard and MCP</a>
+    <a class="sub" href="#arch-dashboard">Exposing the API and dashboard</a>
     <a class="part" href="#spec">Job spec reference</a>
     <a class="sub" href="#spec-top-level">Top level</a>
     <a class="sub" href="#spec-project">project</a>
@@ -660,6 +661,73 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
         secrets verb whatsoever, and a test fails if one appears.
       </p>
     </div>
+
+    <h3 id="arch-dashboard">Exposing the API and dashboard</h3>
+    <p>
+      The API and the dashboard are one listener: the dashboard is served by
+      <code>kanead</code> on the same address the REST API, the WebSocket and the MCP
+      HTTP transport bind, in front of <code>kanea-edge</code> entirely — neither is a
+      service, and neither takes an <code>expose</code> block. Exposing them means
+      setting where that listener binds, and there are two ways: the
+      <code>--listen</code>/<code>--listen-cert</code>/<code>--listen-key</code> flags
+      (asked by <a href="#cli-setup"><code>kanea init</code></a> and rendered into the
+      unit), or — since v1.61 — a <code>bind</code> stanza in the server config, which
+      survives re-runs and makes moving the listener later an edit plus
+      <code>systemctl restart kanead</code>, never a re-init:
+    </p>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">bind</span> {
+  <span class="k">api_addr</span>   = <span class="s">"192.168.1.10:8600"</span>
+  <span class="k">api_tls</span>    = <span class="s">"self-signed"</span>       <span class="c"># acme | self-signed | provided | plaintext</span>
+  <span class="c"># api_domain = "kanea.home.example"  # required by acme; names a self-signed cert</span>
+  <span class="c"># api_cert   = "/etc/kanea/api.pem"  # provided only — always with api_key</span>
+  <span class="c"># api_key    = "/etc/kanea/api.key"</span>
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>api_addr</code></td><td>string</td><td>The <code>host:port</code> the API and dashboard bind. Required by every other field in the stanza — TLS with nothing to serve it on is a parse error.</td></tr>
+          <tr><td><code>api_tls</code></td><td>string</td><td><code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code> — the same mode vocabulary services use. Unset resolves at the daemon: a declared pair means <code>provided</code>, loopback means plaintext, and anything beyond loopback refuses there.</td></tr>
+          <tr><td><code>api_domain</code></td><td>string</td><td>Required by <code>acme</code> (an IP cannot hold an ACME certificate). For <code>self-signed</code> it names the certificate, and it is required when <code>api_addr</code> binds every interface (<code>":8600"</code>, <code>0.0.0.0</code>) — otherwise the certificate would have no name at all.</td></tr>
+          <tr><td><code>api_cert</code>, <code>api_key</code></td><td>string</td><td>Your own PEM pair, for <code>provided</code> only. Always together, and refused beside a managed mode or <code>plaintext</code> — a control that cannot act is refused, never silently dropped.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      What each mode gives you:
+    </p>
+    <ul>
+      <li><b><code>self-signed</code></b> — a certificate from the node's own CA, the one
+        <code>kanea ca show</code> installs on your devices, with a real IP SAN when the
+        address is bare. Renewed automatically. The right default on a home network.</li>
+      <li><b><code>acme</code></b> — a Let's Encrypt certificate for
+        <code>api_domain</code>, issued and renewed by the same account and pass that
+        serve your services. Needs <code>--acme-email</code> configured on the daemon,
+        refused at startup without it.</li>
+      <li><b><code>provided</code></b> — your own <code>api_cert</code>/<code>api_key</code>
+        pair, for a certificate something else manages.</li>
+      <li><b><code>plaintext</code></b> — explicit HTTP. Allowed beyond loopback
+        <i>because you typed it</i>, logged loudly, and it implies the insecure-cookie
+        posture — a Secure cookie over plain HTTP is a login that silently fails.</li>
+    </ul>
+    <p>
+      Precedence: an explicit <code>--listen</code> always beats the stanza, and
+      <code>--listen none</code> keeps the node socket-only regardless of the file. When
+      the stanza is declared and <code>--listen</code> was not passed,
+      <code>kanea init</code> skips the listen question and renders no listen flags into
+      the unit — the file owns the listener. On the flags path, a non-loopback
+      <code>--listen</code> requires the <code>--listen-cert</code>/<code>--listen-key</code>
+      pair and is refused up front without it.
+    </p>
+    <p>
+      One consequence worth knowing when adopting the stanza on an existing node: an init
+      run from before it existed rendered <code>--listen 127.0.0.1:8600</code> into the
+      kanead unit, and that flag shadows the file — the stanza appears to do nothing.
+      Remove the flag from the unit's <code>ExecStart</code>, then
+      <code>systemctl daemon-reload</code> and restart; the
+      <a href="#troubleshoot-common">troubleshooting page</a> has the steps.
+    </p>
 
 
     <!-- ================= spec ================= -->
@@ -1967,10 +2035,11 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
       <code>bind { api_addr = …  api_tls = … }</code> stanza in
       <code>/etc/kanea/kanea.hcl</code>, where <code>api_tls</code> is
       <code>acme</code>, <code>self-signed</code>, <code>provided</code> or
-      <code>plaintext</code> — the same modes services use. When it is
+      <code>plaintext</code> — the same modes services use (the full field set is in
+      <a href="#arch-dashboard">Exposing the API and dashboard</a>). When it is
       declared and <code>--listen</code> was not passed, init skips the listen question
       and renders no listen flags into the unit — the file owns the listener, and moving
-      the dashboard later is an edit to the file plus
+      the API and dashboard later is an edit to the file plus
       <code>systemctl restart kanead</code>, never a re-init.
     </p>
     <div class="callout warn">
@@ -2252,7 +2321,9 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
       services; <code>self-signed</code> — the node CA, with a real IP SAN when the
       address is bare; <code>provided</code> — your own
       <code>api_cert</code>/<code>api_key</code> pair; and <code>plaintext</code> —
-      explicit HTTP, allowed beyond loopback because it was typed and logged loudly).
+      explicit HTTP, allowed beyond loopback because it was typed and logged loudly;
+      the full field set is in <a href="#arch-dashboard">Exposing the API and
+      dashboard</a>).
       The file is probed once at
       startup when it exists; absent means every setting's zero value. It must be a
       regular file, owned by root (or the daemon's uid), and writable
@@ -2454,6 +2525,17 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
         foreign FORWARD-drop firewall policy (docker, ufw) is a finding it names. Then
         remember policy is deny-by-default — a cross-project call needs
         <code>allow_from</code> on the callee.
+      </li>
+      <li>
+        <b>The <code>bind</code> stanza is ignored — the dashboard stays on
+        localhost.</b> An explicit <code>--listen</code> always beats the file, and an
+        init run from before the stanza existed rendered
+        <code>--listen 127.0.0.1:8600</code> into the kanead unit.
+        <code>systemctl cat kanead | grep -- --listen</code> confirms it; remove the
+        flag (and <code>--listen-cert</code>/<code>--listen-key</code> if present) from
+        <code>ExecStart</code>, then <code>systemctl daemon-reload</code> and restart.
+        A re-run of <code>kanea init</code> will not put it back — with
+        <code>bind.api_addr</code> declared it renders no listen flags at all.
       </li>
       <li>
         <b>The autoscaler stopped scaling.</b> Its circuit breaker trips on purpose after
