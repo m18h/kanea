@@ -226,6 +226,11 @@ pipeline-supplied values like `${GIT_SHA_SHORT}` sit above both. Variables are
 never secrets — the node's stanza is readable by any signed-in caller over
 `GET /v1/vars`, so credentials stay `secret:` references.
 
+It may also carry a `dns` stanza pinning the resolvers the internal DNS
+forwards external names to — `dns { upstreams = ["1.1.1.1"] }` — for a node
+whose `/etc/resolv.conf` is DHCP's to rewrite. An explicit `--dns-upstream`
+flag wins; with neither, the daemon uses the host's own resolvers.
+
 ### Functions
 
 A wasm module can run as a service — a **function** (PRD §6.2 R25): always-on,
