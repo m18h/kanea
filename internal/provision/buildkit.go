@@ -64,7 +64,19 @@ func SetupBuildkit(ctx context.Context, l Layout, log *slog.Logger) error {
 	// The socket lives here and *not* under /run: rootlesskit copy-ups /run
 	// into a namespace-private tmpfs, so a socket there is invisible to every
 	// client outside the namespace. M0 spike ④ found that the expensive way.
+	//
+	// The home's parent is the data directory, which `kanea init` and kanead
+	// both create 0750 root:root — a mode the daemon's user can neither own
+	// nor join, so without the group grant below every path under it answers
+	// EACCES and buildkitd's report of that is maximally misleading: a fatal
+	// "permission denied" for an optional config file that does not exist.
 	home := filepath.Join(l.DataDir, "buildkit")
+	if err := os.MkdirAll(l.DataDir, 0o710); err != nil {
+		return fmt.Errorf("create %s: %w", l.DataDir, err)
+	}
+	if err := ensureTraversal(l.DataDir, gid); err != nil {
+		return err
+	}
 	for _, dir := range []string{home, filepath.Join(home, "run")} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
@@ -201,9 +213,33 @@ func ensureSubID(path, name string, log *slog.Logger) error {
 	return nil
 }
 
-// BuildkitSocket is where the daemon listens, given a layout. It matches
-// gitops.DefaultBuildkitSocket's role but under Kanea's data directory, for
-// the copy-up reason above.
+// ensureTraversal grants dir's traversal to the daemon's group.
+//
+// Group ownership plus the execute bit is the containerd directory's 0710
+// pattern: traverse, never list. The mode's other bits are left exactly as
+// found — the data directory belongs to kanead, and this function's only
+// claim on it is the one bit the daemon needs to reach its own home.
+func ensureTraversal(dir string, gid int) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", dir, err)
+	}
+	if err := os.Chown(dir, -1, gid); err != nil {
+		return fmt.Errorf("chown %s: %w", dir, err)
+	}
+	if mode := info.Mode().Perm(); mode&0o010 == 0 {
+		if err := os.Chmod(dir, mode|0o010); err != nil {
+			return fmt.Errorf("chmod %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// BuildkitSocket is where the provisioned daemon listens, given a layout.
+// The unit's --addr is rendered from the same home path, and
+// gitops.DefaultBuildkitSocket must equal this over DefaultLayout — both
+// pinned by test, because the constant once named a path nothing creates and
+// every provisioned node's builds dialed it.
 func BuildkitSocket(l Layout) string {
 	return "unix://" + filepath.Join(l.DataDir, "buildkit", "run", "buildkitd.sock")
 }
