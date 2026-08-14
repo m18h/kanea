@@ -164,7 +164,8 @@ func runAgent(args []string) error {
 		"TSIG algorithm: hmac-sha256, hmac-sha512, ...")
 	serveDashboard := fs.Bool("dashboard", true, "serve the embedded dashboard on the API listener")
 	wsOrigins := fs.String("dashboard-origins", "",
-		"comma-separated Origins allowed to open the live-data websocket (default: same-origin only)")
+		"comma-separated Origins allowed to open the live-data websocket, and named in the "+
+			"dashboard's connect-src (default: same-origin only)")
 	listen := fs.String("listen", "",
 		"network address for the control API, e.g. "+api.DefaultListenAddr+
 			" (default: the server config's bind.api_addr, else unix socket only; \"none\" forces socket-only)")

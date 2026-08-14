@@ -227,6 +227,15 @@ CDN). Daemon-supplied strings render through React's escaping. Security headers
 are applied to the whole mux rather than per route, so a handler added later
 cannot forget them.
 
+`connect-src` is the half that bounds *exfiltration* rather than execution, and
+it names the websocket schemes because browsers have disagreed over whether
+`'self'` extends to `ws:`/`wss:`. Naming them as bare schemes would match any
+host anywhere, leaving the one bidirectional transport unbounded — so they are
+pinned to the host the request arrived on, which is by construction the origin
+the page is running on. A `Host` that is not a bare host\[:port] gets no
+websocket source at all: it cannot be a real page's origin, and a `;` in one
+would be a directive separator under the client's control.
+
 ### 3.7 Identity providers (A07)
 
 OIDC login checks four things independently, because each catches something the
