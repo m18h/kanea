@@ -14,7 +14,14 @@
 // running it accept the shipping object? It loads and verifies, and deliberately
 // does NOT attach: attachment needs cgroup and netlink state that belongs to the
 // spike harness (spikes/ebpf-datapath), which is the full-fidelity run on real
-// hardware. The two are complementary — this one is the always-on tripwire.
+// hardware. The two are complementary — run this one first, because it is the
+// cheapest question and it fails fast if the object will not verify at all.
+//
+// CI does not run it. Booting a 5.10 kernel there was tried through
+// cilium/little-vm-helper and abandoned: the action fetches the image and then
+// hands lvh the qcow2 path where it expects a registry reference. A check that
+// always fails is worse than one that does not exist, so this runs by hand on
+// the floor node instead (docs/VALIDATION.md §3).
 //
 // Behind a build tag because it needs root and a bpffs-capable kernel, which the
 // ordinary `go test ./...` has neither of:
