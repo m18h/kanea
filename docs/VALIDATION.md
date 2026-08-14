@@ -15,7 +15,7 @@ indistinguishable from one nobody checked.
 |---|---|---|
 | `init` → first HTTPS ≤ 5 min on a fresh VM | §21 UX, §20 M10 | [§1](#1-init--first-https) — **pending** |
 | Functions end to end on a node | §20 M11 exit criterion | [`spikes/wasm-functions/REPORT.md`](../spikes/wasm-functions/REPORT.md) check H — **harness written, run pending** |
-| Kernel floor ≥ 5.10 | §21 Platform | [`spikes/ebpf-datapath/REPORT.md`](../spikes/ebpf-datapath/REPORT.md) Kernel A — **pending**; the `bpf-floor` CI job covers verifier acceptance |
+| Kernel floor ≥ 5.10 | §21 Platform | [`spikes/ebpf-datapath/REPORT.md`](../spikes/ebpf-datapath/REPORT.md) Kernel A — **pending**; run `go test -tags bpfload` on the node |
 | S3 interoperability | §15.3 | `s3-interop` CI (MinIO, both addressing styles); real providers via `s3-cloud.yml` — **pending secrets** |
 
 ---
@@ -143,10 +143,19 @@ correctly rather than treated as a blocker:
 
 Verifier acceptance is now also checked continuously: `internal/datapath`'s
 `bpfload`-tagged floor test loads the shipping object and asserts all four
-programs and sixteen maps verify, and the `bpf-floor` CI job runs it under a
-5.10 kernel. That does not replace the full run — it never attaches, and
-attachment is where the datapath meets netlink and cgroups — but it means a
-change that raises the floor is caught by CI rather than by an operator.
+programs and sixteen maps verify. **CI does not run it** — booting a 5.10 kernel
+there was tried through `cilium/little-vm-helper` and abandoned, because the
+action fetches the image and then hands `lvh` the qcow2 path where it expects a
+registry reference, and a check that always fails is worse than one that does not
+exist. So it runs by hand, here, as part of this same session:
+
+```bash
+sudo -E go test -tags bpfload -run Floor -v ./internal/datapath/
+```
+
+It does not replace the full harness — it never attaches, and attachment is where
+the datapath meets netlink and cgroups — but it is the cheapest question worth
+asking first, and it fails fast if the object will not verify at all.
 
 **One thing to confirm during the run:** below kernel 5.11, BPF memory is
 charged against `RLIMIT_MEMLOCK` rather than the cgroup memory controller, and
