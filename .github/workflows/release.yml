@@ -108,16 +108,35 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
 
+      # The SBOMs (PRD §14 A06, §21). They are written here, between the
+      # archives and the checksums, so the manifest below covers them and the
+      # one cosign signature over it extends to them too — the same reasoning
+      # that puts the bundles under it. An SBOM nobody can authenticate
+      # describes software nobody can authenticate.
+      - uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.51.0
+
+      - name: SBOMs
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          bash scripts/sbom.sh dist "$VERSION"
+          ls -lh dist/*.spdx.json
+
       - name: Checksums
         run: |
           cd dist
           # No leading "./" on the names: scripts/install.sh selects its line
           # with `grep " <archive>$"`, and "  ./kanea_…" would not match.
           #
-          # The bundles are covered here too, so the existing cosign signature
-          # over this file extends to them with no second signing step — one
-          # signature over a manifest of hashes, as the header says.
-          sha256sum kanea_*.tar.gz > checksums.txt
+          # The bundles and the SBOMs are covered here too, so the existing
+          # cosign signature over this file extends to them with no second
+          # signing step — one signature over a manifest of hashes, as the
+          # header says. Both patterns are named rather than collapsed to
+          # `kanea_*`: what belongs in a release is a decision, not whatever
+          # happens to be in the directory.
+          sha256sum kanea_*.tar.gz kanea_*.spdx.json > checksums.txt
           cat checksums.txt
 
       - uses: sigstore/cosign-installer@v3
@@ -156,7 +175,8 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes \
-            dist/*.tar.gz dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem
+            dist/*.tar.gz dist/*.spdx.json \
+            dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem
 
   # The Homebrew formula (PRD §5.2.12, v1.60). This job is the formula's only
   # author: it regenerates Formula/kanea.rb from the tag and the checksums the

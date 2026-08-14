@@ -349,7 +349,8 @@ curl -fLO $BASE/checksums.txt
 curl -fLO $BASE/checksums.txt.sig
 curl -fLO $BASE/checksums.txt.pem
 
-<span class="c"># The signature covers checksums.txt; checksums.txt covers every archive.</span>
+<span class="c"># The signature covers checksums.txt; checksums.txt covers every archive</span>
+<span class="c"># and every SBOM (kanea_&lt;ver&gt;_&lt;os&gt;_&lt;arch&gt;.tar.gz.spdx.json, SPDX 2.3).</span>
 cosign verify-blob \
   --certificate checksums.txt.pem \
   --signature   checksums.txt.sig \

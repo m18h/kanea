@@ -39,8 +39,11 @@ itself (§5.2.5). It installs under its own prefix on its own socket, so a node 
 ran Docker yesterday runs it tomorrow.
 
 Prefer to do it by hand? Every release publishes
-`kanea_<version>_linux_<arch>.tar.gz`, `checksums.txt`, and a **keyless cosign**
-signature over the checksums:
+`kanea_<version>_linux_<arch>.tar.gz`, an **SPDX SBOM** beside each archive
+(plus `kanea_<version>_source.spdx.json` for the build's own graph, which is
+where the embedded dashboard's npm dependencies are listed), `checksums.txt`,
+and a **keyless cosign** signature over the checksums — the SBOMs are in the
+checksums, so the one signature covers them too:
 
 ```bash
 VERSION=v0.17.1; ARCH=amd64
