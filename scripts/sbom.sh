@@ -45,7 +45,8 @@ fi
 DIST="$1"
 TAG="$2"
 
-# The same grammar check update-formula.sh and kanea upgrade apply. The version
+# The same grammar check the tap repo's update-formula.sh and kanea upgrade
+# apply. The version
 # composes into a published filename, so a tag that is not a version must not
 # become a plausible-looking asset name.
 case "$TAG" in
@@ -60,7 +61,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # The naming contract. Three readers parse the checksums.txt these land in, and
 # two properties keep all three working:
 #
-#   A name is one whitespace-free field. update-formula.sh reads the file with
+#   A name is one whitespace-free field. The tap repo's update-formula.sh
+#   (m18h/homebrew-kanea) reads the file with
 #   awk '$2 == name' and checksumFor (cmd/kanea/selfupdate.go) requires exactly
 #   two fields per line, so a space in a name silently breaks both.
 #

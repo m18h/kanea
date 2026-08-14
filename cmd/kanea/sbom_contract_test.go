@@ -83,7 +83,8 @@ func TestSBOMNamesCannotCollideWithArchiveNames(t *testing.T) {
 
 // Every published name is one whitespace-free field.
 //
-// scripts/update-formula.sh reads the checksum file with awk '$2 == name', and
+// The tap repo's update-formula.sh (m18h/homebrew-kanea) reads the checksum
+// file with awk '$2 == name', and
 // checksumFor (selfupdate.go) requires exactly two fields per line. A name
 // containing a space would silently break both.
 func TestSBOMNamesAreSingleFields(t *testing.T) {
