@@ -214,6 +214,10 @@ jobs:
           image-version: "5.10-main"
           host-mount: ./
           install-dependencies: "true"
+          # images-folder-parent defaults to the empty string, which makes the
+          # action's own --dir "/images/<arch>/" — an absolute path at the
+          # filesystem root that the runner cannot write. Give it a real parent.
+          images-folder-parent: /tmp/lvh
           cmd: |
             set -eu
             uname -r
