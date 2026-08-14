@@ -10,6 +10,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/rlimit"
 
 	"github.com/m18h/kanea/internal/datapath/bpf"
 	"github.com/m18h/kanea/internal/datapath/dpmap"
@@ -136,6 +137,28 @@ func removeStaleLink(pin string) error {
 
 // loadPinned loads the collection with PinByName under dir.
 func loadPinned(dir string) (*ebpf.Collection, error) {
+	// The memlock limit is the kernel floor's problem, not a tuning knob
+	// (§21: ≥ 5.10). Kernel 5.11 moved BPF memory accounting to the cgroup
+	// memory controller; *below* it, every map and program is charged against
+	// RLIMIT_MEMLOCK instead — and kanead.service deliberately sets no
+	// LimitMEMLOCK, so it inherits systemd's 8 MiB default. Five of the
+	// datapath's maps are PERCPU_HASH (the stats twins), costing ~360 KiB per
+	// CPU, so a node with enough cores exceeds that default and map creation
+	// fails with EPERM: the datapath would not come up at all on the very
+	// kernel the floor names, and the error would point nowhere near the cause.
+	//
+	// Measured on 6.x/7.x: the collection loads with RLIMIT_MEMLOCK squeezed to
+	// 64 KiB, confirming the limit is not consulted there and that this call
+	// costs nothing above the floor. The failure below it is reasoned from the
+	// accounting change, not yet observed — confirming it is a checkpoint of
+	// the 5.10 floor run (spikes/ebpf-datapath).
+	//
+	// It belongs here rather than in the unit because every load path goes
+	// through this function — systemd, a dev run, the spike harness — and a
+	// unit directive would cover only the first.
+	if err := rlimit.RemoveMemlock(); err != nil {
+		return nil, fmt.Errorf("datapath: raise RLIMIT_MEMLOCK: %w", err)
+	}
 	spec, err := bpf.LoadSpec()
 	if err != nil {
 		return nil, err

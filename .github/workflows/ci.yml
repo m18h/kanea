@@ -157,6 +157,59 @@ jobs:
       - name: Regenerate and diff
         run: make bpf-verify
 
+  bpf-floor:
+    # The kernel floor, actually exercised (PRD §21: "kernel ≥ 5.10 — the floor
+    # is spike-validated, not inherited").
+    #
+    # bpf-verify above diffs bytes and never loads them, so nothing in CI has
+    # ever asked whether a kernel accepts the shipping object. A change to
+    # kanea.c needing a helper, map type or instruction added after 5.10 would
+    # raise the real floor silently, and the first to find out would be an
+    # operator whose Debian 11 datapath does not come up.
+    #
+    # This boots the oldest kernel the PRD claims and loads the object under it.
+    # It does not attach: cgroup and netlink attachment belong to the spike
+    # harness on real hardware (spikes/ebpf-datapath), which stays the
+    # full-fidelity run. This is the always-on tripwire under it.
+    #
+    # Informational for now — `continue-on-error` — because a job that boots a
+    # VM has more ways to be flaky than to be right, and this repo's rule is
+    # that a flaky required job teaches people to ignore CI. Promote it once it
+    # has a few weeks of green behind it.
+    name: BPF kernel floor — 5.10
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Built on the host and run inside the VM, so the guest needs no Go
+      # toolchain and the VM's only job is to be an old kernel. It lands in the
+      # repo because host-mount exposes that directory to the guest at /host.
+      - name: Build the floor test
+        run: |
+          go test -tags bpfload -c -o ./datapath.test ./internal/datapath/
+          chmod +x ./datapath.test
+
+      # lvh is Cilium's kernel-image runner — the same ecosystem as the loader
+      # library this exercises, which is why its images carry the kernels that
+      # matter to it.
+      - name: Load the object under a 5.10 kernel
+        uses: cilium/little-vm-helper@v0.0.26
+        with:
+          test-name: bpf-floor-5.10
+          image: complexity-test
+          image-version: "5.10-main"
+          host-mount: ./
+          install-dependencies: false
+          cmd: |
+            set -eu
+            uname -r
+            /host/datapath.test -test.run Floor -test.v
+
   install-smoke:
     # `kanea install` places binaries, writes units and starts daemons. None of
     # that can be tested off a real Linux host, and the S3 `Put` defect in
