@@ -737,18 +737,22 @@ func TestSecurityHeadersAreOnEveryResponse(t *testing.T) {
 
 func TestContentSecurityPolicyIsSetWhenTheDashboardIsServed(t *testing.T) {
 	h := newAuthHarness(t, func(cfg *api.ServerConfig) { cfg.ServeDashboard = true })
-	resp, _ := h.do(t, h.request(t, http.MethodGet, api.PathHealth, nil))
+	resp, _ := h.do(t, h.request(t, http.MethodGet, "/", nil))
 
-	csp := resp.Header.Get("Content-Security-Policy")
-	if csp == "" {
-		t.Fatal("no Content-Security-Policy with the dashboard served")
+	// Exactly one header: browsers intersect multiple CSPs on a response, so
+	// a stricter duplicate from the middleware would silently win over the
+	// policy the dashboard was written against — that broke xterm's runtime
+	// style attributes on every terminal.
+	csp := resp.Header.Values("Content-Security-Policy")
+	if len(csp) != 1 {
+		t.Fatalf("Content-Security-Policy headers = %d, want exactly 1: %q", len(csp), csp)
 	}
 	for _, want := range []string{"default-src 'self'", "frame-ancestors 'none'", "object-src 'none'"} {
-		if !strings.Contains(csp, want) {
-			t.Errorf("CSP is missing %q: %s", want, csp)
+		if !strings.Contains(csp[0], want) {
+			t.Errorf("CSP is missing %q: %s", want, csp[0])
 		}
 	}
-	if strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
+	if strings.Contains(csp[0], "script-src 'self' 'unsafe-inline'") {
 		t.Error("inline script is allowed; an XSS would execute (§14, A03)")
 	}
 }

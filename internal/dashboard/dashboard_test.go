@@ -155,6 +155,9 @@ func TestSecurityHeaders(t *testing.T) {
 		for _, directive := range []string{
 			"default-src 'self'",
 			"script-src 'self'",
+			// xterm.js and shadcn set style attributes at runtime; without the
+			// inline exception the terminal renders broken.
+			"style-src 'self' 'unsafe-inline'",
 			"frame-ancestors 'none'",
 		} {
 			if !strings.Contains(csp, directive) {

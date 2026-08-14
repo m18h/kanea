@@ -150,16 +150,25 @@ func looksLikeAsset(name string) bool {
 // The dashboard renders attacker-influenced strings — log lines, service
 // names, event messages — and React escapes all of them; the ESLint ban on
 // dangerouslySetInnerHTML keeps it that way. This policy is what stops a
-// future slip from becoming an exploit: no inline script or style exists in
-// the build (Vite emits files, and only files), the one data: URI is the
-// favicon, and the only connections the app makes are to its own origin —
-// REST and the live socket, which CSP3's 'self' covers for ws/wss too.
-// frame-ancestors is the clickjacking guard: an admin console with stop,
-// restart and restore buttons is exactly what an invisible overlay wants.
+// future slip from becoming an exploit: no inline script exists in the build
+// (Vite emits files, and only files) and script-src stays without an inline
+// exception. style-src carries 'unsafe-inline' because the exception is not
+// in the build but at runtime: xterm.js sets style attributes on its cursor
+// and selection elements, and shadcn's primitives position dialogs the same
+// way — a strict style-src blocks them and the terminal renders broken.
+// The one data: URI is the favicon; the only connections the app makes are
+// to its own origin — REST and the live socket, spelled as ws:/wss: for the
+// browsers that do not expand 'self' to the ws schemes. frame-ancestors is
+// the clickjacking guard: an admin console with stop, restart and restore
+// buttons is exactly what an invisible overlay wants.
+//
+// This is the ONLY place the dashboard's CSP is set. A second header on the
+// same response is not redundancy — browsers intersect multiple policies, so
+// a stricter duplicate silently wins.
 const contentSecurityPolicy = "default-src 'self'; " +
-	"script-src 'self'; style-src 'self'; " +
-	"img-src 'self' data:; font-src 'self'; " +
-	"connect-src 'self'; frame-src 'none'; " +
+	"script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; font-src 'self' data:; " +
+	"connect-src 'self' ws: wss:; frame-src 'none'; " +
 	"frame-ancestors 'none'; base-uri 'self'; " +
 	"form-action 'self'; object-src 'none'"
 

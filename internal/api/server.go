@@ -528,7 +528,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	s.http = &http.Server{
-		Handler: secureHeaders(cfg.ServeDashboard, mux),
+		Handler: secureHeaders(mux),
 		// The listener decides what "local" means, not the request: a unix
 		// connection is one the kernel proved came from a process that could
 		// open a 0600 socket, and nothing in a request can forge that.

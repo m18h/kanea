@@ -615,8 +615,12 @@ func (s *Server) sessionCookie(value string, expires time.Time) *http.Cookie {
 //
 // Applied to the whole mux rather than per route, so a handler that is added
 // later cannot forget them — including the ones that answer errors and the
-// dashboard's static files.
-func secureHeaders(serveDashboard bool, next http.Handler) http.Handler {
+// dashboard's static files. The Content-Security-Policy is deliberately NOT
+// set here: it belongs to the dashboard package, which is the only thing
+// serving HTML. Two CSP headers on one response are not defence in depth —
+// browsers intersect them, so a duplicate silently tightens the policy the
+// app was written against.
+func secureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -628,29 +632,9 @@ func secureHeaders(serveDashboard bool, next http.Handler) http.Handler {
 		// Cross-origin isolation of the API surface: a page on another origin
 		// must not be able to read these responses even by embedding them.
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
-		if serveDashboard {
-			// The SPA is self-contained by construction (go:embed, no CDN), so
-			// the policy can be strict rather than negotiated. 'unsafe-inline'
-			// covers the style attribute Tailwind's runtime and shadcn's
-			// primitives set; script has no such exception.
-			h.Set("Content-Security-Policy", dashboardCSP)
-		}
 		next.ServeHTTP(w, r)
 	})
 }
-
-// dashboardCSP is the policy for the embedded SPA. connect-src includes ws: and
-// wss: for the live-data socket (§12.1), which is same-origin either way.
-const dashboardCSP = "default-src 'self'; " +
-	"script-src 'self'; " +
-	"style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data:; " +
-	"font-src 'self' data:; " +
-	"connect-src 'self' ws: wss:; " +
-	"frame-ancestors 'none'; " +
-	"base-uri 'none'; " +
-	"form-action 'self'; " +
-	"object-src 'none'"
 
 // ---- response recording ----
 
