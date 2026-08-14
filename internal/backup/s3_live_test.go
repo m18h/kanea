@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +29,7 @@ import (
 //
 // So these run against something that verifies. They skip unless
 // KANEA_S3_ENDPOINT is set, so `go test ./...` on a laptop does not need a
-// bucket; CI runs MinIO as a service container and sets it. To run locally:
+// bucket; CI runs MinIO and sets it. To run locally:
 //
 //	docker run -d --rm -p 19000:9000 \
 //	  -e MINIO_ROOT_USER=kaneatest -e MINIO_ROOT_PASSWORD=kaneatestsecret \
@@ -35,6 +37,17 @@ import (
 //	KANEA_S3_ENDPOINT=http://127.0.0.1:19000 \
 //	  KANEA_S3_ACCESS_KEY=kaneatest KANEA_S3_SECRET_KEY=kaneatestsecret \
 //	  go test ./internal/backup/ -run Live -v
+//
+// The knobs, all optional, so the same binary can be aimed at any provider:
+//
+//	KANEA_S3_ENDPOINT            required; absent means skip
+//	KANEA_S3_ACCESS_KEY          default kaneatest
+//	KANEA_S3_SECRET_KEY          default kaneatestsecret
+//	KANEA_S3_REGION              default us-east-1 — set it for a real provider,
+//	                             or the signature is scoped to the wrong region
+//	KANEA_S3_BUCKET              default kanea-test
+//	KANEA_S3_PATH_STYLE          "false" selects virtual-hosted addressing
+//	KANEA_S3_SKIP_BUCKET_CREATE  set for a bucket provisioned out of band
 
 // liveSink builds a sink against the configured service, creating the bucket.
 func liveSink(t *testing.T, prefix string) *S3Sink {
@@ -49,8 +62,8 @@ func liveSink(t *testing.T, prefix string) *S3Sink {
 	bucket := envOr("KANEA_S3_BUCKET", "kanea-test")
 
 	sink, err := NewS3Sink(S3Config{
-		Endpoint: endpoint, Bucket: bucket, Prefix: prefix, Region: region,
-		AccessKey: accessKey, SecretKey: secretKey, PathStyle: true,
+		Endpoint: endpoint, Bucket: bucket, Prefix: runPrefix() + "/" + prefix, Region: region,
+		AccessKey: accessKey, SecretKey: secretKey, PathStyle: livePathStyle(),
 	})
 	if err != nil {
 		t.Fatalf("new sink: %v", err)
@@ -66,13 +79,56 @@ func envOr(name, fallback string) string {
 	return fallback
 }
 
+// livePathStyle selects the addressing style under test.
+//
+// It defaults to path-style, which is what MinIO wants and what every release
+// before this knob existed exercised. The other branch is not cosmetic: in
+// virtual-hosted style the bucket moves into the *host* header, and the host
+// header is signed — so it is a different signature over a different canonical
+// request, and it is the style AWS prefers. Leaving it untested meant the
+// addressing half of what Archiver.Probe claims to prove had never run against
+// a service that verifies.
+func livePathStyle() bool {
+	return envOr("KANEA_S3_PATH_STYLE", "true") != "false"
+}
+
+// runPrefix is one random path segment per test process.
+//
+// The suite used to write under fixed prefixes ("sig", "page") and delete
+// everything beneath them, which is safe only while exactly one run exists.
+// Against a shared cloud bucket — two providers in a matrix, a re-run of a job
+// whose predecessor is still finishing — that cleanup deletes another run's
+// objects and the failure looks like the object store losing data. A unique
+// prefix makes concurrent runs disjoint, and makes a leaked one identifiable.
+var runPrefix = sync.OnceValue(func() string {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Only reached if the system CSPRNG fails, at which point the test
+		// binary has larger problems; a fixed name is still better than a panic.
+		return "live-norand"
+	}
+	return "live-" + hex.EncodeToString(b[:])
+})
+
 // createBucket makes the test bucket, tolerating one that already exists.
 //
 // It reuses the sink's own signing path rather than shelling out to a client,
 // which makes bucket creation itself a signature test: if the signer were
 // wrong, this would fail first and say so.
+//
+// KANEA_S3_SKIP_BUCKET_CREATE turns it off for a bucket that is provisioned
+// out of band, which every real provider needs: the bare `PUT /<bucket>` below
+// carries no CreateBucketConfiguration, so AWS refuses it outside us-east-1,
+// and a key scoped to one existing bucket — the right way to hand credentials
+// to CI — cannot create anything anywhere. Skipping loses nothing: the first
+// Put still proves the signature, which is what this call was standing in for.
+// It is an explicit switch rather than blanket 403 tolerance on purpose, since
+// a 403 against MinIO means the signer is wrong and must stay fatal.
 func createBucket(t *testing.T, sink *S3Sink) {
 	t.Helper()
+	if os.Getenv("KANEA_S3_SKIP_BUCKET_CREATE") != "" {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -222,7 +278,7 @@ func TestLiveS3RejectsABadSecret(t *testing.T) {
 		Region:    envOr("KANEA_S3_REGION", "us-east-1"),
 		AccessKey: envOr("KANEA_S3_ACCESS_KEY", "kaneatest"),
 		SecretKey: "this-is-not-the-secret-key",
-		PathStyle: true,
+		PathStyle: livePathStyle(),
 	})
 	if err != nil {
 		t.Fatalf("new sink: %v", err)

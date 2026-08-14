@@ -1,0 +1,141 @@
+# S3 interoperability against real providers.
+#
+# The `s3-interop` job in ci.yml establishes that the hand-written client speaks
+# SigV4 in a way a *verifying* service accepts, in both addressing styles. What
+# it cannot establish is that AWS S3, R2, B2 and Wasabi each accept it: they
+# differ in region handling, in which headers they insist on, and in what they
+# do with a request the others tolerate. Backups are the feature where finding
+# that out during an incident is worst.
+#
+# This is deliberately NOT a required check and never runs on a pull request. It
+# needs credentials the repository owner provisions, a fork has none, and a job
+# that depends on someone else's cloud account must not be able to block a
+# merge. It runs on demand and monthly — monthly because the failure being
+# watched for is a provider changing under us, which has no commit to attach to.
+#
+# To enable a provider, set its secrets (all four; an unset endpoint skips it):
+#
+#   <P>_S3_ENDPOINT     e.g. https://s3.eu-west-1.amazonaws.com
+#   <P>_S3_REGION       the signing region — wrong region, wrong signature
+#   <P>_S3_BUCKET       provisioned by hand; the tests never create it
+#   <P>_S3_ACCESS_KEY / <P>_S3_SECRET_KEY   scoped to that bucket alone
+#
+# where <P> is AWS, R2, B2 or WASABI.
+name: S3 cloud interop
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 04:00 UTC on the 1st. Nothing depends on the hour; it is off-peak for the
+    # providers being billed a few requests.
+    - cron: "0 4 1 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  # Secrets cannot be read in a job-level `if`, so availability is resolved
+  # here and passed down as ordinary outputs.
+  preflight:
+    name: Which providers are configured
+    runs-on: ubuntu-latest
+    outputs:
+      providers: ${{ steps.pick.outputs.providers }}
+    steps:
+      - id: pick
+        env:
+          AWS: ${{ secrets.AWS_S3_ENDPOINT }}
+          R2: ${{ secrets.R2_S3_ENDPOINT }}
+          B2: ${{ secrets.B2_S3_ENDPOINT }}
+          WASABI: ${{ secrets.WASABI_S3_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          list=""
+          for p in AWS R2 B2 WASABI; do
+            if [ -n "${!p:-}" ]; then
+              list="${list:+$list,}\"$p\""
+            fi
+          done
+          if [ -z "$list" ]; then
+            echo "No provider secrets are set; nothing to run." >&2
+            echo 'providers=[]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "providers=[$list]" >> "$GITHUB_OUTPUT"
+          echo "running against: $list"
+
+  interop:
+    name: ${{ matrix.provider }}
+    needs: preflight
+    if: needs.preflight.outputs.providers != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      # One provider's outage is not another's result.
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJSON(needs.preflight.outputs.providers) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Interoperability tests
+        env:
+          # A matrix leg cannot index into `secrets`, so all four are exposed
+          # and the step selects. Unset ones are empty strings and unused.
+          AWS_S3_ENDPOINT: ${{ secrets.AWS_S3_ENDPOINT }}
+          AWS_S3_REGION: ${{ secrets.AWS_S3_REGION }}
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          AWS_S3_ACCESS_KEY: ${{ secrets.AWS_S3_ACCESS_KEY }}
+          AWS_S3_SECRET_KEY: ${{ secrets.AWS_S3_SECRET_KEY }}
+          R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+          R2_S3_REGION: ${{ secrets.R2_S3_REGION }}
+          R2_S3_BUCKET: ${{ secrets.R2_S3_BUCKET }}
+          R2_S3_ACCESS_KEY: ${{ secrets.R2_S3_ACCESS_KEY }}
+          R2_S3_SECRET_KEY: ${{ secrets.R2_S3_SECRET_KEY }}
+          B2_S3_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
+          B2_S3_REGION: ${{ secrets.B2_S3_REGION }}
+          B2_S3_BUCKET: ${{ secrets.B2_S3_BUCKET }}
+          B2_S3_ACCESS_KEY: ${{ secrets.B2_S3_ACCESS_KEY }}
+          B2_S3_SECRET_KEY: ${{ secrets.B2_S3_SECRET_KEY }}
+          WASABI_S3_ENDPOINT: ${{ secrets.WASABI_S3_ENDPOINT }}
+          WASABI_S3_REGION: ${{ secrets.WASABI_S3_REGION }}
+          WASABI_S3_BUCKET: ${{ secrets.WASABI_S3_BUCKET }}
+          WASABI_S3_ACCESS_KEY: ${{ secrets.WASABI_S3_ACCESS_KEY }}
+          WASABI_S3_SECRET_KEY: ${{ secrets.WASABI_S3_SECRET_KEY }}
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          set -euo pipefail
+          endpoint="${PROVIDER}_S3_ENDPOINT"
+          region="${PROVIDER}_S3_REGION"
+          bucket="${PROVIDER}_S3_BUCKET"
+          access="${PROVIDER}_S3_ACCESS_KEY"
+          secret="${PROVIDER}_S3_SECRET_KEY"
+
+          export KANEA_S3_ENDPOINT="${!endpoint}"
+          export KANEA_S3_REGION="${!region}"
+          export KANEA_S3_BUCKET="${!bucket}"
+          export KANEA_S3_ACCESS_KEY="${!access}"
+          export KANEA_S3_SECRET_KEY="${!secret}"
+          # The bucket is provisioned by hand and the key is scoped to it, so
+          # the suite must not try to create it — see createBucket's comment.
+          export KANEA_S3_SKIP_BUCKET_CREATE=1
+
+          # Each run writes under its own random prefix and deletes only that,
+          # so a matrix leg cannot disturb another or a previous run.
+          echo "::group::${PROVIDER} — path-style"
+          KANEA_S3_PATH_STYLE=true go test ./internal/backup/ -run Live -count=1 -v
+          echo "::endgroup::"
+
+          # AWS is the one provider whose documented preference is
+          # virtual-hosted (and whose path-style support is on a deprecation
+          # path), so it is the leg where both styles have to pass. The others
+          # are endpoint-addressed in practice; running the style they do not
+          # advertise would test their compatibility shims, not our client.
+          if [ "$PROVIDER" = "AWS" ]; then
+            echo "::group::${PROVIDER} — virtual-hosted"
+            KANEA_S3_PATH_STYLE=false go test ./internal/backup/ -run Live -count=1 -v
+            echo "::endgroup::"
+          fi

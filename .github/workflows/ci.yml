@@ -51,12 +51,21 @@ jobs:
       # Started as a step rather than a `services:` container: MinIO's image
       # needs `server /data` as its command, and service containers cannot
       # supply one.
+      #
+      # Pinned by digest, like every other third-party artefact the build
+      # depends on: this job's whole job is to detect a signature the service
+      # rejects, and ":latest" makes "the service changed" and "we changed"
+      # indistinguishable on the morning it starts failing.
+      #
+      # MINIO_DOMAIN is what enables virtual-hosted addressing below.
       - name: Start MinIO
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=kaneatest \
             -e MINIO_ROOT_PASSWORD=kaneatestsecret \
-            minio/minio:latest server /data
+            -e MINIO_DOMAIN=localhost \
+            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
               echo "MinIO is up"; exit 0
@@ -64,12 +73,34 @@ jobs:
             sleep 1
           done
           echo "MinIO did not become healthy"; docker logs minio; exit 1
-      - name: Interoperability tests
+
+      - name: Interoperability tests — path-style
         env:
           KANEA_S3_ENDPOINT: http://127.0.0.1:9000
           KANEA_S3_ACCESS_KEY: kaneatest
           KANEA_S3_SECRET_KEY: kaneatestsecret
         run: go test ./internal/backup/ -run Live -count=1 -v
+
+      # The other addressing style, and it is a different signature rather than
+      # a different URL: virtual-hosted puts the bucket in the *host* header,
+      # which is signed. It is what AWS prefers and what an operator gets by
+      # omitting `endpoint`, so leaving it unexercised meant the addressing half
+      # of what Archiver.Probe claims to prove had never run against a service
+      # that verifies.
+      #
+      # The bucket subdomain is resolved through /etc/hosts rather than by
+      # trusting the runner to synthesise *.localhost — whether it does is a
+      # systemd-resolved detail, and a required job must not rest on one.
+      - name: Interoperability tests — virtual-hosted
+        env:
+          KANEA_S3_ENDPOINT: http://localhost:9000
+          KANEA_S3_PATH_STYLE: "false"
+          KANEA_S3_ACCESS_KEY: kaneatest
+          KANEA_S3_SECRET_KEY: kaneatestsecret
+        run: |
+          echo "127.0.0.1 kanea-test.localhost" | sudo tee -a /etc/hosts
+          go test ./internal/backup/ -run Live -count=1 -v
+
       - name: Stop MinIO
         if: always()
         run: docker rm -f minio

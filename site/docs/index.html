@@ -629,7 +629,8 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <ul>
       <li><b>Change data capture.</b> Store mutations produce change segments; snapshots and
         segments are replicated to any S3-compatible bucket. The client is hand-written
-        against the REST API — SigV4 and four verbs — and CI exercises it against MinIO.</li>
+        against the REST API — SigV4 and four verbs — and CI exercises it against MinIO in
+        both addressing styles, path-style and virtual-hosted.</li>
       <li><b>Archives are chunked AEAD</b>, with keys HKDF-derived from the master key rather
         than being it. <b>The last chunk is sealed under different additional data</b>, which
         is the only thing standing between a truncated snapshot and a restore that decrypts

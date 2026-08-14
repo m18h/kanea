@@ -329,10 +329,14 @@ something that tells you rather than something you check.
 
 - **Interoperability is established against MinIO only.** CI runs the S3 client
   against MinIO, which verifies SigV4 — so the signature is known to be one a
-  real service accepts. AWS S3, R2, B2 and Wasabi have not been in the loop, and
-  each has quirks around addressing style and region handling. **Run
-  `kanea backup verify` after configuring a new destination**, before you rely
-  on it.
+  real service accepts, **in both addressing styles**: path-style and
+  virtual-hosted are separate signatures, because virtual-hosted moves the
+  bucket into the host header and the host header is signed. What remains
+  untested is the services themselves: AWS S3, R2, B2 and Wasabi have not been
+  in the loop, and each has quirks around region handling and what it does with
+  a request the others accept. **Run `kanea backup verify` after configuring a
+  new destination**, before you rely on it — it writes, lists and deletes
+  through the same code path a real backup uses.
 - **An archive above 5 GiB is refused rather than split.** Multipart upload is
   not implemented. A single node's Store is orders of magnitude below the limit;
   the error names the number if you ever meet it.
