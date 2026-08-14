@@ -33,7 +33,7 @@ func body(t *testing.T, resp *http.Response) string {
 // The root always answers with something: a real build if one is embedded, the
 // placeholder if not. A binary built without `make dashboard` must still serve.
 func TestServesTheEntryPoint(t *testing.T) {
-	resp := get(t, dashboard.Handler("/"), "/")
+	resp := get(t, dashboard.Handler("/", nil), "/")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -48,7 +48,7 @@ func TestServesTheEntryPoint(t *testing.T) {
 // The router is client-side, so a deep link is a real URL to the user and a
 // missing file to the server. It has to reach the app.
 func TestClientRoutesFallBackToTheApp(t *testing.T) {
-	h := dashboard.Handler("/")
+	h := dashboard.Handler("/", nil)
 	for _, path := range []string{"/services", "/projects/shop", "/settings/tokens"} {
 		resp := get(t, h, path)
 		if resp.StatusCode != http.StatusOK {
@@ -64,7 +64,7 @@ func TestClientRoutesFallBackToTheApp(t *testing.T) {
 // script with HTML, which the browser reports as a syntax error and sends you
 // looking in entirely the wrong place.
 func TestMissingAssetsAreNotFound(t *testing.T) {
-	h := dashboard.Handler("/")
+	h := dashboard.Handler("/", nil)
 	for _, path := range []string{
 		"/assets/index-deadbeef.js",
 		"/assets/missing.css",
@@ -82,7 +82,7 @@ func TestMissingAssetsAreNotFound(t *testing.T) {
 // and in-binary, so the blast radius is small, but answering ../../etc/passwd
 // with anything but a 404 is still wrong.
 func TestPathTraversalIsRefused(t *testing.T) {
-	h := dashboard.Handler("/")
+	h := dashboard.Handler("/", nil)
 	for _, path := range []string{
 		"/../dashboard.go",
 		"/assets/../../dashboard.go",
@@ -99,7 +99,7 @@ func TestPathTraversalIsRefused(t *testing.T) {
 // Hashed assets are immutable and the entry point is not: caching index.html
 // hard would leave a browser pinned to the old asset hashes after an upgrade.
 func TestCacheHeaders(t *testing.T) {
-	resp := get(t, dashboard.Handler("/"), "/")
+	resp := get(t, dashboard.Handler("/", nil), "/")
 	defer func() { _ = resp.Body.Close() }()
 
 	if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
@@ -111,7 +111,7 @@ func TestBuiltReportsWhetherAssetsArePresent(t *testing.T) {
 	// Both answers are legitimate — this asserts it does not panic and agrees
 	// with what the handler serves.
 	built := dashboard.Built()
-	resp := get(t, dashboard.Handler("/"), "/")
+	resp := get(t, dashboard.Handler("/", nil), "/")
 	text := body(t, resp)
 
 	isPlaceholder := strings.Contains(text, "was not built into this binary")
@@ -123,7 +123,7 @@ func TestBuiltReportsWhetherAssetsArePresent(t *testing.T) {
 // The security headers protect the origin, not one page, so every answer
 // carries them — the 200, the 404 and the 405 alike.
 func TestSecurityHeaders(t *testing.T) {
-	h := dashboard.Handler("/")
+	h := dashboard.Handler("/", nil)
 
 	cases := []struct {
 		method string
@@ -159,6 +159,8 @@ func TestSecurityHeaders(t *testing.T) {
 			// inline exception the terminal renders broken.
 			"style-src 'self' 'unsafe-inline'",
 			"frame-ancestors 'none'",
+			"base-uri 'none'",
+			"object-src 'none'",
 		} {
 			if !strings.Contains(csp, directive) {
 				t.Errorf("%s %s: CSP missing %q: %q", tc.method, tc.path, directive, csp)
@@ -167,10 +169,82 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 }
 
+// connect-src bounds where a compromised page can send what it has read, so
+// the websocket schemes are pinned to the origin serving the page rather than
+// written as the bare `ws: wss:`, which matches any host anywhere.
+func TestConnectSrcIsBoundToTheRequestHost(t *testing.T) {
+	h := dashboard.Handler("/", nil)
+
+	csp := func(host string) string {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+		req.Host = host
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		resp := w.Result()
+		_ = body(t, resp)
+		return resp.Header.Get("Content-Security-Policy")
+	}
+
+	for _, host := range []string{"kanea.example.com", "192.168.1.10:8600", "[::1]:8600"} {
+		got := csp(host)
+		if want := "connect-src 'self' ws://" + host + " wss://" + host; !strings.Contains(got, want) {
+			t.Errorf("host %q: CSP missing %q: %q", host, want, got)
+		}
+		if strings.Contains(got, "ws: ") || strings.HasSuffix(got, "ws:") || strings.Contains(got, "wss: ") {
+			t.Errorf("host %q: CSP still carries a bare websocket scheme: %q", host, got)
+		}
+	}
+
+	// A Host that is not a bare host[:port] cannot be a real page's origin, and
+	// a `;` in one would be a directive separator under the client's control.
+	for _, host := range []string{"evil.example.com; script-src *", "host with spaces", ""} {
+		got := csp(host)
+		if !strings.Contains(got, "connect-src 'self'") {
+			t.Errorf("host %q: CSP missing the fallback connect-src: %q", host, got)
+		}
+		if strings.Contains(got, "ws://") || strings.Contains(got, "wss://") {
+			t.Errorf("host %q: an unusable Host reached the header: %q", host, got)
+		}
+	}
+}
+
+// The websocket handshake accepts same-origin plus --dashboard-origins, so
+// connect-src has to permit the same set: a policy naming only the first would
+// block, in the browser, a socket the daemon was configured to allow.
+func TestConnectSrcCarriesTheConfiguredOrigins(t *testing.T) {
+	h := dashboard.Handler("/", []string{
+		"https://kanea.example.com",
+		"http://192.168.1.10:8600",
+		"not a url",     // dropped: checkOrigin will refuse it too
+		"https://a b/c", // dropped: not a bare host
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+	req.Host = "10.0.0.2:8600"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	resp := w.Result()
+	_ = body(t, resp)
+	csp := resp.Header.Get("Content-Security-Policy")
+
+	// The scheme is carried over, never doubled: a page on https can only open
+	// wss, so naming ws:// as well would widen the policy past anything usable.
+	for _, want := range []string{"wss://kanea.example.com", "ws://192.168.1.10:8600"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP missing %q: %q", want, csp)
+		}
+	}
+	for _, unwanted := range []string{"ws://kanea.example.com", "wss://192.168.1.10:8600", "a b"} {
+		if strings.Contains(csp, unwanted) {
+			t.Errorf("CSP unexpectedly carries %q: %q", unwanted, csp)
+		}
+	}
+}
+
 // HSTS is only claimed under TLS: browsers ignore it over plain HTTP, and a
 // node behind its own proxy may legitimately serve HTTP.
 func TestHSTSRequiresTLS(t *testing.T) {
-	h := dashboard.Handler("/")
+	h := dashboard.Handler("/", nil)
 
 	plain := get(t, h, "/")
 	_ = body(t, plain)

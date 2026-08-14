@@ -520,7 +520,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		// specific pattern. With "GET /" the two conflict: neither matches a
 		// strict superset of the other, and ServeMux panics rather than guess.
 		// The handler answers non-GET itself.
-		mux.Handle("/", dashboard.Handler("/"))
+		mux.Handle("/", dashboard.Handler("/", cfg.WSOrigins))
 		if !dashboard.Built() {
 			cfg.Logger.Warn("serving the dashboard placeholder",
 				"detail", "this binary was built without the UI; run `make dashboard && make build`")
