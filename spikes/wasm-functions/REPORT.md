@@ -54,7 +54,7 @@ sudo ./spike-wasm-linux -socket /run/containerd/containerd.sock \
 | E | wasi-http answers | **PASS** | HTTP 200 from the module, probed inside the instance's netns |
 | F | module/shim RSS | **INFO** | ~19–20 MiB per module process — §21 footprint input |
 | G | memory cap kills an allocating module | **PASS** | hog exited code 137 (SIGKILL/OOM) under a 16 MiB `memory.max` == swap |
-| H | end-to-end on a kanead node (FQDN + functions port + event + cron) | **deferred** | the §20 M11 exit criterion; needs a full kanead node with the datapath, not a containerd-level harness — this run validates everything H depends on below the datapath |
+| H | end-to-end on a kanead node (FQDN + functions port + event + cron) | **pending a run** | the §20 M11 exit criterion; needs a full kanead node with the datapath, not a containerd-level harness — this run validates everything H depends on below the datapath. The harness now exists: [`check-h/`](./check-h/), one check per clause. See the check-H section below |
 
 ```
 PASS shim binary                            /usr/local/bin/containerd-shim-wasmtime-v1
@@ -148,3 +148,53 @@ port, fire an event, watch a cron tick) remains** — it is the §20 M11 exit
 criterion and needs a running kanead node with the datapath, above what a
 containerd-level harness can reach. Everything H depends on below the datapath
 is validated here.
+
+---
+
+## Check H — end to end on a kanead node
+
+**Status: harness written, run pending.**
+
+A–G above ran at the containerd level and validated everything below the
+datapath. H is the §20 M11 exit criterion itself, verbatim:
+
+> a wasi-http function deploys from a spec, serves through the edge (FQDN and
+> functions-port modes), fires on a matching event and a cron tick; invocation
+> rate visible from an east-west call; pre-v1.39 Store upgrade rolls zero allocs
+
+[`check-h/`](./check-h/) drives it: one check per clause, `PASS`/`FAIL` per
+line, non-zero exit on any failure. See its README for the module build and the
+prerequisites. It is deliberately a node runbook rather than a CI job — CI
+excludes the datapath on purpose (`ci.yml`: "a flaky required job teaches people
+to ignore CI"), so the half CI could run is precisely the half A–G already
+proved, and the half that is owed is precisely the half CI cannot reach.
+
+### Environment
+
+| | |
+|---|---|
+| Node | *(fill in: host, arch, kernel)* |
+| kanea | *(fill in: `kanea version`)* |
+| containerd / shim | *(fill in: `kanea doctor`)* |
+| Network mode | *(ebpf — the invocation-rate clause needs it; under `netns` the datapath publishes no counters and that clause is a documented partial)* |
+| Date | *(fill in)* |
+
+### Result
+
+```
+(paste the output of `sudo ./check-h/check-h.sh` here)
+```
+
+### The clause the driver does not script
+
+"pre-v1.39 Store upgrade rolls zero allocs" is a property of an upgrade rather
+than of a running node, so it cannot be staged after the fact on a node that has
+already been upgraded. It is pinned structurally by
+`TestSpecHashIsUnchangedForASpecWithNoUserOrOwnership`, whose comment records
+that v1.39's `Runtime` holds the same line: an empty string with `omitempty`
+vanishes from the hash material, so a pre-v1.39 record and a post-v1.39 runc
+service produce identical bytes. To observe it as well, capture every alloc's
+`spec_hash` from `GET /v1/services` before upgrading `kanead` across a v1.39
+boundary and confirm none are replaced afterwards.
+
+Observation: *(fill in — node, versions either side, allocs replaced)*
