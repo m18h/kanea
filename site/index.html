@@ -1,479 +1,937 @@
-<!doctype html>
-<html lang="en">
-<head>
+<!DOCTYPE html>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kanea — container orchestration in one binary</title>
 <meta name="description" content="Kanea is a single-binary container orchestration platform: containerd for the runtime, its own eBPF datapath for the network, Let's Encrypt for TLS — no Kubernetes required.">
+<meta name="color-scheme" content="light dark">
 <meta property="og:title" content="Kanea">
 <meta property="og:description" content="Container orchestration in one binary. eBPF-native, Kubernetes-free.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://m18h.github.io/kanea/">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
-<link rel="stylesheet" href="style.css">
+
+<script src="assets/react.production.min.js"></script>
+<script src="assets/react-dom.production.min.js"></script>
+<script src="assets/dc-runtime.js"></script>
 </head>
 <body>
+<x-dc>
+<helmet>
+<style>/* vietnamese */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-1.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-2.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-3.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-1.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-2.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-3.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-1.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-2.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 75% 125%;
+  font-display: swap;
+  src: url("assets/archivo-3.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-1.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-2.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-3.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 700;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-1.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 700;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-2.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 700;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-3.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-1.woff2") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-2.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("assets/bricolage-3.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Spline Sans Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/spline-mono-1.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Spline Sans Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("assets/spline-mono-2.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Spline Sans Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/spline-mono-1.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Spline Sans Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("assets/spline-mono-2.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Spline Sans Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/spline-mono-1.woff2") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Spline Sans Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("assets/spline-mono-2.woff2") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<style>
+  :root {
+    --bg: #FAFAFA; --bg-alt: #F0F0F1; --deep: #FFFFFF; --card: #FFFFFF;
+    --card-2: #F0F0F1; --card-3: #E6E6E8; --row-alt: #F5F5F6;
+    --grid: #E8E8EA; --line: #E4E4E6; --line-2: #DBDBDE; --line-3: #C9C9CD;
+    --line-strong: #A6A6AC; --line-faint: #ECECEE;
+    --heading: #17171A; --text: #232327; --text-2: #3B3B40;
+    --muted: #55555B; --muted-2: #616167; --muted-3: #5D5D63; --muted-4: #6A6A70;
+    --accent: #E09B1A; --accent-hover: #F2B544; --accent-ink: #96620A;
+    --on-accent: #1C1C22; --ok: #1F7A4D;
+    --code-str: #2E7D32; --code-kw: #2A5DB0; --shadow: rgba(28,28,34,.16);
+  }
+  html[data-theme="dark"] {
+    --bg: #0F1014; --bg-alt: #12131A; --deep: #0B0C0F; --card: #15161C;
+    --card-2: #1A1C23; --card-3: #20232B; --row-alt: #14151B;
+    --grid: #171921; --line: #21232B; --line-2: #23252E; --line-3: #2B2E38;
+    --line-strong: #4A505C; --line-faint: #1A1C22;
+    --heading: #F4F5F7; --text: #E8E8EE; --text-2: #C9CFD8;
+    --muted: #9BA1AB; --muted-2: #8A9099; --muted-3: #7E8592; --muted-4: #6C737F;
+    --accent: #F2B544; --accent-hover: #FFCF73; --accent-ink: #F2B544;
+    --on-accent: #12131A; --ok: #7FD8A6;
+    --code-str: #A8C79E; --code-kw: #8FA9D8; --shadow: #000;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
+  * { box-sizing: border-box; }
+  a { color: var(--accent-ink); text-decoration: none; }
+  a:hover { color: var(--accent); }
+  ::selection { background: var(--accent); color: var(--on-accent); }
+  @keyframes kv-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+  @keyframes kv-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+  @keyframes kv-packet { 0% { left: -1%; opacity: 0; } 7% { opacity: 1; } 93% { opacity: 1; } 100% { left: 100%; opacity: 0; } }
+  @keyframes kv-scalein { 0%, 56% { opacity: 0; } 66%, 94% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes kv-bar { 0%, 100% { height: 22%; } 32% { height: 78%; } 60% { height: 40%; } 85% { height: 94%; } }
+  @keyframes kv-sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(360%); } }
+</style>
+</helmet>
 
-<header>
-  <div class="wrap">
-    <a class="brand" href="#top">
-      <!-- logo/kanea-mark-{light,dark}.svg, inlined: the arc and the dots take
-           currentColor so one copy serves both themes, and only the amber is
-           fixed. See logo/README.md. -->
-      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
-        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
-              stroke-width="5" stroke-linecap="round"/>
-        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
-        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
-        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
-      </svg>
+<div style="background:var(--bg);color:var(--text);font-family:Archivo,system-ui,sans-serif;font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased;">
+
+  <header style="position:sticky;top:0;z-index:60;display:flex;flex-wrap:wrap;align-items:center;gap:12px 30px;padding:14px 36px;background:var(--bg);border-bottom:1px solid var(--line);">
+    <a href="#top" style="display:flex;align-items:center;gap:11px;color:var(--text);font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:19px;letter-spacing:-.02em;">
+      <svg width="26" height="26" sc-camel-view-box="0 0 64 64" aria-label="Kanea"><path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="var(--text)" stroke-width="5" stroke-linecap="round"></path><rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--accent)"></rect><rect x="28" y="21" width="8" height="6" rx="3" fill="var(--text)"></rect><rect x="24" y="32" width="16" height="6" rx="3" fill="var(--text)" opacity="0.65"></rect></svg>
       Kanea
     </a>
-    <nav>
-      <a href="#what" class="hide-sm">What it is</a>
-      <a href="#install">Install</a>
-      <a href="docs/">Docs</a>
-      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    <nav style="display:flex;flex-wrap:wrap;gap:10px 24px;font-family:'Spline Sans Mono',monospace;font-size:12px;letter-spacing:.1em;">
+      <a href="#install" style="color:var(--muted-2);" style-hover="color:var(--text)">INSTALL</a>
+      <a href="#binary" style="color:var(--muted-2);" style-hover="color:var(--text)">ARCHITECTURE</a>
+      <a href="#spec" style="color:var(--muted-2);" style-hover="color:var(--text)">SPECS</a>
+      <a href="#ships" style="color:var(--muted-2);" style-hover="color:var(--text)">WHAT SHIPS</a>
+      <a href="#dashboard" style="color:var(--muted-2);" style-hover="color:var(--text)">DASHBOARD</a>
+      <a href="#compare" style="color:var(--muted-2);" style-hover="color:var(--text)">COMPARE</a>
+      <a href="https://m18h.github.io/kanea/docs/" style="color:var(--muted-2);" style-hover="color:var(--text)">DOCS</a>
     </nav>
-  </div>
-</header>
-
-<main id="top">
-
-  <!-- ================= hero ================= -->
-  <section class="hero">
-    <div class="wrap">
-      <div class="badges">
-        <span class="badge">Linux amd64 · arm64</span>
-        <span class="badge">CLI on macOS · Homebrew</span>
-        <span class="badge">Apache-2.0</span>
-      </div>
-      <h1>Container orchestration<br><em>in one binary</em>.</h1>
-      <p class="sub">
-        Kanea runs your services on <b>containerd</b>, networks them with <b>its own eBPF datapath</b>,
-        terminates TLS with <b>Let's Encrypt</b>, and ships a live dashboard, an MCP server,
-        GitOps pipelines and encrypted S3 backups. One static binary, with no Kubernetes
-        required — not underneath, not for the CNI, not for the load balancer.
-      </p>
-
-      <div class="cmd">
-        <pre id="install-cmd"><span class="p">$ </span>curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash</pre>
-        <button type="button" id="copy" data-copy="curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash">Copy</button>
-      </div>
-      <p class="cmd-note">
-        Piping a script into a root shell deserves a look first —
-        <a href="install.sh">read it first</a>, or
-        <a href="#install">install it by hand</a>.
-        Every download is checksum-verified with no flag to skip it.
-        On a Mac? <a href="#homebrew">Homebrew installs the CLI</a>.
-      </p>
-
-      <div class="cta">
-        <a class="btn primary" href="#install">Get started</a>
-        <a class="btn" href="https://github.com/m18h/kanea">Source on GitHub</a>
-        <a class="btn" href="https://github.com/m18h/kanea/blob/main/PRD.md">Read the PRD</a>
-      </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;font-family:'Spline Sans Mono',monospace;font-size:12px;color:var(--muted-3);">
+      <span>v0.17.2</span>
+      <button sc-camel-on-click="{{ toggleTheme }}" title="Toggle light and dark" aria-label="Toggle light and dark" style="display:flex;align-items:center;justify-content:center;width:32px;height:31px;padding:0;border:1px solid var(--line-3);background:transparent;color:var(--muted-3);cursor:pointer;" style-hover="color:var(--text);border-color:var(--line-strong)">
+        <sc-if value="{{ isDark }}" hint-placeholder-val="{{ false }}">
+          <svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M19.1 4.9l-1.5 1.5M6.4 17.6l-1.5 1.5"></path></svg>
+        </sc-if>
+        <sc-if value="{{ isLight }}" hint-placeholder-val="{{ true }}">
+          <svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"></path></svg>
+        </sc-if>
+      </button>
+      <a href="https://github.com/m18h/kanea" style="padding:7px 14px;border:1px solid var(--line-3);color:var(--text);" style-hover="border-color:var(--accent-ink)">GITHUB ↗</a>
     </div>
-  </section>
+  </header>
 
-  <!-- ================= what it is ================= -->
-  <section id="what">
-    <div class="wrap">
-      <p class="eyebrow">What it is</p>
-      <h2>A control plane you can read in an afternoon</h2>
-      <p class="lede">
-        Three processes from one binary: <code>kanead</code> converges state,
-        <code>kanea-edge</code> carries north–south traffic, and the CLI talks to both.
-        The edge is deliberately not a child of the control plane — restarting
-        <code>kanead</code> never drops a request in flight.
-      </p>
+  <section id="top" style="position:relative;border-bottom:1px solid var(--line);">
+    <div style="display:grid;grid-template-columns:minmax(0,.93fr) minmax(0,1.07fr);">
 
-      <div class="grid g3">
-        <div class="card">
-          <span class="tag">Runtime</span>
-          <h3>containerd, hardened by default</h3>
-          <p>
-            Capabilities dropped to a reviewed uid-switching baseline
-            (<code>["none"]</code> drops the rest), <code>no-new-privileges</code>, the
-            default seccomp profile, per-alloc PID and IPC namespaces — and no
-            <code>privileged</code> escape hatch in the spec at all. Nothing runs uncapped: workloads share a
-            cgroup with a hard ceiling, and the control plane holds a kernel-guaranteed
-            memory floor beneath it.
+      <div style="position:relative;padding:76px 44px 60px 36px;border-right:1px solid var(--line);">
+        <div style="position:relative;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:30px;font-family:'Spline Sans Mono',monospace;font-size:11.5px;letter-spacing:.15em;color:var(--accent-ink);">
+            <span style="display: block; width: 40px; height: 1px; background: rgb(242, 181, 68);"></span>ONE STATIC BINARY · FULL ORCHESTRATION PLATFORM</div>
+
+          <h1 style="margin:0;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(40px,5.4vw,82px);line-height:.9;letter-spacing:-.045em;font-weight:800;color:var(--heading);text-wrap:balance;">
+            From nothing<br>to orchestration in<br><span style="color: rgb(224, 155, 26);">two commands</span>.
+          </h1>
+
+          <p style="margin:30px 0 0;max-width:520px;font-size:19px;line-height:1.52;color:var(--muted);text-wrap:pretty;">
+            No cluster to bootstrap, no CNI to choose, no cert-manager to install, no metrics stack
+            to stand up first. Install, <code style="font-family:'Spline Sans Mono',monospace;font-size:16px;color:var(--text-2);">kanea init</code>, and the dashboard on the right is already serving.
           </p>
+
+          <div style="margin-top:34px;display:flex;align-items:stretch;max-width:640px;border:1px solid var(--line-3);background:var(--card);">
+            <code style="flex:1;padding:16px 18px;font-family:'Spline Sans Mono',monospace;font-size:clamp(11.5px,1.05vw,13.5px);color:var(--text);white-space:nowrap;overflow-x:auto;"><span style="color:var(--accent-ink);">$</span> curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash</code>
+            <button sc-camel-on-click="{{ copyInstall }}" style="flex:none;padding:0 18px;border:0;border-left:1px solid var(--line-3);background:var(--card-2);color:var(--muted-2);font-family:'Spline Sans Mono',monospace;font-size:11px;letter-spacing:.12em;cursor:pointer;" style-hover="color:var(--text);background:var(--card-3)">{{ copyLabel }}</button>
+          </div>
+          <p style="margin:12px 0 0;max-width:600px;font-size:14px;color:var(--muted-3);">
+            Piping a script into a root shell deserves a look first —
+            <a href="https://m18h.github.io/kanea/install.sh">read it</a>, or
+            <a href="#install">install it by hand</a>. Checksum verification is mandatory, with no flag to skip it.
+          </p>
+
+          <div style="margin-top:30px;display:flex;flex-wrap:wrap;gap:11px;">
+            <a href="#install" style="padding: 14px 26px; color: var(--on-accent); font-weight: 600; font-size: 15.5px; background-color: #E09B1A" style-hover="background:var(--accent-hover)">Install it</a>
+            <a href="https://github.com/m18h/kanea/blob/main/PRD.md" style="padding:14px 26px;border:1px solid var(--line-3);color:var(--text);font-size:15.5px;" style-hover="border-color:var(--line-strong)">Read the PRD</a>
+          </div>
         </div>
-        <div class="card">
-          <span class="tag">Network</span>
-          <h3>First-party eBPF, no k8s</h3>
-          <p>
-            Connect-time service load balancing, per-project default-deny policy and
-            per-alloc plumbing from three eBPF programs compiled into the binary —
-            no network agent, no kvstore, no CNI. Services find each other over
-            internal DNS, and the same maps supply the east-west metrics the
-            autoscaler reads.
-          </p>
+      </div>
+
+      <div style="position:relative;background:var(--bg-alt);padding:30px 30px 32px;display:flex;flex-direction:column;justify-content:center;">
+        
+
+        <div style="border:1px solid var(--line-2);background:var(--deep);box-shadow:0 40px 80px -40px var(--shadow);">
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--card);font-family:'Spline Sans Mono',monospace;font-size:11px;color:var(--muted-3);">
+            <span style="display:flex;gap:6px;">
+              <span style="display:block;width:8px;height:8px;border-radius:50%;background:var(--line-strong);"></span>
+              <span style="display:block;width:8px;height:8px;border-radius:50%;background:var(--line-strong);"></span>
+              <span style="display:block;width:8px;height:8px;border-radius:50%;background:var(--line-strong);"></span>
+            </span>
+            <span style="padding:4px 11px;border:1px solid var(--line-3);color:var(--muted);">https://127.0.0.1:8600</span>
+            <span style="flex:1;"></span>
+            <span style="display:flex;align-items:center;gap:7px;color:var(--ok);"><span style="display:block;width:6px;height:6px;border-radius:50%;background:var(--ok);animation:kv-pulse 2.4s ease-in-out infinite;"></span>WEBSOCKET CONNECTED</span>
+          </div>
+          <img src="assets/shot-dashboard.webp" alt="The Kanea dashboard, served by the daemon" style="display:block;width:100%;height:auto;">
         </div>
-        <div class="card">
-          <span class="tag">Edge</span>
-          <h3>TLS that renews itself</h3>
-          <p>
-            ACME HTTP-01 out of the box and DNS-01 for wildcards, issued in the control
-            plane and published to the edge. Per-route middleware — IP restriction,
-            token-bucket rate limiting, header rewriting — evaluated in a fixed order.
-          </p>
+
+        <div style="margin-top:24px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;">
+          <sc-for list="{{ sessionStats }}" as="s" hint-placeholder-count="4">
+            <div>
+              <div style="font-family:'Spline Sans Mono',monospace;font-size:10.5px;letter-spacing:.12em;color:var(--muted-3);">{{ s.k }}</div>
+              <div style="margin-top:6px;font-family:'Bricolage Grotesque',sans-serif;font-size:30px;font-weight:800;letter-spacing:-.035em;font-variant-numeric:tabular-nums;color:var(--heading);">{{ s.v }}</div>
+            </div>
+          </sc-for>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ================= job spec ================= -->
-  <section id="spec">
-    <div class="wrap">
-      <p class="eyebrow">Job specs</p>
-      <h2>One file describes a service completely</h2>
-      <p class="lede">
-        Specs are HCL — if you have written Nomad job files the shape will be familiar.
-        The minimal service is just an image: three lines deploy, or skip the file
-        entirely with <code>kanea run --image nginx:1.27-alpine</code>. Everything
-        below is optional, and every layer of it is validated before anything moves.
-      </p>
+  <section style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 28px;padding:15px 36px;background:var(--accent);color:var(--on-accent);font-family:'Spline Sans Mono',monospace;font-size:12.5px;letter-spacing:.1em;font-weight:500;">
+    <span>NO CNI</span><span>·</span><span>NO KVSTORE</span><span>·</span><span>NO SIDECAR</span><span>·</span><span>NO OPERATOR</span><span>·</span><span>NO AGENT PER NODE</span><span>·</span><span>NO METRICS STACK</span><span>·</span><span>NO YAML</span><span>·</span><span>M0–M10 COMPLETE</span>
+  </section>
 
-      <div class="window">
-        <div class="bar"><i></i><i></i><i></i><span>shop.hcl</span></div>
-<pre><span class="c"># A service, its network policy, its TLS, and when to add replicas.</span>
-<span class="k">variables</span> {
-  domain = <span class="s">"shop.example.com"</span>   <span class="c"># declare once, reference anywhere</span>
+  <section id="install" style="border-bottom:1px solid var(--line);">
+    <div style="display:grid;grid-template-columns:66px minmax(0,1fr);">
+      <div style="border-right:1px solid var(--line);padding:34px 0;display:flex;justify-content:center;">
+        <div style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;letter-spacing:.2em;color:var(--muted-3);writing-mode:vertical-rl;">01 / INSTALL</div>
+      </div>
+      <div style="padding:70px 36px 66px;">
+        <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">Two steps, and none of them are hidden</h2>
+        <p style="margin:20px 0 40px;max-width:760px;font-size:18px;color:var(--muted);text-wrap:pretty;">
+          The installer fetches the binary, verifies it, and stops. It generates no keys and starts
+          nothing — those are decisions with consequences, and a script that made them for you would
+          make them at the moment you understand the node least.
+        </p>
+
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;">
+          <div style="border:1px solid var(--line-2);background:var(--card);padding:26px 24px;display:flex;flex-direction:column;gap:13px;">
+            <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:30px;font-weight:800;letter-spacing:-.04em;line-height:1;color:var(--accent-ink);">01</div>
+            <h3 style="margin:0;font-family:'Bricolage Grotesque',sans-serif;font-size:21px;font-weight:700;letter-spacing:-.025em;">Install the binary</h3>
+            <p style="margin:0;font-size:14.5px;line-height:1.55;color:var(--muted-2);">Checksum verification is mandatory. If <code style="font-family:'Spline Sans Mono',monospace;color:var(--text-2);">cosign</code> is on <code style="font-family:'Spline Sans Mono',monospace;color:var(--text-2);">PATH</code>, the Sigstore signature is verified too.</p>
+            <div style="margin-top:auto;padding:14px;border:1px solid var(--line);background:var(--bg);font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--text-2);white-space:pre;overflow-x:auto;display:flex;flex-direction:column;">
+              <div><span style="color:var(--accent-ink);">$</span> curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash</div>
+            </div>
+          </div>
+          <div style="border:1px solid var(--line-2);background:var(--card);padding:26px 24px;display:flex;flex-direction:column;gap:13px;">
+            <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:30px;font-weight:800;letter-spacing:-.04em;line-height:1;color:var(--accent-ink);">02</div>
+            <h3 style="margin:0;font-family:'Bricolage Grotesque',sans-serif;font-size:21px;font-weight:700;letter-spacing:-.025em;">Run the ceremony</h3>
+            <p style="margin:0;font-size:14.5px;line-height:1.55;color:var(--muted-2);">Checks the node, installs containerd, runc and rootless buildkitd at pinned versions, runs the master-key ceremony, writes the units, starts the control plane. The key is shown once.</p>
+            <div style="margin-top:auto;padding:14px;border:1px solid var(--line);background:var(--bg);font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--text-2);"><span style="color:var(--accent-ink);">$</span> sudo kanea init</div>
+          </div>
+          <div style="border:1px solid var(--line-2);background:var(--card);padding:26px 24px;display:flex;flex-direction:column;gap:13px;">
+            <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:30px;font-weight:800;letter-spacing:-.04em;line-height:1;color:var(--accent-ink);">03</div>
+            <h3 style="margin:0;font-family:'Bricolage Grotesque',sans-serif;font-size:21px;font-weight:700;letter-spacing:-.025em;">Deploy something</h3>
+            <p style="margin:0;font-size:14.5px;line-height:1.55;color:var(--muted-2);">No spec file required to start. <code style="font-family:'Spline Sans Mono',monospace;color:var(--text-2);">kanea ui</code> opens the dashboard the daemon already serves.</p>
+            <div style="margin-top:auto;padding:14px;border:1px solid var(--line);background:var(--bg);font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--text-2);white-space:pre;overflow-x:auto;display:flex;flex-direction:column;">
+              <div><span style="color:var(--accent-ink);">$</span> kanea run --image nginx --name web --project demo</div>
+              <div><span style="color:var(--accent-ink);">$</span> kanea ui</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:40px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:36px;align-items:start;">
+          <div>
+            <h3 style="margin:0 0 16px;font-family:'Bricolage Grotesque',sans-serif;font-size:22px;font-weight:700;letter-spacing:-.025em;">Requirements</h3>
+            <div style="border:1px solid var(--line-2);font-family:'Spline Sans Mono',monospace;font-size:13px;">
+              <sc-for list="{{ reqs }}" as="r" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:16px;padding:13px 16px;border-bottom:1px solid var(--line);background:var(--card);">
+                  <div style="color:var(--muted-3);">{{ r.k }}</div>
+                  <div style="color:var(--text);">{{ r.v }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <p style="margin:14px 0 0;font-size:14.5px;color:var(--muted-2);text-wrap:pretty;">That is the whole list. The runtime is installed by <code style="font-family:'Spline Sans Mono',monospace;color:var(--text-2);">kanea init</code> at pinned versions — Kanea supplies it, not you.</p>
+          </div>
+          <div>
+            <h3 style="margin:0 0 16px;font-family:'Bricolage Grotesque',sans-serif;font-size:22px;font-weight:700;letter-spacing:-.025em;">Other ways in</h3>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <div style="padding:18px 20px;border:1px solid var(--line-2);background:var(--card);">
+                <div style="font-size:15.5px;font-weight:500;">Homebrew — the CLI</div>
+                <div style="margin-top:6px;font-size:14px;line-height:1.5;color:var(--muted-2);">macOS is the authoring half: <code style="font-family:'Spline Sans Mono',monospace;color:var(--text-2);">kanea plan</code> validates specs with file-and-line diagnostics, no daemon needed.</div>
+                <div style="margin-top:11px;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--text-2);white-space:pre;overflow-x:auto;display:flex;flex-direction:column;">
+                  <div><span style="color:var(--accent-ink);">$</span> brew tap m18h/kanea https://github.com/m18h/kanea</div>
+                  <div><span style="color:var(--accent-ink);">$</span> brew install kanea</div>
+                </div>
+              </div>
+              <div style="padding:18px 20px;border:1px solid var(--line-2);background:var(--card);">
+                <div style="font-size:15.5px;font-weight:500;">Air-gapped nodes</div>
+                <div style="margin-top:6px;font-size:14px;line-height:1.5;color:var(--muted-2);">A supported installation, not a workaround. The bundle carries no hashes of its own — a bundle that supplied its own would be a bundle that authenticates itself.</div>
+                <div style="margin-top:11px;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--text-2);white-space:pre;overflow-x:auto;display:flex;flex-direction:column;">
+                  <div><span style="color:var(--accent-ink);">$</span> kanea bundle create --arch amd64 -o bundle.tar.gz</div>
+                  <div><span style="color:var(--accent-ink);">$</span> sudo kanea init --bundle bundle.tar.gz</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="binary" style="border-bottom:1px solid var(--line);background:var(--bg-alt);">
+    <div style="display:grid;grid-template-columns:66px minmax(0,1fr);">
+      <div style="border-right:1px solid var(--line);padding:34px 0;display:flex;justify-content:center;">
+        <div style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;letter-spacing:.2em;color:var(--muted-3);writing-mode:vertical-rl;">02 / ARCHITECTURE</div>
+      </div>
+      <div style="padding:70px 36px 66px;">
+        <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">A control plane you can read in an afternoon</h2>
+        <p style="margin:20px 0 40px;max-width:700px;font-size:18px;color:var(--muted);text-wrap:pretty;">
+          Three processes from one file. The edge is deliberately not a child of the control plane —
+          restarting <code style="font-family:'Spline Sans Mono',monospace;font-size:15.5px;color:var(--text-2);">kanead</code> never drops a request in flight. Pick a piece.
+        </p>
+
+        <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.02fr);gap:36px;align-items:start;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <sc-for list="{{ parts }}" as="part" hint-placeholder-count="6">
+              <button sc-camel-on-click="{{ part.select }}" style="{{ part.style }}" style-hover="border-color:var(--line-strong)">
+                <span style="display:block;font-family:'Spline Sans Mono',monospace;font-size:13.5px;color:{{ part.nameColor }};margin-bottom:7px;">{{ part.name }}</span>
+                <span style="display:block;font-family:Archivo,sans-serif;font-size:13.5px;line-height:1.42;color:var(--muted-3);">{{ part.role }}</span>
+              </button>
+            </sc-for>
+          </div>
+
+          <div style="border:1px solid var(--line-2);border-left:3px solid var(--accent);background:var(--card);padding:32px 34px;">
+            <div style="font-family:'Spline Sans Mono',monospace;font-size:11px;letter-spacing:.14em;color:var(--muted-3);">{{ activeKind }}</div>
+            <h3 style="margin:12px 0 0;font-family:'Bricolage Grotesque',sans-serif;font-size:29px;line-height:1.1;letter-spacing:-.03em;font-weight:700;">{{ activeTitle }}</h3>
+            <p style="margin:16px 0 0;font-size:16.5px;line-height:1.6;color:var(--muted);text-wrap:pretty;">{{ activeBody }}</p>
+            <div style="margin-top:24px;padding-top:18px;border-top:1px solid var(--line);font-family:'Spline Sans Mono',monospace;font-size:12.5px;line-height:1.6;color:var(--muted-3);">{{ activeNote }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="spec" style="border-bottom:1px solid var(--line);">
+    <div style="display:grid;grid-template-columns:66px minmax(0,1fr);">
+      <div style="border-right:1px solid var(--line);padding:34px 0;display:flex;justify-content:center;">
+        <div style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;letter-spacing:.2em;color:var(--muted-3);writing-mode:vertical-rl;">03 / SPEC TO RUNNING</div>
+      </div>
+      <div style="padding:70px 36px 66px;">
+        <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">One file describes a service completely</h2>
+        <p style="margin:20px 0 30px;max-width:740px;font-size:18px;color:var(--muted);text-wrap:pretty;">
+          HCL — familiar if you have written Nomad job files. Change the spec and watch the platform
+          it produces change with it.
+        </p>
+
+        <div style="display:flex;flex-wrap:wrap;gap:9px;margin-bottom:22px;">
+          <sc-for list="{{ knobs }}" as="k" hint-placeholder-count="5">
+            <button sc-camel-on-click="{{ k.toggle }}" style="{{ k.style }}" style-hover="border-color:var(--line-strong)">{{ k.label }}</button>
+          </sc-for>
+        </div>
+
+        <div style="display:grid;grid-template-columns:minmax(0,1.08fr) minmax(0,.92fr);gap:22px;align-items:start;">
+          <div style="border:1px solid var(--line-2);background:var(--bg);">
+            <div style="display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--card);font-family:'Spline Sans Mono',monospace;font-size:12px;letter-spacing:.06em;color:var(--muted);">
+              <span style="display:block;width:8px;height:8px;background:var(--accent);"></span>SHOP.HCL
+            </div>
+            <div style="padding:22px 24px;font-family:'Spline Sans Mono',monospace;font-size:13.5px;line-height:1.76;color:var(--text-2);white-space:pre;overflow-x:auto;display:flex;flex-direction:column;">
+              <div><span style="color:var(--code-kw);">service</span> <span style="color:var(--code-str);">"web"</span> {</div>
+              <div>  project = <span style="color:var(--code-str);">"shop"</span></div>
+              <div>  count   = <span style="color:var(--accent-ink);">{{ count }}</span></div>
+              <div style="height:.9em;flex:none;"></div>
+              <div>  <span style="color:var(--code-kw);">task</span> <span style="color:var(--code-str);">"app"</span> {</div>
+              <div>    image = <span style="color:var(--code-str);">"registry.example.com/shop/web:1.4.0"</span></div>
+              <div>    env = {</div>
+              <div>      DATABASE_URL  = <span style="color:var(--code-str);">"secret:shop/database-url"</span>  <span style="color:var(--muted-4);"># never inlined</span></div>
+              <div>      DATABASE_HOST = <span style="color:var(--code-str);">"${service.postgres.host}"</span></div>
+              <div>    }</div>
+              <div>    <span style="color:var(--code-kw);">resources</span> { cpu = <span style="color:var(--accent-ink);">500</span>  memory = <span style="color:var(--accent-ink);">512</span> }</div>
+              <div>  }</div>
+              <div style="height:.9em;flex:none;"></div>
+              <div>  <span style="color:var(--code-kw);">network</span> {</div>
+              <div>    port <span style="color:var(--code-str);">"http"</span> { container = <span style="color:var(--accent-ink);">3000</span> }</div>
+              <sc-if value="{{ policyOn }}" hint-placeholder-val="{{ true }}">
+                <div>    policy { allow_from = [<span style="color:var(--code-str);">"analytics/collector"</span>] }  <span style="color:var(--muted-4);"># else: default-deny</span></div>
+              </sc-if>
+              <div>  }</div>
+              <div style="height:.9em;flex:none;"></div>
+              <div>  <span style="color:var(--code-kw);">expose</span> {</div>
+              <div>    domains = [<span style="color:var(--code-str);">"shop.example.com"</span>]</div>
+              <div>    tls { mode = <span style="color:var(--code-str);">"{{ tls }}"</span> }</div>
+              <sc-if value="{{ rateOn }}" hint-placeholder-val="{{ true }}">
+                <div>    <span style="color:var(--code-kw);">rate_limit</span> { requests = <span style="color:var(--accent-ink);">100</span>  window = <span style="color:var(--code-str);">"1m"</span>  per = <span style="color:var(--code-str);">"ip"</span> }</div>
+              </sc-if>
+              <div>  }</div>
+              <div style="height:.9em;flex:none;"></div>
+              <div>  <span style="color:var(--code-kw);">health_check</span> <span style="color:var(--code-str);">"http"</span> { path = <span style="color:var(--code-str);">"/healthz"</span>  interval = <span style="color:var(--code-str);">"10s"</span> }</div>
+              <sc-if value="{{ scalingOn }}" hint-placeholder-val="{{ true }}">
+                <div style="height:.9em;flex:none;"></div>
+                <div>  <span style="color:var(--code-kw);">scaling</span> {</div>
+                <div>    min = <span style="color:var(--accent-ink);">2</span>  max = <span style="color:var(--accent-ink);">10</span></div>
+                <div>    metric <span style="color:var(--code-str);">"rps"</span> { target = <span style="color:var(--accent-ink);">500</span> }  <span style="color:var(--muted-4);"># from eBPF, not a sidecar</span></div>
+                <div>  }</div>
+              </sc-if>
+              <div>}</div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="font-family:'Spline Sans Mono',monospace;font-size:11px;letter-spacing:.14em;color:var(--muted-3);">WHAT THAT PRODUCES</div>
+            <sc-for list="{{ outcomes }}" as="o" hint-placeholder-count="5">
+              <div style="{{ o.style }}">
+                <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:22px;font-weight:800;letter-spacing:-.03em;color:var(--muted-4);line-height:1;">{{ o.n }}</div>
+                <div>
+                  <div style="font-size:15.5px;font-weight:500;color:var(--text);">{{ o.title }}</div>
+                  <div style="margin-top:5px;font-size:14px;line-height:1.5;color:var(--muted-3);text-wrap:pretty;">{{ o.body }}</div>
+                </div>
+              </div>
+            </sc-for>
+            <div style="margin-top:4px;padding:15px 17px;border:1px dashed var(--line-3);font-family:'Spline Sans Mono',monospace;font-size:12.5px;line-height:1.8;color:var(--muted);">
+              <div><span style="color:var(--muted-3);">$</span> kanea plan shop.hcl</div>
+              <div>{{ planLine }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="ships" style="border-bottom:1px solid var(--line);background:var(--bg-alt);">
+    <div style="display:grid;grid-template-columns:66px minmax(0,1fr);">
+      <div style="border-right:1px solid var(--line);padding:34px 0;display:flex;justify-content:center;">
+        <div style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;letter-spacing:.2em;color:var(--muted-3);writing-mode:vertical-rl;">04 / WHAT SHIPS</div>
+      </div>
+      <div style="padding:70px 36px 60px;">
+        <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">No agents. No operator to reconcile the operator.</h2>
+        <p style="margin:20px 0 40px;max-width:700px;font-size:18px;color:var(--muted);">Eight things you would otherwise assemble, already inside.</p>
+
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;">
+          <sc-for list="{{ ships }}" as="s" hint-placeholder-count="8">
+            <div style="padding:24px 24px 30px 0;border-top:1px solid var(--line-2);">
+              <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:36px;font-weight:800;letter-spacing:-.045em;line-height:1;color:var(--line-strong);">{{ s.n }}</div>
+              <h3 style="margin:14px 0 0;font-family:'Bricolage Grotesque',sans-serif;font-size:20px;letter-spacing:-.025em;font-weight:700;">{{ s.title }}</h3>
+              <p style="margin:9px 0 0;font-size:14.5px;line-height:1.55;color:var(--muted-2);text-wrap:pretty;">{{ s.body }}</p>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="dashboard" style="border-bottom:1px solid var(--line);">
+    <div style="display:grid;grid-template-columns:66px minmax(0,1fr);">
+      <div style="border-right:1px solid var(--line);padding:34px 0;display:flex;justify-content:center;">
+        <div style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;letter-spacing:.2em;color:var(--muted-3);writing-mode:vertical-rl;">05 / THE DASHBOARD</div>
+      </div>
+      <div style="padding:70px 36px 66px;">
+        <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">Embedded in the binary, served by the daemon</h2>
+        <p style="margin:20px 0 28px;max-width:740px;font-size:18px;color:var(--muted);text-wrap:pretty;">
+          Not a screenshot of a plan — this is <code style="font-family:'Spline Sans Mono',monospace;font-size:15.5px;color:var(--text-2);">kanea ui</code> on a running node, over one
+          multiplexed websocket. Pick a page.
+        </p>
+
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;">
+          <sc-for list="{{ shots }}" as="sh" hint-placeholder-count="7">
+            <button sc-camel-on-click="{{ sh.select }}" style="{{ sh.style }}" style-hover="border-color:var(--line-strong)">{{ sh.label }}</button>
+          </sc-for>
+        </div>
+
+        <div style="border:1px solid var(--line-2);background:var(--deep);">
+          <div style="display:flex;align-items:center;gap:14px;padding:11px 16px;border-bottom:1px solid var(--line);background:var(--card);font-family:'Spline Sans Mono',monospace;font-size:11.5px;color:var(--muted-3);">
+            <span style="display:flex;gap:6px;">
+              <span style="display:block;width:9px;height:9px;border-radius:50%;background:var(--line-strong);"></span>
+              <span style="display:block;width:9px;height:9px;border-radius:50%;background:var(--line-strong);"></span>
+              <span style="display:block;width:9px;height:9px;border-radius:50%;background:var(--line-strong);"></span>
+            </span>
+            <span style="padding:4px 12px;border:1px solid var(--line-3);color:var(--muted);">https://127.0.0.1:8600<span ref="{{ pathRef }}">/</span></span>
+            <span style="flex:1;"></span>
+            <span style="display:flex;align-items:center;gap:8px;color:var(--ok);"><span style="display:block;width:6px;height:6px;border-radius:50%;background:var(--ok);animation:kv-pulse 2.4s ease-in-out infinite;"></span>WEBSOCKET CONNECTED</span>
+          </div>
+          <img src="assets/shot-dashboard.webp" alt="Kanea dashboard" ref="{{ shotRef }}" style="display:block;width:100%;height:auto;">
+        </div>
+
+        <div style="margin-top:20px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;">
+          <sc-for list="{{ uiFacts }}" as="f" hint-placeholder-count="4">
+            <div style="padding:20px 22px 22px 0;border-top:1px solid var(--line-2);">
+              <div style="font-family:'Spline Sans Mono',monospace;font-size:11px;letter-spacing:.12em;color:var(--muted-3);">{{ f.k }}</div>
+              <div style="margin-top:8px;font-size:15px;line-height:1.5;color:var(--text-2);text-wrap:pretty;">{{ f.v }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="compare" style="border-bottom:1px solid var(--line);background:var(--bg-alt);">
+    <div style="display:grid;grid-template-columns:66px minmax(0,1fr);">
+      <div style="border-right:1px solid var(--line);padding:34px 0;display:flex;justify-content:center;">
+        <div style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;letter-spacing:.2em;color:var(--muted-3);writing-mode:vertical-rl;">06 / WHERE IT SITS</div>
+      </div>
+      <div style="padding:70px 36px 66px;">
+        <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">Fewer moving parts than the thing you run now</h2>
+        <p style="margin:20px 0 36px;max-width:720px;font-size:18px;color:var(--muted);text-wrap:pretty;">
+          Kanea is a single-node platform for people who wanted a platform, not a cluster. That is a
+          trade, and this is the trade.
+        </p>
+
+        <div style="border:1px solid var(--line-2);">
+          <div style="display:grid;grid-template-columns:minmax(0,1.5fr) repeat(4,minmax(0,1fr));background:var(--card);font-family:'Spline Sans Mono',monospace;font-size:11px;letter-spacing:.12em;color:var(--muted-3);">
+            <div style="padding:14px 18px;"></div>
+            <div style="padding:14px 14px;color:var(--accent-ink);background:rgba(242,181,68,.07);">KANEA</div>
+            <div style="padding:14px 14px;">K3S</div>
+            <div style="padding:14px 14px;">NOMAD</div>
+            <div style="padding:14px 14px;">SWARM</div>
+          </div>
+          <sc-for list="{{ compare }}" as="row" hint-placeholder-count="8">
+            <div style="{{ row.style }}">
+              <div style="padding:14px 18px;font-size:14.5px;color:var(--muted);">{{ row.k }}</div>
+              <div style="padding:14px 14px;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--text);background:rgba(242,181,68,.05);">{{ row.a }}</div>
+              <div style="padding:14px 14px;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--muted-3);">{{ row.b }}</div>
+              <div style="padding:14px 14px;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--muted-3);">{{ row.c }}</div>
+              <div style="padding:14px 14px;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--muted-3);">{{ row.d }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <p style="margin:16px 0 0;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--muted-4);">Multi-node scheduling is not what Kanea is for. If you need a cluster, the table already told you which column to read.</p>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding:74px 36px;border-bottom:1px solid var(--line);">
+    <div style="max-width:1000px;margin:0 auto;">
+      <p style="margin:0;font-family:'Bricolage Grotesque',sans-serif;font-size:40px;line-height:1.16;letter-spacing:-.035em;font-weight:700;color:var(--heading);text-wrap:balance;">
+        “Kanea was specified before it was written, and the document is still the north star.”
+      </p>
+      <div style="margin-top:22px;font-family:'Spline Sans Mono',monospace;font-size:12px;letter-spacing:.12em;color:var(--muted-3);">
+        EVERY ARCHITECTURAL DECISION, NAMING RULE AND THREAT BOUNDARY IS WRITTEN DOWN
+      </div>
+    </div>
+  </section>
+
+  <section style="border-bottom:1px solid var(--line);">
+    <div style="display:grid;grid-template-columns:66px minmax(0,1fr);">
+      <div style="border-right:1px solid var(--line);padding:34px 0;display:flex;justify-content:center;">
+        <div style="font-family:'Spline Sans Mono',monospace;font-size:11.5px;letter-spacing:.2em;color:var(--muted-3);writing-mode:vertical-rl;">07 / DOCUMENTATION</div>
+      </div>
+      <div style="padding:70px 36px 66px;">
+        <h2 style="margin:0 0 36px;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">The specification is the product</h2>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;">
+          <sc-for list="{{ docs }}" as="d" hint-placeholder-count="6">
+            <a href="{{ d.href }}" style="display:block;padding:22px 22px 24px;border:1px solid var(--line-2);background:var(--card);color:var(--text);" style-hover="border-color:var(--accent-ink)">
+              <div style="font-family:'Spline Sans Mono',monospace;font-size:13.5px;color:var(--accent-ink);">{{ d.title }}</div>
+              <div style="margin-top:8px;font-size:14.5px;line-height:1.5;color:var(--muted-2);">{{ d.body }}</div>
+            </a>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer style="padding:40px 36px 60px;">
+    <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;font-family:'Spline Sans Mono',monospace;font-size:12px;color:var(--muted-4);">
+      <span style="display:flex;align-items:center;gap:10px;color:var(--muted);">
+        <svg width="20" height="20" sc-camel-view-box="0 0 64 64" aria-hidden="true"><path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="var(--muted)" stroke-width="5" stroke-linecap="round"></path><rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--accent)"></rect><rect x="28" y="21" width="8" height="6" rx="3" fill="var(--muted)"></rect><rect x="24" y="32" width="16" height="6" rx="3" fill="var(--muted)" opacity="0.65"></rect></svg>
+        KANEA — APACHE-2.0
+      </span>
+      <div style="flex:1"></div>
+      <div style="display:flex;gap:22px;">
+        <a href="https://github.com/m18h/kanea" style="color:var(--muted);" style-hover="color:var(--text)">GITHUB</a>
+        <a href="https://github.com/m18h/kanea/releases" style="color:var(--muted);" style-hover="color:var(--text)">RELEASES</a>
+        <a href="https://github.com/m18h/kanea/security/policy" style="color:var(--muted);" style-hover="color:var(--text)">SECURITY</a>
+      </div>
+      <span>BUILT BY MICHAEL K. ESSANDOH</span>
+    </div>
+  </footer>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;defaultTheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;'light' | 'dark'&quot;,&quot;section&quot;:&quot;Theme&quot;}}">
+class Component extends DCLogic {
+  state = { active: 0, count: 3, tls: 'acme', rate: true, policy: true, scaling: true, shot: 0, theme: 'light' };
+
+  componentDidMount() {
+    let t = null;
+    try { t = localStorage.getItem('kanea-site-theme'); } catch (e) {}
+    if (t !== 'dark' && t !== 'light') t = this.props.defaultTheme === 'dark' ? 'dark' : 'light';
+    this.applyTheme(t);
+  }
+  componentWillUnmount() { clearTimeout(this.copyTimer); }
+
+  applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem('kanea-site-theme', t); } catch (e) {}
+    this.setState({ theme: t });
+  }
+
+  shotData() {
+    return [
+      { label: 'Dashboard', path: '/', src: (window.__resources && window.__resources.shotDashboard) || 'assets/shot-dashboard.webp' },
+      { label: 'Services', path: '/services', src: (window.__resources && window.__resources.shotServices) || 'assets/shot-services.webp' },
+      { label: 'Service detail', path: '/services/shop/web', src: (window.__resources && window.__resources.shotServiceDetail) || 'assets/shot-service-detail.webp' },
+      { label: 'Pipelines', path: '/pipelines', src: (window.__resources && window.__resources.shotPipelines) || 'assets/shot-pipelines.webp' },
+      { label: 'Functions', path: '/functions', src: (window.__resources && window.__resources.shotFunctions) || 'assets/shot-functions.webp' },
+      { label: 'Events', path: '/events', src: (window.__resources && window.__resources.shotEvents) || 'assets/shot-events.webp' },
+      { label: 'Settings', path: '/settings', src: (window.__resources && window.__resources.shotSettings) || 'assets/shot-settings.webp' }
+    ];
+  }
+
+  partData() {
+    return [
+      { name: 'kanead', role: 'converges declared state', kind: 'CONTROL PLANE', title: 'The reconciler, and nothing else', body: 'One loop reads the store, diffs it against the node, and moves what has drifted. It is not a scheduler committee: the autoscaler writes one number and this converges it.', note: 'store · planner · ACME issuance · audit' },
+      { name: 'kanea-edge', role: 'north–south traffic', kind: 'DATA PLANE', title: 'A separate process on purpose', body: 'The edge is not a child of the control plane, so restarting kanead never drops a request in flight. TLS is issued in the control plane and published here.', note: 'routes · middleware in fixed order · h2c behind' },
+      { name: 'eBPF datapath', role: 'east–west, no CNI', kind: 'NETWORK', title: 'Three programs, compiled in', body: 'Connect-time service load balancing, per-project default-deny policy, and per-alloc plumbing. No network agent, no kvstore, no CNI — the programs travel inside the binary.', note: 'internal DNS · service VIPs · the autoscaler\u2019s own counters' },
+      { name: 'containerd', role: 'hardened runtime', kind: 'RUNTIME', title: 'No privileged escape hatch', body: 'Capabilities dropped to a reviewed uid-switching baseline, no-new-privileges, the default seccomp profile, per-alloc PID and IPC namespaces. Workloads share a cgroup with a hard ceiling; the control plane holds a memory floor beneath it.', note: 'installed by kanea init, pinned by SHA-256' },
+      { name: 'dashboard', role: 'embedded, one socket', kind: 'INTERFACE', title: 'Served by the daemon itself', body: 'React and shadcn/ui embedded in the binary, over one multiplexed websocket: services, allocs, events, streaming logs, rollout progress — and a shell into any running alloc, from the browser.', note: 'kanea ui' },
+      { name: 'mcp server', role: '20 tools, three tiers', kind: 'AGENTS', title: 'An agent can operate the platform', body: 'Over stdio and streamable HTTP. Tools reach the platform only over its own HTTP API — never a side channel — and no tool at any tier returns a secret.', note: 'deny-by-default on every route, audited' }
+    ];
+  }
+
+  renderVals() {
+    const s = this.state, p = this.partData(), active = p[s.active] || p[0];
+    const A = 'var(--accent-ink)';
+
+    const parts = p.map((d, i) => ({
+      name: d.name, role: d.role,
+      nameColor: i === s.active ? A : 'var(--text)',
+      select: () => this.setState({ active: i }),
+      style: 'text-align:left;cursor:pointer;padding:16px 17px 17px;font-family:inherit;'
+        + 'background:' + (i === s.active ? 'var(--card-2)' : 'var(--card)') + ';'
+        + 'border:1px solid ' + (i === s.active ? A : 'var(--line-2)') + ';'
+    }));
+
+    const knob = (label, on, toggle) => ({
+      label, toggle,
+      style: 'cursor:pointer;padding:9px 15px;font-family:"Spline Sans Mono",monospace;font-size:12.5px;'
+        + 'background:' + (on ? 'rgba(242,181,68,.1)' : 'var(--card)') + ';'
+        + 'border:1px solid ' + (on ? 'rgba(242,181,68,.55)' : 'var(--line-2)') + ';'
+        + 'color:' + (on ? A : 'var(--muted-2)') + ';'
+    });
+
+    const knobs = [
+      knob('count = ' + s.count, true, () => this.setState({ count: s.count >= 5 ? 1 : s.count + 1 })),
+      knob('tls = "' + s.tls + '"', s.tls !== 'plaintext', () => {
+        const m = ['acme', 'self-signed', 'provided', 'plaintext'];
+        this.setState({ tls: m[(m.indexOf(s.tls) + 1) % m.length] });
+      }),
+      knob('network policy', s.policy, () => this.setState({ policy: !s.policy })),
+      knob('rate_limit', s.rate, () => this.setState({ rate: !s.rate })),
+      knob('scaling', s.scaling, () => this.setState({ scaling: !s.scaling }))
+    ];
+
+    const card = (on) => 'display:grid;grid-template-columns:34px minmax(0,1fr);gap:14px;padding:15px 17px;align-items:start;'
+      + 'background:' + (on ? 'var(--card)' : 'transparent') + ';'
+      + 'border:1px solid ' + (on ? 'var(--line-2)' : 'var(--line-faint)') + ';'
+      + 'opacity:' + (on ? '1' : '.45') + ';';
+
+    const tlsBody = {
+      'acme': 'Let\u2019s Encrypt over HTTP-01, issued in the control plane and published to the edge. Renewal is a loop, not a cron job you wrote.',
+      'self-signed': 'Issued from the node\u2019s own CA with a real IP SAN — install it once per device with kanea ca show. No public name, no rate limit to spend.',
+      'provided': 'The certificate pair you already have, granted to this project by the node. A mode names a source, never a path.',
+      'plaintext': 'Explicit HTTP. Allowed because you typed it, and logged loudly.'
+    }[s.tls];
+
+    const outcomes = [
+      { n: '01', title: s.count + (s.count === 1 ? ' alloc placed' : ' allocs placed'), body: 'containerd, hardened baseline, 500 MHz / 512 MiB each, behind one service VIP on internal DNS.', style: card(true) },
+      { n: '02', title: s.tls === 'plaintext' ? 'TLS off' : 'TLS terminated at the edge', body: tlsBody, style: card(s.tls !== 'plaintext') },
+      { n: '03', title: s.policy ? 'One ingress path allowed' : 'Project default-deny only', body: s.policy ? 'analytics/collector may reach this service. Everything else is dropped in eBPF, before the packet costs anything.' : 'Without a policy block the project\u2019s default-deny still applies — nothing outside shop reaches web.', style: card(s.policy) },
+      { n: '04', title: s.rate ? '100 req/min per IP' : 'No rate limit', body: s.rate ? 'Token bucket in the edge, evaluated in a fixed middleware order with IP restriction and header rewriting.' : 'The edge passes every request through to your allocs.', style: card(s.rate) },
+      { n: '05', title: s.scaling ? 'Autoscaling on real RPS' : 'Fixed count', body: s.scaling ? 'Requests-per-second from the datapath\u2019s own counters, not a sidecar. The autoscaler writes a number; the reconciler converges it.' : 'Count stays where you put it until you change the spec.', style: card(s.scaling) }
+    ];
+
+    const seg = (color, text) => React.createElement('span', { style: { color } }, text);
+    const planLine = React.createElement('span', null,
+      seg('var(--ok)', '~ ' + s.count + ' allocs'),
+      seg('var(--muted-4)', '  ·  '),
+      seg(A, '+ 1 route'),
+      seg('var(--muted-4)', '  ·  ' + (s.scaling ? 'scaling 2–10' : 'no scaling') + '  ·  no destructive change')
+    );
+
+    const compare = [
+      { k: 'Processes you run', a: '1 binary', b: 'server + agent', c: 'server + client', d: 'dockerd' },
+      { k: 'Network layer', a: 'own eBPF', b: 'CNI plugin', c: 'CNI / bridge', d: 'overlay' },
+      { k: 'Load balancing', a: 'connect-time, in kernel', b: 'kube-proxy', c: 'Consul / external', d: 'ingress mesh' },
+      { k: 'TLS', a: 'built in, renews', b: 'cert-manager', c: 'external', d: 'external' },
+      { k: 'Dashboard', a: 'embedded', b: 'add-on', c: 'built in', d: 'none' },
+      { k: 'Autoscaling input', a: 'eBPF RPS + p95', b: 'metrics-server', c: 'APM plugin', d: 'none' },
+      { k: 'Agent API for LLMs', a: 'MCP, 20 tools', b: '—', c: '—', d: '—' },
+      { k: 'Multi-node', a: 'not the point', b: 'yes', c: 'yes', d: 'yes' }
+    ].map((r, i, arr) => Object.assign({}, r, {
+      style: 'display:grid;grid-template-columns:minmax(0,1.5fr) repeat(4,minmax(0,1fr));align-items:center;'
+        + (i < arr.length - 1 ? 'border-bottom:1px solid var(--line);' : '')
+        + 'background:' + (i % 2 ? 'var(--row-alt)' : 'transparent') + ';'
+    }));
+
+    const sd = this.shotData();
+    const shots = sd.map((d, i) => ({
+      label: d.label,
+      select: () => {
+        if (this.shotEl) { this.shotEl.src = d.src; this.shotEl.alt = 'Kanea dashboard — ' + d.label; }
+        if (this.pathEl) this.pathEl.textContent = d.path;
+        this.setState({ shot: i });
+      },
+      style: 'cursor:pointer;padding:9px 15px;font-family:"Spline Sans Mono",monospace;font-size:12.5px;'
+        + 'background:' + (i === s.shot ? 'rgba(242,181,68,.1)' : 'var(--card)') + ';'
+        + 'border:1px solid ' + (i === s.shot ? 'rgba(242,181,68,.55)' : 'var(--line-2)') + ';'
+        + 'color:' + (i === s.shot ? A : 'var(--muted-2)') + ';'
+    }));
+
+    return {
+      isDark: s.theme === 'dark',
+      isLight: s.theme !== 'dark',
+      toggleTheme: () => this.applyTheme(s.theme === 'dark' ? 'light' : 'dark'),
+      copyLabel: s.copied ? 'COPIED' : 'COPY',
+      copyInstall: () => {
+        const cmd = 'curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash';
+        if (navigator.clipboard) navigator.clipboard.writeText(cmd).catch(() => {});
+        this.setState({ copied: true });
+        clearTimeout(this.copyTimer);
+        this.copyTimer = setTimeout(() => this.setState({ copied: false }), 1600);
+      },
+      shots,
+      shotRef: (el) => { this.shotEl = el; },
+      pathRef: (el) => { this.pathEl = el; },
+      uiFacts: [
+        { k: 'ONE SOCKET', v: 'Services, allocs, events, logs and charts all arrive multiplexed over a single websocket.' },
+        { k: 'SHELL IN THE BROWSER', v: 'Exec into any running alloc from the service page, over the same websocket the CLI uses.' },
+        { k: 'ROLLOUT PROGRESS', v: 'The planner\u2019s own spec-hash rule, on the wire — every restart and deploy visible as it happens.' },
+        { k: 'SETTINGS THAT APPLY LIVE', v: 'Backup destination and notification channels change at runtime; unit-owned values are shown read-only.' }
+      ],
+      parts,
+      activeKind: active.kind, activeTitle: active.title, activeBody: active.body, activeNote: active.note,
+      knobs, count: String(s.count), tls: s.tls,
+      policyOn: s.policy, rateOn: s.rate, scalingOn: s.scaling,
+      outcomes, planLine, compare,
+      claims: [
+        { n: '01', t: 'The installer verifies, then stops. It generates no keys and starts nothing.' },
+        { n: '02', t: 'kanea init installs containerd, runc and buildkitd at versions pinned by SHA-256 inside the binary.' },
+        { n: '03', t: 'The eBPF datapath needs no component — its programs travel inside kanea.' },
+        { n: '04', t: 'A node that ran Docker yesterday runs it tomorrow: own prefix, own socket.' }
+      ],
+      sessionStats: [
+        { k: 'COMMANDS TYPED', v: '2' },
+        { k: 'YAML WRITTEN', v: '0' },
+        { k: 'AGENTS INSTALLED', v: '0' },
+        { k: 'CLUSTER NEEDED', v: 'no' }
+      ],
+      ships: [
+        { n: '01', title: 'Live dashboard', body: 'Services, allocs, events, streaming logs, real-time charts, rollout progress on every deploy — and a shell into any running alloc, from the browser.' },
+        { n: '02', title: 'MCP server', body: 'Twenty tools in three tiers over stdio and streamable HTTP, so an agent can operate the platform. No tool at any tier returns a secret.' },
+        { n: '03', title: 'GitOps & pipelines', body: 'In-process git sync, HMAC-signed webhooks, rootless BuildKit builds. Builds are serialised and refused when full — never silently queued behind a wall.' },
+        { n: '04', title: 'eBPF autoscaling', body: 'CPU, memory, RPS and p95 from containerd, the datapath\u2019s counters and the edge. It writes one number; the reconciler converges.' },
+        { n: '05', title: 'Notifications', body: 'Telegram, Slack, Discord, ntfy, SMTP and webhooks, filtered by glob and coalesced. Egress checked at dial time against every resolved address.' },
+        { n: '06', title: 'Backups & DR', body: 'AEAD-encrypted archives replicated to S3 by change data capture, with staged and offline restore. A truncated archive cannot half-restore a platform.' },
+        { n: '07', title: 'Auth & audit', body: 'Deny-by-default on every API, websocket and MCP route. Local accounts, OIDC with PKCE, LDAP with mandatory TLS. Every privileged action audited.' },
+        { n: '08', title: 'Signed releases', body: 'Keyless Sigstore signatures bound to the release workflow — no long-lived key to guard, rotate and eventually leak. The proof is in a public log.' }
+      ],
+      reqs: [
+        { k: 'Platform', v: 'linux/amd64 · linux/arm64' },
+        { k: 'Kernel', v: '≥ 5.10, cgroups v2 unified' },
+        { k: 'Init system', v: 'systemd' },
+        { k: 'Clock', v: 'NTP-synchronised' }
+      ],
+      docs: [
+        { title: 'Overview', body: 'Concepts, the shape of a deployment, where to start', href: 'https://m18h.github.io/kanea/docs/#overview' },
+        { title: 'Architecture', body: 'The processes, the store, and why the edge is separate', href: 'https://m18h.github.io/kanea/docs/#arch' },
+        { title: 'Job spec reference', body: 'Every block, every field, and the sixteen rules', href: 'https://m18h.github.io/kanea/docs/#spec' },
+        { title: 'CLI reference', body: 'Every command, with what it actually does', href: 'https://m18h.github.io/kanea/docs/#cli' },
+        { title: 'THREAT_MODEL.md', body: 'Boundaries, adversaries, OWASP Top 10 as built', href: 'https://github.com/m18h/kanea/blob/main/docs/THREAT_MODEL.md' },
+        { title: 'DR_RUNBOOK.md', body: 'Disaster recovery — read it before you need it', href: 'https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md' }
+      ],
+      rpsRef: (el) => { this.rpsEl = el; },
+      p95Ref: (el) => { this.p95El = el; },
+      cpuRef: (el) => { this.cpuEl = el; }
+    };
+  }
 }
 
-<span class="k">service</span> <span class="s">"web"</span> {
-  project = <span class="s">"shop"</span>
-  count   = 3
-
-  <span class="k">task</span> <span class="s">"app"</span> {
-    image = <span class="s">"registry.example.com/shop/web:1.4.0"</span>
-
-    env = {
-      NODE_ENV      = <span class="s">"production"</span>
-      DATABASE_URL  = <span class="s">"secret:shop/database-url"</span>   <span class="c"># never inlined</span>
-      DATABASE_HOST = <span class="s">"${service.postgres.host}"</span>    <span class="c"># → postgres.shop.kanea</span>
-    }
-
-    <span class="k">resources</span> {
-      cpu    = 500   <span class="c"># MHz</span>
-      memory = 512   <span class="c"># MiB</span>
-    }
-  }
-
-  <span class="k">network</span> {
-    <span class="k">port</span> <span class="s">"http"</span> { container = 3000 }
-    <span class="k">policy</span> { allow_from = [<span class="s">"analytics/collector"</span>] }  <span class="c"># else: default-deny</span>
-  }
-
-  <span class="k">expose</span> {
-    domains = [<span class="s">"${domain}"</span>]
-    <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
-    <span class="k">rate_limit</span> {
-      requests = 100
-      window   = <span class="s">"1m"</span>
-      per      = <span class="s">"ip"</span>
-      burst    = 20
-    }
-  }
-
-  <span class="k">health_check</span> <span class="s">"http"</span> {
-    type     = <span class="s">"http"</span>
-    path     = <span class="s">"/healthz"</span>
-    port     = <span class="s">"http"</span>
-    interval = <span class="s">"10s"</span>
-    failures = 3
-  }
-
-  <span class="k">scaling</span> {
-    min = 2
-    max = 10
-    <span class="k">metric</span> <span class="s">"cpu"</span> { target = 70 }   <span class="c"># percent of resources.cpu</span>
-    <span class="k">metric</span> <span class="s">"rps"</span> { target = 500 }  <span class="c"># from eBPF, not from a sidecar</span>
-    cooldown = <span class="s">"2m"</span>
-  }
-
-  <span class="k">update</span> {
-    strategy     = <span class="s">"rolling"</span>
-    max_parallel = 1
-    min_healthy  = <span class="s">"30s"</span>
-  }
-}</pre>
-      </div>
-
-      <p class="note" style="margin-top:22px">
-        <code>kanea plan</code> gives you the diff before <code>kanea run</code> applies it —
-        and both take selectors (<code>kanea run app.hcl shop/web</code>) to scope one
-        project or service out of a file.
-        Secrets are referenced as <code>secret:&lt;path&gt;</code>, scoped to their own project
-        at validation time, and injected as tmpfs files — a spec that reaches for another
-        project's secret fails to parse, not at runtime.
-      </p>
-    </div>
-  </section>
-
-  <!-- ================= features ================= -->
-  <section id="features">
-    <div class="wrap">
-      <p class="eyebrow">What ships</p>
-      <h2>Everything is in the one binary</h2>
-      <p class="lede">
-        No agents to install alongside it, no operator to reconcile the operator,
-        no separate metrics stack to stand up first.
-      </p>
-
-      <div class="grid g3">
-        <div class="card">
-          <h3>Live dashboard</h3>
-          <p>React and shadcn/ui, embedded in the binary and served by the daemon over one
-             multiplexed websocket: services, allocs, events, streaming logs, real-time
-             charts, rollout progress on every deploy — and a <b>shell into any running
-             alloc</b>, right from the browser. Settings changes what changes at runtime.
-             <code>kanea ui</code> opens it.</p>
-        </div>
-        <div class="card">
-          <h3>MCP server</h3>
-          <p>Twenty tools in three tiers, over stdio and streamable HTTP, so an agent can operate
-             the platform. Tools reach it only over its own HTTP API — never a side channel — and
-             no tool at any tier returns a secret.</p>
-        </div>
-        <div class="card">
-          <h3>GitOps &amp; pipelines</h3>
-          <p>In-process git sync, HMAC-signed webhooks, and rootless BuildKit builds.
-             Builds are serialised and refused when full — never silently queued behind a wall.</p>
-        </div>
-        <div class="card">
-          <h3>eBPF autoscaling</h3>
-          <p>CPU, memory, requests-per-second and p95 latency, scraped from containerd, the
-             datapath's own counters and the edge. The autoscaler writes one number and the
-             reconciler converges — it is not a second scheduler.</p>
-        </div>
-        <div class="card">
-          <h3>Notifications</h3>
-          <p>Telegram, Slack, Discord, ntfy, SMTP and generic webhooks, filtered by glob and
-             coalesced. Egress is checked at dial time against every resolved address; redirects
-             are refused.</p>
-        </div>
-        <div class="card">
-          <h3>Backups &amp; DR</h3>
-          <p>AEAD-encrypted archives replicated to S3 by change data capture, with staged and
-             offline restore. A truncated archive cannot restore cleanly to half a platform,
-             and a new destination is probed with a test write before it replaces a working one.</p>
-        </div>
-        <div class="card">
-          <h3>Auth &amp; audit</h3>
-          <p>Deny-by-default on every API, websocket and MCP route. Accounts and tokens live in
-             the store, OIDC with PKCE and LDAP (TLS-mandatory, deny-by-default group mapping)
-             sign in beside them, and every privileged action is audited.</p>
-        </div>
-        <div class="card">
-          <h3>Signed releases</h3>
-          <p>Keyless Sigstore signatures bound to the release workflow itself — no long-lived
-             signing key to guard, rotate, and eventually leak. The proof is in a public
-             transparency log.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= install ================= -->
-  <section id="install">
-    <div class="wrap">
-      <p class="eyebrow">Install</p>
-      <h2>Two steps, and none of them are hidden</h2>
-      <p class="lede">
-        The installer fetches the binary, verifies it, and stops. It generates no keys
-        and starts nothing — those are decisions with consequences, and a script that
-        made them for you would be making them at the moment you understand the node
-        least. <code>kanea init</code> then installs the runtime itself: containerd,
-        runc and rootless buildkitd, at versions pinned by SHA-256 inside the binary
-        — the network layer needs no component, its eBPF programs travel inside kanea. Under its own prefix, on its own socket —
-        a node that ran Docker yesterday runs it tomorrow.
-      </p>
-
-      <ol class="steps">
-        <li>
-          <h3>Install the binary</h3>
-          <p>Checksum verification is mandatory. If <code>cosign</code> is on
-             <code>PATH</code>, the Sigstore signature is verified too.</p>
-          <pre class="plain">curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash</pre>
-        </li>
-        <li>
-          <h3>Run the first-install ceremony</h3>
-          <p>Checks the node, <b>installs the runtime</b>, runs the master-key ceremony,
-             writes the systemd units — then starts the control plane, asks for your admin
-             username and password, and prints where everything is: the dashboard URL, the
-             internal DNS address, the subnet layout. Have somewhere to record the key
-             <em>before</em> you start: it is shown once, and without it every backup is
-             unreadable.</p>
-          <pre class="plain">sudo kanea init</pre>
-          <p>Every component is pinned by version and SHA-256 in the binary — that table is
-             also the version matrix <code>kanea doctor</code> enforces, so there is no
-             second copy to drift. <code>kanea install --list</code> shows it;
-             <code>--dry-run</code> downloads and verifies everything without writing a byte.
-             Already running a containerd you want to keep? <code>--containerd external</code>
-             adopts it instead.</p>
-        </li>
-        <li>
-          <h3>Deploy something</h3>
-          <pre class="plain">kanea run --image nginx:1.27-alpine --name web --project demo
-kanea ui</pre>
-        </li>
-      </ol>
-
-      <h3 id="homebrew" style="margin:38px 0 10px">Or through Homebrew</h3>
-      <p class="lede" style="margin-bottom:18px">
-        The CLI, on macOS and Linux. On a Mac it is the authoring half —
-        <code>kanea plan</code> validates job specs with file-and-line
-        diagnostics, no daemon needed; the platform itself runs on Linux, and a
-        <em>node</em> belongs to the installer above.
-      </p>
-      <pre class="plain">brew tap m18h/kanea https://github.com/m18h/kanea
-brew trust m18h/kanea
-brew install kanea</pre>
-
-      <h3 style="margin:38px 0 10px">Or install it by hand</h3>
-      <p class="lede" style="margin-bottom:18px">
-        Same artefacts, same verification, nothing piped anywhere. Replace
-        <code>VERSION</code> with a release tag.
-      </p>
-      <div class="window">
-        <div class="bar"><i></i><i></i><i></i><span>manual install</span></div>
-<pre>VERSION=v0.17.2; ARCH=amd64
-BASE=https://github.com/m18h/kanea/releases/download/$VERSION
-
-curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
-curl -fLO $BASE/checksums.txt
-curl -fLO $BASE/checksums.txt.sig
-curl -fLO $BASE/checksums.txt.pem
-
-<span class="c"># The signature covers checksums.txt; checksums.txt covers every archive</span>
-<span class="c"># and every SBOM (kanea_&lt;ver&gt;_&lt;os&gt;_&lt;arch&gt;.tar.gz.spdx.json, SPDX 2.3).</span>
-cosign verify-blob \
-  --certificate checksums.txt.pem \
-  --signature   checksums.txt.sig \
-  --certificate-identity-regexp <span class="s">"https://github.com/m18h/kanea/"</span> \
-  --certificate-oidc-issuer <span class="s">"https://token.actions.githubusercontent.com"</span> \
-  checksums.txt
-
-sha256sum --ignore-missing -c checksums.txt
-tar xzf kanea_${VERSION#v}_linux_$ARCH.tar.gz
-sudo install -m 0755 kanea /usr/local/bin/kanea</pre>
-      </div>
-
-      <h3 style="margin:38px 0 14px">Requirements</h3>
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th>Requirement</th><th>Version</th></tr></thead>
-          <tbody>
-            <tr><td>Platform</td><td><code>linux/amd64</code>, <code>linux/arm64</code></td></tr>
-            <tr><td>CLI only (Homebrew)</td><td>also macOS <code>arm64</code> · <code>amd64</code> — spec authoring; the node is Linux</td></tr>
-            <tr><td>Kernel</td><td><code>≥ 5.10</code>, cgroups v2 unified hierarchy</td></tr>
-            <tr><td>Init system</td><td>systemd</td></tr>
-            <tr><td>Clock</td><td>NTP-synchronised</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="note" style="margin-top:20px">
-        That is the whole list. containerd, runc and rootless buildkitd are installed by
-        <code>kanea init</code> at pinned versions — Kanea supplies them, not you.
-      </p>
-
-      <h3 style="margin:38px 0 10px">Air-gapped nodes</h3>
-      <p class="lede" style="margin-bottom:18px">
-        A node with no egress is a supported installation, not a workaround. Build a bundle
-        where there is a network, carry it across, install from it. The same hashes govern
-        both paths, so it is the same code — not a second installer that rots between
-        releases.
-      </p>
-      <div class="window">
-        <div class="bar"><i></i><i></i><i></i><span>air-gapped install</span></div>
-<pre><span class="c"># on a machine with a network</span>
-kanea bundle create --arch amd64 -o kanea-bundle.tar.gz
-
-<span class="c"># on the air-gapped node</span>
-sudo kanea init --bundle kanea-bundle.tar.gz</pre>
-      </div>
-      <p class="note" style="margin-top:20px">
-        The bundle carries no hashes of its own. Its contents are checked against the ones
-        compiled into the installing node's binary — a bundle that supplied its own would be
-        a bundle that authenticates itself. Releases publish one per architecture, covered by
-        the same signed <code>checksums.txt</code>.
-      </p>
-      <p class="note" style="margin-top:20px">
-        <code>kanea doctor</code> checks all of this on a live node — dependencies, versions,
-        bpffs, disk and clock — and <code>kanea init</code> refuses to proceed if the node
-        cannot support what it is about to be given.
-      </p>
-    </div>
-  </section>
-
-  <!-- ================= docs ================= -->
-  <section id="docs">
-    <div class="wrap">
-      <p class="eyebrow">Documentation</p>
-      <h2>The specification is the product</h2>
-      <p class="lede">
-        Kanea was specified before it was written, and the document is still the north star.
-        Every architectural decision, naming rule and threat boundary is written down.
-      </p>
-      <div class="docs">
-        <a class="doc" href="docs/#overview">
-          <b>Overview</b><span>Concepts, the shape of a deployment, where to start</span>
-        </a>
-        <a class="doc" href="docs/#arch">
-          <b>Architecture</b><span>The processes, the store, and why the edge is separate</span>
-        </a>
-        <a class="doc" href="docs/#spec">
-          <b>Job spec reference</b><span>Every block, every field, and the sixteen rules</span>
-        </a>
-        <a class="doc" href="docs/#cli">
-          <b>CLI reference</b><span>Every command, with what it actually does</span>
-        </a>
-        <a class="doc" href="https://github.com/m18h/kanea/blob/main/PRD.md">
-          <b>PRD.md</b><span>The full product requirements — the north star</span>
-        </a>
-        <a class="doc" href="https://github.com/m18h/kanea/blob/main/docs/THREAT_MODEL.md">
-          <b>THREAT_MODEL.md</b><span>Boundaries, adversaries, OWASP Top 10 as built</span>
-        </a>
-      </div>
-      <p class="cmd-note" style="margin-top:16px">
-        Also in the repository:
-        <a href="https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md">the DR runbook</a> —
-        read it before you need it — and
-        <a href="https://github.com/m18h/kanea/blob/main/AGENTS.md">AGENTS.md</a>,
-        the conventions and binding constraints contributors work under.
-      </p>
-    </div>
-  </section>
-
-</main>
-
-<footer>
-  <div class="wrap">
-    <span>Kanea — Apache-2.0</span>
-    <a href="https://github.com/m18h/kanea">GitHub</a>
-    <a href="https://github.com/m18h/kanea/releases">Releases</a>
-    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
-    <span class="sp">Built by Michael K. Essandoh</span>
-  </div>
-</footer>
-
-<script>
-  // The only script on the page: copy the install command.
-  document.getElementById('copy').addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    try {
-      await navigator.clipboard.writeText(btn.dataset.copy);
-      btn.textContent = 'Copied';
-    } catch {
-      btn.textContent = 'Select it';
-    }
-    setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
-  });
 </script>
 
-</body>
-</html>
+</body></html>

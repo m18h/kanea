@@ -260,7 +260,12 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
 /spikes/               # M0 throwaway validation code (own go.mod per spike)
 /docs/                 # THREAT_MODEL.md (M5, written), DR_RUNBOOK.md (stub; M10),
                        # VALIDATION.md (the real-hardware runs §21 needs)
-/site/                 # the landing page (GitHub Pages, M10) — hand-written, no build step.
+/site/                 # the landing page (GitHub Pages, M10) — no build step, but no longer
+                       # hand-written: index.html is a design-tool export, rendered at load by
+                       # site/assets/dc-runtime.js over React. Edit it in the tool and re-export,
+                       # never by hand — the {{ }} bindings and the component class in the
+                       # inline text/x-dc script are its source. Assets are all local (fonts,
+                       # React, screenshots as WebP); nothing is fetched from a CDN.
                        # install.sh there is COPIED from scripts/ by .github/workflows/pages.yml
                        # and gitignored: two copies drift, and the one that drifts is curled
 /scripts/install.sh    # the installer; its asset names are a contract with .github/workflows/release.yml
@@ -294,9 +299,13 @@ things that drift silently and every one of them has drifted at least once:
    `site/index.html` (feature cards + quickstart), `site/docs/index.html` (the CLI and
    architecture references), and `docs/DR_RUNBOOK.md` where backup/restore behaviour
    moved. The quickstarts must show the *current* flow, not the flow the last release had.
-2. **Version strings that name a release.** The manual-install examples pin one:
-   `VERSION=vX.Y.Z` in `README.md` **and** `site/index.html`. Bump both to the tag being
-   cut. (This shipped as `v0.1.0` for four releases before anyone noticed.)
+2. **Version strings that name a release.** The manual-install example pins one:
+   `VERSION=vX.Y.Z` in `README.md`. Bump it to the tag being cut. (This shipped as
+   `v0.1.0` for four releases before anyone noticed.) **`site/index.html` no longer
+   carries one** — the redesigned landing page shows only the `install.sh` one-liner and
+   the Homebrew tap, both of which resolve the version themselves, so there is nothing
+   there to go stale. If a manual-install block with a pinned version ever returns to the
+   site, it returns to this list with it.
 3. **PRD version references.** `README.md`'s documentation table and this file's header
    both name the PRD version ("the north star (v1.NN)"). They must match `PRD.md`'s
    actual header. (README said v1.37 while the PRD was at v1.44.)
