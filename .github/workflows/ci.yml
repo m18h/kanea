@@ -196,15 +196,24 @@ jobs:
 
       # lvh is Cilium's kernel-image runner — the same ecosystem as the loader
       # library this exercises, which is why its images carry the kernels that
-      # matter to it.
+      # matter to it. host-mount lands the repo at /host inside the VM, and the
+      # runner has no QEMU of its own, hence install-dependencies.
+      #
+      # The image tag floats (5.10-main, rebuilt from 5.10.y) where the MinIO
+      # image in s3-interop is pinned by digest, and the difference is
+      # deliberate: there the service is incidental and a moving version makes
+      # "they changed" and "we changed" indistinguishable, whereas here the
+      # kernel IS the subject. Pinning a dated snapshot would quietly test an
+      # ever-staler kernel and never notice a regression arriving through a
+      # 5.10.y backport — which is the thing this job exists to see.
       - name: Load the object under a 5.10 kernel
-        uses: cilium/little-vm-helper@v0.0.26
+        uses: cilium/little-vm-helper@v0.0.30
         with:
           test-name: bpf-floor-5.10
           image: complexity-test
           image-version: "5.10-main"
           host-mount: ./
-          install-dependencies: false
+          install-dependencies: "true"
           cmd: |
             set -eu
             uname -r
