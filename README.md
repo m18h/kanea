@@ -1,13 +1,14 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./logo/kanea-mark-dark.svg">
-  <img src="./logo/kanea-mark-light.svg" alt="" width="88" height="88">
-</picture>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./logo/kanea-mark-dark.svg">
+    <img src="./logo/kanea-mark-light.svg" alt="" width="42" height="42" align="top">
+  </picture>
+  &nbsp;Kanea
+</h1>
 
-# Kanea
-
-**Container orchestration in one binary.**
+<p align="center"><strong>Container orchestration in one binary.</strong></p>
 
 <img src="./site/assets/shot-dashboard.webp" alt="The Kanea dashboard: counts for services, allocations, builds and events; sparklines for CPU, memory, load and running allocations; and panels for recent events, autoscaler decisions and backup replication" width="900">
 
