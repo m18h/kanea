@@ -258,7 +258,8 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
 /internal/mcp/         # MCP server (tools, resources, transports)
 /dashboard/            # React SPA (own package.json; build → go:embed) — scaffolded in M4
 /spikes/               # M0 throwaway validation code (own go.mod per spike)
-/docs/                 # THREAT_MODEL.md (M5, written), DR_RUNBOOK.md (stub; M10)
+/docs/                 # THREAT_MODEL.md (M5, written), DR_RUNBOOK.md (stub; M10),
+                       # VALIDATION.md (the real-hardware runs §21 needs)
 /site/                 # the landing page (GitHub Pages, M10) — hand-written, no build step.
                        # install.sh there is COPIED from scripts/ by .github/workflows/pages.yml
                        # and gitignored: two copies drift, and the one that drifts is curled
@@ -337,3 +338,4 @@ Each milestone's definition-of-done: OWASP §14 checks reviewed, `govulncheck` c
 | `LICENSE` | Apache-2.0 |
 | `docs/THREAT_MODEL.md` | Threat model — boundaries, adversaries, §14 status as built (M5) |
 | `docs/DR_RUNBOOK.md` | Disaster recovery procedure (to be written during M10) |
+| `docs/VALIDATION.md` | What has been exercised on real hardware — the §21 claims no test can stand in for |
