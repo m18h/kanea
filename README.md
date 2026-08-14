@@ -1,26 +1,23 @@
+<div align="center">
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./logo/kanea-mark-dark.svg">
-  <img src="./logo/kanea-mark-light.svg" alt="Kanea" width="72" height="72">
+  <img src="./logo/kanea-mark-light.svg" alt="" width="88" height="88">
 </picture>
 
 # Kanea
 
-[![CI](https://github.com/m18h/kanea/actions/workflows/ci.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/ci.yml)
-[![Release](https://github.com/m18h/kanea/actions/workflows/release.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/release.yml)
-[![Latest release](https://img.shields.io/github/v/release/m18h/kanea?label=release)](https://github.com/m18h/kanea/releases/latest)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
-[![Go](https://img.shields.io/badge/go-1.26-00ADD8)](./go.mod)
-
 **Container orchestration in one binary.**
 
-Kanea is a lightweight container orchestration platform written in Go. Services run
-on **containerd**, networking and load balancing are **Kanea's own eBPF datapath**, TLS comes from **Let's Encrypt, a per-node CA, or
-certificates you already have**, and it ships a
-real-time **shadcn/ui dashboard**, an **MCP server** for AI agents, **GitOps
-pipelines** (rootless BuildKit), **eBPF-driven autoscaling**, and **encrypted
-S3-backed state replication** with backup and restore.
+<img src="./site/assets/shot-dashboard.webp" alt="The Kanea dashboard: counts for services, allocations, builds and events; sparklines for CPU, memory, load and running allocations; and panels for recent events, autoscaler decisions and backup replication" width="900">
+
+Kanea is a lightweight container orchestration platform written in Go. Services run on **containerd**, networking and load balancing are **Kanea's own eBPF datapath**, TLS comes from **Let's Encrypt, a per-node CA, or certificates you already have**, and it ships a real-time **shadcn/ui dashboard**, an **MCP server** for AI agents, **GitOps pipelines** (rootless BuildKit), **eBPF-driven autoscaling**, and **encrypted S3-backed state replication** with backup and restore.
+
+[![CI](https://github.com/m18h/kanea/actions/workflows/ci.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/ci.yml) [![Release](https://github.com/m18h/kanea/actions/workflows/release.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/release.yml) [![Latest release](https://img.shields.io/github/v/release/m18h/kanea?label=release)](https://github.com/m18h/kanea/releases/latest) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE) [![Go](https://img.shields.io/badge/go-1.26-00ADD8)](./go.mod)
 
 **[Website](https://m18h.github.io/kanea/)** · [PRD](./PRD.md) · [Threat model](./docs/THREAT_MODEL.md) · [DR runbook](./docs/DR_RUNBOOK.md)
+
+</div>
 
 ## Install
 
