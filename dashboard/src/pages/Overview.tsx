@@ -78,7 +78,10 @@ export function Overview() {
     retry: false,
   })
 
-  const list = services.data?.services ?? []
+  // Functions are services too, but every surface counts them under
+  // Functions — the sidebar badge and the Services page both filter them
+  // out, so the tile must agree rather than show a number one higher.
+  const list = (services.data?.services ?? []).filter((s) => s.function == null)
   const byService = groupAllocs(allocs.data?.allocs ?? [])
   const healthy = list.filter(
     (svc) => serviceHealth(svc, byService.get(`${svc.Project}/${svc.Service}`) ?? []).settled,

@@ -13,6 +13,8 @@ import {
   nodeStats,
   onChange,
   restartService,
+  runLogFor,
+  runsAt,
   scaleService,
   services,
   servicesPayload,
@@ -184,11 +186,11 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
         module: svc.image,
         count: svc.count,
         runtime: 'io.containerd.wasmtime.v1',
-        memory_bytes: 128 * 1024 * 1024,
-        http: true,
-        domains: [],
-        events: [{ on: ['deploy.finished'], path: '/hooks/deploy' }],
-        crons: [{ schedule: '*/15 * * * *', path: '/thumbnails/sweep' }],
+          memory_bytes: 64 * 1024 * 1024,
+          http: true,
+          domains: [],
+          events: [{ on: ['deploy.failed', 'service.unhealthy'], path: '/kanea/event' }],
+          crons: [{ schedule: '0 3 * * *', path: '/nightly' }],
         status: 'active',
         running: allocs.filter(
           (a) => a.project === svc.project && a.service === svc.service && a.state === 'running',
@@ -202,14 +204,15 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     })
   }
   if (path === '/v1/pipelines') {
-    return json(res, 200, { runs: mockRuns() })
+    return json(res, 200, { runs: runsAt(Date.now()) })
   }
   const runPath = /^\/v1\/pipelines\/([^/]+)\/([^/]+)\/([^/]+)(\/logs)?$/.exec(path)
   if (runPath) {
-    const run = mockRuns()[0]
+    const run = runsAt(Date.now()).find((r) => r.id === runPath[3])
+    if (!run) return json(res, 404, { error: 'no such run' })
     if (runPath[4]) {
       res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-      res.end('#1 resolving git ref main\n#2 building with buildkit\n#3 exporting image\ndone: sha256:90ffaa1\n')
+      res.end(runLogFor(run))
       return
     }
     return json(res, 200, run)
@@ -223,14 +226,14 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
           created_at: new Date(Date.now() - 6 * 3600 * 1000).toISOString(),
           index: currentIndex() - 5,
           reason: 'interval',
-          node: 'media-node',
+          node: 'shop-node',
           version: 'v0.16.1',
           snapshot: { name: 'snapshot.bin.enc', size: 1_482_112, sha256: 'ab'.repeat(32) },
           counts: { services: services.length, allocs: allocs.length, secrets: 6, certs: 3, projects: 2 },
         },
       ],
       replication: {
-        sink: 's3://kanea-backups/media-node',
+        sink: 's3://kanea-backups/shop-node',
         shipped_to: currentIndex() - 1,
         last_segment_at: new Date(Date.now() - 42 * 1000).toISOString(),
         last_snapshot_at: new Date(Date.now() - 6 * 3600 * 1000).toISOString(),
@@ -247,15 +250,15 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
         allocs: allocs.filter((a) => a.project === name).length,
         running: allocs.filter((a) => a.project === name && a.state === 'running').length,
         git:
-          name === 'blog'
+          name === 'shop'
             ? {
-                url: 'https://git.lab.example/blog.git',
+                url: 'https://github.com/example/shop-deploy.git',
                 branch: 'main',
-                last_commit: '90ffaa1',
+                last_commit: 'f47c1e2',
                 last_sync_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
               }
             : null,
-        notifications: name === 'media' ? ['telegram'] : [],
+        notifications: name === 'shop' ? ['telegram', 'slack'] : [],
       })),
     })
   }
@@ -264,8 +267,13 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (method === 'GET') {
       return json(res, 200, {
         project: projectNotify[1],
-        notifications: { Telegram: { TokenRef: 'secret:media/telegram', ChatID: '42' }, On: ['*.failed'], Severity: 'warning' },
-        git_managed: projectNotify[1] === 'blog',
+        notifications: {
+          Telegram: { TokenRef: 'secret:shop/telegram-bot', ChatID: '-1001234567890' },
+          Slack: { URLRef: 'secret:shop/slack-webhook' },
+          On: ['deploy.failed', 'service.unhealthy', 'scale.*'],
+          Severity: 'warning',
+        },
+        git_managed: projectNotify[1] === 'shop',
       })
     }
     return json(res, 200, {})
@@ -336,7 +344,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
   if (path === '/v1/spec/source') {
     return json(res, 200, {
-      hcl: `# generated from the mock's desired state\nproject "media" {\n  service "jellyfin" {\n    count = 2\n    task { image = "jellyfin/jellyfin:10.9.11" }\n  }\n}\n`,
+      hcl: `# generated from the mock's desired state\nproject "shop" {\n  service "web" {\n    count = 3\n    task { image = "registry.example.com/shop/web:f47c1e2" }\n  }\n}\n`,
       generated: true,
     })
   }
@@ -486,38 +494,12 @@ function execShell(ws: WebSocket, req: IncomingMessage): void {
 
 // ---- fixtures ----
 
-function mockRuns() {
-  const finished = new Date(Date.now() - 40 * 60 * 1000).toISOString()
-  const started = new Date(Date.now() - 42 * 60 * 1000).toISOString()
-  return [
-    {
-      id: '01J9MOCKRUN01',
-      project: 'blog',
-      service: 'site',
-      state: 'succeeded',
-      trigger: 'webhook',
-      triggered_by: 'git push (90ffaa1)',
-      commit: '90ffaa1c2b3d',
-      ref: 'refs/heads/main',
-      image: 'ghcr.io/m18h/blog:2026-08-01',
-      digest: 'sha256:' + 'cd'.repeat(32),
-      steps: [
-        { name: 'sync', state: 'succeeded', started_at: started, finished_at: started },
-        { name: 'build', state: 'succeeded', started_at: started, finished_at: finished },
-        { name: 'deploy', state: 'succeeded', started_at: finished, finished_at: finished },
-      ],
-      started_at: started,
-      finished_at: finished,
-    },
-  ]
-}
-
 function settingsView() {
   return {
     node: {
       listen: '0.0.0.0:8600',
       tls: true,
-      base_domain: 'lab.example',
+      base_domain: 'example.com',
       network_mode: 'ebpf (mock)',
       node_cidr: '10.100.1.0/24',
       cluster_cidr: '10.100.0.0/16',
@@ -531,7 +513,7 @@ function settingsView() {
       source: 'store',
       settings: {
         s3: {
-          url: 's3://kanea-backups/media-node',
+          url: 's3://kanea-backups/shop-node',
           endpoint: 'https://s3.lab.example',
           region: 'us-east-1',
           access_key: 'MOCKKEY',
@@ -542,7 +524,7 @@ function settingsView() {
         retention: 10,
       },
       status: {
-        sink: 's3://kanea-backups/media-node',
+        sink: 's3://kanea-backups/shop-node',
         shipped_to: currentIndex() - 1,
         last_segment_at: new Date(Date.now() - 42 * 1000).toISOString(),
         last_snapshot_at: new Date(Date.now() - 6 * 3600 * 1000).toISOString(),
@@ -565,11 +547,11 @@ function settingsView() {
 function auditEntries() {
   const now = Date.now()
   const actions = [
-    { action: 'service.restart', target: 'media/jellyfin', result: 'ok', status: 200 },
-    { action: 'service.apply', target: 'blog/site', result: 'ok', status: 200 },
+    { action: 'service.restart', target: 'shop/web', result: 'ok', status: 200 },
+    { action: 'service.apply', target: 'shop/api', result: 'ok', status: 200 },
     { action: 'auth.login', target: '', result: 'ok', status: 200 },
     { action: 'auth.login', target: '', result: 'denied', status: 401, actor: 'mallory' },
-    { action: 'alloc.exec', target: 'media/media-jellyfin-0', result: 'ok', status: 200 },
+    { action: 'alloc.exec', target: 'shop/shop-postgres-0', result: 'ok', status: 200 },
   ]
   return actions.map((a, i) => ({
     id: `01AUDIT${i}`,
