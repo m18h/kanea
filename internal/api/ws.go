@@ -34,6 +34,21 @@ const (
 	TopicStats = "stats"
 )
 
+// lossyTopic reports whether a data frame on this topic may be dropped rather
+// than cost the connection (PRD v1.70, §12.1).
+//
+// Logs are the one stream whose frames are independent: each carries lines the
+// others do not, so a gap can be named to the client and is (LogBatch.Dropped).
+// The snapshot topics are deliberately not on this list. Each of their frames
+// supersedes the one before it, so a silent drop leaves a client believing
+// stale data is current — and feedStoreKind makes that worse, because its
+// send() both emits and advances the index it compares against, so a dropped
+// snapshot is recorded as sent and the client waits for an unrelated Store
+// write to be told anything again. They also tick once a second or slower, so a
+// full buffer there means a peer that has stopped reading, which is the case
+// the close is genuinely for.
+func lossyTopic(topic string) bool { return topic == TopicLogs }
+
 // WS frame types. Client frames are requests; server frames are data or errors.
 const (
 	frameSubscribe   = "subscribe"
@@ -80,10 +95,10 @@ const (
 	// wsPingInterval detects a peer that vanished without closing — a laptop
 	// lid, a dropped VPN — which TCP alone can take much longer to notice.
 	wsPingInterval = 30 * time.Second
-	// wsSendBuffer is how many frames may queue for one client before it is
-	// disconnected. A slow reader is dropped rather than allowed to grow an
+	// wsSendBuffer is how many frames may queue for one client before the
+	// overflow policy applies. A slow reader is never allowed to grow an
 	// unbounded queue in the daemon (PRD §17's backpressure rule, applied to
-	// the socket).
+	// the socket); what happens instead is per topic — see lossyTopic.
 	wsSendBuffer = 64
 	// wsDefaultMaxConns caps concurrent sockets. Per-user caps arrive with auth
 	// in M5; until then this is the whole-daemon bound.
@@ -206,6 +221,11 @@ type wsSession struct {
 	conn   *websocket.Conn
 	send   chan ServerFrame
 
+	// dropWarn keeps a drop storm from becoming a logging storm (constraint #8,
+	// the notify dispatcher's rule): a client that is behind is behind for
+	// thousands of frames, and one line per frame is the second outage.
+	dropWarn sync.Once
+
 	mu   sync.Mutex
 	subs map[string]context.CancelFunc
 }
@@ -301,36 +321,62 @@ func (s *wsSession) write(ctx context.Context, frame ServerFrame) error {
 	return s.conn.Write(writeCtx, websocket.MessageText, body)
 }
 
-// emit queues a frame, dropping the connection if the client cannot keep up.
+// emit queues a frame without blocking, and reports whether it was queued.
 //
-// Dropping rather than blocking is deliberate and is the same rule §17 applies
-// to log drains: a slow consumer must never become backpressure on the producer.
-// Here the producer is a Store poll or a log tail, and blocking it would let one
-// stalled browser tab stall the data feeding every other one.
-func (s *wsSession) emit(frame ServerFrame) {
+// Never blocking is the same rule §17 applies to log drains: a slow consumer
+// must never become backpressure on the producer. Here the producer is a Store
+// poll or a log tail, and blocking it would let one stalled browser tab stall
+// the data feeding every other one.
+//
+// What happens on overflow is per topic (PRD v1.70). A data frame on a lossy
+// topic is dropped and the caller is told, so the gap can be counted where
+// whoever is reading will see it; anything else closes the connection, which is
+// what this used to do unconditionally — and unconditionally was the defect: a
+// log tail bursting past the buffer took the services, allocs and stats feeds
+// on the same socket down with it, and the client reconnected into the same
+// burst forever. An error frame is never droppable at any topic, because a
+// panel showing no error is worse than one showing a gap.
+//
+// The peer that reads *nothing* is still caught, by writeLoop's ping under
+// wsWriteTimeout — that, not the buffer, is what frees the connection slot.
+func (s *wsSession) emit(frame ServerFrame) bool {
 	select {
 	case s.send <- frame:
+		return true
 	default:
-		s.server.log.Warn("websocket client is too slow; closing it",
-			"topic", frame.Topic, "buffered", len(s.send))
-		if err := s.conn.Close(websocket.StatusPolicyViolation, "too slow"); err != nil {
-			s.server.log.Debug("websocket close after overflow", "error", err)
-		}
 	}
+	if frame.Type == frameData && lossyTopic(frame.Topic) {
+		s.dropWarn.Do(func() {
+			s.server.log.Warn("websocket client is behind; dropping frames on a lossy topic",
+				"topic", frame.Topic, "key", frame.Key, "buffered", len(s.send),
+				"note", "the count rides in the next frame this subscription sends")
+		})
+		return false
+	}
+	s.server.log.Warn("websocket client is too slow; closing it",
+		"topic", frame.Topic, "buffered", len(s.send))
+	if err := s.conn.Close(websocket.StatusPolicyViolation, "too slow"); err != nil {
+		s.server.log.Debug("websocket close after overflow", "error", err)
+	}
+	return false
 }
 
 func (s *wsSession) emitError(topic, message string) {
 	s.emit(ServerFrame{Type: frameError, Topic: topic, Error: message})
 }
 
-// emitData sends a payload on a topic.
-func (s *wsSession) emitData(topic, key string, payload any) {
+// emitData sends a payload on a topic, reporting whether it was queued.
+//
+// A payload that cannot be encoded reports false for the same reason a dropped
+// one does: it reached nobody, and a feed that counts its gaps should count
+// this one too.
+func (s *wsSession) emitData(topic, key string, payload any) bool {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		s.server.log.Error("encode websocket payload", "topic", topic, "error", err)
-		return
+		return false
 	}
-	s.emit(ServerFrame{Type: frameData, Topic: topic, Key: key, Data: body})
+	return s.emit(ServerFrame{Type: frameData, Topic: topic, Key: key, Data: body})
 }
 
 // subscriptionKey identifies a subscription within a session.
@@ -363,7 +409,7 @@ func (s *wsSession) subscribe(ctx context.Context, frame ClientFrame) {
 
 	go func() {
 		defer cancel()
-		feed(feedCtx, func(payload any) { s.emitData(frame.Topic, key, payload) })
+		feed(feedCtx, func(payload any) bool { return s.emitData(frame.Topic, key, payload) })
 	}()
 }
 

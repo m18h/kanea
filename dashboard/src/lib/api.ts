@@ -107,6 +107,26 @@ export const logLineSchema = z.object({
   line: z.string(),
 })
 
+/**
+ * logBatchSchema is one poll tick's log lines (PRD v1.70).
+ *
+ * The daemon sends a frame per tick, not per line: per line, a 200-line tail
+ * overran its send buffer and cost the whole multiplexed socket.
+ *
+ * `lines` is nullable because Go marshals a nil slice as null, and a schema
+ * that only tolerates [] is one refactor from silently discarding every frame
+ * — but it is *required*, unlike the other list schemas, because the field
+ * carries no omitempty and is therefore always on the wire. Optional would let
+ * the pre-v1.70 single-line frame parse as an empty batch and be discarded in
+ * silence, which is the one failure a tab open across an upgrade can hit.
+ * `dropped` is what this subscription will never deliver, absent rather than
+ * zero on the ordinary frame.
+ */
+export const logBatchSchema = z.object({
+  lines: z.array(logLineSchema).nullable(),
+  dropped: z.number().optional(),
+})
+
 // Functions (v1.39, GET /v1/functions): wasm functions with their triggers,
 // derived status and the invoker's counters.
 export const eventTriggerSchema = z.object({
@@ -192,6 +212,7 @@ export const healthSchema = z.object({
 export type Service = z.infer<typeof serviceSchema>
 export type Alloc = z.infer<typeof allocSchema>
 export type LogLine = z.infer<typeof logLineSchema>
+export type LogBatch = z.infer<typeof logBatchSchema>
 export type Health = z.infer<typeof healthSchema>
 export type OIDCStatus = z.infer<typeof oidcStatusSchema>
 

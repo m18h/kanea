@@ -687,7 +687,7 @@ function AllocRow({
 
 /** LogPanel streams the service's output over the shared socket. */
 function LogPanel({ project, service }: { project: string; service: string }) {
-  const { lines, error, dropped } = useLiveLog(project, service)
+  const { lines, error, dropped, droppedByDaemon } = useLiveLog(project, service)
   const [filter, setFilter] = useState('')
   const [follow, setFollow] = useState(true)
 
@@ -736,14 +736,29 @@ function LogPanel({ project, service }: { project: string; service: string }) {
           lines={viewerLines}
           live
           follow={follow}
+          onFollowChange={setFollow}
           tintSeverity
           toolbar={{ copy: true, download: { filename: `${project}-${service}.log` } }}
           emptyText={lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
           notice={
-            dropped > 0 ? (
+            dropped > 0 || droppedByDaemon > 0 ? (
+              // Two gaps with two causes, said separately: one is this tab
+              // running out of buffer, the other is the node not keeping up.
+              // Reporting them as one number would send someone looking in the
+              // wrong place.
               <p className="pb-2 text-xs text-muted-foreground">
-                {dropped} earlier line{dropped === 1 ? '' : 's'} dropped (showing the most recent{' '}
-                {MaxLogLines}).
+                {dropped > 0 ? (
+                  <>
+                    {dropped} earlier line{dropped === 1 ? '' : 's'} dropped here (showing the most
+                    recent {MaxLogLines}).{' '}
+                  </>
+                ) : null}
+                {droppedByDaemon > 0 ? (
+                  <>
+                    {droppedByDaemon} line{droppedByDaemon === 1 ? '' : 's'} were not sent by the
+                    node.
+                  </>
+                ) : null}
               </p>
             ) : undefined
           }

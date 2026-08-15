@@ -106,6 +106,91 @@ describe('LogViewer', () => {
     render(<LogViewer lines={[]} live toolbar={{ copy: true }} emptyText="—" />)
     expect(screen.queryByRole('button', { name: 'Copy log' })).toBeNull()
   })
+
+  // The snap-back regression (PRD v1.70): follow used to short-circuit the
+  // pinned check entirely, so scrolling up on the service page was ignored.
+  describe('scroll drives follow', () => {
+    // jsdom has no layout, so the scroll container's metrics are stubbed
+    // directly — the component reads exactly these three numbers.
+    function scrollTo(el: Element, { top, height, client }: Record<string, number>) {
+      Object.defineProperty(el, 'scrollTop', { value: top, configurable: true })
+      Object.defineProperty(el, 'scrollHeight', { value: height, configurable: true })
+      Object.defineProperty(el, 'clientHeight', { value: client, configurable: true })
+      fireEvent.scroll(el)
+    }
+
+    function scroller(container: HTMLElement): Element {
+      const el = container.querySelector('.overflow-auto')
+      if (!el) throw new Error('no scroll container')
+      return el
+    }
+
+    it('reports false when the reader scrolls away from the tail', () => {
+      const onFollowChange = vi.fn()
+      const { container } = render(
+        <LogViewer lines={makeLines(50)} live follow onFollowChange={onFollowChange} emptyText="—" />,
+      )
+      scrollTo(scroller(container), { top: 0, height: 1000, client: 200 })
+      expect(onFollowChange).toHaveBeenCalledWith(false)
+    })
+
+    it('reports true again when the reader returns to within the slack', () => {
+      const onFollowChange = vi.fn()
+      const { container } = render(
+        <LogViewer
+          lines={makeLines(50)}
+          live
+          follow={false}
+          onFollowChange={onFollowChange}
+          emptyText="—"
+        />,
+      )
+      const el = scroller(container)
+      scrollTo(el, { top: 0, height: 1000, client: 200 })
+      onFollowChange.mockClear()
+      // 1000 - 790 - 200 = 10, inside the 24px slack.
+      scrollTo(el, { top: 790, height: 1000, client: 200 })
+      expect(onFollowChange).toHaveBeenCalledWith(true)
+    })
+
+    it('does not report a position it has not moved away from', () => {
+      const onFollowChange = vi.fn()
+      const { container } = render(
+        <LogViewer lines={makeLines(50)} live follow onFollowChange={onFollowChange} emptyText="—" />,
+      )
+      const el = scroller(container)
+      // Already at the tail, which is where it starts: nothing changed.
+      scrollTo(el, { top: 800, height: 1000, client: 200 })
+      expect(onFollowChange).not.toHaveBeenCalled()
+    })
+
+    it('leaves the view alone once follow is off', () => {
+      const onFollowChange = vi.fn()
+      const { container, rerender } = render(
+        <LogViewer
+          lines={makeLines(50)}
+          live
+          follow={false}
+          onFollowChange={onFollowChange}
+          emptyText="—"
+        />,
+      )
+      const el = scroller(container)
+      scrollTo(el, { top: 0, height: 1000, client: 200 })
+      onFollowChange.mockClear()
+      // New lines arrive; a reader who scrolled up must not be yanked back.
+      rerender(
+        <LogViewer
+          lines={makeLines(80)}
+          live
+          follow={false}
+          onFollowChange={onFollowChange}
+          emptyText="—"
+        />,
+      )
+      expect(onFollowChange).not.toHaveBeenCalled()
+    })
+  })
 })
 
 describe('lineSeverity', () => {

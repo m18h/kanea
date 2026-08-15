@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   allocsResponseSchema,
   createBackup,
+  logBatchSchema,
   servicesResponseSchema,
   subscriptionKey,
   syncProject,
@@ -35,6 +36,36 @@ describe('servicesResponseSchema', () => {
     const result = servicesResponseSchema.safeParse({
       services: [{ Project: 'shop', Service: 'web' }],
     })
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('logBatchSchema', () => {
+  it('parses a tick of lines with no drops', () => {
+    const parsed = logBatchSchema.parse({
+      lines: [
+        { alloc_id: 'shop-web-0', line: 'listening on :8080' },
+        { alloc_id: 'shop-web-1', line: 'ready' },
+      ],
+    })
+    expect(parsed.lines).toHaveLength(2)
+    // Absent, not zero — the daemon omits it on the ordinary frame.
+    expect(parsed.dropped).toBeUndefined()
+  })
+
+  it('carries a daemon-side drop count', () => {
+    expect(logBatchSchema.parse({ lines: [], dropped: 412 }).dropped).toBe(412)
+  })
+
+  it('accepts a null list, which is what Go sends for an empty slice', () => {
+    expect(logBatchSchema.parse({ lines: null }).lines).toBeNull()
+  })
+
+  // The pre-v1.70 shape was one line per frame. It must fail here, in a test,
+  // rather than silently in a browser — a tab left open across an upgrade is
+  // the one place the old shape can still show up.
+  it('rejects the old one-line-per-frame shape', () => {
+    const result = logBatchSchema.safeParse({ alloc_id: 'shop-web-0', line: 'hello' })
     expect(result.success).toBe(false)
   })
 })

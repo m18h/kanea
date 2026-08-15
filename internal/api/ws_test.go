@@ -29,6 +29,11 @@ func dialWS(t *testing.T, h *harness, origin string) *websocket.Conn {
 		}
 		t.Fatalf("dial websocket: %v", err)
 	}
+	// A log batch may be up to maxBatchBytes (PRD v1.70), and coder/websocket
+	// defaults a client to a 32 KiB read limit. A browser has no such limit, so
+	// this is a Go-client concern only — but it is a real one, and a test that
+	// did not raise it would fail on frame size rather than on behaviour.
+	conn.SetReadLimit(1 << 20)
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
 	return conn
 }

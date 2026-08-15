@@ -16,9 +16,13 @@ export interface LogViewerProps {
   /** live styles the newest line as in-progress and keeps the tail followed. */
   live: boolean
   showLineNumbers?: boolean | undefined
-  /** follow forces pinning regardless of scroll position (the checkbox on the
-   * service page). undefined means pinned-scroll only. */
+  /** follow keeps the view at the tail (the checkbox on the service page).
+   * undefined means pinned-scroll only. */
   follow?: boolean | undefined
+  /** onFollowChange reports that the reader's own scrolling changed whether the
+   * view is at the tail, so the caller's checkbox can say what is true. Without
+   * it a `follow` of true would override the reader forever. */
+  onFollowChange?: ((follow: boolean) => void) | undefined
   notice?: React.ReactNode | undefined
   emptyText: string
   /** heightClass fixes the box's size — the viewer never grows with its
@@ -58,14 +62,20 @@ function flatten(lines: LogViewerLine[]): string {
  *
  * The scroll rule is the build log's: follow only when the reader is already
  * at the bottom. Yanking the view down while someone is reading the line that
- * broke the build is the one thing a live log must not do. The follow prop
- * (the service page's checkbox) forces pinning back on.
+ * broke the build is the one thing a live log must not do.
+ *
+ * `follow` used to short-circuit that check — `follow || (live && pinned)` —
+ * and the service page passes a `follow` that defaults to true and had nothing
+ * to turn it off, so the detection was dead code on the one page that used it
+ * and scrolling up snapped straight back. The reader's gesture now *drives*
+ * `follow` through onFollowChange instead of being overridden by it.
  */
 export function LogViewer({
   lines,
   live,
   showLineNumbers,
   follow,
+  onFollowChange,
   notice,
   emptyText,
   heightClass,
@@ -104,15 +114,22 @@ export function LogViewer({
     },
   })
 
+  // The last line's identity, not the count: at MaxLogLines the buffer
+  // saturates and the length stops changing, so a length dependency silently
+  // stops following on exactly the busy service someone is watching. A filter
+  // whose match count happens to hold steady does the same.
+  const tailKey = lines.length > 0 ? lines[lines.length - 1]?.key : undefined
+
   useEffect(() => {
     if (lines.length === 0) return
-    if (follow || (live && pinned.current)) {
-      virtualizer.scrollToIndex(lines.length - 1, { align: 'end' })
-    }
+    // follow is a request to be at the tail; pinned is where the reader is. An
+    // explicit follow={false} is the reader having scrolled away, so it wins.
+    if (follow === false || !(follow || (live && pinned.current))) return
+    virtualizer.scrollToIndex(lines.length - 1, { align: 'end' })
     // The virtualizer is a stable instance; scrolling reacts to content, not
     // to it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines.length, live, follow])
+  }, [tailKey, lines.length, live, follow])
 
   useEffect(() => {
     if (!copied) return
@@ -172,7 +189,16 @@ export function LogViewer({
         onScroll={(event) => {
           const el = event.currentTarget
           // A small slack: a scroll position is rarely exactly at the end.
-          pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+          const atTail = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+          // Only a *change* is reported, which is also what makes this safe
+          // against the scroll events our own scrollToIndex causes: that lands
+          // at the tail, where pinned already is, so it says nothing. A flag
+          // guarding the programmatic scroll instead would stay armed whenever
+          // the scroll moved nothing (already at the bottom) and swallow the
+          // reader's next real gesture.
+          if (atTail === pinned.current) return
+          pinned.current = atTail
+          onFollowChange?.(atTail)
         }}
         className={cn(
           'overflow-auto rounded-md bg-muted/40 p-2.5 font-mono text-xs leading-relaxed',

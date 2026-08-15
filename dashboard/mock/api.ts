@@ -412,8 +412,11 @@ function liveSocket(ws: WebSocket): void {
       if (sub.topic !== 'logs' || !sub.project || !sub.service) continue
       const svc = findService(sub.project, sub.service)
       if (!svc) continue
-      const line = logLine(svc)
-      if (line) send(key, 'logs', line)
+      // A batch per tick, like the daemon (PRD v1.70) — one frame per line is
+      // what overran its send buffer. Two lines a tick keeps the mock chatty
+      // enough to read while exercising the batched shape.
+      const lines = [logLine(svc), logLine(svc)].filter((l) => l !== null)
+      if (lines.length > 0) send(key, 'logs', { lines })
     }
   }, 450)
 
