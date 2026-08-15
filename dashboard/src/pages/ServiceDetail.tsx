@@ -142,8 +142,24 @@ export function ServiceDetail({ project, service }: { project: string; service: 
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <BackChip to="/services">Services</BackChip>
+      {/* Navigation and actions share the top row — one is where you came
+          from, the other is what you can do here, and neither is the page's
+          name. The name gets its own row underneath, where a long image
+          reference can run without squeezing the buttons. */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <BackChip to="/services">Services</BackChip>
+          <div className="ml-auto">
+            {desired && rollout ? (
+              <ServiceActions
+                project={project}
+                service={service}
+                desired={desired}
+                rollout={rollout}
+              />
+            ) : null}
+          </div>
+        </div>
         <PageHeader
           title={<span className="font-mono">{service}</span>}
           subtitle={
@@ -154,16 +170,6 @@ export function ServiceDetail({ project, service }: { project: string; service: 
             </span>
           }
         />
-        <div className="ml-auto">
-          {desired && rollout ? (
-            <ServiceActions
-              project={project}
-              service={service}
-              desired={desired}
-              rollout={rollout}
-            />
-          ) : null}
-        </div>
       </div>
 
       <StatsPanel sample={stats.data} history={seed.data ?? null} />
