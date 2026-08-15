@@ -672,7 +672,8 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <p>
       The dashboard is a React SPA embedded in the binary with <code>go:embed</code> and served
       by the daemon. A service page charts CPU, memory, request rate and p95 over a real
-      time axis, streams logs live (virtualized, filterable, copy and download), shows a
+      time axis, streams logs live (virtualized, filterable, copy, download, and a
+      full-screen view that keeps your place in the buffer across the toggle), shows a
       restart or deploy as rollout progress — the same spec-hash rule the planner uses,
       served on the wire since v1.64 — and gives an admin a <b>shell into any running
       alloc</b>, over the same exec websocket the CLI uses: the CSRF token rides the

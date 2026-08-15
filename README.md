@@ -44,7 +44,7 @@ and a **keyless cosign** signature over the checksums — the SBOMs are in the
 checksums, so the one signature covers them too:
 
 ```bash
-VERSION=v0.19.0; ARCH=amd64
+VERSION=v0.20.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -327,7 +327,7 @@ record, just a session.
 ### The dashboard
 
 A service page charts CPU, memory, request rate and p95 on a real time axis,
-streams logs live (filterable, with copy and download), shows every restart or
+streams logs live (filterable, with copy, download and a full-screen view), shows every restart or
 deploy as **rollout progress** — the planner's own spec-hash rule, on the
 wire — and opens a **shell into any running alloc** from the browser, over the
 same exec websocket the CLI uses.
