@@ -44,7 +44,7 @@ and a **keyless cosign** signature over the checksums — the SBOMs are in the
 checksums, so the one signature covers them too:
 
 ```bash
-VERSION=v0.18.1; ARCH=amd64
+VERSION=v0.19.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
