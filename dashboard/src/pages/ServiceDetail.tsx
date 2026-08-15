@@ -708,6 +708,25 @@ function LogPanel({ project, service }: { project: string; service: string }) {
     [shown],
   )
 
+  // One definition, rendered in the card header and again inside the expanded
+  // dialog. Both are driven by the same state, so they cannot disagree.
+  const logControls = (
+    <>
+      <input
+        type="search"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder="Filter"
+        aria-label="Filter log lines"
+        className="rounded-md border bg-background px-2 py-1 text-xs"
+      />
+      <label className="flex items-center gap-1 text-xs text-muted-foreground">
+        <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
+        Follow
+      </label>
+    </>
+  )
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
@@ -715,20 +734,7 @@ function LogPanel({ project, service }: { project: string; service: string }) {
           <CardTitle>Logs</CardTitle>
           <span className="font-mono text-xs text-muted-foreground">tail · all allocs · live</span>
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="search"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter"
-            aria-label="Filter log lines"
-            className="rounded-md border bg-background px-2 py-1 text-xs"
-          />
-          <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-            Follow
-          </label>
-        </div>
+        <div className="flex items-center gap-2">{logControls}</div>
       </CardHeader>
       <CardContent>
         {error ? <p className="pb-2 text-sm text-destructive">{error}</p> : null}
@@ -738,7 +744,9 @@ function LogPanel({ project, service }: { project: string; service: string }) {
           follow={follow}
           onFollowChange={setFollow}
           tintSeverity
-          toolbar={{ copy: true, download: { filename: `${project}-${service}.log` } }}
+          toolbar={{ copy: true, download: { filename: `${project}-${service}.log` }, expand: true }}
+          title={`${project}/${service} — logs`}
+          controls={logControls}
           emptyText={lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
           notice={
             dropped > 0 || droppedByDaemon > 0 ? (

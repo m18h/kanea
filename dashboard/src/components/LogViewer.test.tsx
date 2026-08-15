@@ -107,6 +107,74 @@ describe('LogViewer', () => {
     expect(screen.queryByRole('button', { name: 'Copy log' })).toBeNull()
   })
 
+  describe('expand', () => {
+    it('is absent unless the caller asks for it', () => {
+      render(<LogViewer lines={makeLines(3)} live emptyText="—" toolbar={{ copy: true }} />)
+      expect(screen.queryByRole('button', { name: 'Expand log' })).toBeNull()
+    })
+
+    it('opens the buffer in a dialog and closes again', () => {
+      render(
+        <LogViewer lines={makeLines(3)} live emptyText="—" toolbar={{ expand: true }} title="shop/web — logs" />,
+      )
+      expect(screen.queryByRole('dialog')).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Expand log' }))
+      const dialog = screen.getByRole('dialog')
+      expect(dialog).toBeTruthy()
+      expect(screen.getByText('shop/web — logs')).toBeTruthy()
+      // The lines moved into the dialog rather than being rendered twice.
+      expect(dialog.querySelectorAll('[data-index]').length).toBeGreaterThan(0)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.getByText('line 0')).toBeTruthy()
+    })
+
+    it('closes on Escape', () => {
+      render(<LogViewer lines={makeLines(3)} live emptyText="—" toolbar={{ expand: true }} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Expand log' }))
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    // Copy and Download have nothing to act on with an empty buffer, but
+    // "waiting for output" is a thing people sit and watch.
+    it('is offered on an empty buffer, unlike the other actions', () => {
+      render(
+        <LogViewer lines={[]} live emptyText="Waiting for output…" toolbar={{ copy: true, expand: true }} />,
+      )
+      expect(screen.getByRole('button', { name: 'Expand log' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Copy log' })).toBeNull()
+    })
+
+    it('renders the caller controls inside the dialog so they stay reachable', () => {
+      render(
+        <LogViewer
+          lines={makeLines(3)}
+          live
+          emptyText="—"
+          toolbar={{ expand: true }}
+          controls={<button type="button">Follow</button>}
+        />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Expand log' }))
+      const dialog = screen.getByRole('dialog')
+      expect(dialog.querySelector('button')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Follow' })).toBeTruthy()
+    })
+
+    it('holds the card space while the viewer is in the dialog', () => {
+      const { container } = render(
+        <LogViewer lines={makeLines(3)} live emptyText="—" toolbar={{ expand: true }} />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Expand log' }))
+      // The placeholder keeps the layout from collapsing behind the backdrop,
+      // which would show as a jump the moment it closes.
+      expect(container.querySelector('[aria-hidden]')).toBeTruthy()
+    })
+  })
+
   // The snap-back regression (PRD v1.70): follow used to short-circuit the
   // pinned check entirely, so scrolling up on the service page was ignored.
   describe('scroll drives follow', () => {
