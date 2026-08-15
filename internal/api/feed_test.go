@@ -119,16 +119,26 @@ func TestTheLogFeedNeverKillsTheSharedSocket(t *testing.T) {
 	})
 
 	// Every topic must still be represented once the burst has gone through.
+	wanted := []string{api.TopicServices, api.TopicAllocs, api.TopicLogs}
 	seen := map[string]bool{}
+	allSeen := func() bool {
+		for _, topic := range wanted {
+			if !seen[topic] {
+				return false
+			}
+		}
+		return true
+	}
+
 	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) && !(seen[api.TopicServices] && seen[api.TopicAllocs] && seen[api.TopicLogs]) {
+	for time.Now().Before(deadline) && !allSeen() {
 		frame := receive(t, conn)
 		if frame.Type == "error" {
 			t.Fatalf("feed error: %s", frame.Error)
 		}
 		seen[frame.Topic] = true
 	}
-	for _, topic := range []string{api.TopicServices, api.TopicAllocs, api.TopicLogs} {
+	for _, topic := range wanted {
 		if !seen[topic] {
 			t.Errorf("no %s frame arrived; the log burst took the socket down", topic)
 		}
@@ -179,7 +189,7 @@ func TestALogBatchCountsEveryLineItWillNeverDeliver(t *testing.T) {
 		},
 		{
 			name: "a tail past the clamp", produced: 3000, tail: 3000,
-			want: func(t *testing.T, delivered, dropped int) {
+			want: func(t *testing.T, _, dropped int) {
 				// The clamp removes 2000 before the tailer is even built, and
 				// says so rather than pretending the history was shorter.
 				if dropped < 2000 {
