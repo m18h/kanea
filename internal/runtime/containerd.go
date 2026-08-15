@@ -47,6 +47,10 @@ type containerdDriver struct {
 	client *containerd.Client
 	log    *slog.Logger
 	grace  time.Duration
+	// cgroupRoot is where cgroup v2 is mounted, so a stopped alloc's
+	// termination can be attributed (PRD v1.68, §17). A field rather than a
+	// constant only so tests can point it at a directory they control.
+	cgroupRoot string
 }
 
 // New dials containerd and returns the driver.
@@ -65,7 +69,10 @@ func New(cfg Config) (Driver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial containerd at %s: %w", cfg.Socket, err)
 	}
-	return &containerdDriver{client: client, log: cfg.Logger, grace: cfg.DefaultGrace}, nil
+	return &containerdDriver{
+		client: client, log: cfg.Logger, grace: cfg.DefaultGrace,
+		cgroupRoot: DefaultCgroupRoot,
+	}, nil
 }
 
 func (d *containerdDriver) Close() error { return d.client.Close() }
@@ -295,6 +302,14 @@ func (d *containerdDriver) statusOf(ctx context.Context, container containerd.Co
 	out.State = mapState(status.Status)
 	out.ExitCode = status.ExitStatus
 	out.ExitedAt = status.ExitTime
+
+	// Ask the cgroup why, but only for a task that actually died badly: a clean
+	// exit needs no explaining, and a running alloc would cost two file reads
+	// per reconcile pass per alloc to learn nothing.
+	if out.State == StateStopped && out.ExitCode != 0 {
+		oom := readOOMState(d.cgroupRoot, container.ID())
+		out.OOMKilled, out.OOMKnown, out.MemoryLimit = oom.Killed, oom.Known, oom.MemoryLimit
+	}
 	return out, nil
 }
 

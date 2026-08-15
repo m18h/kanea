@@ -138,6 +138,12 @@ type ServerConfig struct {
 	// from GET /v1/functions, which still serves the list — a node running
 	// no event or cron triggers has an invoker with nothing to say.
 	Invoker InvokerSource
+	// Usage reports measured volume usage (v1.69). Nil leaves every volume
+	// unmeasured, which renders as absent rather than as empty.
+	Usage UsageSource
+	// VolumeDir is the root of local volume storage, needed to say where a
+	// volume actually lives. It is the same value the reconciler was given.
+	VolumeDir string
 	// Breaker reports the circuit breaker's state to the exporter.
 	Breaker BreakerSource
 	// EdgeMetrics is the edge's labelled families, republished verbatim by the
@@ -251,6 +257,8 @@ type Server struct {
 	accounts        Accounts
 	metrics         MetricsSource
 	invoker         InvokerSource
+	usage           UsageSource
+	volumeDir       string
 	edgeMetrics     EdgeExpositionSource
 	breaker         BreakerSource
 	node            NodeSource
@@ -334,8 +342,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		spec:    cfg.Spec,
 		metrics: cfg.Metrics, edgeMetrics: cfg.EdgeMetrics,
-		invoker: cfg.Invoker,
-		breaker: cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
+		invoker:   cfg.Invoker,
+		usage:     cfg.Usage,
+		volumeDir: cfg.VolumeDir,
+		breaker:   cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
 		insecureCookies: cfg.InsecureCookies,
 	}
 
@@ -384,6 +394,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// is a service underneath, and the mutation paths are inherited, never
 	// replicated.
 	mux.Handle("GET "+PathFunctions, s.route(policy{action: "functions.list"}, s.handleListFunctions))
+	mux.Handle("GET "+PathVolumes, s.route(policy{action: "volumes.list"}, s.handleListVolumes))
 	mux.Handle("GET "+PathProjects, s.route(policy{action: "project.list"}, s.handleListProjects))
 	mux.Handle("GET "+PathProjects+"/{project}",
 		s.route(policy{action: "project.get"}, s.handleGetProject))

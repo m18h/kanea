@@ -922,7 +922,7 @@ service "web" {
         <thead><tr><th><code>type</code></th><th>Fields</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td><code>local</code></td><td>—</td><td>A directory on the node, managed by Kanea.</td></tr>
-          <tr><td><code>host</code></td><td><code>path</code></td><td>A directory the operator already owns. See R15 — it does nothing until an operator allowlists its parent in <code>/etc/kanea/kanea.hcl</code>'s <code>storage { allowed_host_paths = […] }</code> stanza (or <code>--allowed-host-paths</code>, which wins).</td></tr>
+          <tr><td><code>host</code></td><td><code>path</code>, <code>create</code></td><td>A directory the operator already owns — or, with <code>create = true</code>, one Kanea creates inside an allowed prefix. See R15 — it does nothing until an operator allowlists its parent in <code>/etc/kanea/kanea.hcl</code>'s <code>storage { allowed_host_paths = […] }</code> stanza (or <code>--allowed-host-paths</code>, which wins).</td></tr>
           <tr><td><code>nfs</code></td><td><code>server</code>, <code>export</code>, <code>options</code></td><td></td></tr>
           <tr><td><code>smb</code></td><td><code>server</code>, <code>share</code>, <code>auth_ref</code>, <code>options</code></td><td></td></tr>
           <tr><td><code>s3</code></td><td><code>bucket</code>, <code>endpoint</code>, <code>auth_ref</code>, <code>mode</code></td><td><code>mode = "ro"</code> selects mountpoint-s3, <code>"rw"</code> selects s3fs.</td></tr>
@@ -1165,8 +1165,22 @@ service "web" {
   storage    = "local-ssd"    # a declared storage block
   mount_path = "/var/lib/data"
   read_only  = false
+  size       = "10GiB"        # a budget, not a quota — see below
 }</pre>
     <p>Mount failures fail the alloc loudly. A volume that silently is not there is worse than one that stops the deploy.</p>
+    <p>
+      <code>size</code> declares a <b>budget</b> (R31). Kanea measures what the volume
+      actually uses on a slow background schedule, shows it in
+      <code>kanea volume list</code>, and emits <code>volume.over_budget</code> when it
+      is crossed — and <code>volume.under_budget</code> when it comes back. It is
+      deliberately <b>not</b> a quota and nothing enforces it: no filesystem quota
+      mechanism exists on the node, and <code>nfs</code>, <code>smb</code> and
+      <code>s3</code> could not carry one if it did. Declaring it on an <code>s3</code>
+      volume is a plan error, because that driver is never walked — one request per
+      directory, on a schedule, is not a measurement worth taking. Changing a
+      <code>size</code> never redeploys the service: a budget is not baked into a
+      container.
+    </p>
 
     <h3 id="spec-scaling">scaling</h3>
     <pre class="plain">scaling {
@@ -1281,7 +1295,7 @@ restart {
     <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully — <code>redis-server --save ""</code> is how you disable snapshots.</p></div></div>
     <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> adds to a baseline, and <code>"none"</code> takes the baseline away.</b> Every runc alloc starts from the baseline set — <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>NET_BIND_SERVICE</code>, <code>SETGID</code>, <code>SETUID</code> — so PUID-style images start without a capability line. The effective grant is the union of baseline and declared list; <code>["none"]</code> is the full drop-ALL posture, <code>["none", "CAP_NET_RAW"]</code> exactly one grant. Declarable beyond the baseline: <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_RAW</code> (never baseline — the datapath's identity is the IP), <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. Privilege-equivalent ones — <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends — are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Effective capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
     <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; the datapath's ingress rules only ever union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b> — <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
-    <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time — but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config <code>/etc/kanea/kanea.hcl</code> (or <code>--allowed-host-paths</code>, which wins when set), <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist.</p></div></div>
+    <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time — but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config <code>/etc/kanea/kanea.hcl</code> (or <code>--allowed-host-paths</code>, which wins when set), <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist &mdash; <b>unless the storage block sets <code>create = true</code></b>, which makes Kanea create it. The default has not moved: without that flag a missing path is still refused, because creating one on demand turns a typo into a volume that is silently empty. Creation is allowlist-gated first &mdash; the nearest <i>existing</i> parent is resolved and checked before anything is written &mdash; so a <code>create</code> outside a permitted prefix leaves no directory behind. Creating a directory is not owning it: Kanea still never chowns a host volume.</p></div></div>
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous — declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
     <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device — checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
     <div class="rule"><b>R18</b><div><p><b><code>task.socket</code> is R17 for unix sockets, and is privilege delegation.</b> <code>mount_path</code> is validated as absolute, clean and <code>..</code>-free, may not sit under <code>/dev</code>, <code>/proc</code> or <code>/sys</code>, and may not collide with another socket or a volume. The bind carries <code>nosuid</code>, <code>noexec</code> and <code>nodev</code>. <b>None of that makes it safe and none of it is meant to</b>: a container holding the container runtime's socket can create containers without the hardening defaults, so the grant is equivalent to root on the node. The server config is the only control over it, which is why it is project-scoped and empty by default.</p></div></div>
@@ -2241,6 +2255,21 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       recent events. Stats and health render absent as absent (<code>-</code>),
       never as zero: a missing metric and an idle service are different facts.
     </p>
+    <p>
+      The alloc table's <code>REASON</code> column says why each alloc last
+      stopped — <code>OOMKilled</code>, <code>Signalled</code>,
+      <code>Error</code>, <code>Completed</code> — or why one that never ran did
+      not: <code>ImageFailed</code>, <code>VolumeFailed</code>,
+      <code>GrantFailed</code>, <code>NetworkFailed</code>,
+      <code>CreateFailed</code>, <code>StartFailed</code>. An OOM kill is read
+      from the alloc's cgroup, never guessed from the exit code — a forced stop
+      exits 137 exactly like a memory kill does — so a stop reports as
+      <code>Signalled</code>, and a kill against a service that declared no
+      memory limit names the node's collective ceiling rather than a number
+      nobody typed. The reason shows whatever the alloc's current state is: a
+      <code>running</code> row carrying <code>OOMKilled</code> means it is up
+      now and was killed for memory last time.
+    </p>
 
     <h4><code>kanea status</code></h4>
     <pre class="plain">kanea status [--project=p] [[project/]service]</pre>
@@ -2298,6 +2327,29 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <h4><code>kanea project</code></h4>
     <pre class="plain">kanea project sync &lt;project&gt;             # re-read the git source now
 kanea project builds &lt;project&gt; [--service=s] [--limit=N]</pre>
+
+    <h4><code>kanea volume</code></h4>
+    <pre class="plain">kanea volume list [--json]</pre>
+    <p>
+      Every storage resource with the mounts using it nested underneath: driver,
+      where the bytes live, measured usage, declared budget and mount state. It is
+      what to reach for when a disk is filling up &mdash; a flat list would repeat an
+      NFS export's address once per service and still not say they were the same
+      export.
+    </p>
+    <p>
+      Usage is sampled in the background, so a volume reads <code>&mdash;</code> until
+      it has been measured, and <code>s3</code> volumes are never walked. That dash is
+      an absence, not a zero: a volume nobody has looked at and an empty one are
+      different facts. A local volume appears once per alloc, because that is how many
+      of it there are &mdash; each with its own contents, and each judged against the
+      budget separately.
+    </p>
+    <p>
+      There are no other subcommands, deliberately. A volume exists because a spec
+      declares it, so creating or deleting one here would be a second way to change
+      desired state that the reconciler would immediately undo.
+    </p>
 
     <h3 id="cli-secrets">Secrets and accounts</h3>
 

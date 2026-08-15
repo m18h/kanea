@@ -8,6 +8,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/m18h/kanea/internal/notify"
 )
 
 // slogLogger is an alias so Config can name the type before slog is imported
@@ -33,6 +35,9 @@ type Manager struct {
 	// field so tests can model a mount table on a host that has none.
 	mounted   func(string) (bool, error)
 	hostPaths HostPathPolicy
+	// emit publishes volume.* events (§11). Nil disables them, as it does for
+	// the reconciler.
+	emit func(notify.Event)
 
 	mu     sync.Mutex
 	mounts map[mountPath]*mountState
@@ -51,6 +56,13 @@ type mountState struct {
 	probing bool
 	// remounts counts recoveries, for the event log.
 	remounts int
+	// announcedFailure records that a volume.mount_failed has been sent and
+	// not yet cleared. It is what makes the pair fire on transitions: a wedged
+	// mount is probed every 30 s and a failing one is retried every pass, so
+	// without it an outage would be one notification per probe. It also keeps
+	// the *first* successful mount silent — starting false means there is no
+	// failure to recover from.
+	announcedFailure bool
 	// lastProbeErr is why the most recent health probe failed.
 	lastProbeErr error
 	// lastMountErr is why the most recent mount attempt failed. It is kept
@@ -124,6 +136,7 @@ func New(cfg Config) *Manager {
 		now:            cfg.Now,
 		mounted:        cfg.MountTable,
 		hostPaths:      cfg.HostPaths,
+		emit:           cfg.Emit,
 		mounts:         map[mountPath]*mountState{},
 	}
 }
@@ -191,6 +204,7 @@ func (m *Manager) mount(ctx context.Context, state *mountState, req Request) err
 		state.lastMountErr = failure
 		state.failures++
 		state.nextAttemptAt = m.now().Add(delayAfter(state.failures))
+		m.announceFailure(state, req, failure)
 		return failure
 	}
 
@@ -200,7 +214,45 @@ func (m *Manager) mount(ctx context.Context, state *mountState, req Request) err
 	state.failures = 0
 	m.log.Info("mounted volume",
 		"storage", req.Resource.Name, "type", req.Resource.Type, "target", req.Target)
+	m.announceRecovery(state, req)
 	return nil
+}
+
+// announceFailure emits volume.mount_failed the first time a mount goes bad,
+// and stays quiet until it recovers.
+//
+// The caller holds the mount's own lock. Emitting under it is safe by
+// constraint #8 — Publish never blocks and never returns an error — and the
+// lock is per mount, so even a misbehaving emitter could not stall a different
+// volume.
+func (m *Manager) announceFailure(state *mountState, req Request, cause error) {
+	if state.announcedFailure {
+		return
+	}
+	state.announcedFailure = true
+	if m.emit == nil {
+		return
+	}
+	m.emit(notify.NewEvent(notify.EventVolumeMountFailed, "", "",
+		fmt.Sprintf("volume mount %s is not available: %v", req.Resource.Name, cause),
+		m.now()).WithDetail(req.Target))
+}
+
+// announceRecovery emits volume.mount_recovered, but only for a mount that had
+// actually been announced as failed. A first successful mount is not a
+// recovery, and reporting it as one would make every deploy look like an
+// incident that resolved itself.
+func (m *Manager) announceRecovery(state *mountState, req Request) {
+	if !state.announcedFailure {
+		return
+	}
+	state.announcedFailure = false
+	if m.emit == nil {
+		return
+	}
+	m.emit(notify.NewEvent(notify.EventVolumeMountRecovered, "", "",
+		fmt.Sprintf("volume mount %s is available again", req.Resource.Name),
+		m.now()).WithDetail(req.Target))
 }
 
 // Release unmounts and forgets a mount. Missing is success.
@@ -264,8 +316,12 @@ var errNotMounted = errors.New("storage: nothing is mounted at this path")
 // allowlist is node configuration, and the Manager is where node configuration
 // already lives. A caller that has one of these has, by construction, been
 // given the operator's policy rather than inventing one.
-func (m *Manager) ResolveHost(path string) (string, error) {
-	return m.hostPaths.Resolve(path)
+//
+// create carries the spec's `create = true` (R15, v1.69) through to the policy,
+// which decides whether a missing directory may be made — and refuses outside
+// an allowed prefix before making anything.
+func (m *Manager) ResolveHost(path string, create bool) (string, error) {
+	return m.hostPaths.ResolveOrCreate(path, create)
 }
 
 // Prune releases every tracked mount whose target is not in keep.
@@ -401,6 +457,11 @@ func (m *Manager) superviseOnce(ctx context.Context) {
 
 		state.mu.Lock()
 		req := state.request
+		// A probe failure is the other way a mount becomes unavailable, and it
+		// is the one the supervisor exists for: after an object-store outage
+		// s3fs keeps serving ENOENT for objects that are intact. Announcing it
+		// here means the remount below reports as a recovery.
+		m.announceFailure(state, req, err)
 		state.mu.Unlock()
 
 		if err := m.remount(ctx, state, req); err != nil {

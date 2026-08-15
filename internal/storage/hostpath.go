@@ -103,13 +103,103 @@ func (p HostPathPolicy) Resolve(path string) (string, error) {
 		return "", fmt.Errorf("%w: %q is not a directory", ErrHostPathNotAllowed, path)
 	}
 
-	for _, prefix := range p.allowed {
-		if withinPrefix(resolved, prefix) {
-			return resolved, nil
-		}
+	if p.anyPrefixAllows(resolved) {
+		return resolved, nil
 	}
 	return "", fmt.Errorf("%w: %q (resolved to %q) is not under any of %s",
 		ErrHostPathNotAllowed, path, resolved, strings.Join(p.allowed, ", "))
+}
+
+// ResolveOrCreate is Resolve, plus permission to create the directory when the
+// spec asked for it (R15, PRD v1.69).
+//
+// With create false it *is* Resolve, so the default behaviour has exactly one
+// implementation and cannot drift from it.
+//
+// The ordering is the entire security argument, and it is forced by a detail:
+// a path that does not exist cannot be symlink-resolved, so the allowlist
+// cannot be checked against it directly. Instead the nearest **existing**
+// ancestor is resolved and checked first — meaning a create outside a permitted
+// prefix refuses before anything is written to disk — and then the ordinary
+// Resolve runs on the result, so the decision about whether a directory may be
+// mounted is still made in one place, against a real resolved path.
+//
+// Creating a directory is not the same as owning it: the mode is 0750 and no
+// chown happens, because R24 refuses ownership on host volumes and creating one
+// does not change whose directory it is.
+func (p HostPathPolicy) ResolveOrCreate(path string, create bool) (string, error) {
+	if !create {
+		return p.Resolve(path)
+	}
+	if !p.Enabled() {
+		return "", fmt.Errorf("%w: no host paths are configured on this node "+
+			"(set storage.allowed_host_paths in /etc/kanea/kanea.hcl, or --allowed-host-paths)",
+			ErrHostPathNotAllowed)
+	}
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%w: %q is not absolute", ErrHostPathNotAllowed, path)
+	}
+
+	clean := filepath.Clean(path)
+	if _, err := os.Stat(clean); err == nil {
+		// Already there: nothing to create, and Resolve is the whole check.
+		return p.Resolve(path)
+	}
+
+	// Find the deepest ancestor that exists, and judge *that*. Everything below
+	// it is what we would be creating.
+	ancestor, err := existingAncestor(clean)
+	if err != nil {
+		return "", fmt.Errorf("%w: %q: %w", ErrHostPathNotAllowed, path, err)
+	}
+	resolved, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", fmt.Errorf("%w: %q: %w", ErrHostPathNotAllowed, path, err)
+	}
+	if !p.anyPrefixAllows(resolved) {
+		return "", fmt.Errorf("%w: %q cannot be created: its nearest existing parent %q "+
+			"(resolved to %q) is not under any of %s",
+			ErrHostPathNotAllowed, path, ancestor, resolved, strings.Join(p.allowed, ", "))
+	}
+
+	if err := os.MkdirAll(clean, 0o750); err != nil {
+		return "", fmt.Errorf("create host volume %q: %w", path, err)
+	}
+	// Re-check from scratch. Not paranoia about our own MkdirAll — it is what
+	// keeps a single function answering "may this be mounted", so a future
+	// change to Resolve's rules applies here too without anyone remembering to.
+	return p.Resolve(path)
+}
+
+// existingAncestor walks up from path to the first component that exists.
+//
+// It stops at the root, which always exists, so it terminates. A path whose
+// ancestor is a *file* rather than a directory is returned as-is and refused by
+// the caller's prefix check or by MkdirAll — either way it does not become a
+// mount.
+func existingAncestor(path string) (string, error) {
+	for {
+		parent := filepath.Dir(path)
+		if parent == path {
+			return parent, nil // reached the root
+		}
+		if _, err := os.Stat(parent); err == nil {
+			return parent, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		path = parent
+	}
+}
+
+// anyPrefixAllows reports whether a resolved path sits under an allowed prefix.
+func (p HostPathPolicy) anyPrefixAllows(resolved string) bool {
+	for _, prefix := range p.allowed {
+		if withinPrefix(resolved, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // withinPrefix reports whether path is prefix or sits inside it.

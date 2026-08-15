@@ -74,6 +74,7 @@ type hclStorage struct {
 	Share    string    `hcl:"share,optional"`
 	Options  string    `hcl:"options,optional"`
 	Path     string    `hcl:"path,optional"`
+	Create   bool      `hcl:"create,optional"`
 	DefRange hcl.Range `hcl:",def_range"`
 }
 
@@ -342,9 +343,13 @@ type hclVolume struct {
 	//
 	// Mode is a string because HCL has no octal literal — `mode = 0700` would
 	// parse as decimal 700, which is 0o1274 and not what anyone means.
-	UID      *int      `hcl:"uid,optional"`
-	GID      *int      `hcl:"gid,optional"`
-	Mode     *string   `hcl:"mode,optional"`
+	UID  *int    `hcl:"uid,optional"`
+	GID  *int    `hcl:"gid,optional"`
+	Mode *string `hcl:"mode,optional"`
+	// Size is the volume's budget (R31), a string for the same reason Mode is:
+	// HCL has no size literal. It reaches the validator as written so a value
+	// that does not parse can be reported with its own position.
+	Size     *string   `hcl:"size,optional"`
 	DefRange hcl.Range `hcl:",def_range"`
 }
 
@@ -461,7 +466,8 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 		spec.Storages = append(spec.Storages, &Storage{
 			Name: st.Name, Type: st.Type, Bucket: st.Bucket, Endpoint: st.Endpoint,
 			AuthRef: st.AuthRef, Mode: st.Mode, Server: st.Server, Export: st.Export,
-			Share: st.Share, Options: st.Options, Path: st.Path, DefRange: st.DefRange,
+			Share: st.Share, Options: st.Options, Path: st.Path, Create: st.Create,
+			DefRange: st.DefRange,
 		})
 	}
 	for i := range root.Services {
@@ -654,6 +660,23 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 		vol := &Volume{
 			Name: v.Name, Storage: v.Storage, MountPath: v.MountPath, ReadOnly: v.ReadOnly,
 			UID: v.UID, GID: v.GID, Mode: v.Mode, DefRange: v.DefRange,
+		}
+		// Parsed here rather than carried raw to the validator, unlike Mode:
+		// a budget has no inheritance to resolve first (R24's reason for
+		// keeping Mode a string), so there is nothing to wait for and one
+		// parse is better than two.
+		if v.Size != nil {
+			size, err := ParseByteSize(*v.Size)
+			if err != nil {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Invalid volume size",
+					Detail: fmt.Sprintf("Volume %q has size %s. Write a size like "+
+						"\"10GiB\", \"512MiB\" or a byte count.", v.Name, err),
+					Subject: v.DefRange.Ptr(),
+				})
+			}
+			vol.SizeBytes = size
 		}
 		out.Volumes = append(out.Volumes, vol)
 	}

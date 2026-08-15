@@ -171,7 +171,7 @@ func (h *authHarness) token(t *testing.T, role auth.Role) string {
 func TestNetworkRequestWithoutCredentialsIsRefused(t *testing.T) {
 	h := newAuthHarness(t)
 
-	for _, path := range []string{api.PathServices, api.PathAllocs, api.PathSession, api.PathAudit} {
+	for _, path := range []string{api.PathServices, api.PathAllocs, api.PathSession, api.PathAudit, api.PathVolumes} {
 		t.Run(path, func(t *testing.T) {
 			resp, body := h.do(t, h.request(t, http.MethodGet, path, nil))
 			if resp.StatusCode != http.StatusUnauthorized {

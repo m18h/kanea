@@ -17,6 +17,7 @@ indistinguishable from one nobody checked.
 | Functions end to end on a node | §20 M11 exit criterion | [`spikes/wasm-functions/REPORT.md`](../spikes/wasm-functions/REPORT.md) check H — **harness written, run pending** |
 | Kernel floor ≥ 5.10 | §21 Platform | [`spikes/ebpf-datapath/REPORT.md`](../spikes/ebpf-datapath/REPORT.md) Kernel A — **pending**; run `go test -tags bpfload` on the node |
 | S3 interoperability | §15.3 | `s3-interop` CI (MinIO, both addressing styles); real providers via `s3-cloud.yml` — **pending secrets** |
+| OOM kills are attributed, not guessed | §17, §5.2.11 (v1.68) | [§5](#5-oom-attribution-v168) — **pending** |
 
 ---
 
@@ -189,3 +190,83 @@ configuring a destination during an incident.
 | Cloudflare R2 | | *(pending secrets)* | |
 | Backblaze B2 | | *(pending secrets)* | |
 | Wasabi | | *(pending secrets)* | |
+
+---
+
+## 5. OOM attribution (v1.68)
+
+§17 claims an alloc says *why* it died, and that the OOM half is **read rather
+than inferred**. Unit tests cover the classifier and the cgroup parser against
+a temp directory, which is exactly the part a fake can prove. What no test here
+can answer is the one thing the whole feature rests on:
+
+> **is the alloc's cgroup still readable at the moment the reconciler observes
+> the stopped task?**
+
+The kill is recorded in `memory.events`, and that file lives in a cgroup runc
+removes when the *container* is deleted — not when the task exits. The
+reconciler observes the exit first and tears down after, so the window should
+hold, and the M0 spike read the counter after exit successfully
+([`spikes/containerd-lifecycle/cgroups.go`](../spikes/containerd-lifecycle/cgroups.go),
+check "alloc cgroup oom_kill incremented"). "Should hold" on a timing question
+is exactly the genre of claim v1.53 and PR #59 were: invisible in dev, wrong on
+the first real node. So it gets a run.
+
+Five checks, on a node installed the ordinary way (`install.sh` + `kanea init`):
+
+```bash
+# ① a declared limit, exceeded — the message must name the number
+cat > oom.hcl <<'EOF'
+project "val" {}
+service "hog" {
+  project = "val"
+  count   = 1
+  task {
+    image   = "alpine:3.20"
+    command = ["sh", "-c", "tail /dev/zero"]   # allocates until it is stopped
+  }
+  resources { memory = 64 }
+  restart   { attempts = 1 }
+}
+EOF
+kanea run oom.hcl
+kanea describe val/hog     # REASON: OOMKilled — exceeded its 64 MiB memory limit
+kanea ps                   # unchanged from before v1.68: no REASON column here
+
+# ② no declared limit — the kill came from the collective ceiling, and the
+#    message must say so rather than naming a limit nobody typed. Squeeze the
+#    node: --reserve leaves total-RAM − reserve for the whole workload slice.
+#    (Remove the resources block from the spec above, then re-run.)
+kanea describe val/hog     # REASON: OOMKilled — out of memory under the node's
+                           #         workload ceiling — no limit declared
+
+# ③ THE NEGATIVE CASE, and the reason the counter is read at all: a forced stop
+#    produces exit 137 too. It must NOT be reported as a memory problem.
+kanea run examples/… ; kanea stop val/quiet   # any service that ignores SIGTERM
+kanea describe val/quiet   # REASON: Signalled — killed by SIGKILL (exit 137)
+
+# ④ an alloc that never starts explains itself instead of sitting at `pending`
+kanea run --set image=ghcr.io/nope/nope:v0 …
+kanea describe val/nope    # REASON: ImageFailed — <the registry's own words>
+                           # and it keeps retrying: restarts stays 0, state
+                           # never reaches `failed`
+
+# ⑤ the notification carries the cause without anyone changing a filter
+#    (an `on = ["service.crashed"]` route must still fire for ①)
+```
+
+**What a failure looks like, and what to do about it.** If ① reports
+`Signalled — killed by SIGKILL` instead of `OOMKilled`, the cgroup was gone
+before it was read, and the window assumption is wrong. The fix is not to
+loosen the classifier — inferring OOM from 137 would break ③, which is the
+check that matters most — but to move the read earlier: containerd publishes a
+`/tasks/oom` event, and `runtime.Driver.Exits()` is already implemented and
+currently unwired, so subscribing is the additive path.
+
+| Check | Result | Date | Node |
+|---|---|---|---|
+| ① declared limit named | | | |
+| ② collective ceiling named | | | |
+| ③ `kanea stop` is not an OOM | | | |
+| ④ start failure explained | | | |
+| ⑤ `service.crashed` carries the cause | | | |

@@ -63,6 +63,18 @@ const (
 	// trigger patterns, so this event can never invoke a function.
 	EventFunctionInvokeFailed = "function.invoke_failed"
 
+	// Volumes (PRD v1.69, §8, §6.2 R31). Two pairs, and they are pairs on
+	// purpose: an alert that never clears is one people learn to ignore.
+	//
+	// Every one of these fires on a *transition*, never per sample or per
+	// probe. A breached budget persists for hours and a mount is probed every
+	// 30 s, so an event per observation would be a metric wearing an event's
+	// name — and a notification storm on the way.
+	EventVolumeOverBudget     = "volume.over_budget"
+	EventVolumeUnderBudget    = "volume.under_budget"
+	EventVolumeMountFailed    = "volume.mount_failed"
+	EventVolumeMountRecovered = "volume.mount_recovered"
+
 	// EventTest is the test action's payload (§11). It is in the vocabulary so
 	// that a test message renders like every other event rather than as a
 	// special case each channel has to know about — but the test action does not
@@ -181,6 +193,17 @@ var severities = map[string]Severity{
 	// Error: the retries are already spent by the time this fires, so the
 	// event means invocations are being lost now.
 	EventFunctionInvokeFailed: SeverityError,
+
+	// Warning, not error: a volume over its budget is still serving. It is a
+	// number heading somewhere bad, which is exactly what a warning is for.
+	EventVolumeOverBudget:  SeverityWarning,
+	EventVolumeUnderBudget: SeverityInfo,
+	// Error: a mount that will not establish fails every alloc that needs it
+	// (§8's "mount failures fail the alloc loudly"), and a probe failure past
+	// the threshold means a workload is reading a filesystem that is lying to
+	// it — the s3fs-serves-stale-ENOENT case the supervisor exists for.
+	EventVolumeMountFailed:    SeverityError,
+	EventVolumeMountRecovered: SeverityInfo,
 
 	EventTest: SeverityInfo,
 }

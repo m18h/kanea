@@ -102,12 +102,27 @@ type Mounter interface {
 	// ResolveHost checks a host volume against the operator's allowlist and
 	// returns the real directory to bind-mount (R15). The allowlist is node
 	// configuration, so only the agent can answer this — which is the point.
-	ResolveHost(path string) (string, error)
+	//
+	// create is the spec's opt-in to making a missing directory (v1.69). It
+	// permits, it never widens: the allowlist still decides where.
+	ResolveHost(path string, create bool) (string, error)
 	// Prune releases every mount whose target is not in keep. Releasing is
 	// driven by a sweep rather than by teardown because a network volume is
 	// shared by every alloc of its service: "the last one stopped" is a fact
 	// about the service, not about the alloc being torn down.
 	Prune(ctx context.Context, keep map[string]struct{}) error
+}
+
+// VolumeUsage is an optional seam onto the volume usage sampler (PRD v1.69,
+// R31). The reconciler tells it which volumes exist; measuring them is the
+// sampler's own background job, on its own schedule.
+//
+// It is push-only by design. The reconciler already walks desired state every
+// pass, so it is the cheapest place to learn what exists — and giving the
+// sampler a Store of its own would put a metric collector behind the state
+// interface, which constraint #2 exists to prevent.
+type VolumeUsage interface {
+	SetTargets(targets []storage.UsageTarget)
 }
 
 // Passthrough is the slice of the node's device and socket grants this package
@@ -158,6 +173,9 @@ type Config struct {
 	LogDir string
 	// VolumeDir is the root of local volume storage (PRD §8: data_dir/volumes).
 	VolumeDir string
+	// VolumeUsage receives the set of volumes to measure (v1.69). Nil means
+	// usage is not sampled, which is what a test that is not about it wants.
+	VolumeUsage VolumeUsage
 	// ServiceCIDR is the pool service frontends are allocated from
 	// (PRD §15.1). Empty means DefaultServiceCIDR.
 	ServiceCIDR string
@@ -224,6 +242,7 @@ type Reconciler struct {
 	stopGrace     time.Duration
 	logDir        string
 	volumeDir     string
+	volumeUsage   VolumeUsage
 	resolvConfDir string
 	nameserver    string
 	authSink      AuthSink
@@ -269,6 +288,7 @@ func New(cfg Config) (*Reconciler, error) {
 		stopGrace:     cfg.StopGrace,
 		logDir:        cfg.LogDir,
 		volumeDir:     cfg.VolumeDir,
+		volumeUsage:   cfg.VolumeUsage,
 		resolvConfDir: cfg.ResolvConfDir,
 		nameserver:    cfg.Nameserver,
 		edgeSnapshot:  cfg.EdgeSnapshot,
@@ -345,6 +365,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	// the planner needs the health verdicts to gate dependents.
 	attachments := r.attachments(ctx)
 	world := World{Desired: desired, Records: records, Actual: actual, Now: r.now()}
+	// Tell the usage sampler what exists. Cheap (one slice build and a pointer
+	// store) and idempotent, so it rides the pass rather than needing a loop of
+	// its own — the sampler does the expensive part on its own schedule.
+	if r.volumeUsage != nil {
+		r.volumeUsage.SetTargets(volumeTargets(desired, r.volumeDir))
+	}
 
 	// Probing is separate from observation for the same reason observation is
 	// separate from planning: "the check failed" is a fact about the world, and
@@ -397,6 +423,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 			result.Failed++
 			r.log.Error("action failed",
 				"action", action.Kind, "alloc", action.AllocID, "reason", action.Reason, "error", err)
+			// Put the cause where a person will look for it. Without this an
+			// alloc that cannot start sits at `pending` forever and the only
+			// explanation is in a daemon log nobody reading `kanea describe`
+			// has (PRD v1.68). Retry behaviour is unchanged: this records, it
+			// does not decide.
+			r.recordStartFailure(ctx, action, err)
 			continue
 		}
 		result.Applied++
@@ -720,11 +752,62 @@ func (r *Reconciler) recordFailures(changed map[string]AllocRecord) {
 		// crashing is forty facts; turning that into one message is the
 		// dispatcher's job, and it does it better knowing how many there were
 		// (§11 storm coalescing).
+		// The event name stays `service.crashed` whatever the cause, including
+		// an OOM (PRD v1.68). A new `service.oom_killed` would read better right
+		// up until it silently stopped matching every filter that already lists
+		// `service.crashed` by name — which is the failure the vocabulary is
+		// centralized to prevent (internal/notify/event.go). The cause goes in
+		// the message instead, where nothing has to opt in to see it.
 		r.emit(notify.NewEvent(notify.EventServiceCrashed,
 			record.Project, record.Service,
-			fmt.Sprintf("alloc %d exited with code %d",
-				record.Index, record.LastExitCode), r.now()).
+			crashMessage(record), r.now()).
 			WithDetail(fmt.Sprintf("restart %d", record.Restarts)))
+	}
+}
+
+// recordStartFailure writes the cause of a failed create onto the alloc's
+// record, so an alloc that never started can explain itself (PRD v1.68, §17).
+//
+// It records; it never decides. The retry stays exactly what it was — every
+// pass, budget untouched — because R29's restart budget is for a workload that
+// ran and crashed, and spending it on a registry outage would fail a service
+// permanently for something on the node's side of the line.
+func (r *Reconciler) recordStartFailure(ctx context.Context, action Action, cause error) {
+	reason, message, ok := startFailure(cause)
+	if !ok {
+		return // not a create-path failure: a teardown, a removal, a bad action
+	}
+
+	record, err := r.loadRecord(ctx, action.Project, action.Service, action.Index)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		// The first create of this alloc, so there is nothing to annotate yet.
+		// State stays pending, which is what the planner already assumes for an
+		// alloc with no container — this record adds an explanation, not a
+		// decision.
+		record = AllocRecord{
+			ID: action.AllocID, Project: action.Project, Service: action.Service,
+			Index: action.Index, State: AllocPending, CreatedAt: r.now(),
+		}
+	case err != nil:
+		r.log.Warn("cannot record start failure", "alloc", action.AllocID, "error", err)
+		return
+	}
+
+	// A create that fails fails again every pass — a missing image does not
+	// heal in five seconds — and rewriting an identical record each time would
+	// turn one typo into a steady stream of Store writes, CDC changes and S3
+	// uploads. Same rule as the secret syncer's: an unchanged value is not
+	// written (PRD v1.44).
+	if record.LastExitReason == reason && record.LastExitMessage == message {
+		return
+	}
+	record.LastExitReason = reason
+	record.LastExitMessage = message
+	record.UpdatedAt = r.now()
+
+	if err := r.persist(ctx, map[string]AllocRecord{record.ID: record}); err != nil {
+		r.log.Warn("cannot record start failure", "alloc", action.AllocID, "error", err)
 	}
 }
 
@@ -776,6 +859,7 @@ func Observe(w World) map[string]AllocRecord {
 			}
 			record.LastExitCode = status.ExitCode
 			record.LastExitAt = exitTime(status, w.Now)
+			record.LastExitReason, record.LastExitMessage = classifyExit(status)
 			record.UpdatedAt = w.Now
 
 			if record.Restarts >= desired.Restart.attempts() {
@@ -818,7 +902,7 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 
 	case ActionStart:
 		if err := r.driver.Start(ctx, action.Project, action.AllocID); err != nil {
-			return err
+			return failedAt(phaseStart, err)
 		}
 		return r.markRunning(ctx, w, action)
 
@@ -857,14 +941,16 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 
 	auth, err := r.registryAuth(ctx, desired)
 	if err != nil {
-		return err
+		// Credentials are part of getting the image, and that is how it reads to
+		// whoever has to fix it.
+		return failedAt(phaseImage, err)
 	}
 	// RunImage, not Image: a service with auto-update on declares a tag and
 	// runs the digest that tag resolved to (R19).
 	if _, err := r.driver.EnsureImage(ctx, runtime.ImageRef{
 		Project: desired.Project, Ref: desired.RunImage(), Auth: auth,
 	}); err != nil {
-		return fmt.Errorf("image: %w", err)
+		return failedAt(phaseImage, err)
 	}
 	// Volumes before the spec, not just before the task. Directories have to
 	// exist so the runtime does not create a bind-mount source as a root-owned
@@ -872,13 +958,13 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	// only known once the allowlist has resolved it, so the spec cannot be
 	// built until that has happened.
 	if err := r.ensureVolumes(ctx, desired, action.Index); err != nil {
-		return err
+		return failedAt(phaseVolume, err)
 	}
 	// Grants resolve here for the same reason: a device node's real path is a
 	// node-local fact the spec cannot carry, and it has to be known before the
 	// spec is built.
 	if err := r.ensurePassthrough(desired); err != nil {
-		return err
+		return failedAt(phasePassthrough, err)
 	}
 
 	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
@@ -886,16 +972,16 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	// datapath denies an attachment whose identity is not yet written (§5.2.5).
 	if r.network != nil {
 		if err := r.network.Attach(ctx, spec); err != nil {
-			return fmt.Errorf("attach network: %w", err)
+			return failedAt(phaseNetwork, err)
 		}
 	} else {
 		spec.NetnsPath = ""
 	}
 	if err := r.driver.Create(ctx, spec); err != nil {
-		return fmt.Errorf("create: %w", err)
+		return failedAt(phaseCreate, err)
 	}
 	if err := r.driver.Start(ctx, desired.Project, spec.ID); err != nil {
-		return fmt.Errorf("start: %w", err)
+		return failedAt(phaseStart, err)
 	}
 
 	now := r.now()
@@ -920,6 +1006,15 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 			record.Restarts = existing.Restarts
 			record.LastExitCode = existing.LastExitCode
 			record.LastExitAt = existing.LastExitAt
+			// The explanation travels with the exit it explains — but only when
+			// there was one. A record whose reason came from a *start* failure
+			// has no exit to carry, and this create is the moment that failure
+			// stopped being true: leaving the reason on would leave "image not
+			// found" printed against an alloc that is now running.
+			if !existing.LastExitAt.IsZero() {
+				record.LastExitReason = existing.LastExitReason
+				record.LastExitMessage = existing.LastExitMessage
+			}
 			if action.Kind == ActionRestart {
 				record.Restarts++
 			}
@@ -943,13 +1038,16 @@ func (r *Reconciler) ensureVolumes(ctx context.Context, d Desired, index int) er
 		v := &d.Volumes[i]
 
 		// A host volume is the operator's directory, not Kanea's. It is checked
-		// against the allowlist and never created: a host path that does not
-		// exist is a mistake to report, not a directory to invent (R15).
+		// against the allowlist and, unless the spec asked for it with
+		// `create = true`, never created: a host path that does not exist is a
+		// mistake to report, not a directory to invent (R15). Even when it is
+		// created it is not chowned — creating a directory does not change
+		// whose it is, which is why R24 still refuses ownership here.
 		if v.Resource.IsHost() {
 			if r.mounts == nil {
 				return fmt.Errorf("volume %s is a host volume but host volumes are not configured", v.Name)
 			}
-			resolved, err := r.mounts.ResolveHost(v.Resource.Path)
+			resolved, err := r.mounts.ResolveHost(v.Resource.Path, v.Resource.Create)
 			if err != nil {
 				return fmt.Errorf("volume %s: %w", v.Name, err)
 			}

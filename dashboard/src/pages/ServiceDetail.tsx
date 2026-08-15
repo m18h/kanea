@@ -45,6 +45,7 @@ import { rolloutStatus, type RolloutStatus } from '@/lib/rollout'
 import {
   allocStateVariant,
   formatBytes,
+  allocExitReason,
   formatClock,
   groupAllocs,
   groupCodes,
@@ -185,6 +186,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                       <TH>CPU</TH>
                       <TH>Mem</TH>
                       <TH>Restarts</TH>
+                      <TH>Reason</TH>
                       <TH>Age</TH>
                       <TH className="pr-0" aria-label="Actions" />
                     </tr>
@@ -602,6 +604,7 @@ function AllocRow({
   const cpu = useSeries(stats?.cpu, at)
   const memory = useSeries(stats?.memory, at)
   const tone = allocStateVariant(alloc.state)
+  const reason = allocExitReason(alloc)
   const { session } = useSession()
   const admin = session?.role === 'admin'
   const [shellOpen, setShellOpen] = useState(false)
@@ -626,6 +629,27 @@ function AllocRow({
         {alloc.last_exit_at ? (
           <span className="text-muted-foreground"> ({relativeAge(alloc.last_exit_at)})</span>
         ) : null}
+      </TD>
+      <TD>
+        {/* Why it last stopped, or why it never started (PRD v1.68). Shown
+            whatever the current state — the State column is right there, so a
+            running row carrying OOMKilled reads as "up now, killed for memory
+            last time", which is the thing worth knowing. */}
+        {reason ? (
+          <span
+            className="flex max-w-[22rem] flex-col leading-tight"
+            title={reason.message ? `${reason.label} — ${reason.message}` : reason.label}
+          >
+            <span className={reason.alarming ? 'text-status-error' : 'text-muted-foreground'}>
+              {reason.label}
+            </span>
+            {reason.message ? (
+              <span className="truncate text-xs text-muted-foreground">{reason.message}</span>
+            ) : null}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
       </TD>
       <TD className="font-mono tabular-nums">{relativeAge(alloc.created_at)}</TD>
       <TD className="pr-0 text-right">

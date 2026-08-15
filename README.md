@@ -204,6 +204,21 @@ have written. A spec then mounts with `storage "x" { type = "host" path = … }`
 and claims the GPU with `device "dri" { grant = "gpu" }`; a grant the node does
 not hold fails the alloc rather than starting without it.
 
+A host path must already exist, so a typo cannot become a silently empty volume.
+Add `create = true` to the storage block when you would rather Kanea made it —
+still only inside a prefix you allowed above.
+
+### Volumes
+
+`kanea volume list` shows every storage resource with the mounts using it, their
+measured usage and mount state. A `volume` block may declare `size = "10GiB"`,
+which is a **budget rather than a quota**: Kanea measures the volume against it
+and emits `volume.over_budget` (and `volume.under_budget` when it recovers), but
+nothing enforces it — no quota mechanism exists on the node, and `nfs`, `smb`
+and `s3` could not carry one anyway. Mounts notify too: `volume.mount_failed`
+when one will not establish or stops answering, `volume.mount_recovered` when
+the supervisor gets it back.
+
 ### Shared variables
 
 Declare a value once and reference it anywhere in a spec as `${name}` — or as a
@@ -395,7 +410,7 @@ one place to update.
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.67) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.69) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |

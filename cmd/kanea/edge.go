@@ -8,11 +8,10 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
-	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/m18h/kanea/internal/edge"
+	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/logging"
 	"github.com/m18h/kanea/internal/ratelimit"
 )
@@ -72,7 +71,7 @@ func runEdge(args []string) error {
 	// §21 platform budget, and GC pressure is a better failure mode than an
 	// OOM kill for the process holding public traffic.
 	if *memLimit != "" {
-		limit, err := parseByteSize(*memLimit)
+		limit, err := jobspec.ParseByteSize(*memLimit)
 		if err != nil {
 			return fmt.Errorf("--memory-limit: %w", err)
 		}
@@ -139,37 +138,3 @@ const (
 	statusOff = "off"
 	tlsOff    = "off"
 )
-
-// byteUnits are the suffixes parseByteSize accepts, longest first so "GiB" is
-// matched before "G".
-var byteUnits = []struct {
-	suffix string
-	scale  int64
-}{
-	{"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10},
-	{"G", 1 << 30}, {"M", 1 << 20}, {"K", 1 << 10}, {"B", 1},
-}
-
-// parseByteSize reads "128MiB", "1GiB", or a plain byte count.
-func parseByteSize(s string) (int64, error) {
-	s = strings.TrimSpace(s)
-	for _, u := range byteUnits {
-		rest, ok := strings.CutSuffix(s, u.suffix)
-		if !ok {
-			continue
-		}
-		n, err := strconv.ParseInt(strings.TrimSpace(rest), 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("%q: %w", s, err)
-		}
-		if n <= 0 {
-			return 0, fmt.Errorf("%q: must be positive", s)
-		}
-		return n * u.scale, nil
-	}
-	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%q: want a byte count or a size like 128MiB", s)
-	}
-	return n, nil
-}

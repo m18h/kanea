@@ -28,6 +28,9 @@ export interface MockAlloc {
   healthy: boolean
   spec_hash: string
   created_at: string
+  last_exit_reason?: string
+  last_exit_message?: string
+  last_exit_at?: string
 }
 
 const startedAt = Date.now()
@@ -117,6 +120,15 @@ for (const svc of services) {
       healthy: true,
       spec_hash: specHash(svc),
       created_at: new Date(startedAt - (36 + i) * 3600 * 1000).toISOString(),
+      // The alloc that restarted carries why (PRD v1.68) — running now, and
+      // OOM-killed last time, which is the case the column exists for.
+      ...(svc.service === 'api'
+        ? {
+            last_exit_reason: 'oom_killed',
+            last_exit_message: 'exceeded its 256 MiB memory limit',
+            last_exit_at: new Date(startedAt - 20 * 60 * 1000).toISOString(),
+          }
+        : {}),
     })
   }
 }

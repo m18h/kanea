@@ -128,14 +128,14 @@ func TestEveryKnownEventHasASeverity(t *testing.T) {
 			t.Errorf("%s is not in KnownEvents", name)
 		}
 	}
-	// Twenty-two from §11 (v1.39 added function.invoke_failed — and
+	// Twenty-six from §11 (v1.39 added function.invoke_failed — and
 	// deliberately no function.invoked, which would be a metric at event
-	// cardinality; v1.44 added secret.synced/sync_failed), plus notify.test —
-	// the test action's payload, which is in the vocabulary so it renders like
-	// any other event, and which the test action deliberately does not route
-	// through the filters.
-	if got, want := len(notify.KnownEvents()), 23; got != want {
-		t.Errorf("KnownEvents has %d entries, want %d — §11 lists 22 plus notify.test", got, want)
+	// cardinality; v1.44 added secret.synced/sync_failed; v1.69 added the four
+	// volume.* names), plus notify.test — the test action's payload, which is
+	// in the vocabulary so it renders like any other event, and which the test
+	// action deliberately does not route through the filters.
+	if got, want := len(notify.KnownEvents()), 27; got != want {
+		t.Errorf("KnownEvents has %d entries, want %d — §11 lists 26 plus notify.test", got, want)
 	}
 }
 

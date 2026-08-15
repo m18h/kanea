@@ -23,6 +23,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/m18h/kanea/internal/notify"
 )
 
 // Storage types (PRD §8).
@@ -73,6 +75,10 @@ type Resource struct {
 	Options string
 	// Host: the directory to mount, as written in the spec.
 	Path string
+	// Create permits Kanea to create a missing host directory (R15, v1.69).
+	// False keeps the original behaviour, where a missing path is a mistake to
+	// report rather than a directory to invent.
+	Create bool `json:"create,omitempty"`
 }
 
 // NeedsMount reports whether this resource requires a mount command.
@@ -219,6 +225,14 @@ type Config struct {
 	// HostPaths is the operator's allowlist for `host` volumes (R15). The zero
 	// value permits none, which is the intended default.
 	HostPaths HostPathPolicy
+	// Emit publishes volume.* events (§11, PRD v1.69). Nil disables them.
+	//
+	// Before this existed the supervisor could remount a failed volume three
+	// times in an afternoon and tell nobody: the whole recovery story was in
+	// the daemon log. Constraint #8 governs the call — Publish never blocks and
+	// never returns an error — which is what makes it safe to emit from inside
+	// a mount's own lock.
+	Emit func(notify.Event)
 }
 
 // mountPath is the host path of a mount, used as its identity.

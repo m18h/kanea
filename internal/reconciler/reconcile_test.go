@@ -1429,7 +1429,7 @@ func (f *fakeMounter) Prune(_ context.Context, keep map[string]struct{}) error {
 	return nil
 }
 
-func (f *fakeMounter) ResolveHost(path string) (string, error) {
+func (f *fakeMounter) ResolveHost(path string, _ bool) (string, error) {
 	if f.hostErr != nil {
 		return "", f.hostErr
 	}
