@@ -189,6 +189,36 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 	}
 }
 
+// hashableVolumes strips the fields of a volume that are not baked into a
+// container, so changing one does not roll the alloc (PRD v1.69, R31/R15).
+//
+// Two fields, one reason each. `SizeBytes` is a budget the sampler compares a
+// measurement against — rolling a database because someone adjusted a
+// monitoring threshold would be absurd. `Create` decides whether a missing host
+// directory is made at alloc start; by the time a container exists the answer
+// has already been acted on, and flipping it changes nothing about the running
+// container.
+//
+// This is the same call the PRD makes for `Expose`, `Publish` and function
+// trigger config: the field is real, it is just not *container* state.
+//
+// Note the interaction with omitempty, which is doing separate work: omitempty
+// is what makes a record written before these fields existed hash exactly as it
+// did (R23), and this projection is what makes *declaring* them free. Both are
+// needed — the first for the upgrade, the second for the edit.
+func hashableVolumes(volumes []Volume) []Volume {
+	if len(volumes) == 0 {
+		return nil
+	}
+	out := make([]Volume, len(volumes))
+	copy(out, volumes)
+	for i := range out {
+		out[i].SizeBytes = 0
+		out[i].Resource.Create = false
+	}
+	return out
+}
+
 // SpecHash fingerprints the parts of a desired service that are baked into a
 // container when it is created.
 //
@@ -250,7 +280,7 @@ func SpecHash(d Desired) string {
 	}{
 		Image: d.Image, PinnedImage: d.PinnedImage,
 		Command: d.Command, Capabilities: d.Capabilities,
-		Env: d.Env, User: d.User, Resources: d.Resources, Volumes: d.Volumes,
+		Env: d.Env, User: d.User, Resources: d.Resources, Volumes: hashableVolumes(d.Volumes),
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
 		Devices: d.Devices, Sockets: d.Sockets,
 		Generation: d.Generation,

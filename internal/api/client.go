@@ -67,6 +67,13 @@ func (c *Client) Functions(ctx context.Context) (FunctionsResponse, error) {
 	return out, err
 }
 
+// Volumes lists storage resources with the mounts that use them.
+func (c *Client) Volumes(ctx context.Context) (VolumesResponse, error) {
+	var out VolumesResponse
+	err := c.do(ctx, http.MethodGet, PathVolumes, nil, &out)
+	return out, err
+}
+
 // Services lists the declared services.
 func (c *Client) Services(ctx context.Context) ([]reconciler.Desired, error) {
 	var out ServicesResponse

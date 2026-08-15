@@ -184,6 +184,21 @@ type Status struct {
 	ExitedAt time.Time
 	// Image is the reference the alloc was created from.
 	Image string
+	// OOMKilled reports that the kernel OOM-killed a process in this alloc's
+	// cgroup (PRD v1.68, §17). Read from `memory.events`, never inferred from
+	// exit 137 — `kanea stop` produces 137 too, and calling that a memory
+	// problem would be worse than saying nothing.
+	//
+	// False is not "not OOM-killed": it is also what an unreadable or
+	// already-reaped cgroup gives, which is why OOMKnown exists.
+	OOMKilled bool
+	// OOMKnown reports that the cgroup was readable, so OOMKilled means
+	// something. §9.2's "no data is never zero", applied to a cause.
+	OOMKnown bool
+	// MemoryLimit is the alloc's own `memory.max` in bytes, or 0 when it
+	// declared none (unbounded, R11 v1.58). It is what separates "exceeded its
+	// own limit" from "hit the node's collective ceiling" (§5.2.11).
+	MemoryLimit uint64
 }
 
 // ExecOptions describes an attached exec.

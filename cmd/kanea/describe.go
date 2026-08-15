@@ -185,7 +185,7 @@ func describeAllocs(o *out, svc reconciler.Desired, allocs []reconciler.AllocRec
 	}
 	o.println("Allocs")
 	o.table()
-	o.println("  ALLOC\tSTATE\tHEALTH\tRESTARTS\tAGE")
+	o.println("  ALLOC\tSTATE\tHEALTH\tRESTARTS\tREASON\tAGE")
 	for _, a := range allocs {
 		// Health renders absent as absent (§9.2): a check-free service reads
 		// "-", never "unhealthy".
@@ -204,9 +204,53 @@ func describeAllocs(o *out, svc reconciler.Desired, allocs []reconciler.AllocRec
 		if !a.CreatedAt.IsZero() {
 			age = shortDuration(time.Since(a.CreatedAt))
 		}
-		o.printf("  %s\t%s\t%s\t%d\t%s\n", a.ID, a.State, health, a.Restarts, age)
+		o.printf("  %s\t%s\t%s\t%d\t%s\t%s\n",
+			a.ID, a.State, health, a.Restarts, allocReason(a), age)
 	}
 	o.endTable()
+}
+
+// reasonLabels renders a termination reason the way a person would say it (PRD
+// v1.68, §17). The wire values stay snake_case like every other enum on the
+// record; only the display differs.
+var reasonLabels = map[reconciler.ExitReason]string{
+	reconciler.ExitOOMKilled:         "OOMKilled",
+	reconciler.ExitSignal:            "Signalled",
+	reconciler.ExitError:             "Error",
+	reconciler.ExitCompleted:         "Completed",
+	reconciler.ExitImageFailed:       "ImageFailed",
+	reconciler.ExitVolumeFailed:      "VolumeFailed",
+	reconciler.ExitPassthroughFailed: "GrantFailed",
+	reconciler.ExitNetworkFailed:     "NetworkFailed",
+	reconciler.ExitCreateFailed:      "CreateFailed",
+	reconciler.ExitStartFailed:       "StartFailed",
+}
+
+// allocReason renders why an alloc last stopped, or why it has not started.
+//
+// It is shown whatever the alloc's current state, because the STATE column is
+// right beside it: a `running` row carrying "OOMKilled" says the alloc is up
+// now and was killed for memory last time, which is the single most useful
+// thing to know about a service that keeps coming back.
+//
+// A record from before v1.68 has a code and no reason, and renders as the code
+// rather than as nothing — an upgrade must not make existing allocs less
+// legible than they were.
+func allocReason(a reconciler.AllocRecord) string {
+	if a.LastExitReason == "" {
+		if a.LastExitCode != 0 {
+			return fmt.Sprintf("exit %d", a.LastExitCode)
+		}
+		return "-"
+	}
+	label := reasonLabels[a.LastExitReason]
+	if label == "" {
+		label = string(a.LastExitReason)
+	}
+	if a.LastExitMessage == "" {
+		return label
+	}
+	return label + " — " + a.LastExitMessage
 }
 
 func describeStats(o *out, stats api.StatsSample) {

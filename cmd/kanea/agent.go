@@ -427,13 +427,6 @@ func runAgent(args []string) error {
 		return err
 	}
 
-	mounts := storage.New(storage.Config{
-		CredentialDir: filepath.Join(*dataDir, credentialSubdir),
-		HostPaths:     hostPolicy,
-		Secrets:       secretStore,
-		Logger:        logger,
-	})
-
 	// External secret providers (PRD §5.2.13): a sync loop pulls mapped
 	// values into the store above, so everything downstream — including every
 	// consumer wired in this function — reads them with no idea where they
@@ -524,6 +517,27 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// The mount manager is built here rather than earlier because it needs the
+	// notifier: a volume that will not mount, and one the supervisor recovered,
+	// are both things an operator should hear about (v1.69) — and before that
+	// existed the entire story lived in the daemon log.
+	mounts := storage.New(storage.Config{
+		CredentialDir: filepath.Join(*dataDir, credentialSubdir),
+		HostPaths:     hostPolicy,
+		Secrets:       secretStore,
+		Logger:        logger,
+		Emit:          notifier.Publish,
+	})
+
+	// The volume usage sampler (R31). It measures on its own slow schedule and
+	// is told what exists by the reconciler each pass; nothing it holds touches
+	// the Store (constraint #2).
+	volumeUsage := storage.NewUsageSampler(storage.UsageConfig{
+		Emit:   notifier.Publish,
+		Logger: logger,
+	})
+	go volumeUsage.Run(ctx)
+
 	// The function invoker (v1.39, §11): event triggers tee off the
 	// dispatcher's feed, cron triggers run on its own schedule, and both POST
 	// to VIPs the Store derived — never a URL a spec could hold (R26).
@@ -566,6 +580,7 @@ func runAgent(args []string) error {
 		Breaker:       breaker,
 		Emit:          notifier.Publish,
 		Mounts:        mounts,
+		VolumeUsage:   volumeUsage,
 		Passthrough:   grants,
 		EdgeSnapshot:  routesPath,
 		BaseDomain:    *baseDomain,
@@ -811,6 +826,7 @@ func runAgent(args []string) error {
 		OIDC:         provider, Sessions: users,
 		Metrics: metrics, EdgeMetrics: edgeExposition,
 		Invoker: invoker,
+		Usage:   volumeUsage, VolumeDir: volumes,
 		Breaker: breaker, Node: nodeReader,
 		// The editor's renderer parses with the node's own base domain and
 		// variables — the same options the GitOps sync uses, so a spec means

@@ -557,6 +557,13 @@ type Volume struct {
 	UID  *uint32 `json:"uid,omitempty"`
 	GID  *uint32 `json:"gid,omitempty"`
 	Mode *uint32 `json:"mode,omitempty"`
+	// SizeBytes is the volume's declared budget (R31), 0 for none.
+	//
+	// omitempty for the reason above, and additionally stripped from the hash
+	// material by hashableVolumes: a budget is measured out of band and nothing
+	// about it is baked into a container, so changing one must not roll a
+	// database. Same call the PRD makes for Expose, Publish and trigger config.
+	SizeBytes int64 `json:"size_bytes,omitempty"`
 	// resolvedHostPath is the allowlist-checked directory for a host volume,
 	// filled in by the reconciler just before the alloc is created. It is
 	// unexported and untagged on purpose: it is a node-local fact, so it must
@@ -625,6 +632,51 @@ const (
 	AllocStopped AllocState = "stopped"
 )
 
+// ExitReason classifies why an alloc stopped — or why it never started (PRD
+// v1.68, §17).
+//
+// The exit code alone cannot answer this. 137 is an OOM kill, a `kanea stop`
+// that timed out, and any other SIGKILL, and those want different responses
+// from whoever is reading. And an alloc that never ran has no exit code at all:
+// before v1.68 its cause lived only in a daemon log while `kanea describe`
+// showed a permanently `pending` row with no explanation on it.
+type ExitReason string
+
+// Termination reasons. The first four describe an alloc that ran; the rest name
+// the point on the create path where one that did not got stuck. They are split
+// that finely because the fix differs at every one of them — a missing image is
+// somebody's typo, a failed mount is the node's storage, a refused grant is
+// policy (R17).
+const (
+	// ExitOOMKilled means the kernel killed a process in the alloc's cgroup for
+	// memory. It is set only when the cgroup's own counter says so, never
+	// inferred from an exit code (§5.2.11).
+	ExitOOMKilled ExitReason = "oom_killed"
+	// ExitSignal means the process was killed by a signal, which the message
+	// names. This is where a SIGKILL lands when the cgroup could not be read:
+	// true, and less specific than an OOM claim we cannot support.
+	ExitSignal ExitReason = "signal"
+	// ExitError means the process exited non-zero on its own.
+	ExitError ExitReason = "error"
+	// ExitCompleted means the process exited zero.
+	ExitCompleted ExitReason = "completed"
+
+	// ExitImageFailed means the image could not be pulled or resolved.
+	ExitImageFailed ExitReason = "image_failed"
+	// ExitVolumeFailed means a declared volume could not be prepared (§8).
+	ExitVolumeFailed ExitReason = "volume_failed"
+	// ExitPassthroughFailed means a device or socket grant did not resolve
+	// (R17/R18) — the alloc is failed rather than started without it.
+	ExitPassthroughFailed ExitReason = "passthrough_failed"
+	// ExitNetworkFailed means the datapath attachment failed (§5.2.5).
+	ExitNetworkFailed ExitReason = "network_failed"
+	// ExitCreateFailed means containerd refused to create the container.
+	ExitCreateFailed ExitReason = "create_failed"
+	// ExitStartFailed means the container was created and the task would not
+	// start — most often a command that is not executable in the image.
+	ExitStartFailed ExitReason = "start_failed"
+)
+
 // AllocRecord is the durable per-alloc state, stored under store.KindAlloc.
 // It outlives kanead: restart bookkeeping must survive a control-plane restart,
 // or "attempts = 5" would reset every time kanead was upgraded.
@@ -650,6 +702,20 @@ type AllocRecord struct {
 	// LastExitCode and LastExitAt describe the most recent exit.
 	LastExitCode uint32    `json:"last_exit_code,omitempty"`
 	LastExitAt   time.Time `json:"last_exit_at,omitzero"`
+	// LastExitReason classifies that exit, or the failure of an alloc that
+	// never got as far as running (PRD v1.68, §17).
+	//
+	// Both this and LastExitMessage carry `omitempty` for the R23 reason: the
+	// record is CDC-replicated, and a record written before the fields existed
+	// has to serialise byte-identically or every alloc on the node ships a
+	// change at upgrade. AllocRecord is not SpecHash material, so nothing rolls
+	// — but it *is* the API's wire format directly (there is no allocView), so
+	// these names are public the moment they land.
+	LastExitReason ExitReason `json:"last_exit_reason,omitempty"`
+	// LastExitMessage explains the reason in one line, for `kanea describe`.
+	// The exit counterpart of HealthMessage, which stays probe-only: a crash
+	// and a failed probe are different facts and merging them would lose one.
+	LastExitMessage string `json:"last_exit_message,omitempty"`
 	// NextRestartAt is when the alloc may be restarted; zero means immediately.
 	NextRestartAt time.Time `json:"next_restart_at,omitzero"`
 	// Healthy reports the last health-check verdict.

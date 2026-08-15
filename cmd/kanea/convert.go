@@ -153,6 +153,11 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				// inheritance is spec-internal, so jobspec did it at conversion
 				// and `kanea plan` shows what will actually be applied (R24).
 				UID: convertID(v.UID), GID: convertID(v.GID), Mode: mode,
+				// R31's budget. Already parsed and validated in jobspec, so
+				// this is a copy — and it is deliberately not SpecHash
+				// material (hashableVolumes strips it), so changing it never
+				// rolls the alloc.
+				SizeBytes: v.SizeBytes,
 			})
 		}
 		// Grants cross as names. There is nothing to resolve here and nowhere to
@@ -423,5 +428,6 @@ func storageResource(st *jobspec.Storage) storage.Resource {
 		Share:    st.Share,
 		Options:  st.Options,
 		Path:     st.Path,
+		Create:   st.Create,
 	}
 }

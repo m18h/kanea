@@ -348,6 +348,7 @@ func validateStorages(spec *Spec) hcl.Diagnostics {
 			continue
 		}
 		seen[st.Name] = st.DefRange
+		diags = append(diags, validateStorageCreate(st)...)
 
 		missing := func(field string) *hcl.Diagnostic {
 			return &hcl.Diagnostic{
@@ -762,6 +763,7 @@ func validateVolumes(spec *Spec, svc *Service) hcl.Diagnostics {
 	for _, v := range svc.Volumes {
 		diags = append(diags, validateName("Volume", v.Name, v.DefRange)...)
 		diags = append(diags, validateVolumeOwnership(spec, svc, v)...)
+		diags = append(diags, validateVolumeSize(spec, svc, v)...)
 
 		if !path.IsAbs(v.MountPath) {
 			diags = append(diags, &hcl.Diagnostic{

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"text/tabwriter"
 )
 
@@ -29,6 +30,13 @@ type command struct {
 }
 
 // commands is the CLI surface defined in PRD §16.2, in usage order.
+//
+// The order here is for whoever reads this file: it runs roughly install →
+// deploy → observe → administer, which is the order the commands are learned
+// in. printUsage sorts alphabetically for whoever reads the *help*, where a
+// narrative order is no help at all — you are looking up a name you half
+// remember, and only one of these orders lets you find it. Dispatch scans this
+// slice and does not care either way.
 var commands = []command{
 	{"init", "interactive first-install: config, auth, deps/kernel/NTP checks, key ceremony", runInit},
 	{"install", "install the pinned host components: containerd, runc, buildkit (PRD §5.2.12)", runInstall},
@@ -53,6 +61,7 @@ var commands = []command{
 	{"backup", "backup create|list|verify", runBackup},
 	{"restore", "restore state from a snapshot", runRestore},
 	{"secret", "manage secrets: put, ls, rm (write-only — there is no get)", runSecret},
+	{"volume", "list volumes: storage resources, their mounts, usage and budgets", runVolume},
 	{"ca", "this node's self-signed CA, to install on your devices: show, info", runCA},
 	{"user", "manage accounts: add, ls, rm", runUser},
 	{"token", "manage API tokens: create, ls, rm", runToken},
@@ -118,8 +127,15 @@ func printUsage(w io.Writer) error {
 	if _, err := fmt.Fprintln(w, "\nUsage: kanea <command> [args]\n\nCommands:"); err != nil {
 		return err
 	}
+	// Alphabetical, not the slice's narrative order. Help is a lookup, and a
+	// reader scanning for a name they half remember needs it where the alphabet
+	// says it is. Sorted here rather than by reordering `commands` so that file
+	// keeps its own useful ordering, and so dispatch is untouched.
+	sorted := append([]command(nil), commands...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
+
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	for _, c := range commands {
+	for _, c := range sorted {
 		if _, err := fmt.Fprintf(tw, "  %s\t%s\n", c.name, c.desc); err != nil {
 			return err
 		}

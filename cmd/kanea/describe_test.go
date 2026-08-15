@@ -83,3 +83,76 @@ func TestDescribeAllocsNamesTheStoppedCase(t *testing.T) {
 		t.Errorf("a count-0 service with no allocs must read stopped, got: %s", b.String())
 	}
 }
+
+func TestAllocReasonRendersTheTerminationCause(t *testing.T) {
+	tests := []struct {
+		name   string
+		record reconciler.AllocRecord
+		want   string
+	}{
+		{
+			name: "an OOM names itself and the limit",
+			record: reconciler.AllocRecord{
+				LastExitCode:    137,
+				LastExitReason:  reconciler.ExitOOMKilled,
+				LastExitMessage: "exceeded its 256 MiB memory limit",
+			},
+			want: "OOMKilled — exceeded its 256 MiB memory limit",
+		},
+		{
+			name: "a start failure reads as one",
+			record: reconciler.AllocRecord{
+				LastExitReason:  reconciler.ExitImageFailed,
+				LastExitMessage: "pull access denied",
+			},
+			want: "ImageFailed — pull access denied",
+		},
+		{
+			// A record written before v1.68 has a code and no reason. It must
+			// still render the code: an upgrade cannot make an existing alloc
+			// less legible than it was.
+			name:   "a pre-v1.68 record falls back to its exit code",
+			record: reconciler.AllocRecord{LastExitCode: 1},
+			want:   "exit 1",
+		},
+		{
+			name:   "an alloc that never terminated says nothing",
+			record: reconciler.AllocRecord{},
+			want:   "-",
+		},
+		{
+			// A reason this binary does not know about — a record written by a
+			// newer kanead — renders as itself rather than vanishing.
+			name:   "an unknown reason renders verbatim",
+			record: reconciler.AllocRecord{LastExitReason: "evicted"},
+			want:   "evicted",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := allocReason(tc.record); got != tc.want {
+				t.Errorf("allocReason = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Every reason the reconciler can produce has a label here. A missing entry
+// falls back to the raw snake_case value, which is legible but not what the
+// column is for — and it is the kind of gap that only shows up on the one
+// failure nobody tested.
+func TestEveryExitReasonHasALabel(t *testing.T) {
+	all := []reconciler.ExitReason{
+		reconciler.ExitOOMKilled, reconciler.ExitSignal, reconciler.ExitError,
+		reconciler.ExitCompleted, reconciler.ExitImageFailed,
+		reconciler.ExitVolumeFailed, reconciler.ExitPassthroughFailed,
+		reconciler.ExitNetworkFailed, reconciler.ExitCreateFailed,
+		reconciler.ExitStartFailed,
+	}
+	for _, reason := range all {
+		if reasonLabels[reason] == "" {
+			t.Errorf("no display label for %q", reason)
+		}
+	}
+}

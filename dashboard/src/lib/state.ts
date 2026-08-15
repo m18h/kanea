@@ -16,6 +16,55 @@ export function allocStateVariant(state: string): NonNullable<BadgeProps['varian
   }
 }
 
+/**
+ * reasonLabels renders a termination reason the way a person says it (PRD
+ * v1.68). Kept in step with cmd/kanea/describe.go's map of the same name — the
+ * dashboard and `kanea describe` are answering the same question and should not
+ * word it differently.
+ */
+const reasonLabels: Record<string, string> = {
+  oom_killed: 'OOMKilled',
+  signal: 'Signalled',
+  error: 'Error',
+  completed: 'Completed',
+  image_failed: 'ImageFailed',
+  volume_failed: 'VolumeFailed',
+  passthrough_failed: 'GrantFailed',
+  network_failed: 'NetworkFailed',
+  create_failed: 'CreateFailed',
+  start_failed: 'StartFailed',
+}
+
+export interface ExitReason {
+  label: string
+  message: string
+  /** alarming is true for a cause that needs a person, not just a note. */
+  alarming: boolean
+}
+
+/**
+ * allocExitReason describes why an alloc last stopped, or why it never started.
+ *
+ * Returns null when there is nothing to say. A record written before v1.68 has
+ * an exit code and no reason, and still renders as the code — an upgrade must
+ * not make an existing alloc less legible than it was.
+ */
+export function allocExitReason(alloc: Alloc): ExitReason | null {
+  const reason = alloc.last_exit_reason
+  if (!reason) {
+    return alloc.last_exit_code
+      ? { label: `exit ${alloc.last_exit_code}`, message: '', alarming: false }
+      : null
+  }
+  return {
+    label: reasonLabels[reason] ?? reason,
+    message: alloc.last_exit_message ?? '',
+    // A clean exit is a fact, not a problem. Everything else got here by
+    // something going wrong.
+    alarming: reason !== 'completed',
+  }
+}
+
 /** groupAllocs indexes allocs by their service, in stable index order. */
 export function groupAllocs(allocs: Alloc[]): Map<string, Alloc[]> {
   const out = new Map<string, Alloc[]>()

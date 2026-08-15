@@ -90,6 +90,8 @@ var implemented = map[string]bool{
 	"functions": true,
 	// Service lifecycle verbs (PRD v1.55):
 	"start": true, "restart": true,
+	// Volume visibility (PRD v1.69):
+	"volume": true,
 }
 
 func TestUnimplementedCommandsReportMilestone(t *testing.T) {
@@ -399,7 +401,7 @@ func TestOwnershipRefusalsCarryPositions(t *testing.T) {
 		{
 			name:    "host",
 			storage: "storage \"vol\" {\n  type = \"host\"\n  path = \"/srv/data\"\n}",
-			wantErr: "the operator already owns",
+			wantErr: "never changes its ownership",
 		},
 		{
 			name:    "nfs",

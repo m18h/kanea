@@ -60,6 +60,16 @@ type Storage struct {
 	// Host: the absolute directory to mount. Whether it *may* be mounted is a
 	// server-config decision, not a job-spec one (R15).
 	Path string
+	// Create makes Kanea create the directory when it is missing (R15, v1.69).
+	// Off by default, and the default is the point: absent this flag a host
+	// path that does not exist is refused, because creating one on demand
+	// turns a typo into a volume that is silently empty. Opting in is a
+	// declaration that the spec author knows which directory they meant.
+	//
+	// It never widens the allowlist. Creation happens only inside a permitted
+	// prefix, checked against the nearest existing ancestor *before* anything
+	// is made.
+	Create bool
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }
@@ -615,6 +625,13 @@ type Volume struct {
 	UID  *int
 	GID  *int
 	Mode *string
+	// SizeBytes is the volume's declared budget in bytes (R31), 0 for none.
+	//
+	// A budget, not a quota: nothing enforces it. What it does is give the
+	// usage sampler something to compare against, so `kanea volume list` and
+	// the volume.over_budget event have a number to be about. Zero is "not
+	// declared" and is never filled in with a default (R11's rule).
+	SizeBytes int64
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }

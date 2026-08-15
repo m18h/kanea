@@ -83,6 +83,11 @@ export const allocSchema = z.object({
   restarts: z.number().optional(),
   last_exit_code: z.number().optional(),
   last_exit_at: z.string().optional(),
+  // Why the alloc last stopped, or why it never started (PRD v1.68). Absent on
+  // records written before the field existed, and on an alloc that has simply
+  // never terminated.
+  last_exit_reason: z.string().optional(),
+  last_exit_message: z.string().optional(),
   healthy: z.boolean().optional(),
   health_message: z.string().optional(),
   last_probe_at: z.string().optional(),
