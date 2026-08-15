@@ -9,6 +9,21 @@ import (
 )
 
 // udpBackend is a fake service: it answers every datagram with "saw: <body>".
+// udpBytesOut totals what the relay has written back to its clients.
+//
+// The reply loop touches a session immediately before it writes, so a non-zero
+// total is proof the touch has already happened — which is what makes it safe
+// to move the clock out from under it.
+func udpBytesOut(u *udpRelay) int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var total int64
+	for _, s := range u.sessions {
+		total += s.bytesOut.Load()
+	}
+	return total
+}
+
 func udpBackend(t *testing.T) (ip string, port int) {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
@@ -195,6 +210,17 @@ func TestUDPRelayExpiresIdleSessions(t *testing.T) {
 	if relay.liveCount() != 1 {
 		t.Fatal("no session was created")
 	}
+
+	// Wait for the echo before touching the clock. The backend replies, and the
+	// reply loop stamps the session with the *relay's* clock when it does — so
+	// a stamp that lands after the clock moves puts lastActive two timeouts in
+	// the future, where no deadline can ever be earlier than it. The session is
+	// then immortal, the janitor finds nothing to collect, and the sweep below
+	// waits out its two seconds for a session that was never going to go. That
+	// is a real flake, seen on CI and reproduced by forcing this ordering; it
+	// is not a bug in the janitor. Once the echo is accounted for nothing else
+	// moves, so the clock is safe.
+	waitFor(t, func() bool { return udpBytesOut(relay) > 0 }, "the echo to be relayed back")
 
 	// The clock moves; the janitor runs.
 	setClock(relay, func() time.Time { return time.Now().Add(2 * udpIdleTimeout) })

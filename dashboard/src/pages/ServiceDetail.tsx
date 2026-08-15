@@ -142,8 +142,24 @@ export function ServiceDetail({ project, service }: { project: string; service: 
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <BackChip to="/services">Services</BackChip>
+      {/* Navigation and actions share the top row — one is where you came
+          from, the other is what you can do here, and neither is the page's
+          name. The name gets its own row underneath, where a long image
+          reference can run without squeezing the buttons. */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <BackChip to="/services">Services</BackChip>
+          <div className="ml-auto">
+            {desired && rollout ? (
+              <ServiceActions
+                project={project}
+                service={service}
+                desired={desired}
+                rollout={rollout}
+              />
+            ) : null}
+          </div>
+        </div>
         <PageHeader
           title={<span className="font-mono">{service}</span>}
           subtitle={
@@ -154,16 +170,6 @@ export function ServiceDetail({ project, service }: { project: string; service: 
             </span>
           }
         />
-        <div className="ml-auto">
-          {desired && rollout ? (
-            <ServiceActions
-              project={project}
-              service={service}
-              desired={desired}
-              rollout={rollout}
-            />
-          ) : null}
-        </div>
       </div>
 
       <StatsPanel sample={stats.data} history={seed.data ?? null} />
@@ -687,7 +693,7 @@ function AllocRow({
 
 /** LogPanel streams the service's output over the shared socket. */
 function LogPanel({ project, service }: { project: string; service: string }) {
-  const { lines, error, dropped } = useLiveLog(project, service)
+  const { lines, error, dropped, droppedByDaemon } = useLiveLog(project, service)
   const [filter, setFilter] = useState('')
   const [follow, setFollow] = useState(true)
 
@@ -708,6 +714,25 @@ function LogPanel({ project, service }: { project: string; service: string }) {
     [shown],
   )
 
+  // One definition, rendered in the card header and again inside the expanded
+  // dialog. Both are driven by the same state, so they cannot disagree.
+  const logControls = (
+    <>
+      <input
+        type="search"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder="Filter"
+        aria-label="Filter log lines"
+        className="rounded-md border bg-background px-2 py-1 text-xs"
+      />
+      <label className="flex items-center gap-1 text-xs text-muted-foreground">
+        <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
+        Follow
+      </label>
+    </>
+  )
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
@@ -715,20 +740,7 @@ function LogPanel({ project, service }: { project: string; service: string }) {
           <CardTitle>Logs</CardTitle>
           <span className="font-mono text-xs text-muted-foreground">tail · all allocs · live</span>
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="search"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter"
-            aria-label="Filter log lines"
-            className="rounded-md border bg-background px-2 py-1 text-xs"
-          />
-          <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-            Follow
-          </label>
-        </div>
+        <div className="flex items-center gap-2">{logControls}</div>
       </CardHeader>
       <CardContent>
         {error ? <p className="pb-2 text-sm text-destructive">{error}</p> : null}
@@ -736,14 +748,31 @@ function LogPanel({ project, service }: { project: string; service: string }) {
           lines={viewerLines}
           live
           follow={follow}
+          onFollowChange={setFollow}
           tintSeverity
-          toolbar={{ copy: true, download: { filename: `${project}-${service}.log` } }}
+          toolbar={{ copy: true, download: { filename: `${project}-${service}.log` }, expand: true }}
+          title={`${project}/${service} — logs`}
+          controls={logControls}
           emptyText={lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
           notice={
-            dropped > 0 ? (
+            dropped > 0 || droppedByDaemon > 0 ? (
+              // Two gaps with two causes, said separately: one is this tab
+              // running out of buffer, the other is the node not keeping up.
+              // Reporting them as one number would send someone looking in the
+              // wrong place.
               <p className="pb-2 text-xs text-muted-foreground">
-                {dropped} earlier line{dropped === 1 ? '' : 's'} dropped (showing the most recent{' '}
-                {MaxLogLines}).
+                {dropped > 0 ? (
+                  <>
+                    {dropped} earlier line{dropped === 1 ? '' : 's'} dropped here (showing the most
+                    recent {MaxLogLines}).{' '}
+                  </>
+                ) : null}
+                {droppedByDaemon > 0 ? (
+                  <>
+                    {droppedByDaemon} line{droppedByDaemon === 1 ? '' : 's'} were not sent by the
+                    node.
+                  </>
+                ) : null}
               </p>
             ) : undefined
           }

@@ -13,8 +13,14 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// emitFunc delivers one payload to a subscriber.
-type emitFunc func(payload any)
+// emitFunc delivers one payload to a subscriber. It reports whether the payload
+// was queued.
+//
+// The return value exists for the lossy topics (PRD v1.70, §12.1): a feed whose
+// frames may be dropped is the only thing that can account for what it lost, so
+// it has to be told. Feeds on the snapshot topics ignore it — a full buffer
+// there still closes the connection, so there is nothing to account for.
+type emitFunc func(payload any) bool
 
 // feedFunc runs a subscription until its context is cancelled.
 type feedFunc func(ctx context.Context, emit emitFunc)
@@ -244,70 +250,264 @@ type LogLine struct {
 	Line    string `json:"line"`
 }
 
+// LogBatch is one poll tick's worth of log lines for a subscription.
+//
+// One frame per tick rather than one per line (PRD v1.70). Per line, a 200-line
+// tail is 200 frames into a 64-slot send buffer, which is a closed connection
+// before the panel has painted — and it closed the whole multiplexed socket,
+// taking every other topic with it. Batching bounds the frame count at the tick
+// rate whatever the workload writes, at a cost of at most one PollInterval of
+// latency.
+type LogBatch struct {
+	// Lines is never empty: a tick that produced nothing emits no frame.
+	Lines []LogLine `json:"lines"`
+	// Dropped counts lines this subscription will never deliver — trimmed by
+	// the per-frame cap, clamped off an oversized tail request, or lost with a
+	// frame the send buffer refused. It rides in the frame so the gap is
+	// visible where the gap is, rather than in a number elsewhere that nobody
+	// correlates. Absent when zero, so the ordinary frame is unchanged.
+	Dropped int `json:"dropped,omitempty"`
+}
+
+// Bounds on one log frame and one subscription's history.
+const (
+	// maxBatchLines and maxBatchBytes bound a single frame. Without them,
+	// batching trades an unbounded frame *count* for an unbounded frame *size*:
+	// one line may be maxLineBytes (64 KiB), so a thousand-line frame could be
+	// 64 MiB — allocated per tick, per subscriber, on a write with a timeout.
+	// The byte bound is the load-bearing one; the line bound keeps a chatty but
+	// terse workload from building an equally large frame out of small lines.
+	// Both are measured over the raw line bytes rather than the encoded JSON:
+	// escaping can expand a line, so the bound holds within a constant factor,
+	// and a factor is all this needs — the difference it exists to prevent is
+	// 256 KiB against 64 MiB.
+	maxBatchLines = 1000
+	maxBatchBytes = 256 << 10
+	// maxTailLines bounds the history one subscription may ask for. A cost
+	// bound before it is a frame bound: seekToLastLines reads the file
+	// *backwards* to satisfy it, and §17 caps a service's logs at 100 MiB, so
+	// an unbounded tail is a 100 MiB backwards scan whose result the frame cap
+	// would discard anyway. Clamped rather than refused — a refusal blanks the
+	// panel — and the clamp is not silent: what it removed is counted into the
+	// first batch's Dropped like any other gap. The REST log route keeps its
+	// unbounded tail; it is a plain stream with no queue behind it.
+	maxTailLines = 1000
+)
+
 // feedLogs follows one service's logs.
 func (s *Server) feedLogs(frame ClientFrame) feedFunc {
 	return func(ctx context.Context, emit emitFunc) {
+		tail := frame.Tail
+		clamped := 0
+		if tail > maxTailLines {
+			clamped = tail - maxTailLines
+			tail = maxTailLines
+		}
 		opts := LogOptions{
 			Project: frame.Project,
 			Service: frame.Service,
-			Tail:    frame.Tail,
+			Tail:    tail,
 			Follow:  true,
 		}
-		allocs, err := s.selectAllocs(ctx, opts)
-		if err != nil {
-			s.log.Warn("log feed: cannot select allocs",
-				"service", frame.Project+"/"+frame.Service, "error", err)
-			return
-		}
 
-		tails := make([]*tailer, 0, len(allocs))
-		defer func() {
-			for _, t := range tails {
-				if err := t.Close(); err != nil {
-					s.log.Debug("close log tailer", "alloc", t.allocID, "error", err)
-				}
-			}
-		}()
-
-		for _, alloc := range allocs {
-			path := filepath.Join(s.logDir, alloc.ID+".log")
-			// prefix=false: the alloc id travels in the frame, so the dashboard
-			// can attribute a line without parsing it back out of the text.
-			t, err := newTailer(path, alloc.ID, opts.Tail, false)
-			if err != nil {
-				// Normal for an alloc that has not started yet.
-				s.log.Debug("no log file", "alloc", alloc.ID, "error", err)
-				continue
-			}
-			tails = append(tails, t)
+		f := &logFollower{
+			server:  s,
+			opts:    opts,
+			tail:    tail,
+			service: frame.Project + "/" + frame.Service,
+			tails:   map[string]*tailer{},
+			// Whatever the tail clamp removed is a gap like any other, and it
+			// belongs to the first frame this subscription sends.
+			carry: clamped,
 		}
-		if len(tails) == 0 {
-			return
-		}
-
-		// One writer per tailer: the split state (a line straddling two reads)
-		// belongs to that file, not to the loop.
-		writers := make([]*lineWriter, len(tails))
-		for i, t := range tails {
-			allocID := t.allocID
-			writers[i] = &lineWriter{emit: func(line string) {
-				emit(LogLine{AllocID: allocID, Line: line})
-			}}
-		}
+		defer f.closeAll()
 
 		ticker := time.NewTicker(PollInterval)
 		defer ticker.Stop()
 		for {
-			for i, t := range tails {
-				if _, err := t.copyTo(writers[i]); err != nil {
-					s.log.Debug("read log", "alloc", t.allocID, "error", err)
-				}
-			}
+			f.resync(ctx)
+			f.drain()
+			f.flush(emit)
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
 			}
+		}
+	}
+}
+
+// logFollower holds one log subscription's tailers and its pending batch.
+//
+// The tailers are a map rather than a slice because the set changes: allocs
+// come and go with every deploy, restart and scale-up, and choosing them once
+// at subscribe is what used to leave a live subscription streaming nothing
+// after any of those, with no error and an open socket (PRD v1.70).
+type logFollower struct {
+	server  *Server
+	opts    LogOptions
+	tail    int
+	service string
+
+	tails map[string]*tailer
+	// writers hold the split state for a line straddling two reads, which
+	// belongs to a file rather than to the loop — so it is keyed like the
+	// tailers and torn down with them.
+	writers map[string]*lineWriter
+
+	// lastIndex is the Store index the alloc set was last resolved at, and
+	// nextResync is the earliest the next attempt may happen. Two gates rather
+	// than one: the index is what says anything *could* have changed, but it
+	// moves on any write to any kind, so on a busy node it would authorise a
+	// full alloc listing on every 250 ms tick, per subscriber. The interval
+	// bounds that to the rate the Store-backed feeds already poll at. Zero
+	// values mean the first pass always resolves.
+	lastIndex  uint64
+	nextResync time.Time
+	resolved   bool
+
+	batch LogBatch
+	bytes int
+	// carry counts lines lost with a frame that was itself refused, plus
+	// anything the tail clamp removed. A count, never a queue — holding the
+	// lines would be the unbounded daemon-side buffer §17 forbids.
+	carry int
+}
+
+// resync brings the tailer set in line with the allocs the service has now.
+//
+// Gated on the Store index having moved — the pattern feedStoreKind uses — plus
+// an unconditional retry whenever nothing is being tailed. The retry is the case
+// the index gate cannot see: the alloc record exists and its log file does not
+// yet, which is every alloc for the moment between creation and its first write.
+func (f *logFollower) resync(ctx context.Context) {
+	now := time.Now()
+	if f.resolved && now.Before(f.nextResync) {
+		return
+	}
+	f.nextResync = now.Add(FeedInterval)
+
+	index, err := f.server.store.Index(ctx)
+	if err != nil {
+		// An unreadable index is not a reason to stop tailing what is already
+		// open; the next pass asks again.
+		f.server.log.Debug("log feed: cannot read store index", "error", err)
+		if f.resolved && len(f.tails) > 0 {
+			return
+		}
+	} else if f.resolved && index == f.lastIndex && len(f.tails) > 0 {
+		return
+	}
+	f.lastIndex = index
+
+	allocs, err := f.server.selectAllocs(ctx, f.opts)
+	if err != nil {
+		f.server.log.Warn("log feed: cannot select allocs", "service", f.service, "error", err)
+		return
+	}
+	f.resolved = true
+
+	wanted := make(map[string]struct{}, len(allocs))
+	for _, alloc := range allocs {
+		wanted[alloc.ID] = struct{}{}
+		if _, ok := f.tails[alloc.ID]; ok {
+			continue
+		}
+		path := filepath.Join(f.server.logDir, alloc.ID+".log")
+		// prefix=false: the alloc id travels in the frame, so the dashboard can
+		// attribute a line without parsing it back out of the text.
+		//
+		// A late-arriving alloc opens at the subscription's own tail rather than
+		// at end-of-file: a freshly started alloc's file is usually shorter than
+		// that anyway, and after a restart the recent output is exactly what
+		// someone watching a crash loop wants. Only safe because the batch caps
+		// above bound what that can turn into.
+		t, err := newTailer(path, alloc.ID, f.tail, false)
+		if err != nil {
+			// Normal for an alloc that has not written anything yet; the next
+			// pass tries again.
+			f.server.log.Debug("no log file", "alloc", alloc.ID, "error", err)
+			continue
+		}
+		f.add(t)
+	}
+
+	for id, t := range f.tails {
+		if _, ok := wanted[id]; ok {
+			continue
+		}
+		// Closing is what releases the descriptor: the deferred sweep only runs
+		// when the whole subscription ends, and a long-lived page watching a
+		// service that redeploys would otherwise accumulate one fd per alloc.
+		if err := t.Close(); err != nil {
+			f.server.log.Debug("close log tailer", "alloc", id, "error", err)
+		}
+		delete(f.tails, id)
+		delete(f.writers, id)
+	}
+}
+
+// add registers a tailer and the line writer that accumulates its output.
+func (f *logFollower) add(t *tailer) {
+	if f.writers == nil {
+		f.writers = map[string]*lineWriter{}
+	}
+	allocID := t.allocID
+	f.tails[allocID] = t
+	f.writers[allocID] = &lineWriter{emit: func(line string) {
+		f.append(LogLine{AllocID: allocID, Line: line})
+	}}
+}
+
+// append adds a line to the pending batch, dropping the oldest past the caps.
+//
+// Oldest-first is the end the client's own buffer trims, so the two agree on
+// which lines survive; and the batch always keeps at least one line, even one
+// over the byte cap, or a workload writing megabytes without a newline stalls
+// the stream forever while the drop count climbs.
+func (f *logFollower) append(line LogLine) {
+	f.batch.Lines = append(f.batch.Lines, line)
+	f.bytes += len(line.Line)
+	for len(f.batch.Lines) > 1 && (len(f.batch.Lines) > maxBatchLines || f.bytes > maxBatchBytes) {
+		f.bytes -= len(f.batch.Lines[0].Line)
+		f.batch.Lines = f.batch.Lines[1:]
+		f.batch.Dropped++
+	}
+}
+
+// drain reads whatever each tailer has produced since the last tick.
+func (f *logFollower) drain() {
+	for id, t := range f.tails {
+		if _, err := t.copyTo(f.writers[id]); err != nil {
+			f.server.log.Debug("read log", "alloc", id, "error", err)
+		}
+	}
+}
+
+// flush sends the tick's batch, if there is anything to say.
+func (f *logFollower) flush(emit emitFunc) {
+	if len(f.batch.Lines) == 0 {
+		// A drop with no lines to carry it has to wait: a frame with no lines
+		// would be a gap reported against nothing.
+		return
+	}
+	f.batch.Dropped += f.carry
+	if emit(f.batch) {
+		f.carry = 0
+	} else {
+		// The frame reached nobody, so everything in it is a gap the next one
+		// reports. A count, never a queue.
+		f.carry = len(f.batch.Lines) + f.batch.Dropped
+	}
+	f.batch = LogBatch{}
+	f.bytes = 0
+}
+
+// closeAll releases every tailer the subscription holds.
+func (f *logFollower) closeAll() {
+	for id, t := range f.tails {
+		if err := t.Close(); err != nil {
+			f.server.log.Debug("close log tailer", "alloc", id, "error", err)
 		}
 	}
 }

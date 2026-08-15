@@ -160,6 +160,8 @@ export function PipelineDetail({
               live={live}
               showLineNumbers
               heightClass="h-[28rem]"
+              toolbar={{ expand: true }}
+              title={`${project}/${service} — build log`}
               emptyText={live ? 'Waiting for the build to start…' : 'No log for this run.'}
             />
           </CardContent>
