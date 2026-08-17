@@ -41,6 +41,8 @@ func runUpgrade(args []string) error {
 	timeout := fs.Duration("timeout", 2*time.Minute, "how long to wait for each service")
 	check := fs.Bool("check", false, "report the running, installed and latest versions and stop")
 	pin := fs.String("version", "", "upgrade to this release instead of the latest (vX.Y.Z)")
+	allowDowngrade := fs.Bool("allow-downgrade", false,
+		"permit a target older than the running daemon (the Store's schema may not support it; see docs/DR_RUNBOOK.md)")
 	noFetch := fs.Bool("no-fetch", false,
 		"do not download anything; restart onto whatever binary is already installed")
 	if err := fs.Parse(args); err != nil {
@@ -82,6 +84,19 @@ func runUpgrade(args []string) error {
 			if target, err = source.latest(ctx); err != nil {
 				return err
 			}
+		}
+		// A downgrade is refused by default (K-41): the Store's schema moves
+		// forward-only, so the only signal a silent downgrade would produce is
+		// a daemon refusing its own database at next start. The daemon's
+		// version is the one that matters; the CLI binary's is the fallback.
+		running := installed.Version
+		if running == "" || running == "dev" {
+			running = binaryVersion
+		}
+		if !*allowDowngrade && compareReleaseTags(target, running) < 0 {
+			return fmt.Errorf("%s is older than the running daemon (%s); a downgrade can leave the "+
+				"Store's schema newer than the binary. Pass --allow-downgrade if you mean it",
+				target, running)
 		}
 		switch {
 		case target == binaryVersion:

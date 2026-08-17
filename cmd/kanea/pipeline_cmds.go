@@ -72,7 +72,7 @@ func followBuild(ctx context.Context, client *api.Client, run gitops.Run) error 
 	if err := waitForBuildLog(ctx, client, run); err != nil {
 		return err
 	}
-	if err := client.BuildLogs(ctx, run.Project, run.Service, run.ID, true, os.Stdout); err != nil {
+	if err := client.BuildLogs(ctx, run.Project, run.Service, run.ID, true, scrubTerminal{os.Stdout}); err != nil {
 		return err
 	}
 

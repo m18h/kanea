@@ -180,7 +180,8 @@ func kaneadService(opts unitOptions) string {
 		# binary) which Type=simple would report as a successful start.
 		Type=exec
 		ExecStart=` + opts.binary + ` agent --data-dir ` + opts.dataDir + ` --log-dir ` + opts.logDir +
-		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + v6Flags + listenFlags + `
+		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + v6Flags + listenFlags +
+		` --edge-group ` + provision.EdgeUser + `
 		Restart=always
 		RestartSec=5s
 		Slice=kanea.slice
@@ -242,6 +243,13 @@ func edgeService(opts unitOptions) string {
 		RestartSec=2s
 		Slice=kanea.slice
 		OOMScoreAdjust=-800
+
+		# Its own user (PRD §5.2.6): the process split is a boundary only if
+		# the edge is not root. As uid 0 it would match the owner of every
+		# root-owned file without needing a single capability - the master key,
+		# the containerd socket - and the split would be worth nothing.
+		User=` + provision.EdgeUser + `
+		Group=` + provision.EdgeUser + `
 
 		# Binding privileged ports is all the privilege it needs, and it drops
 		# the rest. The ambient capability lives in the effective set for the

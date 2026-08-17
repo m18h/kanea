@@ -873,7 +873,9 @@ func runLogs(args []string) error {
 	return client.Logs(ctx, api.LogOptions{
 		Project: proj, Service: service, AllocID: *alloc,
 		Follow: *follow, Tail: *tail,
-	}, os.Stdout)
+		// Scrubbed (K-45): a workload's log line can carry terminal control
+		// sequences, and the operator's terminal is not the workload's.
+	}, scrubTerminal{os.Stdout})
 }
 
 // runStop implements `kanea stop`: scale a service to zero, or remove it.
