@@ -483,7 +483,7 @@ func (m *Manager) Check(ctx context.Context, target string) error {
 //
 // Remounting is mandatory rather than defensive. After an object-store outage
 // s3fs keeps serving ENOENT for objects that are still in the bucket and never
-// recovers on its own (M0 spike ③): the mount is stale, not the data. Nothing
+// recovers on its own (spike ③): the mount is stale, not the data. Nothing
 // short of a remount fixes it, so a supervisor that only reported health would
 // leave a workload reading successful, empty, wrong answers.
 func (m *Manager) Supervise(ctx context.Context, interval time.Duration) {

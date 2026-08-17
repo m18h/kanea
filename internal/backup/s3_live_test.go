@@ -224,7 +224,7 @@ func TestLiveS3ListPaginatesAgainstARealService(t *testing.T) {
 
 func TestLiveS3CarriesAWholeArchiveRoundTrip(t *testing.T) {
 	// The end-to-end shape: a Store, replicated to a real object store, restored
-	// from it. This is M10's exit criterion with the fake taken out.
+	// from it. This is §20's fresh-node restore criterion with the fake taken out.
 	ctx := context.Background()
 	sink := liveSink(t, "archive")
 	keys := testKeys(t, 40)

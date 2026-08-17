@@ -9,7 +9,7 @@
     "consequence is deliberate: bumping a component is a change to this file,",
     "which goes through review and the §14 gates.",
     "",
-    "Versions are the ones M0 validated. Changing one means re-running the",
+    "Versions are the ones the spikes validated. Changing one means re-running the",
     "relevant spike, not editing a number: spikes/kaniko-build found BuildKit's",
     "frontend defaulting to Dockerfile, the kind of thing a patch bump can",
     "reintroduce."

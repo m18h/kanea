@@ -1,7 +1,7 @@
 // Package storage establishes and supervises the volume mounts services
 // declare (PRD §8).
 //
-// The design is shaped almost entirely by one M0 spike ③ finding: a FUSE mount
+// The design is shaped almost entirely by one spike ③ finding: a FUSE mount
 // whose backing store has gone away does not fail; it *blocks*, for 40 s to
 // over 2 minutes, uninterruptibly. A syscall in that state cannot be cancelled
 // by a context, because the goroutine is stuck in the kernel. Every function
@@ -39,7 +39,7 @@ const (
 )
 
 // S3 access modes. The driver differs by mode because the two are not
-// interchangeable (M0 spike ③): mountpoint-s3 refuses append, write-at-offset,
+// interchangeable (spike ③): mountpoint-s3 refuses append, write-at-offset,
 // chmod and symlink, which is fine for media and fatal for anything that
 // rewrites files in place.
 const (
@@ -194,9 +194,9 @@ func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 
 // SecretResolver resolves a `secret:<path>` reference to its value.
 //
-// Storage credentials are referenced, never inlined (PRD §6.2 R3/R5). The
-// secrets store itself is M5, so a nil resolver here is expected for now and
-// produces a clear refusal rather than an attempt to mount without credentials.
+// Storage credentials are referenced, never inlined (PRD §6.2 R3/R5). A
+// Manager built without a resolver produces a clear refusal rather than an
+// attempt to mount without credentials.
 type SecretResolver interface {
 	Resolve(ctx context.Context, ref string) ([]byte, error)
 }

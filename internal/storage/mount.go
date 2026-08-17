@@ -103,7 +103,7 @@ func (m *Manager) smbCommand(ctx context.Context, req Request) (string, []string
 	return "mount", []string{"-t", "cifs", "-o", strings.Join(opts, ","), "--", source, req.Target}, cleanup, nil
 }
 
-// s3Command mounts a bucket with the driver the mode selects (M0 spike ③).
+// s3Command mounts a bucket with the driver the mode selects (spike ③).
 //
 // mountpoint-s3 is the default and is read-mostly: it refuses append,
 // write-at-offset, chmod and symlink. s3fs is the opt-in read-write driver and

@@ -58,7 +58,7 @@ func TestContainerdUsesKaneasOwnPaths(t *testing.T) {
 	}
 }
 
-// M0 spike ④: rootlesskit copy-ups /run into a namespace-private tmpfs, so a
+// spike ④: rootlesskit copy-ups /run into a namespace-private tmpfs, so a
 // socket there is invisible to every client outside the namespace.
 func TestBuildkitSocketIsNotUnderRun(t *testing.T) {
 	l := testLayout(t)

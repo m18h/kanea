@@ -151,7 +151,7 @@ func (f *fakeDriver) count() int {
 	return len(f.allocs)
 }
 
-// fakeNetwork records attach/detach ordering, which is the property M0 spike ②
+// fakeNetwork records attach/detach ordering, which is the property spike ②
 // showed matters most.
 type fakeNetwork struct {
 	mu       sync.Mutex
@@ -441,7 +441,7 @@ func (h *harness) allocRecord(t *testing.T, index int) reconciler.AllocRecord {
 }
 
 func TestReconcileCreatesDesiredAllocs(t *testing.T) {
-	// M1's definition of done: N containers running from a bare image reference.
+	// The runtime core's definition of done: N containers running from a bare image reference.
 	h := newHarness(t)
 	h.setDesired(t, desired(3))
 
@@ -466,7 +466,7 @@ func TestReconcileCreatesDesiredAllocs(t *testing.T) {
 }
 
 func TestReconcileAttachesNetworkBeforeStartingTheTask(t *testing.T) {
-	// M0 spike ① and ②: a workload must never run before its network exists.
+	// spike ① and ②: a workload must never run before its network exists.
 	h := newHarness(t)
 	h.setDesired(t, desired(1))
 	h.reconcile(t)
@@ -712,7 +712,7 @@ func TestReconcileRemovesAllocsWhenServiceIsDeleted(t *testing.T) {
 
 func TestReconcileDetachesNetworkAfterTeardown(t *testing.T) {
 	// CNI DEL needs the namespace to still exist, so detach must come after the
-	// container is removed (M0 spike ②).
+	// container is removed (spike ②).
 	h := newHarness(t)
 	h.setDesired(t, desired(1))
 	h.reconcile(t)
@@ -1560,7 +1560,7 @@ func TestReconcileWaitsForAServiceWithNoImageYet(t *testing.T) {
 
 func TestReconcileDeploysANewImageToARunningService(t *testing.T) {
 	// The end-to-end shape of `kanea run` against a service that is already up,
-	// and of M7's push → build → deploy. Before the spec hash existed this test
+	// and of the pipeline's push → build → deploy. Before the spec hash existed this test
 	// would have observed the old image still running, indefinitely.
 	h := newHarness(t)
 	d := desired(1)

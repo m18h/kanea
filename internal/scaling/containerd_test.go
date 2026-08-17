@@ -20,7 +20,7 @@ func (a allocMap) Alloc(id string) (scaling.AllocInfo, bool) {
 	return info, ok
 }
 
-// exposition renders containerd's metrics the way M0 spike ② measured them:
+// exposition renders containerd's metrics the way spike ② measured them:
 // the real names, the real label set, and enough neighbouring families that a
 // parser which is not selective would trip over them.
 func exposition(samples map[string]map[string]float64) string {

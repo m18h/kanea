@@ -1,4 +1,4 @@
-# Release (PRD §14 A08, §20 M10).
+# Release (PRD §14 A08, §20).
 #
 # The binary this publishes runs as root on someone's node with access to every
 # container and every secret on it. So the artefacts are signed, and the

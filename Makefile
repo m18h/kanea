@@ -74,7 +74,7 @@ dashboard: ## Dashboard gates: lint, typecheck, test, build, audit
 	@if [ -f dashboard/package.json ]; then \
 		cd dashboard && npm ci && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm audit --audit-level=high; \
 	else \
-		echo "dashboard/ not scaffolded yet (milestone M4); skipping"; \
+		echo "dashboard/ not present; skipping"; \
 	fi
 
 .PHONY: tools

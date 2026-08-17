@@ -42,7 +42,7 @@ func runSecret(args []string) error {
 //
 // Never from a command-line argument. Everything in argv is world-readable
 // through /proc/<pid>/cmdline and lands in the operator's shell history: the
-// same reasoning that keeps mount credentials out of argv (M2).
+// same reasoning that keeps mount credentials out of argv (§8).
 func runSecretPut(args []string) error {
 	fs := flag.NewFlagSet("secret put", flag.ContinueOnError)
 	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")

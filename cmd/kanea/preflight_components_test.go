@@ -131,7 +131,7 @@ func TestVersionMatrixOnAnEmptyPrefix(t *testing.T) {
 }
 
 // A component at a version this build does not pin is a finding: the flag sets
-// in §5.2.5 and the file interfaces M0 found are version-specific.
+// in §5.2.5 and the file interfaces the spikes found are version-specific.
 func TestVersionMatrixDetectsDrift(t *testing.T) {
 	layout := scratchLayout(t)
 	manifest := provision.MustLoad()

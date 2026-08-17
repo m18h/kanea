@@ -47,8 +47,8 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// Default filesystem layout. PRD §15.1 makes these configurable; M1 takes the
-// defaults and the flags below.
+// Default filesystem layout. PRD §15.1 makes these configurable; the daemon
+// takes the defaults and the flags below.
 const (
 	defaultDataDir = "/var/lib/kanea"
 	// stateFile is the bbolt database's name under the data directory. Named
@@ -897,7 +897,7 @@ func runAgent(args []string) error {
 	}
 	// The mount supervisor runs alongside, not inside, the reconcile loop: a
 	// probe of a wedged mount can take seconds to abandon, and convergence must
-	// not wait for it (M0 spike ③).
+	// not wait for it (spike ③).
 	go mounts.Supervise(ctx, storage.DefaultCheckInterval)
 	go sweepAuthState(ctx, users, trail, *auditRetention, logger)
 	// The dispatcher owns its own goroutine so a wedged channel cannot stall

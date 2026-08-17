@@ -423,7 +423,7 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 	// East-west metrics come from the datapath's own per-CPU counters, on by
 	// default (PRD v1.36): reading a pinned map costs nothing per request,
 	// which is what lets this be a default where Hubble (152.8 MiB of
-	// resident cilium-agent as M0 spike ① measured it) had to be opt-in.
+	// resident cilium-agent as spike ① measured it) had to be opt-in.
 	if cfg.flows != nil {
 		scraper, err := scaling.NewDatapathScraper(scaling.DatapathConfig{
 			Source: cfg.flows, Metrics: cfg.metrics, Logger: logger,

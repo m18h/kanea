@@ -421,7 +421,7 @@ func (d *containerdDriver) Wait(ctx context.Context, project, id string) (Exit, 
 
 // Exits streams task exits. This is the reconciler's crash signal: subscribing
 // beats polling, because a container that dies and is restarted between polls
-// would otherwise be invisible (M0 spike ②).
+// would otherwise be invisible (spike ②).
 func (d *containerdDriver) Exits(ctx context.Context, project string) (<-chan Exit, error) {
 	ctx = scope(ctx, project)
 	envelopes, errs := d.client.Subscribe(ctx, `topic=="/tasks/exit"`)

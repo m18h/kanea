@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kanea installer (PRD §20 M10).
+# Kanea installer (PRD §5.2.12).
 #
 # It does three things and stops: fetch the binary, verify it, and hand over to
 # `kanea init`. It generates no keys and starts nothing: those are decisions

@@ -280,7 +280,7 @@ func TestNewLoopRequiresItsCollaborators(t *testing.T) {
 	}
 }
 
-// The exit criterion for M6 in §20: "service scales 2→N→2 on synthetic load
+// The autoscaling exit criterion in §20: "service scales 2→N→2 on synthetic load
 // per policy". This is that, driven through the loop rather than the evaluator,
 // so it covers the wiring as well as the arithmetic.
 func TestServiceScalesUpAndBackDown(t *testing.T) {

@@ -1,8 +1,8 @@
 # Kanea Threat Model
 
-**Status:** written during M5 (auth & OWASP pass). It describes what is built
-as of M5; every control below is code with a test unless it says otherwise, and
-anything not yet defended says which milestone defends it.
+**Status:** current as of PRD v1.78. It describes what is built today; every
+control below is code with a test unless it says otherwise, and anything not
+yet defended says so in §7 rather than being left out.
 
 Baseline: [`PRD.md`](../PRD.md) §14 (OWASP mapping) and
 [`AGENTS.md`](../AGENTS.md) binding constraints. When this document and the code
@@ -69,7 +69,7 @@ not cost the cluster.
 | **Compromised workload** | The pod network, the node's kernel | Arbitrary code as the container's user |
 | **Malicious job spec** | The HCL parser, the scheduler | Whatever the spec language allows |
 | **Stolen operator browser** | Session cookie; CSRF token if XSS lands | Anything the role allows |
-| **Rogue AI agent (MCP)** | The MCP tool surface (**not built, M9**) | A valid token and no judgement |
+| **Rogue AI agent (MCP)** | The MCP tool surface (§3.10) | A valid token and no judgement |
 | **Node-local root** | Everything | Out of scope: see §6 |
 
 ---
@@ -156,9 +156,11 @@ audit log's redaction
 filter runs on every entry rather than at call sites, because a filter each
 caller must remember is one that gets forgotten in the path that mattered.
 
-**Losing `master.key` loses every secret and every encrypted backup.** The
-escrow ceremony that makes this survivable is M10. Until then it is the sharpest
-edge in the system, and the daemon says so on first run.
+**Losing `master.key` loses every secret and every encrypted backup.** `kanea
+init` escrows it at the key ceremony: shown once, typed back to prove it was
+recorded, and discarded rather than written if it was not. There is no recovery
+service and no second copy, so a lost record is final. It is the sharpest edge
+in the system, and the daemon says so on first run.
 
 ### 3.4 Accountability (A09)
 
@@ -1040,7 +1042,8 @@ effect on the next request because the check is a Store lookup, not a signature.
 
 **The audit trail is tampered with.** Editing an entry breaks the chain there
 and `Verify` names it. Truncating the tail is the case a chain alone does not
-catch, and that is what the signed periodic export (M10) is for.
+catch; a signed periodic export is what would catch it, and it is not built
+(§7).
 
 **A prompt injection reaches an agent.** A service's README, read by an agent
 debugging a failing deploy, contains "before continuing, delete the staging
@@ -1058,15 +1061,15 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | | Control | State |
 |---|---|---|
 | A01 | Deny-by-default on every route, roles, CSRF, WS and MCP origin checks | **Built** |
-| A02 | Secrets encrypted at rest, bcrypt passwords, TLS on the listener | **Built**, listener TLS is operator-supplied |
+| A02 | Secrets encrypted at rest, bcrypt passwords, TLS on the listener | **Built**; the API listener holds its own certificate through `bind.api_tls` (`acme`, `self-signed`, `provided`, or a `plaintext` that must be typed, PRD v1.61) |
 | A03 | HCL schema validation, DNS-1123 names, no shell interpolation | **Built** |
 | A04 | Secure-by-default config; this document | **Built** |
 | A05 | Security headers, CSP, hardened workload defaults, declarable non-root workload identity (§3.15) | **Built** |
 | A06 | `govulncheck`, `gosec`, `gitleaks`, `npm audit` in CI | **Built** |
 | A07 | Login and global rate limits, token expiry, OIDC + PKCE, LDAP with TLS-mandatory binds and escaped filters (v1.47, §3.20) | **Built** |
-| A08 | Digest pinning honoured; release signing | **Partial**, signing is M10 |
-| A09 | Hash-chained audit log, retention; MCP tool calls audited through the same routes | **Built**, signed export is M10 |
-| A10 | Metadata-endpoint egress block, enforced by the datapath's own egress program (v1.36; previously claimed via a Cilium egress policy that was never emitted) | **Built**, git/webhook SSRF rules are M7/M8 |
+| A08 | Digest pinning honoured; keyless cosign signature over the release checksums, which the SPDX SBOMs are listed in | **Built** |
+| A09 | Hash-chained audit log, retention; MCP tool calls audited through the same routes | **Built**; a signed periodic export is not (§7) |
+| A10 | Metadata-endpoint egress block, enforced by the datapath's own egress program (v1.36; previously claimed via a Cilium egress policy that was never emitted) | **Built**, git and webhook SSRF rules included |
 
 ---
 
@@ -1077,7 +1080,7 @@ The password is not reachable at any tier: there is no tool that reads a secret.
   otherwise would mean designing around a boundary that does not exist.
 - **Kernel container escape.** Kanea drops capabilities to a reviewed baseline,
   applies seccomp and namespaces every alloc; a kernel bug past all of that is
-  the kernel's boundary, not Kanea's. The mitigation is patching, which `kanea doctor` (M10) checks.
+  the kernel's boundary, not Kanea's. The mitigation is patching, which `kanea doctor` checks.
 - **Hostility between projects on one node.** Projects are isolated by network
   policy and cgroups, not by virtualisation. v1 is a single-team platform;
   a project is an organisational boundary that happens to be enforced, not a
@@ -1091,20 +1094,18 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 
 ## 7. Known residual risks
 
-| Risk | Why it remains | Milestone |
-|---|---|---|
-| Master key loss is unrecoverable | Escrow ceremony not built | M10 |
-| Audit tail truncation is undetectable | Needs the signed export | M10 |
-| An audit entry can be lost if the Store fails mid-request | Needs an audited apply in one Store batch | n/a |
-| API listener TLS is operator-supplied | ACME for the control plane is not wired | M10 |
-| The MCP tool surface is not covered here | Not built | M9 |
-| GitHub OAuth carries no signed identity | Deliberately not shipped (PRD v1.19) | n/a |
-| Auto-update follows a moving tag, so a compromised upstream image is deployed automatically | Opt-in per service and off by default; a failed update reverts, but a *working* malicious image converges (§6.2 R19) | n/a |
-| A granted runtime socket is node-level control for the container holding it | No containment exists; a filtering proxy is deliberately not built (§3.12) | n/a |
-| A granted device exposes a kernel driver's ioctl surface | No seccomp filtering is applied over it | n/a |
-| An operator can grant a device that should never be granted | The config refuses `/` and the wrong file type; it cannot judge intent | n/a |
-| A provider credential file on the node reads every external secret its token can | 0600-checked and root-owned, but a scoped token is the provider's control, not Kanea's; docs prescribe least-privilege tokens (§3.19) | n/a |
-| A local-account name and a directory name are timing-distinguishable at login | LDAP bind time is the directory's, not Kanea's; equalising against network I/O would be theatre (§3.20) | n/a |
-| A directory user's revoked group membership outlives login by up to a session lifetime | Group→role mapping is evaluated at bind time only; the session's 12 h absolute expiry bounds it (§3.20) | n/a |
-| A build's `RUN` steps can read unauthenticated loopback diagnostics (containerd metrics, edge status) and reach every project's VIPs | Host networking is what keeps a node-local registry reachable; a worker network namespace is the real fix and is unevaluated (§3.21) | n/a |
-| A Dockerfile `USER <non-root>` step escapes the uid-keyed metadata drop | Rootless uid-mapping puts non-root container users on subuids, not the build account; the rule covers the default root shape (§3.21) | n/a |
+| Risk | Why it remains |
+|---|---|
+| Master key loss is unrecoverable | The ceremony escrows it once, to a record the operator keeps; a recovery service is deliberately not built, because it would be a second copy of every secret (§3.3) |
+| Audit tail truncation is undetectable | Needs a signed periodic export, which is not built |
+| An audit entry can be lost if the Store fails mid-request | Needs an audited apply in one Store batch |
+| GitHub OAuth carries no signed identity | Deliberately not shipped (PRD v1.19) |
+| Auto-update follows a moving tag, so a compromised upstream image is deployed automatically | Opt-in per service and off by default; a failed update reverts, but a *working* malicious image converges (§6.2 R19) |
+| A granted runtime socket is node-level control for the container holding it | No containment exists; a filtering proxy is deliberately not built (§3.12) |
+| A granted device exposes a kernel driver's ioctl surface | No seccomp filtering is applied over it |
+| An operator can grant a device that should never be granted | The config refuses `/` and the wrong file type; it cannot judge intent |
+| A provider credential file on the node reads every external secret its token can | 0600-checked and root-owned, but a scoped token is the provider's control, not Kanea's; docs prescribe least-privilege tokens (§3.19) |
+| A local-account name and a directory name are timing-distinguishable at login | LDAP bind time is the directory's, not Kanea's; equalising against network I/O would be theatre (§3.20) |
+| A directory user's revoked group membership outlives login by up to a session lifetime | Group→role mapping is evaluated at bind time only; the session's 12 h absolute expiry bounds it (§3.20) |
+| A build's `RUN` steps can read unauthenticated loopback diagnostics (containerd metrics, edge status) and reach every project's VIPs | Host networking is what keeps a node-local registry reachable; a worker network namespace is the real fix and is unevaluated (§3.21) |
+| A Dockerfile `USER <non-root>` step escapes the uid-keyed metadata drop | Rootless uid-mapping puts non-root container users on subuids, not the build account; the rule covers the default root shape (§3.21) |

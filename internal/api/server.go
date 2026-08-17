@@ -1235,7 +1235,7 @@ func listAll[T any](ctx context.Context, s Store, kind store.Kind) ([]T, error) 
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
-	// Defence in depth for the M5 browser-facing listener: these responses are
+	// Defence in depth for the browser-facing listener: these responses are
 	// never a document, and must never be sniffed as one.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)

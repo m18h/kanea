@@ -17,7 +17,7 @@ import (
 
 // DefaultContainerdMetricsURL is containerd's Prometheus listener, configured
 // in containerd's config v4 as `[plugins.'io.containerd.server.v1.metrics']`
-// (M0 spike ②).
+// (spike ②).
 const DefaultContainerdMetricsURL = "http://127.0.0.1:1338/v1/metrics"
 
 // Metric names recorded by the scraper.
@@ -34,7 +34,7 @@ const (
 	MetricPIDs = "pids"
 )
 
-// containerd's metric names, as measured in M0 spike ②. Only these are parsed:
+// containerd's metric names, as measured in spike ②. Only these are parsed:
 // the endpoint carries 47 families per task, and at the §21 target of 2 000
 // allocs that is a response no one should be building a map out of.
 const (
@@ -193,7 +193,7 @@ func (s *ContainerdScraper) Scrape(ctx context.Context) (recorded int, err error
 // built: parsing the whole body to discard nine tenths of it would make the
 // metrics pipeline the most expensive thing on the node.
 //
-// M0 spike ② left this open ("M6 should re-measure at 2 000-alloc scale") so
+// spike ② left this open ("re-measure at 2 000-alloc scale") so
 // BenchmarkScrapeParse does, on a body of that shape:
 //
 //	2.2 ms per scrape, 439 MB/s, 1.2 MB allocated

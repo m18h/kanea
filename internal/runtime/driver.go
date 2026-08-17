@@ -15,7 +15,7 @@
 //     escape hatch in the v1 spec, and the allowlist must not become one.
 //   - Resource limits (PRD §6.2 R11, §5.2.11): no container ever runs
 //     unlimited. Missing limits are a programming error, not a default.
-//   - Network namespace ordering (M0 spike ②): the netns is created and wired
+//   - Network namespace ordering (spike ②): the netns is created and wired
 //     up *before* the task starts, and torn down *after* the task dies, so a
 //     workload never runs without its network and CNI DEL always has a netns
 //     to clean up.

@@ -50,7 +50,7 @@ type Storage struct {
 	Endpoint string
 	AuthRef  string
 	// Mode selects the S3 driver: "ro" (mountpoint-s3, the default) or "rw"
-	// (s3fs); M0 spike ③.
+	// (s3fs); spike ③.
 	Mode string
 	// NFS and SMB:
 	Server  string
@@ -221,7 +221,7 @@ type Service struct {
 type Build struct {
 	Context string
 	// Dockerfile overrides recipe detection. Empty means auto-detect:
-	// Containerfile first, then Dockerfile (M0 spike ④).
+	// Containerfile first, then Dockerfile (spike ④).
 	Dockerfile string
 	Target     string
 	Tag        string
