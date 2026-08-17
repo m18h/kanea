@@ -429,6 +429,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, errNoAuthConfigured)
 		return
 	}
+	// JSON only (K-33): a CORS-simple cross-site POST (text/plain, a form)
+	// must not be able to replace the browser's session - the login CSRF the
+	// MCP transport's isJSON gate already refuses its own way.
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType,
+			fmt.Errorf("login takes a JSON body (Content-Type: application/json)"))
+		return
+	}
 	var req LoginRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxLoginBytes)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("decode request: %w", err))

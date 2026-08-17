@@ -23,6 +23,7 @@ func TestAccountRoutesAreAdminOnly(t *testing.T) {
 		{http.MethodGet, api.PathUsers, nil},
 		{http.MethodPut, api.PathUsers + "/mallory", api.UserRequest{Password: "a-long-enough-one", Role: auth.RoleAdmin}},
 		{http.MethodDelete, api.PathUsers + "/" + adminUser, nil},
+		{http.MethodDelete, api.PathUsers + "/" + adminUser + "/sessions", nil},
 		{http.MethodGet, api.PathTokens, nil},
 		{http.MethodPost, api.PathTokens, api.TokenRequest{Name: "ci", Role: auth.RoleAdmin}},
 		{http.MethodDelete, api.PathTokens + "/deadbeef", nil},
@@ -288,5 +289,40 @@ func TestAccountRoutesAreOffWithoutAnAccountStore(t *testing.T) {
 
 	if resp, body := h.do(t, req); resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503: %s", resp.StatusCode, body)
+	}
+}
+
+// K-13: the emergency lever exists and works: a revoked cookie stops
+// authorizing the moment the route returns, not at the absolute expiry.
+func TestRevokeUserSessions(t *testing.T) {
+	h := newAuthHarness(t)
+	adminTok := h.token(t, auth.RoleAdmin)
+
+	cookie, csrf := h.login(t, viewerUser, viewerPass)
+	if csrf == "" {
+		t.Fatal("no csrf")
+	}
+
+	// The session works before revocation.
+	req := h.request(t, http.MethodGet, api.PathServices, nil)
+	req.AddCookie(cookie)
+	if resp, _ := h.do(t, req); resp.StatusCode == http.StatusUnauthorized {
+		t.Fatal("the fresh session did not authenticate")
+	}
+
+	req = h.request(t, http.MethodDelete, api.PathUsers+"/"+viewerUser+"/sessions", nil)
+	req.Header.Set("Authorization", "Bearer "+adminTok)
+	resp, body := h.do(t, req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("revoke = %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "\"revoked\":1") {
+		t.Fatalf("revoke body = %s, want one revoked session", body)
+	}
+
+	req = h.request(t, http.MethodGet, api.PathServices, nil)
+	req.AddCookie(cookie)
+	if resp, _ := h.do(t, req); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("the revoked session still authorizes: status = %d", resp.StatusCode)
 	}
 }

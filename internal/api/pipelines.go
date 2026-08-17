@@ -126,6 +126,14 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	follow := r.URL.Query().Get("follow") == "true"
+	if follow {
+		// Same bound as the alloc-log stream (K-37): a following build log
+		// holds a goroutine and an open file for the build's life.
+		if !s.acquireStream(w) {
+			return
+		}
+		defer s.releaseStream()
+	}
 	tail, err := newTailer(s.pipelines.LogPath(run), gitops.ShortID(run.ID), 0, false)
 	if err != nil {
 		writeError(w, http.StatusNotFound, fmt.Errorf("no log for run %s", gitops.ShortID(run.ID)))

@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/m18h/kanea/internal/auth"
 	"github.com/m18h/kanea/internal/runtime"
 )
 
@@ -109,11 +110,18 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	if !s.ws.acquire() {
+	// Exec is an operator tool: the identity is writer-capable by route
+	// policy, so the per-viewer socket cap (K-36) does not apply, and the
+	// global one still does.
+	subject := ""
+	if id, ok := auth.FromContext(r.Context()); ok {
+		subject = id.Subject
+	}
+	if !s.ws.acquire(subject, true) {
 		writeError(w, http.StatusServiceUnavailable, errTooManyConnections)
 		return
 	}
-	defer s.ws.release()
+	defer s.ws.release(subject)
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// Origin is checked above, against the same allowlist the live-data
@@ -276,6 +284,13 @@ func (s *execSession) readLoop(ctx context.Context, stdin *io.PipeWriter, resize
 	defer func() {
 		if err := stdin.Close(); err != nil {
 			s.log.Debug("closing exec stdin", "error", err)
+		}
+	}()
+	// A read-loop bug costs the session, never the process (K-35): this
+	// goroutine parses client frames for an authenticated caller.
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Warn("exec read loop panic; the session is closed", "panic", r)
 		}
 	}()
 
