@@ -229,6 +229,13 @@ func (l Layout) buildkitUnit() string {
 // BuildkitUser is the unprivileged account buildkitd runs as.
 const BuildkitUser = "kanea-buildkit"
 
+// EdgeUser is the account kanea-edge runs as (PRD §5.2.6): nothing but
+// CAP_NET_BIND_SERVICE, no Store handle, and - the property the process split
+// exists for - not root, so an edge compromise costs the traffic it
+// terminates and not the node. `kanea init` creates it; the certificate
+// bundle's group-read permission (0640) names its group.
+const EdgeUser = "kanea-edge"
+
 // heredoc strips the indentation a raw string literal picks up from being
 // written inside a Go function.
 //

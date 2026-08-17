@@ -43,7 +43,7 @@ func SetupBuildkit(ctx context.Context, l Layout, log *slog.Logger) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	if err := ensureUser(ctx, BuildkitUser, log); err != nil {
+	if err := EnsureUser(ctx, BuildkitUser, log); err != nil {
 		return err
 	}
 	u, err := user.Lookup(BuildkitUser)
@@ -107,8 +107,10 @@ func SetupBuildkit(ctx context.Context, l Layout, log *slog.Logger) error {
 	return nil
 }
 
-// ensureUser creates the system account buildkitd runs as.
-func ensureUser(ctx context.Context, name string, log *slog.Logger) error {
+// EnsureUser creates a system account if it does not exist. Idempotent, like
+// EnsureGroup, and built for the same caller: `kanea init`, which creates the
+// build daemon's account and the edge's (PRD §5.2.6).
+func EnsureUser(ctx context.Context, name string, log *slog.Logger) error {
 	if _, err := user.Lookup(name); err == nil {
 		return nil
 	} else if !isUnknownUser(err) {
@@ -123,13 +125,13 @@ func ensureUser(ctx context.Context, name string, log *slog.Logger) error {
 	// --no-create-home: the home directory is under Kanea's data directory and
 	// is created above with the mode it needs, not by useradd's skeleton.
 	// #nosec G204: the path comes from lookupTool over fixed directories, and
-	// name is a package constant.
+	// every caller passes a compile-time constant name.
 	cmd := exec.CommandContext(ctx, useradd,
 		"--system", "--no-create-home", "--shell", "/usr/sbin/nologin", name)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create the %s account: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
-	log.Info("created the build daemon account", "user", name)
+	log.Info("created the system account", "user", name)
 	return nil
 }
 
