@@ -33,6 +33,17 @@ from the master key. If the id in the manifest does not match the key you hold,
 a restore refuses with a message saying exactly that, rather than failing with
 an authentication error you would have to interpret.
 
+Since v1.74 the manifest is also **MAC'd**: a restore verifies the manifest
+itself against the key before trusting anything in it, so a bucket-write
+attacker cannot roll you back to an older genuine archive by swapping
+manifests. Archives written before v1.74 have no MAC and restore with a loud
+warning instead - when you see it, treat the archive's age as unverified and
+confirm the id and created-at are the state you mean to roll back to before
+letting the replay run. The same version refuses a restore whose segment chain
+has a hole (a segment deleted from the bucket): it says which index the state
+is good up to, and `--skip-replay` restores the snapshot alone if that is what
+you want.
+
 `kanea init` runs the escrow ceremony: it prints the key once and requires you
 to type it back before it writes anything. That is deliberately not a y/n
 prompt: the point is to establish that you actually recorded it.
