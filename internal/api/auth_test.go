@@ -780,3 +780,16 @@ func TestLoginIsRateLimited(t *testing.T) {
 		t.Fatalf("login during lockout = %d, want 429", resp.StatusCode)
 	}
 }
+
+// K-33: a CORS-simple cross-site POST (a form, text/plain) must not be able
+// to replace the browser's session. JSON only.
+func TestLoginRequiresJSON(t *testing.T) {
+	h := newAuthHarness(t)
+
+	req := h.request(t, http.MethodPost, api.PathLogin, nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Body = io.NopCloser(strings.NewReader("user=admin&password=whatever"))
+	if resp, _ := h.do(t, req); resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("form login = %d, want 415", resp.StatusCode)
+	}
+}

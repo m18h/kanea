@@ -515,6 +515,17 @@ func (c *Client) DeleteUser(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, PathUsers+"/"+url.PathEscape(name), nil, nil)
 }
 
+// RevokeUserSessions ends every session the subject holds (K-13), reporting
+// how many there were.
+func (c *Client) RevokeUserSessions(ctx context.Context, name string) (int, error) {
+	var resp struct {
+		Revoked int `json:"revoked"`
+	}
+	err := c.do(ctx, http.MethodDelete,
+		PathUsers+"/"+url.PathEscape(name)+"/sessions", nil, &resp)
+	return resp.Revoked, err
+}
+
 // Tokens lists tokens, without their hashes.
 func (c *Client) Tokens(ctx context.Context) ([]auth.Token, error) {
 	var resp TokensResponse

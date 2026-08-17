@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -114,6 +113,31 @@ func (s *Server) feedStats(frame ClientFrame) feedFunc {
 }
 
 // statsFor gathers one sample for a service and its allocs.
+// allocsAtCurrentIndex lists alloc records, cached per store index (K-18):
+// every stats subscriber asks every interval, and the answer cannot change
+// without a write moving the index, so a miss recomputes and a hit serves the
+// same slice to every asker.
+func (s *Server) allocsAtCurrentIndex(ctx context.Context) ([]reconciler.AllocRecord, error) {
+	index, err := s.store.Index(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	s.allocCache.mu.Lock()
+	defer s.allocCache.mu.Unlock()
+	if s.allocCache.valid && s.allocCache.index == index {
+		return s.allocCache.allocs, nil
+	}
+	allocs, err := listAll[reconciler.AllocRecord](ctx, s.store, store.KindAlloc)
+	if err != nil {
+		return nil, err
+	}
+	s.allocCache.index = index
+	s.allocCache.allocs = allocs
+	s.allocCache.valid = true
+	return allocs, nil
+}
+
 func (s *Server) statsFor(ctx context.Context, service string) StatsSample {
 	sample := StatsSample{Service: service, At: time.Now()}
 	sample.CPU = s.latestValue(service, scaling.MetricCPU)
@@ -134,7 +158,10 @@ func (s *Server) statsFor(ctx context.Context, service string) StatsSample {
 	// The alloc list comes from the Store rather than from the metric subjects:
 	// an alloc that started a second ago has a record and no samples yet, and
 	// leaving it out of the table would make it look like it does not exist.
-	allocs, err := listAll[reconciler.AllocRecord](ctx, s.store, store.KindAlloc)
+	// Cached per store index (K-18): a stats feed asks every interval per
+	// subscriber, and a full alloc listing is the same answer until a write
+	// moves the index.
+	allocs, err := s.allocsAtCurrentIndex(ctx)
 	if err != nil {
 		s.log.Debug("stats feed: cannot list allocs", "error", err)
 		return sample
@@ -413,7 +440,13 @@ func (f *logFollower) resync(ctx context.Context) {
 		if _, ok := f.tails[alloc.ID]; ok {
 			continue
 		}
-		path := filepath.Join(f.server.logDir, alloc.ID+".log")
+		path, err := logPathFor(f.server.logDir, alloc.ID)
+		if err != nil {
+			// Same refusal as the REST tail: a traversal-shaped ID in the
+			// Store is skipped, never read outside the log directory.
+			f.server.log.Warn("refusing log path", "alloc", alloc.ID, "error", err)
+			continue
+		}
 		// prefix=false: the alloc id travels in the frame, so the dashboard can
 		// attribute a line without parsing it back out of the text.
 		//

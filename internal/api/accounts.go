@@ -28,6 +28,10 @@ type Accounts interface {
 	PutUser(ctx context.Context, name, password string, role auth.Role) error
 	Users(ctx context.Context) ([]auth.User, error)
 	DeleteUser(ctx context.Context, name string) error
+	// DeleteSessionsFor revokes every session a subject holds (K-13). It is
+	// the only lever for directory-established sessions (oidc/ldap): those
+	// have no local account to delete or re-credential.
+	DeleteSessionsFor(ctx context.Context, name string) (int, error)
 	CreateToken(ctx context.Context, name string, role auth.Role, expires time.Time) (auth.Token, string, error)
 	Tokens(ctx context.Context) ([]auth.Token, error)
 	RevokeToken(ctx context.Context, id string) error
@@ -126,6 +130,26 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("account removed", "user", name)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRevokeUserSessions revokes every session a subject holds (K-13): the
+// documented emergency response to a stolen cookie, and the only lever for
+// directory-established sessions, whose subjects have no local account.
+func (s *Server) handleRevokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	if s.accounts == nil {
+		writeError(w, http.StatusServiceUnavailable, errNoAccounts)
+		return
+	}
+	name := r.PathValue("name")
+	auditTarget(r, name)
+
+	n, err := s.accounts.DeleteSessionsFor(r.Context(), name)
+	if err != nil {
+		writeError(w, statusForAuthError(err), err)
+		return
+	}
+	s.log.Info("sessions revoked", "user", name, "count", n)
+	writeJSON(w, http.StatusOK, map[string]int{"revoked": n})
 }
 
 // handleListTokens lists tokens.

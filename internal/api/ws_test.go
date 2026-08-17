@@ -350,3 +350,32 @@ func TestHealthReportsWebSocketConnections(t *testing.T) {
 		return err == nil && health.WSConnections == 0
 	}, "the closed socket was never released")
 }
+
+// K-18: a connection's live feeds are capped. Every subscription is a
+// goroutine and, for logs, open files, so subscribing without bound is a
+// resource leak the server would be holding; the refusal is an error frame,
+// never a silent drop.
+func TestWebSocketCapsSubscriptions(t *testing.T) {
+	h := newHarness(t)
+	h.putService(t, "shop", "web", 1)
+	conn := dialWS(t, h, "")
+
+	for i := 0; i < 40; i++ {
+		send(t, conn, api.ClientFrame{
+			Type: "subscribe", Topic: api.TopicLogs,
+			Project: "shop",
+			// Distinct keys: resubscribing the same key replaces, which is the
+			// dashboard's own pattern and must keep working.
+			Service: "web-" + strings.Repeat("x", i+1),
+		})
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		frame := receive(t, conn)
+		if frame.Type == "error" && strings.Contains(frame.Error, "too many subscriptions") {
+			return
+		}
+	}
+	t.Fatal("no subscription-cap error frame arrived")
+}

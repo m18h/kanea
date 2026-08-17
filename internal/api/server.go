@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,11 +18,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/m18h/kanea/internal/dashboard"
 	"github.com/m18h/kanea/internal/gitops"
+	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/ratelimit"
 	"github.com/m18h/kanea/internal/reconciler"
@@ -277,6 +281,22 @@ type Server struct {
 	publicLimit ratelimit.Spec
 	authLimit   ratelimit.Spec
 
+	// streamSlots bounds concurrent streaming REST responses (K-37): each
+	// holds a goroutine and at least one open log fd, so an authenticated
+	// caller opening them without bound exhausts kanead's descriptors.
+	streamSlots chan struct{}
+
+	// allocCache is the stats feed's per-index cache (K-18): a full alloc
+	// listing per subscriber per interval is the same answer until a write
+	// moves the store index, so it is computed once per index, not once per
+	// asker.
+	allocCache struct {
+		mu     sync.Mutex
+		index  uint64
+		valid  bool
+		allocs []reconciler.AllocRecord
+	}
+
 	// now, started and pid feed the health payload's uptime report (v1.38).
 	// started comes from the same clock now reads, so an injected clock in a
 	// test sees a consistent pair.
@@ -348,6 +368,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		breaker:   cfg.Breaker, node: cfg.Node, exec: cfg.Exec,
 		insecureCookies: cfg.InsecureCookies,
 	}
+	// writeError's 5xx half logs through the daemon's logger (K-34); wired
+	// once here, before any request is served.
+	internalErrorLog.Store(s.log.Error)
+	s.streamSlots = make(chan struct{}, maxStreams)
 
 	// Every route states what it requires next to where it is registered, and
 	// the `public: true` entries are the whole exemption list (§5.2.1). Four of
@@ -424,6 +448,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("PUT "+PathUsers+"/{name}", s.route(policy{action: "user.put", mutates: true}, s.handlePutUser))
 	mux.Handle("DELETE "+PathUsers+"/{name}",
 		s.route(policy{action: "user.delete", mutates: true}, s.handleDeleteUser))
+	mux.Handle("DELETE "+PathUsers+"/{name}/sessions",
+		s.route(policy{action: "user.sessions.revoke", mutates: true}, s.handleRevokeUserSessions))
 	mux.Handle("GET "+PathTokens, s.route(policy{action: "token.list", adminOnly: true}, s.handleListTokens))
 	mux.Handle("POST "+PathTokens, s.route(policy{action: "token.create", mutates: true}, s.handleCreateToken))
 	mux.Handle("DELETE "+PathTokens+"/{id}",
@@ -473,7 +499,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST "+PathBackups,
 		s.route(policy{action: "backup.create", mutates: true}, s.handleCreateBackup))
 	mux.Handle("GET "+PathBackups+"/{id}/verify",
-		s.route(policy{action: "backup.verify"}, s.handleVerifyBackup))
+		// A "read" that downloads and hashes a full archive per call is not a
+		// read: viewer-reachable egress/CPU churn (K-39). Admin-only.
+		s.route(policy{action: "backup.verify", adminOnly: true}, s.handleVerifyBackup))
 	mux.Handle("POST "+PathBackups+"/restore",
 		s.route(policy{action: "backup.restore", mutates: true}, s.handleRestore))
 	// Node settings (v1.46, §15.1). Reading them is admin-only: the view
@@ -821,6 +849,13 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 				errors.New("every service needs a project and a name")
 		}
 		key := svc.Project + "/" + svc.Service
+		// The parser enforces the spec's invariants one way; a record that
+		// arrives as JSON never meets it. This is the same boundary R22 is
+		// checked at below: validateDesired is the rest of the rules a stored
+		// record must live under, refused before any Store write.
+		if err := validateDesired(svc); err != nil {
+			return ApplyResponse{}, http.StatusBadRequest, err
+		}
 		// The restart generation belongs to the running service, not to the
 		// file: it is bumped by `kanea restart`, and a spec that does not
 		// mention it must not reset it. Without this, the first apply after a
@@ -886,6 +921,12 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 		if pipeline.Project == "" {
 			return ApplyResponse{}, http.StatusBadRequest,
 				errors.New("every pipeline config needs a project")
+		}
+		// Same R1 half as the services above: the project name composes into
+		// DNS and paths everywhere a pipeline's services do.
+		if !jobspec.IsName(pipeline.Project) {
+			return ApplyResponse{}, http.StatusBadRequest,
+				fmt.Errorf("pipeline project %q is not a DNS-1123 label", pipeline.Project)
 		}
 		// Merged rather than replaced: LastCommit and LastSyncAt belong to the
 		// sync loop, and an apply that overwrote them with zero values would
@@ -1069,6 +1110,15 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("no matching allocs"))
 		return
 	}
+	if opts.Follow {
+		// A following stream holds a goroutine and a log fd per alloc for as
+		// long as the client cares to hold it (K-37): bounded, refused when
+		// full, never queued.
+		if !s.acquireStream(w) {
+			return
+		}
+		defer s.releaseStream()
+	}
 	// One alloc keeps the stream unprefixed; several need attribution.
 	prefix := len(allocs) > 1
 
@@ -1078,7 +1128,14 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	tails := make([]*tailer, 0, len(allocs))
 	for _, alloc := range allocs {
-		path := filepath.Join(s.logDir, alloc.ID+".log")
+		path, err := logPathFor(s.logDir, alloc.ID)
+		if err != nil {
+			// A traversal-shaped ID in the Store means the record pre-dates
+			// the apply seam's name validation; skip it rather than read
+			// outside the log directory.
+			s.log.Warn("refusing log path", "alloc", alloc.ID, "error", err)
+			continue
+		}
 		t, err := newTailer(path, alloc.ID, opts.Tail, prefix)
 		if err != nil {
 			// A missing log file is normal for an alloc that never started.
@@ -1197,10 +1254,66 @@ var encodeFailures atomic.Int64
 func EncodeFailures() int64 { return encodeFailures.Load() }
 
 func writeError(w http.ResponseWriter, status int, err error) {
+	if status >= 500 && status != http.StatusNotImplemented {
+		// A 5xx body is fixed text plus a correlation id (K-34): the verbatim
+		// error can carry filesystem layout and subsystem names to any
+		// authenticated caller. The real error goes to the log with the id.
+		// (501 is exempt: it is the deliberate "not configured on this node"
+		// answer, and its text is the point.)
+		id := correlationID()
+		logInternalError(msg500, "ref", id, "status", status, "error", err)
+		writeJSON(w, status, Error{Error: "internal error (ref " + id + ")"})
+		return
+	}
 	writeJSON(w, status, Error{Error: err.Error()})
+}
+
+const msg500 = "request failed"
+
+// logInternalError is set by NewServer to the daemon's logger. A package-level
+// hook rather than a parameter because writeError has ~150 call sites that
+// predate it; the alternative is a signature change for a Low-severity
+// finding. Stored atomically: tests run several servers in one process.
+var logInternalError = func(msg string, args ...any) {
+	if fn, ok := internalErrorLog.Load().(func(string, ...any)); ok {
+		fn(msg, args...)
+		return
+	}
+	slog.Default().Error(msg, args...)
+}
+
+var internalErrorLog atomic.Value // func(string, ...any)
+
+// correlationID is a short random reference for a 5xx body, so the operator
+// can find the real error in the log and the client learns nothing.
+func correlationID() string {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // trimSocketPrefix is used by the client to render a friendlier target.
 func trimSocketPrefix(path string) string {
 	return strings.TrimPrefix(path, "unix://")
 }
+
+// maxStreams bounds concurrent streaming REST responses (K-37).
+const maxStreams = 16
+
+// acquireStream takes a streaming slot, answering 503 when they are all held.
+// Streaming is the expensive serving mode (a goroutine and open files per
+// connection); a non-follow read is short and never takes one.
+func (s *Server) acquireStream(w http.ResponseWriter) bool {
+	select {
+	case s.streamSlots <- struct{}{}:
+		return true
+	default:
+		writeError(w, http.StatusServiceUnavailable,
+			fmt.Errorf("api: too many open streams (%d)", maxStreams))
+		return false
+	}
+}
+
+func (s *Server) releaseStream() { <-s.streamSlots }

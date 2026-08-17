@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/m18h/kanea/internal/auth"
 )
 
 // PathWS is the single multiplexed live-data socket (PRD §12.1).
@@ -100,43 +102,59 @@ const (
 	// unbounded queue in the daemon (PRD §17's backpressure rule, applied to
 	// the socket); what happens instead is per topic: see lossyTopic.
 	wsSendBuffer = 64
-	// wsDefaultMaxConns caps concurrent sockets. Per-user caps arrive with auth
-	// in M5; until then this is the whole-daemon bound.
+	// wsDefaultMaxConns caps concurrent sockets across the daemon.
 	wsDefaultMaxConns = 32
+	// wsMaxPerViewer bounds one read-only subject's sockets (K-36): a viewer
+	// holding every slot would deny the WS/exec channel to everyone else,
+	// indefinitely. Write-capable subjects answer to the global cap alone:
+	// exec is an operator tool and the global bound still holds it.
+	wsMaxPerViewer = 8
 )
 
 // ErrOriginNotAllowed marks a rejected Upgrade.
 var ErrOriginNotAllowed = errors.New("api: websocket origin not allowed")
 
-// wsHub tracks live sockets so the cap can be enforced.
+// wsHub tracks live sockets so the caps can be enforced: one global bound,
+// and a per-subject one for read-only identities (K-36).
 type wsHub struct {
-	mu       sync.Mutex
-	conns    int
-	maxConns int
+	mu        sync.Mutex
+	conns     int
+	maxConns  int
+	bySubject map[string]int
 }
 
 func newWSHub(maxConns int) *wsHub {
 	if maxConns <= 0 {
 		maxConns = wsDefaultMaxConns
 	}
-	return &wsHub{maxConns: maxConns}
+	return &wsHub{maxConns: maxConns, bySubject: map[string]int{}}
 }
 
 // acquire reserves a connection slot.
-func (h *wsHub) acquire() bool {
+func (h *wsHub) acquire(subject string, canWrite bool) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.conns >= h.maxConns {
 		return false
 	}
+	if !canWrite && h.bySubject[subject] >= wsMaxPerViewer {
+		return false
+	}
 	h.conns++
+	h.bySubject[subject]++
 	return true
 }
 
-func (h *wsHub) release() {
+// release returns the slot.
+func (h *wsHub) release(subject string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.conns--
+	if h.bySubject[subject] <= 1 {
+		delete(h.bySubject, subject)
+	} else {
+		h.bySubject[subject]--
+	}
 }
 
 func (h *wsHub) count() int {
@@ -156,12 +174,20 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, err)
 		return
 	}
-	if !s.ws.acquire() {
+	// The per-subject cap (K-36) needs the identity the auth middleware
+	// attached; a request here is always authenticated (deny-by-default), but
+	// an absent one degrades to the global cap rather than refusing.
+	subject, canWrite := "", false
+	if id, ok := auth.FromContext(r.Context()); ok {
+		subject = id.Subject
+		canWrite = id.Role.CanWrite()
+	}
+	if !s.ws.acquire(subject, canWrite) {
 		writeError(w, http.StatusServiceUnavailable,
 			fmt.Errorf("api: too many websocket connections (%d)", s.ws.maxConns))
 		return
 	}
-	defer s.ws.release()
+	defer s.ws.release(subject)
 
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// Origin was checked above against the configured allowlist; the
@@ -387,6 +413,12 @@ func subscriptionKey(f ClientFrame) string {
 	return f.Topic + ":" + f.Project + "/" + f.Service
 }
 
+// maxSubscriptions bounds one connection's live feeds (K-18): every
+// subscription is a goroutine and, for logs, a set of open files, so a client
+// that subscribes without bound is a resource leak the server is holding.
+// 32 is far past anything the dashboard opens (one per visible panel).
+const maxSubscriptions = 32
+
 // subscribe starts a feed, replacing any existing one with the same key.
 func (s *wsSession) subscribe(ctx context.Context, frame ClientFrame) {
 	key := subscriptionKey(frame)
@@ -402,13 +434,30 @@ func (s *wsSession) subscribe(ctx context.Context, frame ClientFrame) {
 	// data to one socket.
 	s.unsubscribe(key)
 
-	feedCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
+	if len(s.subs) >= maxSubscriptions {
+		s.mu.Unlock()
+		// An error frame, never a silent drop: a panel showing no error is
+		// worse than one showing a gap (the v1.70 rule).
+		s.emitError(frame.Topic, "too many subscriptions on this connection")
+		return
+	}
+	feedCtx, cancel := context.WithCancel(ctx)
 	s.subs[key] = cancel
 	s.mu.Unlock()
 
 	go func() {
 		defer cancel()
+		// A feed bug costs one subscription, never the process (K-35): this
+		// goroutine runs client-driven code for an authenticated viewer, and
+		// an unrecovered panic in it is a remotely triggerable control-plane
+		// crash.
+		defer func() {
+			if r := recover(); r != nil {
+				s.server.log.Error("feed panic; the subscription is closed",
+					"topic", frame.Topic, "key", key, "panic", r)
+			}
+		}()
 		feed(feedCtx, func(payload any) bool { return s.emitData(frame.Topic, key, payload) })
 	}()
 }
