@@ -270,3 +270,129 @@ currently unwired, so subscribing is the additive path.
 | ③ `kanea stop` is not an OOM | | | |
 | ④ start failure explained | | | |
 | ⑤ `service.crashed` carries the cause | | | |
+
+## 6. The edge runs as its own user
+
+The §5.2.6 boundary is only real if the edge is not root (the audit's K-02:
+uid 0 matches the owner of every root-owned file without needing one
+capability). Unit tests pin the directive; what they cannot prove is that a
+real init wires the account, the unit and the bundle's group together. On a
+freshly inited node:
+
+```bash
+# ① the account exists
+id kanea-edge
+
+# ② the process runs as it
+ps -o user= -p "$(systemctl show -p MainPID --value kanea-edge.service)"
+
+# ③ the certificate bundle is group-readable by exactly that group
+stat -c '%a %U %G' /run/kanea-edge/certs.json
+
+# ④ doctor has no edge-user finding
+kanea doctor
+```
+
+| Check | Result | Date | Node |
+|---|---|---|---|
+| ① `id kanea-edge` resolves | | | |
+| ② edge process uid is kanea-edge | | | |
+| ③ bundle is 0640 root:kanea-edge | | | |
+| ④ `kanea doctor` is quiet about the edge user | | | |
+
+## 7. The seccomp filter is real on a running alloc
+
+PRD §14 A05 has claimed a default seccomp profile since M5; the audit found
+it applied nowhere (K-06). The unit tests pin the spec. What they cannot prove
+is that a real runc on a real kernel accepts the resolved profile and a
+workload actually runs under it:
+
+```bash
+# ① a stock alloc runs under a filter (2 = SECCOMP_MODE_FILTER)
+kanea run val/web --image nginx:1.27-alpine
+pid=$(pgrep -f "nginx: master" | head -1)
+grep Seccomp "/proc/$pid/status"
+
+# ② a baseline alloc cannot call the gated syscalls
+kanea exec val/web -- cat /proc/kallsyms >/dev/null 2>&1   # works (read)
+kanea exec val/web -- /bin/true
+# inside the alloc: `mount -t tmpfs none /tmp` must fail with EPERM *and* the
+# syscall must be the one refusing (strace shows EPERM before any cap check)
+
+# ③ the wasmtime shim starts under the same profile (functions node)
+```
+
+| Check | Result | Date | Node |
+|---|---|---|---|
+| ① `/proc/<pid>/status` shows `Seccomp: 2` | | | |
+| ② `mount` fails with EPERM inside a baseline alloc | | | |
+| ③ a wasm function serves under the profile | | | |
+
+## 8. A build cannot reach the metadata service (v1.75)
+
+A Dockerfile `RUN` step is repo-controlled code with host networking
+(THREAT_MODEL §3.21), and the alloc-veth egress guard never sees it. The
+control is an nftables drop of `169.254.0.0/16` for the `kanea-buildkit`
+uid. Unit tests pin the rule's shape; what they cannot prove is that the
+rootless daemon's processes really do carry that uid on the host:
+
+```bash
+# ① the rule is there
+sudo nft list table ip kanea
+
+# ② a RUN step cannot reach metadata, but the registry still works
+cat > /tmp/Dockerfile <<'EOF'
+FROM alpine:3
+RUN wget -q -T 3 -O- http://169.254.169.254/latest/meta-data/ && exit 1 || exit 0
+EOF
+kanea build shop/meta-probe --path /tmp   # succeeds; the wget timed out
+
+# ③ buildkitd itself pulls/pushes: a normal build still pushes its image
+```
+
+| Check | Result | Date | Node |
+|---|---|---|---|
+| ① the drop rule is in the `kanea` table | | | |
+| ② a RUN step to 169.254.169.254 times out | | | |
+| ③ a normal build pushes to its registry | | | |
+
+## 9. The audit hardening pass (K-09, K-20, K-12)
+
+The security remediation wave landed three controls whose correctness is
+architectural but whose activation needs a node: the maps have to exist, the
+mount has to be a mount, and the relay has to drop. Unit tests pin the shapes;
+this run proves the wiring.
+
+```bash
+# ① K-09: the binding exists, and a forged source is dropped
+sudo bpftool map show | grep veth_src            # both maps pinned
+sudo bpftool map dump name veth_src               # one entry per alloc veth
+kanea run --name probe --image alpine/curl       # in some project
+# from the probe: forge another alloc's source address and fail
+kanea exec probe -- sh -c 'ip addr add 10.200.0.99/32 dev eth0 2>/dev/null; ping -c1 -W1 10.200.0.1'
+# (the add needs no capability Kanea grants; if it works, the ping must
+#  still fail: the binding checks the veth's assigned address, not eth0's)
+sudo bpftool map dump name stats_drops | grep -c SPOOF   # grew
+```
+
+```bash
+# ② K-20: the mount source is the staging bind, not the checked path
+kanea inspect shop-data | grep /run/kanea/host-volumes/   # per-alloc staging
+mount | grep /run/kanea/host-volumes                       # the binds exist
+# rename a symlink in the checked path after apply; the alloc restarts onto
+# the pinned object, and the spec's next deploy re-derives cleanly.
+```
+
+```bash
+# ③ K-12: one datagram gets at most 4 KiB back, and the 9th socket from one
+#    address is refused
+# (a udp-published service whose backend answers big; two datagrams lift the
+#  cap; the counters kanea_edge_udp_refused_total{reason="unverified_cap"}
+#  and {reason="source_limit"} move)
+```
+
+| Check | Result | Date | Node |
+|---|---|---|---|
+| ① veth_src maps exist and spoof drops count | | | |
+| ② host volumes mount from the staging tree | | | |
+| ③ the unverified byte cap and per-source cap bite | | | |

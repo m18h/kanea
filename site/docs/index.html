@@ -253,6 +253,16 @@
   DATABASE_URL = "secret:shop/database-url"
 }</pre>
     <p>
+      The variable then carries the path of a file in a per-alloc tmpfs mount
+      (<code>/run/kanea/secrets/&lt;alloc&gt;/shop/database-url</code>, read-only,
+      owned by the service's user) - the value never sits in an environment
+      block. Software that can only read environment variables opts into the
+      weaker form, <code>secret-env:shop/database-url</code>, which inlines the
+      value (visible via <code>/proc/&lt;pid&gt;/environ</code>); the record keeps
+      the reference either way, and a rotated secret takes effect at the next
+      replacement.
+    </p>
+    <p>
       Two rules make that reference safe rather than merely tidy:
     </p>
     <ul>
@@ -864,7 +874,7 @@ service "web" {
       <table>
         <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>url</code></td><td>string</td><td>Required. Clone URL.</td></tr>
+          <tr><td><code>url</code></td><td>string</td><td>Required. Clone URL: <code>https://</code>, <code>ssh://</code>, scp-form or a local path - <code>http://</code> and <code>git://</code> are refused (the deploy credential would travel in cleartext / nothing authenticates the content), and credentials in the URL's userinfo are refused in favour of <code>auth_ref</code>.</td></tr>
           <tr><td><code>branch</code></td><td>string</td><td>Defaults to the repository's default branch.</td></tr>
           <tr><td><code>path</code></td><td>string</td><td>Directory within the repository holding specs, e.g. <code>.kanea/</code>.</td></tr>
           <tr><td><code>auth_ref</code></td><td>secret ref</td><td>Deploy key or token. Project-scoped like every other reference.</td></tr>
@@ -930,6 +940,12 @@ service "web" {
         </tbody>
       </table>
     </div>
+    <p>
+      <code>auth_ref</code> is R5-scoped like every other credential reference: every service
+      mounting the storage must be allowed to read it (its own project or <code>shared/</code>),
+      because mounting is reading. And an <code>endpoint</code> must be <code>https://</code> -
+      the mount helper sends the resolved credential to that address on every request.
+    </p>
     <div class="callout warn">
       <b class="label">S3 volumes are not a filesystem</b>
       <p>
@@ -1097,6 +1113,12 @@ service "web" {
         than a control that is silently dropped. On a tcp listener the upstream sees the
         edge's address, not the client's, so <code>ip_restriction</code> is the whole
         mitigation and it is enforced at accept time.</li>
+      <li><code>mode = "udp"</code> relays datagrams (game servers, DNS, syslog): one
+        session per client source address, pinned to a backend by rendezvous hash so a
+        conversation survives an edge restart. Because one spoofed datagram can open a
+        session, two bounds assume forgery: at most 8 live sessions per source IP, and at
+        most 4 KiB back to the client until it sends a second datagram - the proof its
+        address is real. Both refusals are counted in <code>kanea_edge_udp_refused_total</code>.</li>
       <li>Which node ports a spec may claim belongs to the node, not the spec
         (<code>--publish-ports</code>, unprivileged by default). A repository anyone can
         push to must not be able to take :22. See R22.</li>
@@ -1252,6 +1274,13 @@ restart {
       <li>Builds run on rootless BuildKit, unprivileged end to end.</li>
       <li><b><code>Containerfile</code> and <code>Dockerfile</code> both work, and
         <code>Containerfile</code> wins when both exist.</b></li>
+      <li><code>context</code> and <code>dockerfile</code> are paths inside the checkout:
+        absolute and <code>..</code> forms are refused, and the context must be a real
+        directory, never a symlink.</li>
+      <li><code>target</code> and <code>cache_repo</code> must parse as image references, and
+        <code>tag</code> may not contain a comma, an <code>=</code> or whitespace - buildctl
+        reads those flags as comma-separated option lists, so a comma is option injection,
+        not a name.</li>
       <li>The push credential is materialised as a <code>config.json</code> for the build and
         never enters the build context.</li>
       <li>A service with a <code>build</code> block and no <code>task.image</code> is
@@ -1294,7 +1323,7 @@ restart {
     <div class="rule"><b>R10</b><div><p><b>Dependencies gate starts, not stops.</b> <code>depends_on</code> and every implicit reference edge mean a dependent will not start until its dependencies are healthy. If a dependency degrades afterwards, dependents keep running and events are emitted: no cascading stops.</p></div></div>
     <div class="rule"><b>R11</b><div><p><b>A declared limit is enforced; an omitted one is the node's capacity.</b> Omit <code>resources</code> and the alloc gets all cores and all allocatable memory, bounded by the workload parent cgroup, not by a per-alloc number nobody typed. A default <code>pids.max</code> applies regardless. A declared <code>memory.max</code> breach OOM-kills the alloc, emits an event, and the restart policy applies. Scaling on <code>cpu</code> or <code>memory</code> (percent-of-limit) requires the corresponding limit and is refused at plan without it. Declared values are the admission units counted against the node's workload budget. Functions keep small defaults (<code>cpu = 100</code>, <code>memory = 64</code>): the wasm sandbox's caps are promises.</p></div></div>
     <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully; <code>redis-server --save ""</code> is how you disable snapshots.</p></div></div>
-    <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> adds to a baseline, and <code>"none"</code> takes the baseline away.</b> Every runc alloc starts from the baseline set; <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>NET_BIND_SERVICE</code>, <code>SETGID</code>, <code>SETUID</code>, so PUID-style images start without a capability line. The effective grant is the union of baseline and declared list; <code>["none"]</code> is the full drop-ALL posture, <code>["none", "CAP_NET_RAW"]</code> exactly one grant. Declarable beyond the baseline: <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_RAW</code> (never baseline; the datapath's identity is the IP), <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. Privilege-equivalent ones; <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends; are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Effective capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
+    <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> adds to a baseline, and <code>"none"</code> takes the baseline away.</b> Every runc alloc starts from the baseline set; <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>NET_BIND_SERVICE</code>, <code>SETGID</code>, <code>SETUID</code>, so PUID-style images start without a capability line. The effective grant is the union of baseline and declared list; <code>["none"]</code> is the full drop-ALL posture, <code>["none", "CAP_NET_RAW"]</code> exactly one grant. Declarable beyond the baseline: <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_RAW</code> (never baseline; the datapath's identity is the IP), <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. One honest caveat on <code>SETFCAP</code>: file capabilities are xattrs, so a binary given them inside an <b>rw host volume</b> keeps them on the host for whoever executes it later; <code>no-new-privileges</code> contains the grant inside the container, not the file. Privilege-equivalent ones; <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends; are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Effective capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
     <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; the datapath's ingress rules only ever union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b>: <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
     <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time, but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config <code>/etc/kanea/kanea.hcl</code> (or <code>--allowed-host-paths</code>, which wins when set), <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist &mdash; <b>unless the storage block sets <code>create = true</code></b>, which makes Kanea create it. The default has not moved: without that flag a missing path is still refused, because creating one on demand turns a typo into a volume that is silently empty. Creation is allowlist-gated first &mdash; the nearest <i>existing</i> parent is resolved and checked before anything is written &mdash; so a <code>create</code> outside a permitted prefix leaves no directory behind. Creating a directory is not owning it: Kanea still never chowns a host volume.</p></div></div>
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous; declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
@@ -2370,7 +2399,8 @@ kanea secret rm &lt;project&gt;/&lt;name&gt;</pre>
     <h4><code>kanea user</code> and <code>kanea token</code></h4>
     <pre class="plain">kanea user add [--role=admin|viewer] &lt;name&gt;
 kanea user ls
-kanea user rm &lt;name&gt;
+kanea user rm &lt;name&gt;                  # also revokes the account's sessions
+kanea user revoke-sessions &lt;name&gt;     # sessions only; the account stays
 
 kanea token create [--role=viewer] [--expires-in=720h] &lt;name&gt;
 kanea token ls

@@ -144,8 +144,15 @@ hijack riding the session cookie.
 
 Referenced, never inlined (`secret:project/name`), project-scoped at validation
 time, encrypted at rest with XChaCha20-Poly1305 under a master key in a 0600
-file, injected into workloads through tmpfs files by default. A value never
-reaches a log, an API response, or an audit entry: the audit log's redaction
+file, injected into workloads through tmpfs files by default. An env value of
+`secret:project/name` resolves at alloc create into a per-alloc tmpfs tree
+(files 0400 owned by the alloc's uid, mounted read-only) and the variable
+carries the file's path; `secret-env:project/name` is the documented weaker
+opt-in that inlines the value for software that only reads environment
+variables (v1.76). The Store record keeps the reference in both cases: a
+resolved value never enters the Store, a backup, a log, an API response, or an
+audit entry, so rotation takes effect at the alloc's next replacement. The
+audit log's redaction
 filter runs on every entry rather than at call sites, because a filter each
 caller must remember is one that gets forgotten in the path that mattered.
 
@@ -218,6 +225,17 @@ in-node ACK probe therefore traverses the filter and is stopped only by the
 receiving stack's RST; a cross-project attacker can learn that an address
 exists, not talk to it. The upgrade to stateful tracking is additive and
 parked, not precluded.
+
+What an attacker *cannot* do is speak under another name (v1.77): each host
+veth is bound in `veth_src`/`veth_src6` to the one address kanead assigned it,
+and the egress program drops any other claimed source, fail-closed on a miss.
+Without the binding (pre-v1.77), `IP_FREEBIND` + `bind()` forged any
+in-cluster source - the host anchor included, which passed policy before
+protocol gating - making cross-project UDP/ICMP delivery and one-way delivery
+as the host possible, and the "learn, not talk" sentence above false. The
+binding is written before the veth comes up, deleted with it, and restored by
+`Init` for pre-upgrade veths before the refreshed programs attach, so the
+fix reaches a running node without blackholing it.
 
 ### 3.6 The browser (A03, A05)
 
@@ -472,6 +490,18 @@ owns it, and no API, MCP tool or spec can add to it.
   A device grant must still be a character or block device and a socket grant
   must still be a socket at the moment it is handed over. A path that was one at
   daemon start and is a regular file now is exactly the swap worth catching.
+- **A host volume's check and its mount cannot be raced apart (v1.77).** The
+  allowlist answer used to travel as a path string from `Resolve` to runc's
+  bind mount seconds later, and a workload with an rw volume under an allowed
+  prefix could atomic-rename a checked directory to a symlink in the gap. The
+  checked object is now pinned by fd (`openat2` with `RESOLVE_NO_SYMLINKS`, so
+  the swap loses the race to the open), the fd's own path is re-verified
+  against the allowlist, and kanead bind-mounts `/proc/self/fd/N` - the pinned
+  inode in kanead's own table - onto a per-alloc staging directory under a
+  root-owned tree. runc is handed the staging path, whose every component the
+  workload cannot influence. Precondition, stated plainly: this defends the
+  *mount*; a workload that already has an rw host volume can of course change
+  that volume's *contents*, which is what the grant was.
 - **A failed grant fails the alloc.** There is no path on which a container
   starts without a passthrough it asked for. A transcoder silently running
   without its GPU looks healthy and does the wrong thing.
@@ -555,6 +585,19 @@ What is defended:
   LB has no datagram hook, so the backend list crosses the §5.2.6 boundary in
   `routes.json` for udp listeners alone: alloc addresses are already derivable
   from the route table's shape and carry no secret.
+- **The udp relay is not an amplifier (v1.77).** One spoofed datagram can open
+  a session, so two bounds assume spoofing: a per-source-IP session cap (8)
+  beside the listener cap - the listener cap keys on the full address and a
+  flood varies the port - and a pre-verification byte cap (4 KiB) on what the
+  backend may send to an address until the client sends a *second* datagram
+  from the same socket, the weak proof of receipt a spoofed source cannot
+  produce. Below the request it answers, amplification is impossible; both
+  refusals are counted (`source_limit`, `unverified_cap`). The residual, stated
+  plainly: a *streaming* backend keeps replying within the 4 KiB budget per
+  spoofed session, so a determined flood still moves bounded traffic at the
+  victim until the session table fills and refuses; there is no cookie
+  exchange to strengthen the proof without protocol knowledge the relay does
+  not have.
 
 What is *not* defended, stated plainly:
 
@@ -598,6 +641,18 @@ untrusted public traffic (§5.2.6).
   through, and then clicks through on the day it means something.
 - **A plaintext route is never redirected and never receives HSTS.** HSTS is the
   one header a mistake in which the browser remembers for two years.
+- **TLS session resumption can keep a rotated-out certificate serving for the
+  edge process's lifetime** (K-24, recorded rather than fixed). The edge's
+  `tls.Config` sets neither `SessionTicketsDisabled` nor `SetSessionTicketKeys`,
+  so a client resuming a session negotiated under the old certificate never
+  re-runs the handshake against the new one. The exposure window that matters
+  is compromise-driven rotation: a scheduled renewal changes nothing an attacker
+  holds. The honest cost of the fix is why it is parked: disabling resumption
+  taxes every handshake, and re-keying tickets on bundle change is a session
+  store the edge deliberately does not have (§5.2.6's "the edge never writes").
+  The mitigation that exists is the one operators already reach for on a
+  compromise: restart `kanea-edge`, which §5.2.6's process split makes cheap and
+  the control plane survives.
 
 ### 3.15 Workload identity and volume ownership (A05; PRD §6.2 R23-R24)
 
@@ -859,9 +914,13 @@ them; Kanea has no role for them" is an ask-an-administrator answer).
 
 **Group membership is evaluated at login only.** A user removed from the
 admin group keeps an issued session until its absolute expiry (≤ 12 h),
-the same residual OIDC has, now stated. Session revocation
-(`kanea user`-independent: delete the session records) is the operator's
-lever in an emergency.
+the same residual OIDC has, now stated. The operator's lever in an emergency
+is real and immediate (v1.77): `DELETE /v1/users/{name}/sessions` /
+`kanea user revoke-sessions <name>` sweeps every session a subject holds -
+the only form that works for directory-established sessions, which have no
+local account to delete - and for a local account, `kanea user rm` and any
+re-credentialling (`PutUser`) sweep its sessions automatically, so the
+standard response to a stolen cookie ends the access it carries.
 
 **Availability is one-way.** A down directory refuses LDAP logins loudly in
 the log and uniformly (401) to the caller; it never takes `kanead`, the local
@@ -869,6 +928,53 @@ accounts, or token authentication with it. Startup validates configuration
 hard (a bad URL, a half-configured group search, an empty role mapping all
 refuse in front of the operator) but connects soft: an unreachable directory
 at boot is a warning, because a directory outage is weather.
+
+---
+
+### 3.21 Builds and the build daemon (A01, A04, A10; PRD §10.2)
+
+**A build is arbitrary code execution by whoever can push to a synced
+repository (or apply a spec), and it runs with host networking.** That is
+the sentence this section exists to say plainly, because the adversary table
+grants "malicious job spec" only "the HCL parser, the scheduler", and for
+years the honest entry also needed "the build runner". A Dockerfile `RUN`
+step executes on the node - unprivileged (rootless `buildkitd` as
+`kanea-buildkit`, no process sandbox between the step and the kernel, which
+is the only configuration the spike found that needs no elevated privilege)
+- but in the **host network namespace** (`rootlesskit --net=host`, so a
+node-local registry stays reachable). The §5.2.5 egress guard drops
+`169.254.0.0/16` on alloc veths; build traffic originates in the host
+netns and never crosses one, so the guard never saw it (the audit's K-07).
+
+**What that buys an attacker, and what is done about it.** Reachable from a
+`RUN` step: the cloud instance metadata service (instance credentials on
+IMDSv1), the node's unauthenticated loopback diagnostics (containerd's
+metrics listener, the edge's status listener), every workload VIP in every
+project (the connect-time LB is a root-cgroup hook and the policy layer
+passes host-sourced traffic by construction), and the LAN. **Not**
+reachable: the kanead and containerd unix sockets (different mount
+namespace, and `/run/kanea` is 0710 root:root), the API (deny-by-default
+authenticated), and the Store file. The control that exists: an
+output-chain drop of `169.254.0.0/16` for the `kanea-buildkit` uid in the
+datapath's owned nftables table (v1.75), re-ensured with the masquerade
+rule, so the metadata class is closed for the daemon and its workers.
+Residuals, stated: a Dockerfile `USER <non-root>` step runs as a *subuid*
+of the build account and escapes the uid match (the metadata rule covers
+the default root shape); loopback diagnostics and cross-project VIP
+reachability remain, by design, until a worker network namespace is
+evaluated - both are reads the platform treats as low-value (metrics and
+route tables, not credentials), and both are now in §7.
+
+**The build context is a boundary too.** The context reader resolves its
+root through symlinks *as root* (buildkit's fsutil, driven by `buildctl`
+from `kanead`), and a checkout writes symlink blobs verbatim, so a pushed
+`ctx -> /etc` named as `build.context` would make the host's `/etc` the
+build context (the audit's K-01). The runner refuses any symlink in the
+context path component-by-component, the recipe is `Lstat`'d and refused
+as a link, and `context`/`dockerfile` refuse absolute and `..` forms at
+plan. The isolation properties are unchanged: builds are serialised
+through a bounded queue (§10.2), refused when full, and the daemon's
+footprint lives inside the §5.2.11 reserve.
 
 ---
 
@@ -1000,3 +1106,5 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | A provider credential file on the node reads every external secret its token can | 0600-checked and root-owned, but a scoped token is the provider's control, not Kanea's; docs prescribe least-privilege tokens (§3.19) | n/a |
 | A local-account name and a directory name are timing-distinguishable at login | LDAP bind time is the directory's, not Kanea's; equalising against network I/O would be theatre (§3.20) | n/a |
 | A directory user's revoked group membership outlives login by up to a session lifetime | Group→role mapping is evaluated at bind time only; the session's 12 h absolute expiry bounds it (§3.20) | n/a |
+| A build's `RUN` steps can read unauthenticated loopback diagnostics (containerd metrics, edge status) and reach every project's VIPs | Host networking is what keeps a node-local registry reachable; a worker network namespace is the real fix and is unevaluated (§3.21) | n/a |
+| A Dockerfile `USER <non-root>` step escapes the uid-keyed metadata drop | Rootless uid-mapping puts non-root container users on subuids, not the build account; the rule covers the default root shape (§3.21) | n/a |
