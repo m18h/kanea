@@ -83,8 +83,12 @@ func (r *Reconciler) ensureSecrets(
 	// The tmpfs is ensured lazily: a node whose services reference no secrets
 	// never mounts one. And the directory itself is traversable (0711): the
 	// 0400 files inside it are the boundary, not the path to them.
-	if err := ensureSecretsTmpfs(r.secretsDir); err != nil {
+	fellBack, err := ensureSecretsTmpfs(r.secretsDir)
+	if err != nil {
 		return nil, nil, err
+	}
+	if fellBack {
+		r.warnSecretsTmpfsFallback(r.secretsDir)
 	}
 	if err := os.MkdirAll(dir, 0o711); err != nil { // #nosec G301: o+x on parents is the point - a non-root alloc uid must traverse to its 0400 files
 		return nil, nil, err
