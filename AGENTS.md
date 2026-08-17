@@ -371,7 +371,7 @@ Tags are annotated, in the style of the existing ones: a one-line title
 - **Logging:** everything logs through `log/slog` via `internal/logging`; components receive a `*slog.Logger` by injection. The stdlib `log` package is **depguard-banned**; direct `fmt.Print*` is **forbidigo-banned** (CLI output lives in `cmd/kanea` and goes through `fmt.Fprint*(os.Stdout/os.Stderr, …)`). Daemon file sinks rotate via lumberjack (bounded size/backups, gzip); workload logs follow PRD §17 (non-blocking drains, drop counters) and must never let a rotation stall a workload `write()`.
 - **HCL:** all spec changes extend `internal/jobspec` schema with validation errors carrying file/line diagnostics; keep the PRD §6 examples valid.
 - **Dashboard:** TypeScript strict; shadcn/ui components only (no new component lib); all user-controlled strings escaped (XSS, PRD §14 A03); live data via the single multiplexed WS.
-- **Commits/PRs:** conventional commits (`feat:`, `fix:`, `chore:`, `docs:` …), one logical change per PR, `make check` green required. PR template enforces the binding constraints.
+- **Commits/PRs:** conventional commits (`feat:`, `fix:`, `chore:`, `docs:` …), one logical change per PR, `make check` green required. PR template enforces the binding constraints. **Merging and history:** plain merges only. Never rebase, never force-push, and never ask GitHub to rewrite a branch's commits — not as a merge strategy, not as a "clean-up" — unless the user expressly says so for the case at hand.
 - **Tests:** table-driven; reconciler and jobspec validation must have >80% coverage: they are the correctness core.
 
 ## Milestones (PRD §20)
