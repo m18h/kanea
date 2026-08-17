@@ -22,7 +22,7 @@ import (
 // It is a client of kanead, not a second copy of it: every tool call goes over
 // the unix socket to the running daemon, through the same routes the CLI uses.
 // A local agent that launches this gets exactly the authority the socket
-// confers — which, per §13.1, is the authority of the user who can open it.
+// confers, which, per §13.1, is the authority of the user who can open it.
 func runMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	socket := socketFlag(fs)
@@ -49,7 +49,7 @@ func runMCP(args []string) error {
 		}
 	}()
 
-	// The node's shared variables (R30), fetched once — the file behind them
+	// The node's shared variables (R30), fetched once: the file behind them
 	// is load-once, so a session-long value is the daemon's own behaviour. A
 	// failed fetch (older daemon, unreachable socket) parses without them:
 	// the unknown-variable diagnostic reaches the agent as the tool's error.
@@ -82,7 +82,7 @@ func runMCP(args []string) error {
 }
 
 // specParser turns job-spec source into desired state, for the plan_spec and
-// apply_spec tools, with the node's shared variables (R30) in scope — handed
+// apply_spec tools, with the node's shared variables (R30) in scope: handed
 // over directly on the daemon, fetched over the API by `kanea mcp`.
 //
 // The same parse and the same conversion the CLI performs, so a spec an agent

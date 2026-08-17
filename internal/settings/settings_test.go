@@ -26,7 +26,7 @@ func openStore(t *testing.T) store.Store {
 
 func TestBackupSettingsValidation(t *testing.T) {
 	// Validate is the shape check that lands in front of whoever typed the
-	// record — a record the daemon cannot act on must be refused at PUT time,
+	// record: a record the daemon cannot act on must be refused at PUT time,
 	// not discovered at the first snapshot.
 	boolPtr := func(b bool) *bool { return &b }
 
@@ -46,7 +46,7 @@ func TestBackupSettingsValidation(t *testing.T) {
 			wantErr: "not both",
 		},
 		{
-			// A record with no destination is not "backups off" — deleting the
+			// A record with no destination is not "backups off"; deleting the
 			// record is. Accepting it would make an empty PUT silently disable
 			// replication.
 			name:    "neither destination refused",
@@ -135,7 +135,7 @@ func TestBackupSettingsValidation(t *testing.T) {
 
 func TestNotificationSettingsValidation(t *testing.T) {
 	// The record reuses the job spec's channel shape, so the same silent-channel
-	// mistakes the spec parser refuses must be refused here too — a node-level
+	// mistakes the spec parser refuses must be refused here too: a node-level
 	// channel that matches nothing looks exactly like a system with nothing to
 	// report.
 	for _, tc := range []struct {
@@ -170,7 +170,7 @@ func TestNotificationSettingsValidation(t *testing.T) {
 		},
 		{
 			// A channel nobody has told what to send would be silent forever
-			// (the v1.24 rule) — refused rather than defaulted to everything.
+			// (the v1.24 rule); refused rather than defaulted to everything.
 			name: "empty on filter refused",
 			rec: settings.NotificationSettings{
 				Channels: &jobspec.Notifications{
@@ -225,7 +225,7 @@ func TestNotificationSettingsValidation(t *testing.T) {
 func TestDurationRoundTripsThroughJSON(t *testing.T) {
 	// Durations travel as the strings operators already type on the flags this
 	// record supersedes. Marshal uses time.Duration.String(), so "5m" comes
-	// back out as "5m0s" — different spelling, same duration — and the value
+	// back out as "5m0s" (different spelling, same duration) and the value
 	// must survive the round trip exactly.
 	var d settings.Duration
 	if err := json.Unmarshal([]byte(`"5m"`), &d); err != nil {
@@ -340,7 +340,7 @@ func TestNotificationsRecordRoundTripsThroughTheStore(t *testing.T) {
 
 func TestFingerprintChangesOnlyWithTheValue(t *testing.T) {
 	// Fingerprint is what reloaders compare to rebuild only on real change (the
-	// v1.44 Providers.Current rule) — equal values must hash equal, different
+	// v1.44 Providers.Current rule): equal values must hash equal, different
 	// values must not.
 	a := settings.BackupSettings{Dir: "/backups"}
 	b := settings.BackupSettings{Dir: "/backups"}

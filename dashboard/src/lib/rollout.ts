@@ -11,12 +11,12 @@ export interface RolloutStatus {
 
 /**
  * rolloutStatus derives deploy progress from the served spec_hash (v1.64)
- * and the allocs' own hashes — the planner's staleness rule, applied
+ * and the allocs' own hashes; the planner's staleness rule, applied
  * client-side (internal/reconciler/plan.go): an alloc with a non-empty hash
  * differing from the desired one is being replaced; an empty hash is an
  * adopted record and never counts as stale.
  *
- * Works for a deploy from any source — restart, apply, GitOps, auto-update —
+ * Works for a deploy from any source: restart, apply, GitOps, auto-update;
  * because all of them are exactly a spec-hash mismatch. Against an older
  * daemon that serves no hash, the answer is "not deploying", never a guess.
  */
@@ -35,7 +35,7 @@ export function rolloutStatus(desired: Service, allocs: Alloc[]): RolloutStatus 
       a.state === 'running' &&
       (a.spec_hash === hash || a.spec_hash === '' || a.spec_hash === undefined),
   )
-  // A replacement that exists at the new hash but has not started yet — the
+  // A replacement that exists at the new hash but has not started yet: the
   // window between an old alloc's teardown and its successor coming up.
   // Deliberately only 'pending': a 'backoff' alloc at the new hash is a crash
   // loop, and calling that "deploying" would disable the restart button that

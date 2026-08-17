@@ -15,7 +15,7 @@ import (
 
 // EdgePortName is the port a route uses when a service declares several
 // (PRD §7.2). v1 routes by Host alone, so with more than one candidate there is
-// no request attribute left to choose with — the spec has to say.
+// no request attribute left to choose with: the spec has to say.
 const EdgePortName = "http"
 
 // MaxDomainLength is the DNS limit on a fully qualified name.
@@ -42,7 +42,7 @@ func AutoFQDN(project, service, baseDomain string) string {
 
 // EdgeDomains returns the hostnames this service answers on, lowercased.
 //
-// Empty when the service is not exposed — and also when it is exposed with no
+// Empty when the service is not exposed, and also when it is exposed with no
 // explicit domains and no base domain is known, because then the name cannot be
 // computed yet. Callers that must have a name (the agent building routes) pass
 // the server's base domain; callers that are only checking a file may not have
@@ -57,7 +57,7 @@ func (s *Service) EdgeDomains(baseDomain string) []string {
 
 // EdgeDomainsFor is EdgeDomains for one expose block (v1.50). Only the first
 // block may generate the auto-FQDN: there is one generated name per service,
-// and a second nameless block would be a second claim on it — R16 refuses it.
+// and a second nameless block would be a second claim on it; R16 refuses it.
 func (s *Service) EdgeDomainsFor(e *Expose, baseDomain string) []string {
 	if e == nil {
 		return nil
@@ -82,8 +82,8 @@ func (s *Service) EdgeDomainsFor(e *Expose, baseDomain string) []string {
 // declare a usable one (R16 rejects that at plan time, so a nil here in the
 // agent means validation was skipped).
 //
-// A grpc route (R28) prefers a port named "grpc" — the spec already said what
-// the traffic is, so a service may name the port for it — then falls back to
+// A grpc route (R28) prefers a port named "grpc" (the spec already said what
+// the traffic is, so a service may name the port for it) then falls back to
 // the R16 rule. Deterministic when both exist: "grpc" wins, because
 // `protocol = "grpc"` is the spec choosing.
 func (s *Service) EdgePort() *Port {
@@ -93,7 +93,7 @@ func (s *Service) EdgePort() *Port {
 // EdgePortFor is EdgePort for one expose block (v1.50): each block picks its
 // own upstream by the same rules.
 func (s *Service) EdgePortFor(e *Expose) *Port {
-	// The edge dials a VIP, and udp ports have no frontend on it (v1.42) —
+	// The edge dials a VIP, and udp ports have no frontend on it (v1.42);
 	// they are invisible here, including as the sole-port fallback: a service
 	// whose only port is udp is not exposable, and R16 says so at plan.
 	var candidates []*Port
@@ -109,8 +109,8 @@ func (s *Service) EdgePortFor(e *Expose) *Port {
 	}
 	// An explicit port (R16, v1.49) beats every convention below, the grpc
 	// preference included: a spec that says which port it means is never
-	// second-guessed by a naming heuristic. A name that matches nothing here —
-	// undeclared, or declared udp — selects nothing, and validateExposePort
+	// second-guessed by a naming heuristic. A name that matches nothing here
+	// (undeclared, or declared udp) selects nothing, and validateExposePort
 	// says why.
 	if e != nil && e.Port != "" {
 		for _, p := range candidates {
@@ -166,7 +166,7 @@ func validateExpose(svc *Service) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  "Expose block has no domains",
 				Detail: fmt.Sprintf("Service %q declares several expose blocks, and only the "+
-					"first may omit domains — the auto-FQDN is one name per service. "+
+					"first may omit domains; the auto-FQDN is one name per service. "+
 					"Declare domains on this block.", svc.Name),
 				Subject: e.DefRange.Ptr(),
 			})
@@ -239,7 +239,7 @@ func validateExposePort(svc *Service, e *Expose) hcl.Diagnostics {
 
 	// An explicit port that selected nothing (v1.49): the refusal names what
 	// went wrong rather than falling through to the ambiguity error, whose
-	// remedy — name a port "http" — is not this spec's problem.
+	// remedy (name a port "http") is not this spec's problem.
 	if name := e.Port; name != "" {
 		if p := declaredPort(svc, name); p == nil {
 			declared := make([]string, 0, len(svc.Network.Ports))
@@ -274,7 +274,7 @@ func validateExposePort(svc *Service, e *Expose) hcl.Diagnostics {
 			streamPorts++
 		}
 	}
-	// Every declared port is udp: not an ambiguity but an impossibility — the
+	// Every declared port is udp: not an ambiguity but an impossibility; the
 	// edge proxies streams to a VIP, and udp ports have neither (v1.42).
 	if streamPorts == 0 {
 		return hcl.Diagnostics{{
@@ -333,7 +333,7 @@ func validateExposeDomains(svc *Service, e *Expose, seen map[string]bool) hcl.Di
 // There is deliberately no warning for an absent tls block. The whole point of
 // --tls-default is that a homelabber annotates nothing and still gets a
 // certificate, and a warning on every service teaches people to ignore
-// warnings — after which the two below stop being read either.
+// warnings: after which the two below stop being read either.
 func validateExposeTLS(svc *Service, e *Expose) hcl.Diagnostics {
 	t := e.TLS
 	if t == nil {
@@ -440,7 +440,7 @@ func checkDomain(d string) error {
 		return fmt.Errorf("contains a port; the edge always listens on 80 and 443")
 	case strings.Contains(d, "*"):
 		return fmt.Errorf("is a wildcard; routes name one host each (a wildcard " +
-			"certificate is a separate thing — see the acme config)")
+			"certificate is a separate thing; see the acme config)")
 	case strings.HasSuffix(d, "."):
 		return fmt.Errorf("has a trailing dot; write it as it appears in a Host header")
 	}
@@ -575,7 +575,7 @@ func validateRateLimit(where string, rl *RateLimit) hcl.Diagnostics {
 }
 
 // validateRateLimitKey checks `per`. An unrecognised key would otherwise fall
-// back to some default and rate-limit the wrong thing — which looks like it is
+// back to some default and rate-limit the wrong thing, which looks like it is
 // working until the day it matters.
 func validateRateLimitKey(where string, rl *RateLimit) hcl.Diagnostics {
 	per := strings.TrimSpace(rl.Per)
@@ -734,7 +734,7 @@ func validateExposedDomains(spec *Spec) hcl.Diagnostics {
 
 // validHeaderName reports whether s is a legal HTTP field name (RFC 9110
 // token). textproto's canonicaliser rejects anything with a delimiter, which is
-// exactly the check wanted here — a header name with a colon or a newline in it
+// exactly the check wanted here: a header name with a colon or a newline in it
 // is a response-splitting attempt.
 func validHeaderName(s string) bool {
 	if s == "" {
@@ -763,7 +763,7 @@ func quoteAll(in []string) []string {
 
 // validateExposeProtocol enforces R28 (v1.41): `protocol` names how the edge
 // dials the upstream, and it is refused where it cannot work. Fail-closed at
-// plan, per R16's doctrine — a gRPC route that silently served HTTP/1.1 is a
+// plan, per R16's doctrine: a gRPC route that silently served HTTP/1.1 is a
 // control the spec claimed and nothing applied.
 func validateExposeProtocol(svc *Service, e *Expose) hcl.Diagnostics {
 	if e.Protocol == "" {
@@ -788,7 +788,7 @@ func validateExposeProtocol(svc *Service, e *Expose) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	// gRPC needs HTTP/2 end to end, and the plaintext path is HTTP/1.1
-	// cleartext on :80 — the edge serves no inbound h2c — so a route declared
+	// cleartext on :80 (the edge serves no inbound h2c) so a route declared
 	// both ways could never carry a real gRPC client. A declared contradiction
 	// is a plan error; an *undeclared* mode resolving to plaintext on a
 	// --tls-default plaintext node is the agent's warning at resolution time,
@@ -806,7 +806,7 @@ func validateExposeProtocol(svc *Service, e *Expose) hcl.Diagnostics {
 	}
 
 	// Publishing the same port in http mode would stand up an HTTP/1.1
-	// listener on the LAN for a service the spec just said speaks gRPC —
+	// listener on the LAN for a service the spec just said speaks gRPC:
 	// R21's silently dropped control. `mode = "tcp"` relays the bytes and is
 	// the correct spelling for LAN gRPC.
 	if edgePort := svc.EdgePortFor(e); edgePort != nil && svc.Network != nil {

@@ -11,8 +11,8 @@ import (
 )
 
 // The two halves of v1.56's invariant, asserted together: a spec that declares
-// no capabilities still hashes to the pre-feature digest — so upgrading kanead
-// re-hashes nothing and rolls nothing — while its projection carries the
+// no capabilities still hashes to the pre-feature digest (so upgrading kanead
+// re-hashes nothing and rolls nothing) while its projection carries the
 // baseline. The hash and the projection diverged on purpose; this test is what
 // keeps anyone from "fixing" that by writing the baseline into the record.
 func TestTheCapabilityBaselineNeverEntersTheSpecHash(t *testing.T) {
@@ -39,7 +39,7 @@ func TestTheCapabilityBaselineNeverEntersTheSpecHash(t *testing.T) {
 
 // "none" starts from nothing: alone it is the pre-v1.56 drop-ALL posture, and
 // beside a grant it means exactly that grant. The token itself must never
-// survive into the projection — runc refuses unknown capability names, so a
+// survive into the projection: runc refuses unknown capability names, so a
 // leaked token would fail every alloc of the service.
 func TestNoneMeansNoCapabilities(t *testing.T) {
 	d := desired(1)
@@ -55,7 +55,7 @@ func TestNoneMeansNoCapabilities(t *testing.T) {
 	}
 }
 
-// A declared grant adds to the baseline rather than replacing it — otherwise
+// A declared grant adds to the baseline rather than replacing it: otherwise
 // granting ping would silently take away the uid-switching set, which is the
 // exact confusion the baseline exists to end.
 func TestDeclaredCapabilitiesMergeWithTheBaseline(t *testing.T) {
@@ -77,7 +77,7 @@ func TestDeclaredCapabilitiesMergeWithTheBaseline(t *testing.T) {
 
 // Declaring "none" (or spelling the baseline out) is a spec change and must
 // roll: what the container runs with genuinely changes. The second half pins
-// the other direction — the declared list is what hashes, so an explicit
+// the other direction: the declared list is what hashes, so an explicit
 // baseline is a different record than an implied one, and nobody gets to
 // "optimize" the union back into the store.
 func TestDeclaringNoneRollsTheService(t *testing.T) {
@@ -108,8 +108,8 @@ func TestAFunctionGetsNoCapabilityBaseline(t *testing.T) {
 	}
 }
 
-// Capabilities are spec-hash material, so a capability edit rolls every alloc
-// — and a plan that did not mention it would show a redeploy with no visible
+// Capabilities are spec-hash material, so a capability edit rolls every alloc,
+// and a plan that did not mention it would show a redeploy with no visible
 // cause (the runtime/ports rule, applied to R13).
 func TestDiffNamesACapabilityChange(t *testing.T) {
 	have := desired(1)

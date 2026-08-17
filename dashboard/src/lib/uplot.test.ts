@@ -36,7 +36,7 @@ describe('timeLabel', () => {
 })
 
 describe('ranges', () => {
-  it('percent is pinned 0–100', () => {
+  it('percent is pinned 0-100', () => {
     expect(percentRange()).toEqual([0, 100])
   })
 
@@ -70,7 +70,7 @@ describe('buildOptions', () => {
       formatValue: (v) => `${v}%`,
     })
 
-  it('the series never spans gaps — absent is never a drawn line', () => {
+  it('the series never spans gaps: absent is never a drawn line', () => {
     const series = opts('percent').series[1]
     expect(series?.spanGaps).toBe(false)
   })
@@ -91,7 +91,7 @@ describe('buildOptions', () => {
     expect(series?.fill).toBe('f3')
   })
 
-  it('the legend is off — the panel readout is the legend', () => {
+  it('the legend is off: the panel readout is the legend', () => {
     expect(opts('percent').legend?.show).toBe(false)
   })
 })

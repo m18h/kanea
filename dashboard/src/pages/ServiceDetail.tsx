@@ -142,7 +142,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
 
   return (
     <div className="space-y-4">
-      {/* Navigation and actions share the top row — one is where you came
+      {/* Navigation and actions share the top row: one is where you came
           from, the other is what you can do here, and neither is the page's
           name. The name gets its own row underneath, where a long image
           reference can run without squeezing the buttons. */}
@@ -242,7 +242,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
 /**
  * ServiceActions is the lifecycle row: edit spec, start, stop, restart.
  *
- * Stop and start are scales (to zero and back), restart bumps the generation —
+ * Stop and start are scales (to zero and back), restart bumps the generation:
  * every button writes desired state and the reconciler converges, so nothing
  * here is a second path to the runtime. The buttons stay visible for a viewer
  * but disabled: a viewer who does not know they are a viewer reads a missing
@@ -276,7 +276,7 @@ export function ServiceActions({
   const [lockExpired, setLockExpired] = useState(false)
 
   // What "start" should scale back to: the last non-zero count this page saw.
-  // The daemon does not remember it — a stopped service's record says zero —
+  // The daemon does not remember it: a stopped service's record says zero;
   // so this is a courtesy with a safe fallback of one.
   const lastCount = useRef(1)
   useEffect(() => {
@@ -331,7 +331,7 @@ export function ServiceActions({
       {rollout.deploying ? (
         <span className="font-mono text-xs text-muted-foreground">
           {lockExpired
-            ? 'still converging — actions re-enabled'
+            ? 'still converging; actions re-enabled'
             : `rolling out · ${rollout.updated}/${rollout.total} updated`}
         </span>
       ) : null}
@@ -473,7 +473,7 @@ function SpecPanel({ desired }: { desired: Service | undefined }) {
           {desired.Count}
         </KeyValue>
         <KeyValue label="Resources" mono>
-          {/* Zero means unbounded (R11, v1.58) — "0m · 0 B" would read as
+          {/* Zero means unbounded (R11, v1.58): "0m · 0 B" would read as
               nothing allowed when it means everything available. */}
           {desired.Resources.CPUMillis > 0 ? `${desired.Resources.CPUMillis}m` : "all cores"} ·{" "}
           {desired.Resources.MemoryBytes > 0 ? formatBytes(desired.Resources.MemoryBytes) : "all memory"}
@@ -512,7 +512,7 @@ function SpecPanel({ desired }: { desired: Service | undefined }) {
  * Rendered only when the edge has actually reported this service. A service
  * with no `expose` block is not reachable from outside, and a panel of zeroes
  * for it would read as "nobody is using this" rather than "this was never
- * measured" — the same distinction the metric gauges draw by being absent.
+ * measured": the same distinction the metric gauges draw by being absent.
  */
 function EdgePanel({ edge }: { edge?: EdgeBreakdown | undefined }) {
   if (!edge) return null
@@ -551,7 +551,7 @@ function Total({ label, value }: { label: string; value: string }) {
   return (
     <div className="space-y-1">
       <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
-      {/* Cumulative for the life of the edge process, not a rate — the panel
+      {/* Cumulative for the life of the edge process, not a rate; the panel
           says "Requests", never "Requests/s", so the two are not confused. */}
       <dd className="font-mono text-sm tabular-nums">{value}</dd>
     </div>
@@ -638,13 +638,13 @@ function AllocRow({
       </TD>
       <TD>
         {/* Why it last stopped, or why it never started (PRD v1.68). Shown
-            whatever the current state — the State column is right there, so a
+            whatever the current state: the State column is right there, so a
             running row carrying OOMKilled reads as "up now, killed for memory
             last time", which is the thing worth knowing. */}
         {reason ? (
           <span
             className="flex max-w-[22rem] flex-col leading-tight"
-            title={reason.message ? `${reason.label} — ${reason.message}` : reason.label}
+            title={reason.message ? `${reason.label}; ${reason.message}` : reason.label}
           >
             <span className={reason.alarming ? 'text-status-error' : 'text-muted-foreground'}>
               {reason.label}
@@ -654,13 +654,13 @@ function AllocRow({
             ) : null}
           </span>
         ) : (
-          <span className="text-muted-foreground">—</span>
+          <span className="text-muted-foreground">-</span>
         )}
       </TD>
       <TD className="font-mono tabular-nums">{relativeAge(alloc.created_at)}</TD>
       <TD className="pr-0 text-right">
         {/* The most privileged verb on the page: admin-only like the API, and
-            only against a running alloc — a shell into a stopped one is a
+            only against a running alloc; a shell into a stopped one is a
             worse error message than this button's absence. */}
         {admin && alloc.state === 'running' ? (
           <>
@@ -751,7 +751,7 @@ function LogPanel({ project, service }: { project: string; service: string }) {
           onFollowChange={setFollow}
           tintSeverity
           toolbar={{ copy: true, download: { filename: `${project}-${service}.log` }, expand: true }}
-          title={`${project}/${service} — logs`}
+          title={`${project}/${service}; logs`}
           controls={logControls}
           emptyText={lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
           notice={

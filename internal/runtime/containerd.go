@@ -120,7 +120,7 @@ func (d *containerdDriver) EnsureImage(ctx context.Context, img ImageRef) (strin
 // pulling it (PRD §6.2 R19).
 //
 // This is the whole reason auto-update needs a method of its own. EnsureImage
-// answers from the local content store whenever the image is already there —
+// answers from the local content store whenever the image is already there:
 // which is correct for starting an alloc and useless for noticing that a tag
 // has moved, since the answer is by construction the digest that is already
 // running. Only a manifest is fetched here, not the layers.
@@ -194,7 +194,7 @@ func (d *containerdDriver) Create(ctx context.Context, spec AllocSpec) error {
 // runtimeOpts selects the containerd runtime for a spec.
 //
 // Empty for an empty Runtime: containerd's client falls back to its compiled
-// default (the runc shim), and that default is containerd's to own — only a
+// default (the runc shim), and that default is containerd's to own; only a
 // departure from it is written down (PRD v1.39, §6.2 R25). Validate has
 // already closed the set, so what reaches here is the wasmtime shim's name.
 func runtimeOpts(spec AllocSpec) []containerd.NewContainerOpts {
@@ -208,7 +208,7 @@ func runtimeOpts(spec AllocSpec) []containerd.NewContainerOpts {
 type ImageInfo struct {
 	// Digest is the image's manifest digest.
 	Digest string
-	// SizeBytes is the compressed content size — what the Functions page
+	// SizeBytes is the compressed content size: what the Functions page
 	// shows as the artifact size (PRD §12.2).
 	SizeBytes int64
 }
@@ -467,7 +467,7 @@ func (d *containerdDriver) Exits(ctx context.Context, project string) (<-chan Ex
 // Exec runs a command inside a running alloc and returns its exit code.
 //
 // This is what backs the `exec` health check (PRD §6.2 R7). The command is an
-// argument array and is executed directly — never through a shell, which would
+// argument array and is executed directly, never through a shell, which would
 // make a health check a command-injection vector (§14, A03).
 //
 // The exec process inherits the task's namespaces and cgroup, so a health check
@@ -564,8 +564,8 @@ func (d *containerdDriver) task(ctx context.Context, id string) (containerd.Task
 
 // execTask is task() plus the exec refusal for runtimes that have none.
 //
-// The wasmtime shim implements no exec — a wasm sandbox holds exactly one
-// instance — so an exec against a function alloc must fail as ErrNoExec, with
+// The wasmtime shim implements no exec (a wasm sandbox holds exactly one
+// instance) so an exec against a function alloc must fail as ErrNoExec, with
 // the reason, rather than as whatever gRPC error the shim's stub produces.
 // jobspec already refuses `exec` health checks on functions (R25); this is the
 // runtime-level half of that refusal, for `kanea exec` and for anything that
@@ -593,7 +593,7 @@ func (d *containerdDriver) execTask(ctx context.Context, id string) (containerd.
 
 func snapshotID(allocID string) string { return allocID + "-snap" }
 
-// labels make allocs attributable without consulting the Store — useful when
+// labels make allocs attributable without consulting the Store: useful when
 // reconciling drift and when a human is looking at `ctr containers ls`.
 func labels(spec AllocSpec) map[string]string {
 	return map[string]string{
@@ -646,7 +646,7 @@ func decodeExit(env *events.Envelope) (Exit, error) {
 // This is the debug shell of PRD §16.2, and it differs from the health-check
 // Exec above in every respect that matters: it carries a person's terminal, it
 // has no deadline, and its output goes somewhere. What it shares is the rule
-// that matters most — the command is an argument array executed directly, never
+// that matters most: the command is an argument array executed directly, never
 // a shell string, so the only shell involved is one the operator named.
 //
 // The exec process inherits the task's namespaces and cgroup, so a debug shell
@@ -698,7 +698,7 @@ func (d *containerdDriver) ExecStream(
 	}
 	defer func() {
 		// Always reap. A leaked exec process holds the task's resources and
-		// counts against the alloc's pids limit — and a debug shell someone
+		// counts against the alloc's pids limit, and a debug shell someone
 		// closed the laptop lid on is exactly how that happens.
 		if _, delErr := proc.Delete(context.WithoutCancel(ctx), containerd.WithProcessKill); delErr != nil {
 			d.log.Debug("cleaning up exec", "alloc", id, "exec", execID, "error", delErr)

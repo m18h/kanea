@@ -47,7 +47,7 @@ jobs:
       # than being assumed from the commit's CI. A tag can be pushed at any
       # commit, including one CI never saw.
       # `make check` includes the dashboard build, which is what go:embed picks
-      # up — so it has to run before the binaries are built, not merely before
+      # up, so it has to run before the binaries are built, not merely before
       # they are published.
       - name: Install gate tools
         run: |
@@ -68,7 +68,7 @@ jobs:
           mkdir -p dist
           # The darwin archives are the CLI half (PRD §5.2.12, v1.60): spec
           # authoring and validation on a Mac, via the Homebrew formula. The
-          # daemons stay Linux; nothing else about the release changes — the
+          # daemons stay Linux; nothing else about the release changes: the
           # checksums glob below covers these too, so the one cosign signature
           # extends over them with no second signing step.
           for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
@@ -89,7 +89,7 @@ jobs:
       # for an operator to assemble from a wiki page.
       #
       # containerd has to be running to export the image components, so the
-      # binary built above installs it — which also means every release
+      # binary built above installs it, which also means every release
       # exercises `kanea install` end to end before the binary is published.
       - name: Build the offline bundles
         run: |
@@ -110,7 +110,7 @@ jobs:
 
       # The SBOMs (PRD §14 A06, §21). They are written here, between the
       # archives and the checksums, so the manifest below covers them and the
-      # one cosign signature over it extends to them too — the same reasoning
+      # one cosign signature over it extends to them too: the same reasoning
       # that puts the bundles under it. An SBOM nobody can authenticate
       # describes software nobody can authenticate.
       - uses: anchore/sbom-action/download-syft@v0
@@ -132,7 +132,7 @@ jobs:
           #
           # The bundles and the SBOMs are covered here too, so the existing
           # cosign signature over this file extends to them with no second
-          # signing step — one signature over a manifest of hashes, as the
+          # signing step: one signature over a manifest of hashes, as the
           # header says. Both patterns are named rather than collapsed to
           # `kanea_*`: what belongs in a release is a decision, not whatever
           # happens to be in the directory.
@@ -180,5 +180,5 @@ jobs:
 
   # The Homebrew formula moved to its own tap repository (PRD §5.2.12,
   # v1.67): m18h/homebrew-kanea polls this repository's releases and bumps
-  # itself — the release workflow writes only to this repository, and no
+  # itself; the release workflow writes only to this repository, and no
   # cross-repo credential exists.

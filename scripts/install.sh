@@ -2,7 +2,7 @@
 # Kanea installer (PRD §20 M10).
 #
 # It does three things and stops: fetch the binary, verify it, and hand over to
-# `kanea init`. It generates no keys and starts nothing — those are decisions
+# `kanea init`. It generates no keys and starts nothing: those are decisions
 # with consequences, and a script that made them for you would be making them at
 # the moment you understand the node least.
 #
@@ -43,7 +43,7 @@ esac
 if [ "$VERSION" = "latest" ]; then
   # Resolved from the redirect GitHub already serves, rather than from the JSON
   # API: parsing that needs jq, which is not on a minimal Debian or Amazon Linux
-  # image — so the one-liner this script exists to be would fail on its first
+  # image, so the one-liner this script exists to be would fail on its first
   # step, on exactly the bare node it is meant for. The redirect also has no
   # unauthenticated rate limit.
   VERSION="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
@@ -51,7 +51,7 @@ if [ "$VERSION" = "latest" ]; then
     die "cannot reach https://github.com/${REPO}/releases/latest"
   VERSION="${VERSION##*/}"
   # A repository with no release redirects to /releases, and the tag would come
-  # back as the literal "releases" — which composes into a plausible-looking
+  # back as the literal "releases", which composes into a plausible-looking
   # archive name and a 404 nobody can read. Checked here instead.
   case "$VERSION" in
     v*) ;;
@@ -95,7 +95,7 @@ curl -fsSL "${BASE}/checksums.txt" -o "${WORK}/checksums.txt"
   else
     grep " ${ARCHIVE}\$" checksums.txt | shasum -a 256 -c - >/dev/null
   fi
-) || die "checksum mismatch — do not run this binary"
+) || die "checksum mismatch: do not run this binary"
 
 # Signature verification, when cosign is present. Not required, because
 # requiring it would mean every installer needs cosign; strongly preferred,
@@ -125,7 +125,7 @@ install -m 0755 "${WORK}/kanea" "${PREFIX}/kanea"
 note "Installed ${PREFIX}/kanea"
 
 # The upgrade ending. The new binary is on disk but the old one is still the
-# one running — `kanea upgrade` owns the restart order (PRD §15.4): back up,
+# one running; `kanea upgrade` owns the restart order (PRD §15.4): back up,
 # drain and restart the edge, then kanead, which runs any state migrations.
 # Workloads are untouched throughout (KillMode=process).
 if [ -n "$OLD_VERSION" ]; then
@@ -135,13 +135,13 @@ The running daemons are still on the old binary. Next:
 
     sudo kanea upgrade
 
-It backs up, drains and restarts kanea-edge, then restarts kanead — which
+It backs up, drains and restarts kanea-edge, then restarts kanead, which
 runs any state migrations. Running workloads are untouched throughout.
 
 (Next time, `sudo kanea upgrade` alone is the whole upgrade: it downloads
 and verifies the release itself before restarting anything.)
 
-If the release notes mention changed systemd units, regenerate them too —
+If the release notes mention changed systemd units, regenerate them too;
 `kanea upgrade` deliberately never rewrites units:
 
     sudo kanea init      # idempotent: key, accounts and settings are kept
@@ -166,7 +166,7 @@ Next:
      buildkitd, at pinned versions), runs the master-key ceremony and writes
      the systemd units.
 
-     Have somewhere to record the key before you start — it is shown once,
+     Have somewhere to record the key before you start: it is shown once,
      and without it every backup is unreadable.
 
      Nothing already on the node is touched: Kanea's containerd installs under
@@ -180,13 +180,13 @@ Next:
          sudo systemctl enable --now kanead
          sudo kanea user add --role admin <name>
 
-     To use the CLI without sudo, join the kanea group and log in again —
+     To use the CLI without sudo, join the kanea group and log in again;
      membership is root-equivalent, exactly like docker's:
 
          sudo usermod -aG kanea <user>
 
 No egress on that node? Build a bundle on a machine that has some, carry it
-across, and install from it — the same verification either way:
+across, and install from it; the same verification either way:
 
     kanea bundle create --arch amd64 -o kanea-bundle.tar.gz   # connected
     sudo kanea init --bundle kanea-bundle.tar.gz              # air-gapped

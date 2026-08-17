@@ -6,7 +6,7 @@ import type { Sort } from '@/hooks/useSort'
 /**
  * SortHeader is a TH the reader can click to sort by that column.
  *
- * The double chevron on an inactive column is the affordance — without it a
+ * The double chevron on an inactive column is the affordance: without it a
  * sortable header and a plain one are indistinguishable, and the feature only
  * exists for whoever happens to click a label.
  */

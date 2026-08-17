@@ -19,12 +19,12 @@ import { fetchHealth } from '@/lib/api'
 export function Login() {
   const { signIn } = useSession()
   // Health is public, so this is the one thing the app can ask before it has a
-  // credential — including which sign-in methods exist.
+  // credential: including which sign-in methods exist.
   const health = useQuery({ queryKey: ['health'], queryFn: ({ signal }) => fetchHealth(signal) })
   const provider = health.data?.oidc?.enabled ? health.data.oidc : null
   // The daemon supplies the SSO entry point; only a path on its own origin is
-  // ever rendered as a link. Anything else — an absolute URL, a javascript:
-  // scheme — is a misconfiguration to ignore, not navigate to.
+  // ever rendered as a link. Anything else (an absolute URL, a javascript:
+  // scheme) is a misconfiguration to ignore, not navigate to.
   const ssoPath = provider?.start_path?.startsWith('/') ? provider.start_path : null
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
@@ -42,7 +42,7 @@ export function Login() {
     try {
       signIn(await login(user, password))
     } catch (err) {
-      // Whatever the daemon says, verbatim — it is deliberately vague about
+      // Whatever the daemon says, verbatim: it is deliberately vague about
       // which half was wrong (§14, A07), and paraphrasing it here would only
       // risk making it more specific than it means to be.
       setError(err instanceof Error ? err.message : 'sign in failed')
@@ -127,7 +127,7 @@ export function Login() {
 /**
  * issuerHost renders the provider as its host name.
  *
- * The daemon supplies this string, and React escapes it either way — but a
+ * The daemon supplies this string, and React escapes it either way, but a
  * whole URL on a login screen reads like something to click, and this one is
  * not a link.
  */

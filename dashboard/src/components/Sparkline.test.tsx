@@ -44,7 +44,7 @@ describe('Sparkline', () => {
     render(<Sparkline points={[500]} max={100} label="cpu" />)
     const points = screen.getByLabelText('cpu').querySelector('polyline')?.getAttribute('points')
     // y is measured downward from the top, so a clamped value sits at the top
-    // padding — never above it, which is where 5× the ceiling would land.
+    // padding, never above it, which is where 5× the ceiling would land.
     const y = Number(points?.split(',')[1])
     expect(y).toBeGreaterThanOrEqual(0)
     expect(y).toBeLessThanOrEqual(8)

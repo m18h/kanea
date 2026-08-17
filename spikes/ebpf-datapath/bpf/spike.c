@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only OR MIT */
 /*
- * spike.c — the three datapath programs of Kanea's planned internal eBPF
+ * spike.c; the three datapath programs of Kanea's planned internal eBPF
  * datapath (the standalone-Cilium replacement), minimal but real:
  *
  *   P1 kanea_connect4       cgroup/connect4 at the root cgroup: service VIP
@@ -192,7 +192,7 @@ int kanea_connect4(struct bpf_sock_addr *ctx)
 	return lb4(ctx);
 }
 
-/* Load probe for check 11 — identical, but gates on ctx->protocol too. */
+/* Load probe for check 11: identical, but gates on ctx->protocol too. */
 SEC("cgroup/connect4")
 int kanea_connect4_proto(struct bpf_sock_addr *ctx)
 {
@@ -284,12 +284,12 @@ int kanea_from_container(struct __sk_buff *skb)
 	if ((void *)(ip + 1) > data_end)
 		return TC_ACT_OK;
 
-	/* 169.254.0.0/16 — the metadata-service class of destination */
+	/* 169.254.0.0/16: the metadata-service class of destination */
 	if ((ip->daddr & bpf_htonl(0xffff0000)) == bpf_htonl(0xa9fe0000)) {
 		count_drop(DROP_LINKLOCAL);
 		return TC_ACT_SHOT;
 	}
-	/* 10.201.0.0/16 — a VIP is a connect-time concept; a raw packet to
+	/* 10.201.0.0/16; a VIP is a connect-time concept; a raw packet to
 	 * one on the wire is a bypass attempt, not a service connection */
 	if ((ip->daddr & bpf_htonl(0xffff0000)) == bpf_htonl(0x0ac90000)) {
 		count_drop(DROP_SVC_CIDR);

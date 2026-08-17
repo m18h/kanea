@@ -16,8 +16,8 @@ import (
 )
 
 // World is everything the planner needs to decide. It is a value, not an
-// interface: the planner performs no I/O, so a test can construct any situation
-// — including ones that are hard to produce against a live daemon.
+// interface: the planner performs no I/O, so a test can construct any situation;
+// including ones that are hard to produce against a live daemon.
 type World struct {
 	// Desired is the target state, one entry per service.
 	Desired []Desired
@@ -33,7 +33,7 @@ type World struct {
 //
 // It is deterministic and total: the same World always yields the same actions,
 // in a stable order, and every alloc in either desired or actual is accounted
-// for. Determinism is what makes the loop safe to run every few seconds — a
+// for. Determinism is what makes the loop safe to run every few seconds: a
 // pass that has nothing to do returns nothing, rather than churning.
 func Plan(w World) []Action {
 	var actions []Action
@@ -55,7 +55,7 @@ func Plan(w World) []Action {
 		hash := SpecHash(d)
 		// How many of this service's allocs may be disturbed right now. Computed
 		// before any of them are planned, because the answer is a property of the
-		// service as a whole — an alloc cannot decide on its own whether taking
+		// service as a whole: an alloc cannot decide on its own whether taking
 		// itself down would leave the service short.
 		budget := replaceBudget(w, d, hash)
 
@@ -106,7 +106,7 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 	// forever would hide the failure instead of surfacing it.
 	//
 	// Unless the spec changed. That is the whole workflow for fixing a crash
-	// loop — see what failed, correct the image or the config, deploy — and a
+	// loop (see what failed, correct the image or the config, deploy) and a
 	// planner that refused to touch a failed alloc would make the fix land only
 	// after a manual delete.
 	if hasRecord && record.State == AllocFailed && !stale {
@@ -152,7 +152,7 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 			return nil // the steady state, and by far the common case
 		}
 		// The deploy. This is the only place a healthy alloc is deliberately
-		// taken down, and it is gated by the update policy in Plan — reaching
+		// taken down, and it is gated by the update policy in Plan: reaching
 		// here means the service can spare this one right now.
 		act := base
 		act.Kind = ActionReplace
@@ -168,7 +168,7 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 	case runtime.StateStopped:
 		if stale {
 			// Already down, so it costs the service nothing and does not go
-			// through the rolling budget — and it comes back on the new spec
+			// through the rolling budget, and it comes back on the new spec
 			// rather than the one that stopped.
 			act := base
 			act.Kind = ActionRestart
@@ -193,7 +193,7 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 // container, so changing one does not roll the alloc (PRD v1.69, R31/R15).
 //
 // Two fields, one reason each. `SizeBytes` is a budget the sampler compares a
-// measurement against — rolling a database because someone adjusted a
+// measurement against: rolling a database because someone adjusted a
 // monitoring threshold would be absurd. `Create` decides whether a missing host
 // directory is made at alloc start; by the time a container exists the answer
 // has already been acted on, and flipping it changes nothing about the running
@@ -205,7 +205,7 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 // Note the interaction with omitempty, which is doing separate work: omitempty
 // is what makes a record written before these fields existed hash exactly as it
 // did (R23), and this projection is what makes *declaring* them free. Both are
-// needed — the first for the upgrade, the second for the edit.
+// needed: the first for the upgrade, the second for the edit.
 func hashableVolumes(volumes []Volume) []Volume {
 	if len(volumes) == 0 {
 		return nil
@@ -223,8 +223,8 @@ func hashableVolumes(volumes []Volume) []Volume {
 // container when it is created.
 //
 // Only those parts. The desired state carries plenty that a running alloc does
-// not embody — the replica count, the autoscaling policy, the health check the
-// reconciler probes it with, the edge route, the network policy peers — and
+// not embody: the replica count, the autoscaling policy, the health check the
+// reconciler probes it with, the edge route, the network policy peers, and
 // hashing those would turn "raise the maximum replica count" into a rolling
 // restart of a service nobody asked to disturb. The rule is: if changing it
 // requires a new container, it belongs here; if it can be applied to the
@@ -239,8 +239,8 @@ func SpecHash(d Desired) string {
 		// (R19). Image is hashed too: editing the declared tag is a spec
 		// change even when the digest behind it happens to be the same.
 		//
-		// The updater's other fields — RollbackImage, ImageCheckedAt,
-		// ImageUpdatedAt — are deliberately absent, and so is RegistryAuthRef.
+		// The updater's other fields (RollbackImage, ImageCheckedAt,
+		// ImageUpdatedAt) are deliberately absent, and so is RegistryAuthRef.
 		// They are bookkeeping and pull-time inputs, not things baked into a
 		// container: hashing them would roll every auto-updating service on
 		// every poll, for no change to what is running.
@@ -273,7 +273,7 @@ func SpecHash(d Desired) string {
 		// for User: every pre-v1.39 record hashes with the field absent, and
 		// a hash that changed on upgrade would roll the whole node.
 		//
-		// Function's trigger config is deliberately NOT here — the invokers
+		// Function's trigger config is deliberately NOT here: the invokers
 		// read it live, like the edge reads Publish, and hashing it would
 		// roll an alloc to change a cron schedule.
 		Runtime string `json:"runtime,omitempty"`
@@ -298,7 +298,7 @@ func SpecHash(d Desired) string {
 		body = []byte(fmt.Sprintf("%#v", material))
 	}
 	sum := sha256.Sum256(body)
-	// Half the digest. This is a change detector, not a security boundary —
+	// Half the digest. This is a change detector, not a security boundary:
 	// nobody chooses their own spec hash to collide with someone else's.
 	return hex.EncodeToString(sum[:16])
 }
@@ -316,8 +316,8 @@ func drifted(record AllocRecord, hash string) bool {
 // replaceBudget is how many of a service's allocs may be replaced this pass.
 //
 // The unit is availability, not progress: the policy says how many allocs may
-// be *down at once*, so anything already down — starting, unhealthy, or too
-// recently replaced to be trusted — spends the budget before a deliberate
+// be *down at once*, so anything already down (starting, unhealthy, or too
+// recently replaced to be trusted) spends the budget before a deliberate
 // replacement gets any. That is what makes a rolling deploy stop when it starts
 // going wrong, instead of walking through every replica taking each one down.
 func replaceBudget(w World, d Desired, hash string) int {
@@ -364,7 +364,7 @@ func replaceBudget(w World, d Desired, hash string) int {
 
 	// A single-replica service has no spare capacity by definition, and the
 	// subtraction would refuse to ever deploy it. Its one alloc is available, so
-	// unavailable is zero and the budget is one — the deploy happens, with the
+	// unavailable is zero and the budget is one: the deploy happens, with the
 	// downtime that count = 1 has always implied.
 	if budget := limit - unavailable; budget > 0 {
 		return budget
@@ -439,8 +439,8 @@ func planOrphans(w World, desiredByService map[string]Desired, wanted map[string
 // VolumeHostPath is where an alloc's copy of a volume lives on the host:
 // <volumeDir>/<project>/<service>/<index>/<volume>.
 //
-// The alloc index is in the path on purpose. It is stable across restarts — a
-// restarted alloc keeps index 0 — so data survives a crash, while two allocs of
+// The alloc index is in the path on purpose. It is stable across restarts (a
+// restarted alloc keeps index 0) so data survives a crash, while two allocs of
 // the same service never share a directory (PRD §8's per-alloc mode).
 func VolumeHostPath(volumeDir, project, service string, index int, volume string) string {
 	return filepath.Join(volumeDir, project, service, strconv.Itoa(index), volume)
@@ -450,7 +450,7 @@ func VolumeHostPath(volumeDir, project, service string, index int, volume string
 // <volumeDir>/<project>/<service>/shared/<volume>.
 //
 // No alloc index, unlike a local volume. An NFS export or an S3 bucket *is* the
-// shared thing — mounting it once per alloc would establish N mounts of one
+// shared thing: mounting it once per alloc would establish N mounts of one
 // bucket, N supervisors probing it, and N sets of credentials on disk, all to
 // present the same bytes. One mount per service is what the storage actually is.
 func SharedVolumeHostPath(volumeDir, project, service, volume string) string {
@@ -537,7 +537,7 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 // own load across backends that are not all there yet, and the whole point of
 // gating is to make the dependency ready before anything talks to it.
 //
-// A service with count 0 is vacuously healthy — it was deliberately scaled to
+// A service with count 0 is vacuously healthy: it was deliberately scaled to
 // nothing, and blocking its dependents forever would be a deadlock rather than
 // a safeguard.
 func healthyServices(w World) map[string]bool {
@@ -578,7 +578,7 @@ func healthyServices(w World) map[string]bool {
 // A dependency that is not in the desired set at all is *not* treated as unmet.
 // jobspec already rejects a depends_on naming a service that does not exist
 // (R10), so reaching this state means the dependency was removed out from under
-// a running spec — and blocking forever on something that will never appear is
+// a running spec, and blocking forever on something that will never appear is
 // worse than starting.
 func unmetDependencies(d Desired, healthy map[string]bool) []string {
 	var blocked []string
@@ -630,7 +630,7 @@ func Diff(current, desired []Desired) []string {
 		if have.Count != want.Count {
 			changes = append(changes, fmt.Sprintf("count %d -> %d", have.Count, want.Count))
 		}
-		// Capabilities are spec-hash material — declaring ["none"] (or adding a
+		// Capabilities are spec-hash material: declaring ["none"] (or adding a
 		// grant) rolls every alloc, and a plan that did not mention it would
 		// show a redeploy with no visible cause.
 		if !reflect.DeepEqual(have.Capabilities, want.Capabilities) {
@@ -643,7 +643,7 @@ func Diff(current, desired []Desired) []string {
 		if !sameEnv(have.Env, want.Env) {
 			changes = append(changes, "env changed")
 		}
-		// Container ports are spec-hash material — a changed number or a
+		// Container ports are spec-hash material: a changed number or a
 		// flipped protocol (v1.42) rolls every alloc, and a plan that did not
 		// mention it would show a redeploy with no visible cause.
 		if !reflect.DeepEqual(have.Ports, want.Ports) {
@@ -651,7 +651,7 @@ func Diff(current, desired []Desired) []string {
 				describeDeclaredPorts(have.Ports), describeDeclaredPorts(want.Ports)))
 		}
 		// Published ports are what people iterate on, and they do not change
-		// the spec hash — so without this line `kanea plan` would print "No
+		// the spec hash, so without this line `kanea plan` would print "No
 		// changes" for the edit somebody just made and is about to apply.
 		if !reflect.DeepEqual(have.Publish, want.Publish) {
 			changes = append(changes, fmt.Sprintf("published ports %s -> %s",

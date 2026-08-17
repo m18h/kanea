@@ -29,7 +29,7 @@ var (
 // Two refusals, both from §13.1 and §14 A05, and both deliberately refusing the
 // *listener* rather than the daemon: kanead must keep running and keep serving
 // its socket, because the socket is where `kanea user add` and `kanea token
-// create` land. A daemon that refused to start here would be a bootstrap trap —
+// create` land. A daemon that refused to start here would be a bootstrap trap:
 // the account cannot be created without the daemon, and the daemon will not
 // start without the account.
 func (s *Server) listenNetwork() (net.Listener, error) {
@@ -47,7 +47,7 @@ func (s *Server) listenNetwork() (net.Listener, error) {
 	if public && s.tls == nil && !s.listenPlaintext {
 		// Session cookies and bearer tokens over plain HTTP on a network
 		// anyone else is on is how a credential is stolen without anybody
-		// noticing. Loopback is exempt because there is no wire to read —
+		// noticing. Loopback is exempt because there is no wire to read:
 		// and bind.api_tls = "plaintext" is exempt because someone typed
 		// the decision (PRD v1.61); the caller logs that loudly.
 		return nil, fmt.Errorf("%w: %s carries credentials in clear text; "+
@@ -68,10 +68,10 @@ func (s *Server) listenNetwork() (net.Listener, error) {
 // IsPublicAddr reports whether an address binds anything beyond loopback.
 //
 // An empty or unspecified host (":8600", "0.0.0.0:8600", "[::]:8600") is the
-// widest case there is and is treated as public — that is the address someone
+// widest case there is and is treated as public: that is the address someone
 // types when they have not thought about who can reach it. Exported for
 // `kanea init`, which validates a listen address before writing it into a
-// unit — the same refusal listenNetwork makes, moved in front of the operator.
+// unit: the same refusal listenNetwork makes, moved in front of the operator.
 func IsPublicAddr(addr string) (bool, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

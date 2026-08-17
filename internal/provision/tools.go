@@ -9,7 +9,7 @@ import (
 
 // sbinDirs are the canonical homes of system administration binaries. On
 // Debian a non-root user's PATH does not include them, and a sudo that does
-// not apply secure_path hands that PATH straight to this process — so
+// not apply secure_path hands that PATH straight to this process, so
 // exec.LookPath declares useradd missing on a node where /usr/sbin/useradd
 // has existed for decades. Field report: a stock Debian 12 install failed
 // `kanea init` exactly this way.

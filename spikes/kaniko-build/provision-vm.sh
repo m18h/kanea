@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# provision-vm.sh — one-time setup for spike ④ (image builds as containerd tasks)
+# provision-vm.sh: one-time setup for spike ④ (image builds as containerd tasks)
 # on the kanea-spike OrbStack VM (Ubuntu 24.04 arm64).
 #
 # Sets up a local OCI registry with basic auth (so push credentials are exercised
 # the way PRD §10.2 describes) and pulls the three candidate builders:
-#   kaniko   v1.24.0  — the PRD's incumbent; upstream repo is ARCHIVED (read-only)
-#   buildkit v0.32.0  — actively maintained, rootless image
-#   buildah  v1.43.1  — actively maintained, chroot isolation available
+#   kaniko   v1.24.0: the PRD's incumbent; upstream repo is ARCHIVED (read-only)
+#   buildkit v0.32.0: actively maintained, rootless image
+#   buildah  v1.43.1: actively maintained, chroot isolation available
 # Idempotent. Spike-only, nothing ships.
 set -euo pipefail
 
@@ -33,7 +33,7 @@ sudo apt-get install -y -qq apache2-utils curl ca-certificates >/dev/null
 say "registry credentials + auth file"
 sudo mkdir -p "$WORKDIR"/{auth,registry-data,context,cache}
 sudo htpasswd -Bbc "$WORKDIR/auth/htpasswd" "$REG_USER" "$REG_PASS" 2>/dev/null
-# docker config.json — the shape every builder expects for registry auth. In
+# docker config.json: the shape every builder expects for registry auth. In
 # Kanea this is materialised from the secret store (PRD §12), never on disk.
 AUTH_B64="$(printf '%s:%s' "$REG_USER" "$REG_PASS" | base64 -w0)"
 sudo tee "$WORKDIR/auth/config.json" >/dev/null <<EOF
@@ -139,7 +139,7 @@ sudo ctr -n "$CTR_NS" images ls | awk 'NR==1 || /kaniko|buildkit|buildah|registr
 
 say "rootless buildkitd as a host service (the daemon path)"
 # BuildKit's native shape is a daemon, and its rootless mode runs as an
-# unprivileged host user via rootlesskit — no privileged container per build.
+# unprivileged host user via rootlesskit: no privileged container per build.
 # Binaries are extracted from the same digest-pinned image used for the task form.
 sudo apt-get install -y -qq uidmap >/dev/null
 id -u "$BK_USER" >/dev/null 2>&1 || sudo useradd --create-home --shell /usr/sbin/nologin "$BK_USER"

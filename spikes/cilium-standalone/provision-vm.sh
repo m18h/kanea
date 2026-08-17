@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# provision-vm.sh — one-time setup of standalone Cilium on the kanea-spike OrbStack VM
+# provision-vm.sh: one-time setup of standalone Cilium on the kanea-spike OrbStack VM
 # (Ubuntu 24.04 arm64). Assumes spike ② already provisioned containerd/runc/CNI plugins.
 #
 # Installs: etcd (kvstore, 127.0.0.1:2379) + cilium-agent as a privileged host-network

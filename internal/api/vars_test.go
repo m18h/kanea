@@ -9,7 +9,7 @@ import (
 	"github.com/m18h/kanea/internal/auth"
 )
 
-// GET /v1/vars (R30, v1.63): authenticated, any role — variables are never
+// GET /v1/vars (R30, v1.63): authenticated, any role; variables are never
 // secrets, and a viewer planning a spec needs the node's defaults.
 
 func TestVarsRequiresAuthentication(t *testing.T) {

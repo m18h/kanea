@@ -14,8 +14,8 @@ import (
 )
 
 // The secret sync loop (PRD §5.2.13): pull mapped external secrets into the
-// local store on an interval. It mirrors the certificate loop's shape — an
-// immediate pass at startup, a slow work timer, a fast config poll — and the
+// local store on an interval. It mirrors the certificate loop's shape (an
+// immediate pass at startup, a slow work timer, a fast config poll) and the
 // reconciler never waits for it: the store serves whatever the last pass
 // wrote, which is the point of syncing into the store at all.
 
@@ -24,7 +24,7 @@ const (
 	// replication RPO's number (§15.3): rotation tools work in minutes, and
 	// anything faster is spending someone else's API rate limit.
 	secretSyncDefaultInterval = 5 * time.Minute
-	// secretSyncMinInterval is the floor the flag refuses below — a poll is a
+	// secretSyncMinInterval is the floor the flag refuses below: a poll is a
 	// request against a provider's rate limit, five of them per pass.
 	secretSyncMinInterval = 30 * time.Second
 	// secretSyncRetryInterval is the first retry after a failed pass; each
@@ -33,7 +33,7 @@ const (
 	// cadence forever.
 	secretSyncRetryInterval = time.Minute
 	// secretConfigCheckInterval is how often the config and credential files
-	// are checked for movement — certFileCheckInterval's twin, because a
+	// are checked for movement: certFileCheckInterval's twin, because a
 	// rotation tool rewrites a token without telling Kanea.
 	secretConfigCheckInterval = time.Minute
 )
@@ -104,7 +104,7 @@ func secretSyncWait(interval time.Duration, consecutiveFailures int) time.Durati
 			wait = interval
 		}
 	}
-	jitter := 0.9 + 0.2*rand.Float64() // #nosec G404 — jitter, not cryptography
+	jitter := 0.9 + 0.2*rand.Float64() // #nosec G404: jitter, not cryptography
 	return time.Duration(float64(wait) * jitter)
 }
 

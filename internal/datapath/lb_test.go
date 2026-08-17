@@ -104,7 +104,7 @@ func TestFlipOpsPutThenCommitThenDelete(t *testing.T) {
 	}
 
 	last := f.maps.flips[len(f.maps.flips)-1]
-	// Puts of the new generation, one commit, deletes of the old — in that
+	// Puts of the new generation, one commit, deletes of the old; in that
 	// order and no other: the commit is the atomicity.
 	wantKinds := []dpmap.OpKind{dpmap.OpPutBackend, dpmap.OpPutBackend, dpmap.OpCommitService, dpmap.OpDeleteBackend}
 	if len(last) != len(wantKinds) {

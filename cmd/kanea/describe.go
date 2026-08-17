@@ -14,11 +14,11 @@ import (
 )
 
 // runDescribe implements `kanea describe`: the one-service deep view
-// (PRD v1.54, §16.2) — the declared spec beside what is actually true.
+// (PRD v1.54, §16.2); the declared spec beside what is actually true.
 //
 // Assembled client-side from the routes that already exist (services, allocs,
 // stats, events): the same reads the dashboard makes, so the CLI cannot know
-// anything the API does not serve — §16.3's no-side-channels rule, applied to
+// anything the API does not serve; §16.3's no-side-channels rule, applied to
 // the read path.
 func runDescribe(args []string) error {
 	fs := flag.NewFlagSet("describe", flag.ContinueOnError)
@@ -79,7 +79,7 @@ func describeSpec(o *out, svc reconciler.Desired) {
 		o.printf("Runtime      %s\n", svc.Runtime)
 	}
 	// The stored list is what was declared; an empty one means the R13
-	// baseline for a runc service, and saying so beats printing nothing —
+	// baseline for a runc service, and saying so beats printing nothing:
 	// the difference between "default" and "none" is the whole feature.
 	if len(svc.Capabilities) > 0 {
 		o.printf("Capabilities %s\n", strings.Join(svc.Capabilities, ", "))
@@ -177,7 +177,7 @@ func describeAllocs(o *out, svc reconciler.Desired, allocs []reconciler.AllocRec
 	o.println()
 	if len(allocs) == 0 {
 		if svc.Count == 0 {
-			o.println("Allocs: none (stopped — count 0)")
+			o.println("Allocs: none (stopped; count 0)")
 		} else {
 			o.println("Allocs: none yet")
 		}
@@ -234,7 +234,7 @@ var reasonLabels = map[reconciler.ExitReason]string{
 // thing to know about a service that keeps coming back.
 //
 // A record from before v1.68 has a code and no reason, and renders as the code
-// rather than as nothing — an upgrade must not make existing allocs less
+// rather than as nothing: an upgrade must not make existing allocs less
 // legible than they were.
 func allocReason(a reconciler.AllocRecord) string {
 	if a.LastExitReason == "" {
@@ -250,7 +250,7 @@ func allocReason(a reconciler.AllocRecord) string {
 	if a.LastExitMessage == "" {
 		return label
 	}
-	return label + " — " + a.LastExitMessage
+	return label + ": " + a.LastExitMessage
 }
 
 func describeStats(o *out, stats api.StatsSample) {

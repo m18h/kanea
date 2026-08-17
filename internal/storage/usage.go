@@ -16,7 +16,7 @@ import (
 
 // Measuring what a volume actually uses (PRD v1.69, §8, §6.2 R31).
 //
-// R31's `size` is a budget, not a quota — nothing enforces it — so the whole
+// R31's `size` is a budget, not a quota (nothing enforces it) so the whole
 // value of declaring one is that the number gets compared against reality. That
 // is this file: a slow background walk, an in-memory result, and an event when
 // a volume crosses its budget in either direction.
@@ -29,7 +29,7 @@ import (
 //     takes minutes, and `GET /v1/volumes` has to answer now.
 //   - It reports absence as absence (§9.2). A volume not yet measured, one
 //     whose walk timed out, and one on a driver that is not walked are all
-//     gaps — never zero, which would read as "empty" and is a completely
+//     gaps, never zero, which would read as "empty" and is a completely
 //     different fact.
 
 // UsageTarget is one volume to measure.
@@ -46,7 +46,7 @@ type UsageTarget struct {
 	// Type is the storage driver, which decides whether it is walked at all.
 	Type string
 	// BudgetBytes is R31's declared size, or 0 for none. A target with no
-	// budget is still measured — the number is worth showing on its own.
+	// budget is still measured: the number is worth showing on its own.
 	BudgetBytes int64
 }
 
@@ -148,7 +148,7 @@ func (s *UsageSampler) SetTargets(targets []UsageTarget) {
 	s.targets.Store(&next)
 
 	// Forget volumes that are gone, so a deleted service does not keep a
-	// reading — or an over-budget verdict that would re-fire if its name were
+	// reading, or an over-budget verdict that would re-fire if its name were
 	// ever reused.
 	live := make(map[string]struct{}, len(next))
 	for _, t := range next {
@@ -266,7 +266,7 @@ func (s *UsageSampler) record(t UsageTarget, u Usage) {
 }
 
 // parseDuTotal reads the byte count out of `du -s` output, which is
-// "<bytes>\t<path>" — possibly preceded by warnings on stderr, which the
+// "<bytes>\t<path>": possibly preceded by warnings on stderr, which the
 // Runner combines in.
 func parseDuTotal(out string) (int64, error) {
 	var last string

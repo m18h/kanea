@@ -1,6 +1,6 @@
 export interface PageHeaderProps {
   title: React.ReactNode
-  /** subtitle is rendered mono and muted — it carries facts, not prose. */
+  /** subtitle is rendered mono and muted; it carries facts, not prose. */
   subtitle?: React.ReactNode | undefined
   actions?: React.ReactNode | undefined
 }

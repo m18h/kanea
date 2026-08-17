@@ -21,7 +21,7 @@ import {
 /**
  * The spec editor (PRD §12.2, v1.38): Deploy service and Edit spec.
  *
- * Validation is server-side — the browser has no HCL parser, and should not:
+ * Validation is server-side; the browser has no HCL parser, and should not:
  * the daemon renders with the node's own base domain, so what the preview
  * shows is what an apply would mean *here*. The client-side "validated" state
  * is a courtesy; apply re-renders the same bytes regardless, so plan and
@@ -75,8 +75,8 @@ export function SpecEditorPage({
   }, [editing, project, service])
 
   // The GitOps warning: a synced project's next sync wins over anything
-  // applied here. Warn, never block — an admin may be intentionally
-  // hot-fixing — and require the checkbox so it was read.
+  // applied here. Warn, never block (an admin may be intentionally
+  // hot-fixing) and require the checkbox so it was read.
   const projects = useQuery({
     queryKey: ['projects'],
     queryFn: ({ signal }) => fetchProjects(signal),
@@ -93,7 +93,7 @@ export function SpecEditorPage({
 
   const edit = (next: string) => {
     setText(next)
-    // Any edit invalidates the previous validation — cosmetic only, the
+    // Any edit invalidates the previous validation; cosmetic only, the
     // server re-renders on apply, but a stale green tick misleads.
     setValidated(false)
     setPreview(null)
@@ -174,7 +174,7 @@ export function SpecEditorPage({
       {sourceNote ? (
         <p className="rounded-md border border-status-warn/40 bg-status-warn/10 px-3 py-2 text-sm">
           Could not generate this service's spec: {sourceNote}. Starting from the template
-          instead — the running service is unchanged until you apply.
+          instead: the running service is unchanged until you apply.
         </p>
       ) : null}
 
@@ -188,7 +188,7 @@ export function SpecEditorPage({
                 (<span className="font-mono">{gitSource.branch}</span>)
               </>
             ) : null}
-            . Changes applied here will be overwritten on the next sync — edit the
+            . Changes applied here will be overwritten on the next sync: edit the
             repository instead, or confirm you want a hot-fix that the repository will
             later replace.
           </p>

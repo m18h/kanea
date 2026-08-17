@@ -6,8 +6,8 @@ import "net/netip"
 // writes it: index i of generation g lands at backend_key{svc, i, g}.
 //
 // The address is a netip.Addr rather than wire bytes (v1.41): the flip plan
-// is family-neutral — backend_key is shared between svc_backends and
-// svc_backends6 — and the executor marshals the value for whichever map the
+// is family-neutral (backend_key is shared between svc_backends and
+// svc_backends6) and the executor marshals the value for whichever map the
 // service key's family selects.
 type Backend struct {
 	IP   netip.Addr
@@ -45,14 +45,14 @@ type DropEntry struct {
 
 // Pick is the userspace reference of the datapath's backend selection:
 // kanea_connect4 computes bpf_get_prandom_u32() % count. count must be in
-// [1, 65535] — svc_val.count is a __u16, and the program checks count == 0
+// [1, 65535]: svc_val.count is a __u16, and the program checks count == 0
 // (and refuses the connect) before selecting. Pick mirrors that by
 // returning 0 outside the range, which the caller must never reach.
 func Pick(count int, rand uint32) uint16 {
 	if count <= 0 || count > 0xFFFF {
 		return 0
 	}
-	// #nosec G115 — count is bounded to the uint16 range above, and the
+	// #nosec G115: count is bounded to the uint16 range above, and the
 	// modulo bounds the result below it.
 	return uint16(rand % uint32(count))
 }
@@ -66,11 +66,11 @@ const (
 	// generation happens strictly before the commit.
 	OpPutBackend OpKind = iota + 1
 	// OpCommitService atomically updates the service's svc_v4 value to
-	// Svc — the one write that makes the new generation visible. The
+	// Svc: the one write that makes the new generation visible. The
 	// svc_v4 key (VIP/port/proto) is the executor's to supply; the plan
 	// carries the value.
 	OpCommitService
-	// OpDeleteBackend deletes svc_backends[Key] — the old generation's
+	// OpDeleteBackend deletes svc_backends[Key]: the old generation's
 	// entries, strictly after the commit.
 	OpDeleteBackend
 )
@@ -97,7 +97,7 @@ type Op struct {
 // touched); one that lands after resolves oldGen+1 and finds the new set
 // complete (all of it was written first). Half-updating svc_backends
 // without flipping svc_v4 is the torn-set bug this pattern exists to
-// prevent — which is why the writer executes a plan instead of improvising.
+// prevent, which is why the writer executes a plan instead of improvising.
 //
 // An empty next set is a valid plan: the commit writes Count 0 and the
 // datapath refuses connects with DROP_NO_BACKEND until the next flip.
@@ -105,25 +105,25 @@ func FlipPlan(svcID uint16, current, next []Backend, oldGen uint32) []Op {
 	newGen := oldGen + 1
 	ops := make([]Op, 0, len(next)+1+len(current))
 
-	// #nosec G115 — backend counts fit a __u16 by construction: svc_backends
+	// #nosec G115; backend counts fit a __u16 by construction: svc_backends
 	// holds at most 16384 entries, and jobspec caps replicas far below that.
 	for i, b := range next {
 		ops = append(ops, Op{
 			Kind: OpPutBackend,
-			Key:  BackendKey{SvcID: svcID, Index: uint16(i), Gen: newGen}, // #nosec G115 — bounded as above
+			Key:  BackendKey{SvcID: svcID, Index: uint16(i), Gen: newGen}, // #nosec G115; bounded as above
 			Val:  b,
 		})
 	}
 
 	ops = append(ops, Op{
 		Kind: OpCommitService,
-		Svc:  SvcVal{SvcID: svcID, Count: uint16(len(next)), Gen: newGen}, // #nosec G115 — bounded as above
+		Svc:  SvcVal{SvcID: svcID, Count: uint16(len(next)), Gen: newGen}, // #nosec G115; bounded as above
 	})
 
 	for i := range current {
 		ops = append(ops, Op{
 			Kind: OpDeleteBackend,
-			Key:  BackendKey{SvcID: svcID, Index: uint16(i), Gen: oldGen}, // #nosec G115 — bounded as above
+			Key:  BackendKey{SvcID: svcID, Index: uint16(i), Gen: oldGen}, // #nosec G115; bounded as above
 		})
 	}
 

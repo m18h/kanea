@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Check H — the M11 exit criterion, on a real kanead node (PRD §20 M11).
+# Check H: the M11 exit criterion, on a real kanead node (PRD §20 M11).
 #
-# Checks A–G ran at the containerd level (../REPORT.md, 7/7 GO on 2026-08-10)
+# Checks A-G ran at the containerd level (../REPORT.md, 7/7 GO on 2026-08-10)
 # and validated everything below the datapath: the shim takes Kanea's hardening
 # and resources spec unchanged, task.Exec is unsupported, the memory cap
 # OOM-kills, wasi-http serves, and modules ship as host-platform scratch images.
-# H is what a containerd-level harness cannot reach — the edge, the VIP, the
-# invokers, the datapath's own counters — so it needs a node.
+# H is what a containerd-level harness cannot reach: the edge, the VIP, the
+# invokers, the datapath's own counters, so it needs a node.
 #
 # The exit criterion, verbatim: "a wasi-http function deploys from a spec,
 # serves through the edge (FQDN and functions-port modes), fires on a matching
 # event and a cron tick; invocation rate visible from an east-west call;
 # pre-v1.39 Store upgrade rolls zero allocs". Each clause below is one check,
-# and the last is deliberately NOT here — see the note at the end.
+# and the last is deliberately NOT here: see the note at the end.
 #
 # Run it on the node, as root, from a checkout:
 #
@@ -79,7 +79,7 @@ command -v "$KANEA" >/dev/null || { printf 'no kanea on PATH\n' >&2; exit 2; }
 "$KANEA" version || { printf 'kanea is not runnable\n' >&2; exit 2; }
 
 if ! "$KANEA" functions list >/dev/null 2>&1; then
-  printf 'cannot reach kanead — start it before running check H\n' >&2
+  printf 'cannot reach kanead: start it before running check H\n' >&2
   exit 2
 fi
 info "kanead reachable"
@@ -89,11 +89,11 @@ info "kanead reachable"
 if [ -x /usr/local/lib/kanea/bin/containerd-shim-wasmtime-v1 ]; then
   info "wasmtime shim present"
 else
-  info "wasmtime shim NOT at the expected path — kanea doctor will say more"
+  info "wasmtime shim NOT at the expected path: kanea doctor will say more"
 fi
 
 if [ ! -f ../testdata/hello.wasm ]; then
-  printf 'no module at ../testdata/hello.wasm — build it first:\n' >&2
+  printf 'no module at ../testdata/hello.wasm: build it first:\n' >&2
   printf '  rustup target add wasm32-wasip2\n' >&2
   printf '  (cd ../modules/hello-http && cargo build --release --target wasm32-wasip2)\n' >&2
   printf '  cp ../modules/hello-http/target/wasm32-wasip2/release/hellohttp.wasm ../testdata/hello.wasm\n' >&2
@@ -101,7 +101,7 @@ if [ ! -f ../testdata/hello.wasm ]; then
 fi
 
 # ------------------------------------------------------------------ clause 1
-step "Clause 1 — a wasi-http function deploys from a spec"
+step "Clause 1: a wasi-http function deploys from a spec"
 
 ./mkimage.sh --wasm ../testdata/hello.wasm --project "$PROJECT" ||
   { printf 'could not import the module image\n' >&2; exit 2; }
@@ -123,7 +123,7 @@ else
 fi
 
 # ------------------------------------------------------------------ clause 2
-step "Clause 2 — serves through the edge, FQDN mode"
+step "Clause 2: serves through the edge, FQDN mode"
 
 fqdn="$(fn_json | python3 -c "
 import json,sys
@@ -134,7 +134,7 @@ print(d[0] if d else '')
 ")"
 
 if [ -z "$fqdn" ]; then
-  info "the function has no domain — a node with no base domain is the"
+  info "the function has no domain: a node with no base domain is the"
   info "functions-port case, which clause 3 covers"
 else
   # Through the edge's own listener, with the Host header the route matches
@@ -153,7 +153,7 @@ else
 fi
 
 # ------------------------------------------------------------------ clause 3
-step "Clause 3 — serves through the edge, functions-port mode"
+step "Clause 3: serves through the edge, functions-port mode"
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
     "http://127.0.0.1:${FUNCTIONS_PORT}/${PROJECT}/${FUNCTION}/" 2>/dev/null)"
@@ -164,10 +164,10 @@ else
 fi
 
 # ------------------------------------------------------------------ clause 4
-step "Clause 4 — fires on a matching event"
+step "Clause 4: fires on a matching event"
 
 # The invoker's own counter, which counts event and cron deliveries and not
-# the HTTP ones above — so this measures the path the clause is about.
+# the HTTP ones above, so this measures the path the clause is about.
 before="$(fn_field invoker.invocations)"; before="${before:-0}"
 info "invoker invocations before: ${before}"
 
@@ -190,7 +190,7 @@ else
 fi
 
 # ------------------------------------------------------------------ clause 5
-step "Clause 5 — fires on a cron tick"
+step "Clause 5: fires on a cron tick"
 
 # The schedule is every minute, so a tick is due within 60s; 90 gives the
 # boundary room.
@@ -209,17 +209,17 @@ else
 fi
 
 # ------------------------------------------------------------------ clause 6
-step "Clause 6 — invocation rate visible from an east-west call"
+step "Clause 6: invocation rate visible from an east-west call"
 
 # caller dials the VIP once a second and never touches the edge, so a non-zero
 # rate here is the datapath's own per-destination counter (§9.1) and not edge
-# rps. "No data" renders as absent, never as zero — an absent field is a
+# rps. "No data" renders as absent, never as zero: an absent field is a
 # failure of this clause, not a quiet pass.
 info "letting caller run for 60s"
 sleep 60
 rate="$(fn_field invocations_per_minute)"
 if [ -z "$rate" ]; then
-  fail "no invocation rate is published (absent, not zero — see §9.1)"
+  fail "no invocation rate is published (absent, not zero: see §9.1)"
   info "under --network netns the datapath publishes no counters; that is the"
   info "documented partial case and this clause needs the ebpf datapath"
 else
@@ -245,7 +245,7 @@ step "Summary"
 printf '%d passed, %d failed\n' "$PASSES" "$FAILS"
 cat <<'NOTE'
 
-The criterion's last clause — "pre-v1.39 Store upgrade rolls zero allocs" — is
+The criterion's last clause: "pre-v1.39 Store upgrade rolls zero allocs"; is
 not scripted here, because it is a property of an upgrade rather than of a
 running node, and it cannot be staged after the fact on a node that has already
 been upgraded. It is pinned structurally by

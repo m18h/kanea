@@ -51,7 +51,7 @@ func TestLatestSkipsATrailingGap(t *testing.T) {
 
 	m.Record(k, c.at, 10)
 	// The scraper stopped for a minute. "Latest" means the newest value, not
-	// the newest slot — a caller asking what CPU is wants the last reading.
+	// the newest slot: a caller asking what CPU is wants the last reading.
 	c.advance(time.Minute)
 	m.Record(k, c.at, 20)
 	c.advance(time.Minute)
@@ -99,7 +99,7 @@ func TestAverageIgnoresGaps(t *testing.T) {
 
 	mean, points := m.Average(k, time.Minute)
 	if points != 2 {
-		t.Fatalf("points = %d, want 2 — a missed scrape is absent, not zero", points)
+		t.Fatalf("points = %d, want 2: a missed scrape is absent, not zero", points)
 	}
 	if mean != 150 {
 		t.Errorf("mean = %v, want 150", mean)
@@ -169,7 +169,7 @@ func TestRangeIsOldestFirst(t *testing.T) {
 	}
 	for i, p := range points {
 		if p.Value != float64(i) {
-			t.Fatalf("point[%d] = %v, want %d — out of order", i, p.Value, i)
+			t.Fatalf("point[%d] = %v, want %d: out of order", i, p.Value, i)
 		}
 	}
 }
@@ -205,7 +205,7 @@ func TestRollupIsTheMeanOfItsMinute(t *testing.T) {
 	k := key("shop/web", "rps")
 
 	// A minute of alternating 0 and 100 averages 50. A downsample that kept
-	// the last sample instead would report 0 or 100 — which is the difference
+	// the last sample instead would report 0 or 100, which is the difference
 	// between a scaling decision and a coin flip.
 	start := c.at
 	for i := range 12 {
@@ -324,7 +324,7 @@ func TestFootprintAtTargetScale(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&after)
 	// Without this the store is unreachable by the second reading and the GC
-	// collects the very thing being measured — which reports a comfortable
+	// collects the very thing being measured, which reports a comfortable
 	// zero and tests nothing.
 	runtime.KeepAlive(m)
 

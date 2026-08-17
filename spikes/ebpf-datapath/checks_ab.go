@@ -11,7 +11,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-// check1 — connect4 at the root cgroup rewrites a VIP connect from both a
+// check1: connect4 at the root cgroup rewrites a VIP connect from both a
 // plain host process and a process in a netns under a systemd-managed
 // cgroup, without disturbing systemd's own cgroup programs.
 func check1(e *env) error {
@@ -95,7 +95,7 @@ func sortedIDs(ids []ebpf.ProgramID) []ebpf.ProgramID {
 	return out
 }
 
-// check2 — the pinned cgroup link survives the loader exiting, and
+// check2: the pinned cgroup link survives the loader exiting, and
 // Link.Update() swaps programs without dropping connects.
 func check2(e *env) error {
 	// A child process re-attaches+pins another link, then exits. If the pin

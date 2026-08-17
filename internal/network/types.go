@@ -8,7 +8,7 @@ import (
 
 // This file is the driver-neutral vocabulary: the types the reconciler speaks
 // to whatever network driver is behind its interfaces, and the validators they
-// share. Nothing here knows how a service is programmed — only what one is.
+// share. Nothing here knows how a service is programmed: only what one is.
 
 // Port protocols. A service port is TCP unless it says otherwise; the datapath
 // balances TCP only (PRD §5.2.5), and the jobspec has no field to declare UDP,
@@ -45,7 +45,7 @@ type Service struct {
 	// Ports the frontend listens on.
 	Ports []ServicePort
 	// Backends are the allocs that should receive traffic. Only allocs that are
-	// actually running belong here — an alloc that is created, backing off or
+	// actually running belong here: an alloc that is created, backing off or
 	// mid-restart is not a backend, and listing it would send real requests
 	// into a black hole.
 	//
@@ -59,7 +59,7 @@ type Service struct {
 type Backend struct {
 	AllocID string
 	IPv4    string
-	// IPv6 is empty on a v4-only node — and on a v4-only attachment adopted
+	// IPv6 is empty on a v4-only node, and on a v4-only attachment adopted
 	// across the dual-stack upgrade, which a v6 frontend then omits (v1.41).
 	IPv6 string
 }
@@ -149,7 +149,7 @@ type Attachment struct {
 	EndpointID int64
 	// IPv4 is the address the datapath assigned.
 	IPv4 string
-	// IPv6 is the dual-stack twin (v1.41), or empty on a v4-only node — and
+	// IPv6 is the dual-stack twin (v1.41), or empty on a v4-only node, and
 	// on a v4-only attachment adopted across the dual-stack upgrade.
 	IPv6 string
 	// Service is the project/service the attachment's identity says it serves.
@@ -160,7 +160,7 @@ type Attachment struct {
 
 // validateLabelValue rejects values that would corrupt an identity. Project
 // and service names are DNS-1123 labels by the time they reach here (jobspec
-// R1), so this is a last-line assertion rather than the real gate — but the
+// R1), so this is a last-line assertion rather than the real gate, but the
 // consequence of a bad value is an identity that matches no policy, which fails
 // silently and denies traffic. Cheap to check, expensive to debug.
 func validateLabelValue(kind, value string) error {
@@ -173,7 +173,7 @@ func validateLabelValue(kind, value string) error {
 	return nil
 }
 
-// validIP reports whether s parses as an IP address — used to refuse an
+// validIP reports whether s parses as an IP address: used to refuse an
 // attachment whose address has not been filled in yet.
 func validIP(s string) bool {
 	return net.ParseIP(s) != nil

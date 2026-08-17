@@ -1,6 +1,6 @@
 // Package jobspec parses and validates Kanea job specifications (HCL v2).
 //
-// The schema and its rules R1–R11 are PRD §6. Two properties drive the design:
+// The schema and its rules R1-R11 are PRD §6. Two properties drive the design:
 //
 //   - Every rejection carries file/line/column diagnostics (R1). A spec error is
 //     a user error, and "invalid spec" without a position is useless.
@@ -8,8 +8,8 @@
 //     references and dependencies are resolved across files, so declaration
 //     order never matters (R9).
 //
-// Parsing is deliberately two-pass. The first pass reads structure only —
-// service names, ports — because the second pass needs them to evaluate
+// Parsing is deliberately two-pass. The first pass reads structure only
+// (service names, ports) because the second pass needs them to evaluate
 // ${service.<name>.host} references into real DNS names. Expressions are
 // collected before evaluation so the reference graph survives (R9, R10).
 package jobspec
@@ -50,7 +50,7 @@ type Storage struct {
 	Endpoint string
 	AuthRef  string
 	// Mode selects the S3 driver: "ro" (mountpoint-s3, the default) or "rw"
-	// (s3fs) — M0 spike ③.
+	// (s3fs); M0 spike ③.
 	Mode string
 	// NFS and SMB:
 	Server  string
@@ -228,7 +228,7 @@ type Build struct {
 	CacheRepo  string
 	// RegistryAuthRef names the secret holding a docker config.json used to
 	// push the built image. It is scoped by R5 like every other reference, and
-	// it is materialised as a file for the duration of the build — never put in
+	// it is materialised as a file for the duration of the build, never put in
 	// the build context, and never a --build-arg (build args survive in image
 	// history, §10.2).
 	RegistryAuthRef string
@@ -249,7 +249,7 @@ type Task struct {
 	Env          map[string]string
 	// User is the numeric identity the workload runs as (R23). Nil means the
 	// image's own USER directive stands, which is what every spec written
-	// before R23 meant — so adding the field changes no running service.
+	// before R23 meant, so adding the field changes no running service.
 	User *User
 	// Resources are enforced where declared; zero means unbounded (R11,
 	// v1.58) and no default is ever filled in.
@@ -271,8 +271,8 @@ type Task struct {
 // Device requests a host device the operator has granted (R17).
 //
 // It carries a grant name and no path. The node holds the mapping from grant to
-// device nodes, so a spec cannot ask for `/dev/mem` — there is nowhere to write
-// it — and no host path travels through the Store or a git repository.
+// device nodes, so a spec cannot ask for `/dev/mem` (there is nowhere to write
+// it) and no host path travels through the Store or a git repository.
 type Device struct {
 	// Name is local to the task: it makes duplicates detectable and reads in a
 	// diagnostic. It has no meaning outside the spec.
@@ -304,13 +304,13 @@ type Socket struct {
 //
 // Numeric only, and there is no field here for a username: see hclUser for why
 // resolving one is a thing this deliberately does not do. Setting a user is not
-// a substitute for R13 — the capability rules apply unchanged — but it is what
+// a substitute for R13 (the capability rules apply unchanged) but it is what
 // makes startup privilege unnecessary: the baseline's CHOWN/SETUID/SETGID exist
 // so an image can do at startup what this states up front, and a spec that
 // states it can pair this block with capabilities = ["none"].
 // The fields are `int` rather than `uint32` so that validateUser sees the value
 // as it was written and can say so. Narrowing happens at the toDesired boundary,
-// where Resources is narrowed too — after validation has refused the values that
+// where Resources is narrowed too: after validation has refused the values that
 // would not survive it.
 type User struct {
 	UID int
@@ -322,7 +322,7 @@ type User struct {
 }
 
 // MaxID is the largest uid or gid a spec may name. 2^32-1 is (uid_t)-1, which
-// the kernel reserves to mean "unchanged" in chown(2) — a workload asking to
+// the kernel reserves to mean "unchanged" in chown(2): a workload asking to
 // run as it is asking for something that is not a user.
 const MaxID = 1<<32 - 2
 
@@ -341,7 +341,7 @@ type Resources struct {
 	Memory int
 }
 
-// DefaultCPU is the function CPU default in MHz (R25) — services default to
+// DefaultCPU is the function CPU default in MHz (R25); services default to
 // unbounded since v1.58, functions deliberately do not: the wasm sandbox's
 // caps are promises.
 const DefaultCPU = 100
@@ -371,7 +371,7 @@ const (
 	PublishUDP = "udp"
 )
 
-// Port protocols (v1.42). A udp port never gets a VIP frontend — it exists
+// Port protocols (v1.42). A udp port never gets a VIP frontend: it exists
 // only to be published, and everything frontend-shaped refuses it at plan.
 const (
 	PortTCP = "tcp"
@@ -384,7 +384,7 @@ const (
 // An expose block generates an auto-FQDN, requests a certificate *for those
 // domains* and requires one unambiguous upstream port; a service on three node
 // ports has no such thing. Nesting would make every expose field conditionally
-// meaningful — the same reason R17's device grants are a separate kind rather
+// meaningful: the same reason R17's device grants are a separate kind rather
 // than a relaxation of the host volume driver.
 type Publish struct {
 	// Port names the `network { port }` this listener forwards to. There is no
@@ -418,7 +418,7 @@ func (p *Publish) ResolvedMode() string {
 // NetworkPolicy is the per-service ingress allowlist (R14).
 //
 // It only ever *adds* reachability. The datapath unions ingress allow edges, so
-// an entry here cannot weaken the project's default-deny boundary — which is
+// an entry here cannot weaken the project's default-deny boundary, which is
 // what makes it safe to let a job spec influence policy at all.
 type NetworkPolicy struct {
 	// AllowFrom names the peers permitted to reach this service, each a
@@ -429,7 +429,7 @@ type NetworkPolicy struct {
 	DefRange hcl.Range
 }
 
-// Peers returns the parsed allowlist. It assumes validation has run — a spec
+// Peers returns the parsed allowlist. It assumes validation has run: a spec
 // that reached the reconciler has already had every entry checked.
 func (p *NetworkPolicy) Peers() []PeerRef {
 	if p == nil {
@@ -457,7 +457,7 @@ func (p PeerRef) String() string { return p.Project + "/" + p.Service }
 //
 // Both halves are required. A bare service name would have to mean "in my own
 // project", which reads fine in a same-project spec and silently means the
-// wrong thing the moment the block is copied into another project — so the
+// wrong thing the moment the block is copied into another project, so the
 // fully-qualified form is the only one accepted (R14).
 func ParsePeerRef(s string) (PeerRef, error) {
 	project, service, ok := strings.Cut(s, "/")
@@ -488,7 +488,7 @@ type Port struct {
 	Container int
 	// Protocol is PortTCP (the default) or PortUDP (v1.42). A udp port is
 	// excluded from the VIP, from expose, from ${service.*.port} references
-	// and from http/tcp health checks — it exists to be published (R21).
+	// and from http/tcp health checks: it exists to be published (R21).
 	Protocol string
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
@@ -528,8 +528,8 @@ type Expose struct {
 	DefRange hcl.Range
 }
 
-// Expose protocols (§6.2 R28, v1.41). The marker names the operator's intent —
-// "this upstream speaks gRPC" — and what it selects is the upstream transport:
+// Expose protocols (§6.2 R28, v1.41). The marker names the operator's intent
+// ("this upstream speaks gRPC") and what it selects is the upstream transport:
 // grpc means the edge dials the VIP over plaintext HTTP/2.
 const (
 	// ExposeProtocolHTTP is the default and is normalized to "" at conversion.
@@ -542,7 +542,7 @@ const (
 //
 // Mode names a source, never a path: "acme", "self-signed", "provided" or
 // "plaintext". Name narrows "provided" to one of the grants in the node's
-// --tls-certs-config — the same rule R17 draws for devices, for the same
+// --tls-certs-config: the same rule R17 draws for devices, for the same
 // reason. A spec is deployed by GitOps, so anything it can name, anyone who
 // can push to a synced repository can name.
 //
@@ -597,7 +597,7 @@ type HealthCheck struct {
 	DefRange hcl.Range
 }
 
-// Health check types (R7). `exec` takes an argument array — never a shell
+// Health check types (R7). `exec` takes an argument array, never a shell
 // string, which would be an injection vector (PRD §14, A03).
 const (
 	HealthHTTP = "http"
@@ -616,7 +616,7 @@ type Volume struct {
 	// ends up owned takes DefaultVolumeMode if it declared no mode.
 	//
 	// All three stay nil for a task with no user block and no explicit fields,
-	// and nil means "leave it exactly as it is" — which is what every spec
+	// and nil means "leave it exactly as it is", which is what every spec
 	// written before R24 means, and is why they are pointers rather than a
 	// zero value that would read as "chown to root".
 	//
@@ -695,7 +695,7 @@ type Update struct {
 	MinHealthy  string
 	// Auto turns on image auto-update (R19): the tag task.image declares is
 	// re-resolved on a schedule and the digest behind it is pinned when it
-	// moves. Off by default — following a moving tag is the one thing §14 A08
+	// moves. Off by default: following a moving tag is the one thing §14 A08
 	// otherwise refuses, so it is stated explicitly or not at all.
 	Auto bool
 	// Interval is how often the registry is polled. Empty means the default.

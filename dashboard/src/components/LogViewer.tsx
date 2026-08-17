@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 
 export interface LogViewerLine {
   key: string
-  /** prefix is the muted-amber column before the text — an alloc name. */
+  /** prefix is the muted-amber column before the text; an alloc name. */
   prefix?: string | undefined
   text: string
 }
@@ -26,7 +26,7 @@ export interface LogViewerProps {
   onFollowChange?: ((follow: boolean) => void) | undefined
   notice?: React.ReactNode | undefined
   emptyText: string
-  /** heightClass fixes the box's size — the viewer never grows with its
+  /** heightClass fixes the box's size; the viewer never grows with its
    * content, so a filling buffer cannot push the page around. */
   heightClass?: string | undefined
   /** toolbar adds actions over the whole buffer. `expand` opens the viewer in
@@ -36,12 +36,12 @@ export interface LogViewerProps {
    * card already says what this is. */
   title?: React.ReactNode | undefined
   /** controls are the caller's own filter/follow inputs. They are rendered
-   * again inside the dialog so they stay reachable full screen — the page's
+   * again inside the dialog so they stay reachable full screen: the page's
    * copies are behind the backdrop, so nothing is visibly duplicated. Keep
    * them controlled by the caller's state and both copies stay in step. */
   controls?: React.ReactNode | undefined
   /** tintSeverity colors lines matching error/warn heuristics. Text nodes
-   * only — the classification reads the text, it never interprets it. */
+   * only: the classification reads the text, it never interprets it. */
   tintSeverity?: boolean | undefined
 }
 
@@ -74,7 +74,7 @@ function flatten(lines: LogViewerLine[]): string {
  * at the bottom. Yanking the view down while someone is reading the line that
  * broke the build is the one thing a live log must not do.
  *
- * `follow` used to short-circuit that check — `follow || (live && pinned)` —
+ * `follow` used to short-circuit that check: `follow || (live && pinned)`;
  * and the service page passes a `follow` that defaults to true and had nothing
  * to turn it off, so the detection was dead code on the one page that used it
  * and scrolling up snapped straight back. The reader's gesture now *drives*
@@ -100,7 +100,7 @@ export function LogViewer({
   const [expanded, setExpanded] = useState(false)
   // The row the reader was looking at when they expanded or collapsed. Moving
   // the viewer in or out of the dialog remounts its DOM, and a fresh scroll
-  // container starts at the top — which is the *oldest* line in the buffer,
+  // container starts at the top, which is the *oldest* line in the buffer,
   // the least useful place to land.
   const anchorRow = useRef<number | null>(null)
 
@@ -111,7 +111,7 @@ export function LogViewer({
     overscan: 20,
     // Measure immediately, then let ResizeObserver keep it current. The
     // default waits for the observer's first callback, which leaves the first
-    // paint empty — and never comes at all where ResizeObserver is missing
+    // paint empty, and never comes at all where ResizeObserver is missing
     // (jsdom). The fallback height is max-h-96 (384px), the container's own
     // default.
     observeElementRect: (instance, cb) => {
@@ -151,7 +151,7 @@ export function LogViewer({
 
   // Restore the reader's place across the remount that expanding or collapsing
   // causes. `pinned` is a ref on this component, which does not itself
-  // unmount, so following survives the move on its own — only the scroll
+  // unmount, so following survives the move on its own: only the scroll
   // position is lost with the old DOM node, and it comes back by row index
   // rather than by pixels, because the box is a different height on each side.
   useLayoutEffect(() => {
@@ -328,7 +328,7 @@ export function LogViewer({
     <>
       {/* The viewer itself has moved into the dialog, so the card would
           otherwise collapse to nothing and the page behind the backdrop would
-          reflow — visible as a jump the moment it closes. This holds the
+          reflow: visible as a jump the moment it closes. This holds the
           space. */}
       <div className={cn('rounded-md bg-muted/40', heightClass ?? 'h-96')} aria-hidden />
       <Dialog

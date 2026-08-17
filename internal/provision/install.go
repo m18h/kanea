@@ -46,7 +46,7 @@ type Layout struct {
 	NodeCIDR    string
 	ClusterCIDR string
 	// NodeCIDR6 and ClusterCIDR6 are the opt-in dual-stack halves
-	// (PRD v1.41). Empty means v4-only — deliberately no defaults, and they
+	// (PRD v1.41). Empty means v4-only: deliberately no defaults, and they
 	// come together or not at all. The kanead flag trio also needs
 	// --service-cidr6, which is validated on kanead's own argv.
 	NodeCIDR6    string
@@ -64,9 +64,9 @@ const (
 // ValidateNetworking checks the CIDRs before they configure the datapath.
 //
 // A typo otherwise surfaces on a live node rather than here: the containment
-// rule is that the cluster CIDR must cover the node CIDR — the range the
+// rule is that the cluster CIDR must cover the node CIDR; the range the
 // datapath masquerades as internal has to contain the range it allocates alloc
-// addresses from — so a node CIDR outside its cluster CIDR is a configuration
+// addresses from, so a node CIDR outside its cluster CIDR is a configuration
 // that cannot route.
 func (l Layout) ValidateNetworking() error {
 	node, cluster := l.Networking()
@@ -95,7 +95,7 @@ func (l Layout) ValidateNetworking() error {
 	}
 
 	// The dual-stack pair (v1.41): both or neither, and the same containment
-	// rule. kanead's own argv re-checks with --service-cidr6 in the picture —
+	// rule. kanead's own argv re-checks with --service-cidr6 in the picture:
 	// this is the installer's earlier, friendlier refusal.
 	if (l.NodeCIDR6 == "") != (l.ClusterCIDR6 == "") {
 		return fmt.Errorf("--node-cidr6 and --cluster-cidr6 come together: set both or neither")
@@ -171,7 +171,7 @@ func (l Layout) receiptDir() string { return filepath.Join(l.Prefix, ".receipts"
 // Images pulls and unpacks OCI image components.
 //
 // An interface because it needs a running containerd, which does not exist
-// until the archive components are installed and started — the install
+// until the archive components are installed and started: the install
 // bootstraps itself in one direction (§5.2.12), and this is where that shows
 // up in the types.
 type Images interface {
@@ -191,7 +191,7 @@ const (
 	ActionCurrent Action = "up-to-date"
 	// ActionPlanned is what --dry-run reports instead of installing.
 	ActionPlanned Action = "would install"
-	// ActionSkipped means a prerequisite was missing — an image component with
+	// ActionSkipped means a prerequisite was missing: an image component with
 	// no containerd to pull it through, say.
 	ActionSkipped Action = "skipped"
 )
@@ -226,7 +226,7 @@ type Installer struct {
 	Force bool
 }
 
-// Install places the given components, in the order it is given them — which
+// Install places the given components, in the order it is given them, which
 // [Manifest.Select] guarantees is manifest order, because containerd has to be
 // running before an image can be pulled through it.
 //
@@ -299,7 +299,7 @@ func (i *Installer) installOne(ctx context.Context, c *Component, arch string) R
 
 // installArtefact handles the archive and binary kinds.
 func (i *Installer) installArtefact(ctx context.Context, c *Component, arch string) error {
-	// #nosec G301 — see writeFileAtomic: the prefix holds executables the
+	// #nosec G301; see writeFileAtomic: the prefix holds executables the
 	// unprivileged buildkit user must traverse.
 	if err := os.MkdirAll(i.Layout.Prefix, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", i.Layout.Prefix, err)
@@ -316,7 +316,7 @@ func (i *Installer) installArtefact(ctx context.Context, c *Component, arch stri
 	files := c.ResolveFiles(arch)
 	switch c.Kind {
 	case KindBinary:
-		// One file, and the payload is it — there is nothing to extract.
+		// One file, and the payload is it; there is nothing to extract.
 		if len(files) != 1 {
 			return fmt.Errorf("component %q is a bare binary but names %d files", c.Name, len(files))
 		}
@@ -350,7 +350,7 @@ func (i *Installer) installImage(ctx context.Context, c *Component, arch string)
 		// having it locally is the install.
 		return nil
 	}
-	// #nosec G301 — see writeFileAtomic.
+	// #nosec G301: see writeFileAtomic.
 	if err := os.MkdirAll(i.Layout.Prefix, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", i.Layout.Prefix, err)
 	}
@@ -387,7 +387,7 @@ type receipt struct {
 	Arch    string `json:"arch"`
 	// Pin is the hash or digest this was installed against. Comparing it
 	// rather than the version means a manifest that re-pins the same version
-	// at a different hash — an upstream re-tagging a release — reinstalls.
+	// at a different hash (an upstream re-tagging a release) reinstalls.
 	Pin string `json:"pin"`
 }
 
@@ -404,7 +404,7 @@ func (i *Installer) receiptPath(name string) string {
 
 // isCurrent reports whether the pinned version is already installed.
 func (i *Installer) isCurrent(c *Component, arch string) (bool, error) {
-	raw, err := os.ReadFile(i.receiptPath(c.Name)) // #nosec G304 — a path this package composed
+	raw, err := os.ReadFile(i.receiptPath(c.Name)) // #nosec G304; a path this package composed
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
@@ -449,7 +449,7 @@ func (i *Installer) writeReceipt(c *Component, arch string) error {
 	if err != nil {
 		return fmt.Errorf("encode the receipt for %s: %w", c.Name, err)
 	}
-	// #nosec G301 — receipts record installed versions and carry nothing
+	// #nosec G301; receipts record installed versions and carry nothing
 	// secret; `kanea doctor` reads them, and it is not always run as root.
 	if err := os.MkdirAll(i.Layout.receiptDir(), 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", i.Layout.receiptDir(), err)
@@ -460,7 +460,7 @@ func (i *Installer) writeReceipt(c *Component, arch string) error {
 // Installed reads the receipt for a component, if there is one. `kanea doctor`
 // uses it to enforce the version matrix.
 func (i *Installer) Installed(name string) (version, pin string, ok bool) {
-	raw, err := os.ReadFile(i.receiptPath(name)) // #nosec G304 — a path this package composed
+	raw, err := os.ReadFile(i.receiptPath(name)) // #nosec G304: a path this package composed
 	if err != nil {
 		return "", "", false
 	}

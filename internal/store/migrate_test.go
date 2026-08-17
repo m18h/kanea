@@ -11,8 +11,8 @@ import (
 )
 
 // The migration framework ships with no migrations, because v1 is the first
-// schema. These tests are about the machinery — the planner, the transaction
-// boundary and the downgrade guard — which has to be right before the first
+// schema. These tests are about the machinery (the planner, the transaction
+// boundary and the downgrade guard) which has to be right before the first
 // migration exists, not after.
 
 func openAt(t *testing.T, path string) Store {

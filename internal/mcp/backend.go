@@ -20,7 +20,7 @@ import (
 // This is the whole of §16.3's "no side channels, no privileged backdoors", and
 // it is structural rather than a promise. A tool cannot read the Store, cannot
 // hold a secrets store, and cannot decide that an agent is allowed to do
-// something — the only verb it has is "send this request", and the request lands
+// something: the only verb it has is "send this request", and the request lands
 // on the same authenticated, authorized, rate-limited, audited handler the CLI
 // and the dashboard reach. A privilege escalation in a tool would have to be a
 // privilege escalation in the API, which is the surface that already gets the
@@ -36,8 +36,8 @@ type Backend interface {
 // API decides who a caller is, on every request, and a token revoked between
 // two tool calls stops working at the second one.
 type Session struct {
-	// Header carries the caller's credentials — Authorization, Cookie, the CSRF
-	// token — and nothing else. It is built from an allowlist (see
+	// Header carries the caller's credentials (Authorization, Cookie, the CSRF
+	// token) and nothing else. It is built from an allowlist (see
 	// SessionFromRequest), because forwarding a whole request's headers into a
 	// synthesized one is how a client-supplied X-Forwarded-For ends up in an
 	// audit entry.
@@ -82,7 +82,7 @@ func (s *Session) apply(req *http.Request) {
 //
 // This is the streamable-HTTP transport's backend: kanead is already serving
 // the handler, so a tool call is a function call that happens to be shaped like
-// a request. The alternative — dialling its own unix socket — would be the same
+// a request. The alternative (dialling its own unix socket) would be the same
 // requests with a round trip and a second set of connection limits, to reach a
 // server in the same process.
 type HandlerBackend struct {
@@ -117,7 +117,7 @@ func (b HandlerBackend) Do(ctx context.Context, req *http.Request) (*http.Respon
 // recorder is an http.ResponseWriter that keeps what was written.
 //
 // Bounded, unlike httptest's: a tool result is capped anyway, and a handler that
-// streams — the log routes do — must not be able to fill memory before the cap
+// streams (the log routes do) must not be able to fill memory before the cap
 // is applied. Writes past the limit are dropped and counted rather than
 // erroring, because a handler that gets a write error mid-stream logs it as a
 // client disconnect, which is not what happened.
@@ -164,7 +164,7 @@ func (r *recorder) Flush() {}
 
 // SocketBackend talks to a running kanead over its unix socket. It is what
 // `kanea mcp` uses: a separate process, holding the same credential the CLI
-// does — the socket itself.
+// does; the socket itself.
 type SocketBackend struct {
 	client *http.Client
 	socket string
@@ -245,7 +245,7 @@ func (s *Server) call(
 	return nil
 }
 
-// callText makes a request whose body is not JSON — the log routes.
+// callText makes a request whose body is not JSON: the log routes.
 func (s *Server) callText(ctx context.Context, sess *Session, path string) (_ string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://kanead"+path, nil)
 	if err != nil {

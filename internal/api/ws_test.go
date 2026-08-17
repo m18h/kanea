@@ -31,7 +31,7 @@ func dialWS(t *testing.T, h *harness, origin string) *websocket.Conn {
 	}
 	// A log batch may be up to maxBatchBytes (PRD v1.70), and coder/websocket
 	// defaults a client to a 32 KiB read limit. A browser has no such limit, so
-	// this is a Go-client concern only — but it is a real one, and a test that
+	// this is a Go-client concern only, but it is a real one, and a test that
 	// did not raise it would fail on frame size rather than on behaviour.
 	conn.SetReadLimit(1 << 20)
 	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "") })
@@ -120,7 +120,7 @@ func TestWebSocketDeniesEveryOriginByDefault(t *testing.T) {
 	}
 }
 
-// No Origin means no browser, so it cannot be a hijack — that is how the CLI
+// No Origin means no browser, so it cannot be a hijack: that is how the CLI
 // connects.
 func TestWebSocketAllowsRequestsWithoutAnOrigin(t *testing.T) {
 	h := newHarness(t)
@@ -190,7 +190,7 @@ func TestWebSocketServicesFeedCarriesTheStore(t *testing.T) {
 	if payload.Services[0].Count != 3 {
 		t.Errorf("count = %d, want 3", payload.Services[0].Count)
 	}
-	// The live surface carries the projected hash too (v1.64) — a dashboard
+	// The live surface carries the projected hash too (v1.64); a dashboard
 	// watching the feed must not need a REST round-trip to see a deploy.
 	if got, want := payload.Services[0].SpecHash, reconciler.SpecHash(payload.Services[0].Desired); got != want {
 		t.Errorf("spec_hash on the feed = %q, want %q", got, want)

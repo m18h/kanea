@@ -7,13 +7,13 @@ import (
 )
 
 // devPrefix marks every interface the datapath owns. Together with the alias
-// it is the ownership mark that makes enumeration — and therefore the reaper —
+// it is the ownership mark that makes enumeration, and therefore the reaper:
 // safe.
 const devPrefix = "kn"
 
 // aliasPrefix opens every ownership alias: "kanea/<allocID>/<v4>" or, since
 // v1.41, "kanea/<allocID>/<v4>,<v6>". The v4-only form must stay parseable
-// forever — it is the durable record written by nodes that predate
+// forever: it is the durable record written by nodes that predate
 // dual-stack, and a live upgrade adopts it rather than re-plumbing.
 const aliasPrefix = "kanea/"
 
@@ -28,7 +28,7 @@ func aliasFor(allocID string, ip netip.Addr, ip6 netip.Addr) string {
 
 // parseAlias reads an ownership alias back. Anything that does not parse is
 // not ours, whatever the interface is called. A missing v6 half returns the
-// zero Addr — the v4-only aliases of pre-v1.41 nodes.
+// zero Addr: the v4-only aliases of pre-v1.41 nodes.
 func parseAlias(alias string) (allocID string, ip netip.Addr, ip6 netip.Addr, ok bool) {
 	rest, found := strings.CutPrefix(alias, aliasPrefix)
 	if !found {
@@ -75,7 +75,7 @@ func newIPAM(nodeCIDR netip.Prefix) *ipam {
 		byAlloc: map[string]netip.Addr{},
 	}
 	// Only v4 has a broadcast address. For v6 the zero Addr never equals a
-	// valid address, so Reserve's skip is inert — and the network address
+	// valid address, so Reserve's skip is inert, and the network address
 	// (the subnet-router anycast) is already skipped by starting at Next().
 	if masked.Addr().Is4() {
 		p.broadcast = broadcastOf(masked)
@@ -135,7 +135,7 @@ func (p *ipam) Len() int { return len(p.byAlloc) }
 // Rebuild replaces the reservation state with what the marked veths say.
 // Aliases that do not parse, or addresses outside the pool, are ignored: they
 // are not ours to account for. One ipam instance adopts whichever half of a
-// dual alias falls inside its own prefix — per family, not fatally — so a
+// dual alias falls inside its own prefix (per family, not fatally) so a
 // v4-only alias on a dual-stack node rebuilds its v4 half and nothing else.
 func (p *ipam) Rebuild(links []Link) {
 	p.byIP = map[netip.Addr]string{}

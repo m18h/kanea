@@ -5,8 +5,8 @@ import { Topic, logBatchSchema, type LogLine } from '@/lib/api'
 /**
  * MaxLogLines bounds what a tab holds.
  *
- * A dashboard left open on a chatty service would otherwise grow without limit
- * — the daemon streams as fast as the workload writes, and the browser has
+ * A dashboard left open on a chatty service would otherwise grow without limit:
+ * the daemon streams as fast as the workload writes, and the browser has
  * nowhere to put it. Dropping the oldest is the same trade §17 makes for the
  * log pipeline: recent output is what anyone is looking at. Ten thousand
  * because the viewer virtualizes: render cost is the viewport's, so the
@@ -20,7 +20,7 @@ export interface LogState {
   /** dropped counts lines discarded here to stay within MaxLogLines. */
   dropped: number
   /**
-   * droppedByDaemon counts lines the node never sent — trimmed by its per-frame
+   * droppedByDaemon counts lines the node never sent; trimmed by its per-frame
    * cap, clamped off an oversized tail, or lost with a frame a full send buffer
    * refused (PRD v1.70).
    *

@@ -4,7 +4,7 @@ package auth
 //
 // A simple bind rests on a different trust argument from the other two
 // mechanisms: with a local account Kanea verifies the password itself, with
-// OIDC a provider hands over a signed assertion — here Kanea learns only that
+// OIDC a provider hands over a signed assertion; here Kanea learns only that
 // the directory accepted the password on a channel Kanea configured. So the
 // channel is mandatory TLS with no insecure flag, the RFC 4513
 // unauthenticated-bind trap is closed before the network is touched, and both
@@ -32,7 +32,7 @@ const MethodLDAP Method = "ldap"
 // Errors the login path distinguishes.
 var (
 	// ErrLDAPNoRole means the directory vouched for them and Kanea has no
-	// role for them — the difference between "log in again" and "ask an
+	// role for them: the difference between "log in again" and "ask an
 	// administrator", so it maps to 403 where every other refusal is 401
 	// (the OIDC no-role rule).
 	ErrLDAPNoRole = errors.New("auth: no role maps to this account's directory groups")
@@ -51,8 +51,8 @@ type LDAPConfig struct {
 	// Cleartext is refused at construction; there is no insecure option.
 	URL string
 	// BindDN and BindPassword are the service account the user search runs
-	// as; both empty means an anonymous search. The password arrives resolved
-	// — the `secret:` reference is the caller's to handle (R3).
+	// as; both empty means an anonymous search. The password arrives resolved:
+	// the `secret:` reference is the caller's to handle (R3).
 	BindDN       string
 	BindPassword string
 	// UserBaseDN is where users are searched.
@@ -66,7 +66,7 @@ type LDAPConfig struct {
 	GroupBaseDN string
 	GroupFilter string
 	// AdminGroups and ViewerGroups are the group DNs that map to a role,
-	// deny-by-default and admin checked first. Compared case-insensitively —
+	// deny-by-default and admin checked first. Compared case-insensitively:
 	// DNs are, and directories are inconsistent about the case they return.
 	AdminGroups  []string
 	ViewerGroups []string
@@ -84,7 +84,7 @@ type LDAP struct {
 	log *slog.Logger
 }
 
-// NewLDAP validates the configuration — no I/O, deliberately. Unlike OIDC
+// NewLDAP validates the configuration: no I/O, deliberately. Unlike OIDC
 // discovery (which is config validation over the network), a directory's
 // reachability is weather: it is checked once at startup as a warning
 // (CheckConnection), never as a refusal to run.
@@ -97,7 +97,7 @@ func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
 	case "ldaps", "ldap":
 		// ldap:// gets StartTLS unconditionally in Verify. The wire carries
 		// the user's actual password, which is a stronger reason than any
-		// TLS default elsewhere — hence no insecure flag at all.
+		// TLS default elsewhere: hence no insecure flag at all.
 	default:
 		return nil, fmt.Errorf(
 			"auth: LDAP URL must be ldaps://host or ldap://host (StartTLS is forced); got %q", cfg.URL)
@@ -139,7 +139,7 @@ func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
 
 	tlsConfig := &tls.Config{ServerName: parsed.Hostname(), MinVersion: tls.VersionTLS12}
 	if cfg.CAFile != "" {
-		pem, err := os.ReadFile(cfg.CAFile) // #nosec G304 — an operator flag
+		pem, err := os.ReadFile(cfg.CAFile) // #nosec G304; an operator flag
 		if err != nil {
 			return nil, fmt.Errorf("auth: read --ldap-ca: %w", err)
 		}
@@ -153,7 +153,7 @@ func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
 	return &LDAP{cfg: cfg, tls: tlsConfig, log: cfg.Logger}, nil
 }
 
-// Server names the directory, for audit Detail and status surfaces — the
+// Server names the directory, for audit Detail and status surfaces: the
 // Issuer() twin.
 func (l *LDAP) Server() string { return l.cfg.URL }
 
@@ -165,7 +165,7 @@ func (l *LDAP) Server() string { return l.cfg.URL }
 func (l *LDAP) Verify(ctx context.Context, name, password string) (subject string, role Role, err error) {
 	// RFC 4513 §5.1.2: a bind with a DN and an empty password is an
 	// "unauthenticated bind" many servers treat as anonymous success. Refused
-	// before the network is touched — a directory's permissiveness must never
+	// before the network is touched: a directory's permissiveness must never
 	// become a login. Whitespace-only gets the same door.
 	if strings.TrimSpace(password) == "" {
 		return "", "", fmt.Errorf("%w: empty password", ErrUnauthenticated)
@@ -180,14 +180,14 @@ func (l *LDAP) Verify(ctx context.Context, name, password string) (subject strin
 	}
 	defer conn.Close() //nolint:errcheck // read-side close on the way out
 
-	// The service bind. Its failure is operational — this is the operator's
-	// credential, not the user's — and is logged loudly as such.
+	// The service bind. Its failure is operational (this is the operator's
+	// credential, not the user's) and is logged loudly as such.
 	if l.cfg.BindDN != "" {
 		if err := conn.Bind(l.cfg.BindDN, l.cfg.BindPassword); err != nil {
 			l.log.Error("the LDAP service bind failed",
 				"server", l.cfg.URL, "bind_dn", l.cfg.BindDN, "error", err)
 			// The %v is deliberate here and below: the sentinel is the only
-			// error callers may match — a go-ldap cause in the chain would be
+			// error callers may match; a go-ldap cause in the chain would be
 			// API surface nobody promised.
 			return "", "", fmt.Errorf("%w: service bind: %v", ErrLDAPUnavailable, err) //nolint:errorlint // see above
 		}
@@ -228,7 +228,7 @@ func (l *LDAP) Verify(ctx context.Context, name, password string) (subject strin
 // maxLDAPNameBytes bounds the typed name; nothing legitimate is longer.
 const maxLDAPNameBytes = 256
 
-// dial opens the connection with TLS established — ldaps natively, StartTLS
+// dial opens the connection with TLS established: ldaps natively, StartTLS
 // forced on ldap. A StartTLS failure is a refusal, never a cleartext continue.
 func (l *LDAP) dial(ctx context.Context) (*ldap.Conn, error) {
 	dialer := &net.Dialer{Timeout: l.cfg.Timeout}
@@ -283,7 +283,7 @@ func (l *LDAP) findUser(conn *ldap.Conn, name string) (*ldap.Entry, error) {
 	}
 }
 
-// groupsFor extracts the user's groups — memberOf from the entry, or a group
+// groupsFor extracts the user's groups: memberOf from the entry, or a group
 // search re-bound as the service account (the connection is bound as the user
 // by now, and group visibility must not depend on user self-visibility).
 func (l *LDAP) groupsFor(conn *ldap.Conn, entry *ldap.Entry) ([]string, error) {
@@ -318,7 +318,7 @@ const maxLDAPGroups = 1000
 // roleFor maps groups to a role, deny-by-default.
 //
 // Admin first: an account in both lists is an admin, because checking viewer
-// first would demote every admin who is also in a viewer group — which is
+// first would demote every admin who is also in a viewer group, which is
 // most of them (the OIDC rule, verbatim).
 func (l *LDAP) roleFor(groups []string) (Role, bool) {
 	for _, g := range groups {
@@ -339,7 +339,7 @@ func (l *LDAP) roleFor(groups []string) (Role, bool) {
 }
 
 // CheckConnection dials and service-binds once, for the startup
-// reachability warning. Failure here is weather, not configuration — the
+// reachability warning. Failure here is weather, not configuration: the
 // caller warns and serves.
 func (l *LDAP) CheckConnection(ctx context.Context) error {
 	conn, err := l.dial(ctx)

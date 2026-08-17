@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Before you file: check the **Deliberately not built** section of
-        [AGENTS.md](https://github.com/m18h/kanea/blob/main/AGENTS.md) — several
+        [AGENTS.md](https://github.com/m18h/kanea/blob/main/AGENTS.md); several
         obvious features are absent on purpose, with the reasoning written down.
         If your request is one of them, the useful issue is the one that engages
         with that reasoning rather than restating the feature.
@@ -21,7 +21,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: What would it look like — a spec block, a flag, a CLI command, a dashboard surface? Sketches welcome.
+      description: What would it look like; a spec block, a flag, a CLI command, a dashboard surface? Sketches welcome.
     validations:
       required: true
   - type: textarea
@@ -33,4 +33,4 @@ body:
     id: fit
     attributes:
       label: Anything the PRD says about this?
-      description: If the PRD or AGENTS.md already touches this area, link the section — it speeds the conversation up considerably.
+      description: If the PRD or AGENTS.md already touches this area, link the section; it speeds the conversation up considerably.

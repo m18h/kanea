@@ -39,7 +39,7 @@ func (d *deployer) ref(key string) string {
 }
 
 // runnerHarness is a runner over a real run store, a real syncer and a fake
-// buildctl — so a test drives the whole sequence the daemon drives.
+// buildctl, so a test drives the whole sequence the daemon drives.
 type runnerHarness struct {
 	runner   *gitops.Runner
 	runs     *gitops.Runs
@@ -141,7 +141,7 @@ func TestTheTagExpandsTheCommit(t *testing.T) {
 	}
 
 	// The built-in §6.1 documents. A tag that still reads "${GIT_SHA_SHORT}"
-	// would push a literal — and every build would overwrite the last.
+	// would push a literal, and every build would overwrite the last.
 	short := run.Commit[:7]
 	if !strings.HasSuffix(run.Image, ":"+short) {
 		t.Fatalf("image = %q, want the tag expanded to %s", run.Image, short)
@@ -178,7 +178,7 @@ func TestExpandTag(t *testing.T) {
 
 func TestGitIsNotInTheBuildContext(t *testing.T) {
 	// §10.2's hygiene rule: a `COPY .` with `.git` present puts the whole
-	// history — including any credential ever committed and later removed —
+	// history; including any credential ever committed and later removed;
 	// inside the published image.
 	//
 	// Asserted from inside the fake builder, at the moment the context is
@@ -350,7 +350,7 @@ func TestTheBuildLogIsWritten(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	body, err := os.ReadFile(h.runner.LogPath(run)) // #nosec G304 — a path the runner composed
+	body, err := os.ReadFile(h.runner.LogPath(run)) // #nosec G304; a path the runner composed
 	if err != nil {
 		t.Fatalf("read build log: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestALocalBuildNeedsNoGitSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// It fails, because an empty checkout has no recipe — but it fails as a
+	// It fails, because an empty checkout has no recipe, but it fails as a
 	// build, having got that far, rather than as a checkout error.
 	if run.State != gitops.RunFailed {
 		t.Fatalf("state = %q", run.State)

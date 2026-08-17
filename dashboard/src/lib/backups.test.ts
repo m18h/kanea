@@ -50,7 +50,7 @@ describe('describeArchive', () => {
   })
 
   it('says nothing rather than nothing-shaped when there are no counts', () => {
-    expect(describeArchive(archive())).toBe('—')
+    expect(describeArchive(archive())).toBe('-')
   })
 
   it('omits a count the manifest does not carry', () => {

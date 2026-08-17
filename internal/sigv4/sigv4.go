@@ -1,7 +1,7 @@
 // Package sigv4 implements AWS Signature Version 4 request signing.
 //
-// It exists because two subsystems sign AWS-shaped requests — the backup S3
-// sink (§15.3) and the Secrets Manager provider (§5.2.13) — and a signing
+// It exists because two subsystems sign AWS-shaped requests (the backup S3
+// sink (§15.3) and the Secrets Manager provider (§5.2.13)) and a signing
 // algorithm duplicated is a signing algorithm that drifts. The scope is
 // deliberately the signature and nothing else: no credential-provider chain,
 // no IMDS client, no retry framework. TLS, HTTP and the hashing come from the
@@ -23,7 +23,7 @@ import (
 // UnsignedPayload tells S3 not to include a body hash in the signature.
 //
 // The alternative is hashing the payload before sending it, which for a
-// multi-hundred-megabyte snapshot means reading it twice — once to hash, once
+// multi-hundred-megabyte snapshot means reading it twice: once to hash, once
 // to send. Only S3 accepts it; the JSON APIs (Secrets Manager) sign the real
 // body hash, which is cheap because their bodies are small.
 const UnsignedPayload = "UNSIGNED-PAYLOAD"
@@ -42,7 +42,7 @@ type Options struct {
 	// service is "s3".
 	PayloadHash string
 	// Now is the signing time. The zero value means time.Now, but callers
-	// with an injectable clock should pass it through — a skewed signature is
+	// with an injectable clock should pass it through: a skewed signature is
 	// a 403 with an unhelpful message.
 	Now time.Time
 }

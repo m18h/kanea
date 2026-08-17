@@ -19,7 +19,7 @@ type slogLogger = slog.Logger
 // Manager establishes, supervises and releases volume mounts.
 //
 // It is safe for concurrent use, and every mount is guarded by its own lock so
-// a wedged mount cannot block operations on any other one — which matters,
+// a wedged mount cannot block operations on any other one, which matters,
 // because "wedged" is the normal failure mode here, not an exotic one.
 type Manager struct {
 	runner        Runner
@@ -60,7 +60,7 @@ type mountState struct {
 	// not yet cleared. It is what makes the pair fire on transitions: a wedged
 	// mount is probed every 30 s and a failing one is retried every pass, so
 	// without it an outage would be one notification per probe. It also keeps
-	// the *first* successful mount silent — starting false means there is no
+	// the *first* successful mount silent: starting false means there is no
 	// failure to recover from.
 	announcedFailure bool
 	// lastProbeErr is why the most recent health probe failed.
@@ -71,14 +71,14 @@ type mountState struct {
 	lastMountErr error
 	// failures and nextAttemptAt back off repeated mount attempts. A mount
 	// command against an unreachable server costs the full mount timeout, and
-	// the reconcile loop runs every few seconds — without a backoff a single
+	// the reconcile loop runs every few seconds: without a backoff a single
 	// dead NFS server would leave the loop blocked in `mount` most of the time.
 	//
 	// The backoff deliberately resets on a daemon restart (PRD v1.37): the
 	// kernel mount table, not this struct, is the ground truth Ensure consults
 	// first, mounts are keyed by paths whose allocs may not exist any more,
 	// and a restart is legitimately a moment the operator may have fixed the
-	// server. The post-restart cost is bounded — one honest mount attempt per
+	// server. The post-restart cost is bounded: one honest mount attempt per
 	// distinct target, serialized per mount, before the schedule re-arms.
 	failures      int
 	nextAttemptAt time.Time
@@ -166,8 +166,8 @@ func (m *Manager) Ensure(ctx context.Context, req Request) error {
 		return nil
 	}
 
-	// Fail fast while backing off. The alloc still does not start — which is
-	// the point — but the reconcile pass is not spent blocked in a mount
+	// Fail fast while backing off. The alloc still does not start (which is
+	// the point) but the reconcile pass is not spent blocked in a mount
 	// command that is going to time out again.
 	if state.failures > 0 && m.now().Before(state.nextAttemptAt) {
 		return fmt.Errorf("mount %s at %s is backing off after %d failures: %w",
@@ -222,7 +222,7 @@ func (m *Manager) mount(ctx context.Context, state *mountState, req Request) err
 // and stays quiet until it recovers.
 //
 // The caller holds the mount's own lock. Emitting under it is safe by
-// constraint #8 — Publish never blocks and never returns an error — and the
+// constraint #8 (Publish never blocks and never returns an error) and the
 // lock is per mount, so even a misbehaving emitter could not stall a different
 // volume.
 func (m *Manager) announceFailure(state *mountState, req Request, cause error) {
@@ -318,7 +318,7 @@ var errNotMounted = errors.New("storage: nothing is mounted at this path")
 // given the operator's policy rather than inventing one.
 //
 // create carries the spec's `create = true` (R15, v1.69) through to the policy,
-// which decides whether a missing directory may be made — and refuses outside
+// which decides whether a missing directory may be made, and refuses outside
 // an allowed prefix before making anything.
 func (m *Manager) ResolveHost(path string, create bool) (string, error) {
 	return m.hostPaths.ResolveOrCreate(path, create)
@@ -355,7 +355,7 @@ func (m *Manager) Check(ctx context.Context, target string) error {
 	// The mount table first, and it is not an optimisation.
 	//
 	// A mount point is an ordinary directory when nothing is mounted on it, so
-	// os.Stat succeeds just the same — it cannot tell "mounted and serving"
+	// os.Stat succeeds just the same: it cannot tell "mounted and serving"
 	// from "empty directory where a volume should be". Probing with stat alone
 	// would report a completely failed mount as healthy, which is precisely the
 	// silently-empty-volume failure PRD §8 exists to prevent. Reading
@@ -376,7 +376,7 @@ func (m *Manager) Check(ctx context.Context, target string) error {
 	if state.probing {
 		state.mu.Unlock()
 		// A probe is already stuck on this mount. Reporting the previous
-		// verdict is honest — we know no more than we did — and starting a
+		// verdict is honest (we know no more than we did) and starting a
 		// second blocked syscall would tell us nothing new.
 		return fmt.Errorf("%w: a probe of %s is still outstanding", ErrTimeout, target)
 	}
@@ -424,7 +424,7 @@ func (m *Manager) Check(ctx context.Context, target string) error {
 //
 // Remounting is mandatory rather than defensive. After an object-store outage
 // s3fs keeps serving ENOENT for objects that are still in the bucket and never
-// recovers on its own (M0 spike ③) — the mount is stale, not the data. Nothing
+// recovers on its own (M0 spike ③): the mount is stale, not the data. Nothing
 // short of a remount fixes it, so a supervisor that only reported health would
 // leave a workload reading successful, empty, wrong answers.
 func (m *Manager) Supervise(ctx context.Context, interval time.Duration) {

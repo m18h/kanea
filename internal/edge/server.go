@@ -44,7 +44,7 @@ type Config struct {
 	// HTTPAddr is the public plaintext listener.
 	HTTPAddr string
 	// HTTPSAddr is the public TLS listener. Empty disables TLS, which is what a
-	// node with no certificates yet wants — it must still serve :80, or the
+	// node with no certificates yet wants: it must still serve :80, or the
 	// HTTP-01 validation that would produce one cannot complete.
 	HTTPSAddr string
 	// BundlePath is the certificate projection kanead publishes (see Bundle).
@@ -230,8 +230,8 @@ func New(cfg Config) (*Server, error) {
 
 // Listen binds the listeners.
 //
-// Separate from Run so a port collision — the overwhelmingly likely startup
-// failure, since :80 is contended — fails immediately and visibly rather than
+// Separate from Run so a port collision (the overwhelmingly likely startup
+// failure, since :80 is contended) fails immediately and visibly rather than
 // inside a goroutine after the process has claimed to be up.
 func (s *Server) Listen() error {
 	ln, err := net.Listen("tcp", s.cfg.HTTPAddr)
@@ -352,8 +352,8 @@ func (s *Server) Run(ctx context.Context) error {
 //  1. ACME challenges, always, and never redirected. The validation that would
 //     produce a certificate must work on a node that has none.
 //  2. HTTP→HTTPS, but only for hosts the edge actually holds a certificate for.
-//     Redirecting the rest turns "not issued yet" into "unreachable" — the
-//     browser follows the redirect and gets a handshake failure — and takes
+//     Redirecting the rest turns "not issued yet" into "unreachable" (the
+//     browser follows the redirect and gets a handshake failure) and takes
 //     HTTP-01 down with it, so the situation never resolves itself.
 //  3. Otherwise proxy the request in plaintext.
 func (s *Server) plaintextHandler() http.Handler {
@@ -417,7 +417,7 @@ func (s *Server) httpsPort() string {
 
 // sweepLimiters drops rate-limit buckets that have refilled.
 //
-// The bucket set is capped, so this is not what prevents exhaustion — eviction
+// The bucket set is capped, so this is not what prevents exhaustion: eviction
 // is. It is what keeps a node that saw a traffic spike from holding the
 // high-water mark of buckets for the rest of its life.
 func (s *Server) sweepLimiters(ctx context.Context) {
@@ -487,7 +487,7 @@ func (s *Server) statusMux() http.Handler {
 	})
 	// The bind state of every published port, and how many connections each is
 	// holding. A port something else on the node already owns appears here with
-	// its error rather than not appearing at all — "it is not in the list" and
+	// its error rather than not appearing at all: "it is not in the list" and
 	// "it could not bind" need different fixes.
 	mux.HandleFunc("GET /listeners", func(w http.ResponseWriter, _ *http.Request) {
 		s.writeJSON(w, map[string]any{"listeners": s.published.States()})

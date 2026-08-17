@@ -17,7 +17,7 @@ import (
 
 // runContainer answers the question that actually matters for PRD §8: can a
 // FUSE mount on the host be handed to a workload as a volume, and does the
-// workload see it — including objects written after the container started?
+// workload see it; including objects written after the container started?
 func runContainer(ctx context.Context, d *driver) error {
 	fmt.Printf("\n── %s: as a container volume ──\n", d.Name)
 	if err := resetBucket(); err != nil {

@@ -29,7 +29,7 @@ import {
  * proxy to 127.0.0.1:8600 is switched off in its place.
  *
  * Auth is theatre by design: any non-empty user/password signs in as admin.
- * The value of the mock is layout, charts, streams and rollouts — not a
+ * The value of the mock is layout, charts, streams and rollouts, not a
  * second implementation of §13.
  */
 export function mockApi(): Plugin {
@@ -262,6 +262,83 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       })),
     })
   }
+  // A sync is fire-and-forget from the client's side: the daemon marks the
+  // project and the sync loop re-reads the source.
+  if (/^\/v1\/projects\/[^/]+\/sync$/.test(path) && method === 'POST') return json(res, 200, {})
+
+  // The volume view (v1.69), derived: one resource per storage block, one
+  // mount per volume that uses it. The fixture is chosen for the three states
+  // the page has to keep apart: measured and inside its budget, measured and
+  // over it, and never measured at all, which for s3 is permanent.
+  if (path === '/v1/volumes') {
+    return json(res, 200, {
+      storages: [
+        {
+          project: 'shop',
+          name: 'pgdata',
+          type: 'local',
+          mounts: [
+            {
+              project: 'shop',
+              service: 'postgres',
+              volume: 'pgdata[0]',
+              mount_path: '/var/lib/postgresql/data',
+              path: '/var/lib/kanea/volumes/shop/postgres/pgdata/0',
+              used_bytes: 3_221_225_472,
+              size_bytes: 10_737_418_240,
+              state: 'ok',
+            },
+          ],
+        },
+        {
+          project: 'shop',
+          name: 'uploads',
+          type: 'nfs',
+          target: 'nas.lan:/export/uploads',
+          mounts: [
+            {
+              project: 'shop',
+              service: 'web',
+              volume: 'uploads',
+              mount_path: '/srv/uploads',
+              path: '/var/lib/kanea/mounts/shop/uploads',
+              used_bytes: 6_012_954_214,
+              size_bytes: 5_368_709_120,
+              state: 'over',
+            },
+            {
+              project: 'shop',
+              service: 'api',
+              volume: 'uploads',
+              mount_path: '/srv/uploads',
+              read_only: true,
+              path: '/var/lib/kanea/mounts/shop/uploads',
+              used_bytes: 6_012_954_214,
+              state: 'ok',
+            },
+          ],
+        },
+        {
+          project: 'analytics',
+          name: 'archive',
+          type: 's3',
+          target: 's3://analytics-archive',
+          mounts: [
+            {
+              project: 'analytics',
+              service: 'collector',
+              volume: 'archive',
+              mount_path: '/var/archive',
+              path: '/var/lib/kanea/mounts/analytics/archive',
+              // No reading, ever: an s3 volume is not walked (R31).
+              state: 'unmeasured',
+            },
+          ],
+        },
+      ],
+    })
+  }
+
   const projectNotify = /^\/v1\/projects\/([^/]+)\/notifications$/.exec(path)
   if (projectNotify) {
     if (method === 'GET') {
@@ -412,7 +489,7 @@ function liveSocket(ws: WebSocket): void {
       if (sub.topic !== 'logs' || !sub.project || !sub.service) continue
       const svc = findService(sub.project, sub.service)
       if (!svc) continue
-      // A batch per tick, like the daemon (PRD v1.70) — one frame per line is
+      // A batch per tick, like the daemon (PRD v1.70): one frame per line is
       // what overran its send buffer. Two lines a tick keeps the mock chatty
       // enough to read while exercising the batched shape.
       const lines = [logLine(svc), logLine(svc)].filter((l) => l !== null)
@@ -447,7 +524,7 @@ function execShell(ws: WebSocket, req: IncomingMessage): void {
   }
   const prompt = () => stdout(`\x1b[36m${alloc}\x1b[0m:/$ `)
 
-  stdout(`mock shell — this is the dashboard's mock daemon, not a container\r\n`)
+  stdout(`mock shell: this is the dashboard's mock daemon, not a container\r\n`)
   prompt()
 
   let line = ''

@@ -15,7 +15,7 @@ import (
 )
 
 // Publishing is a file write the edge polls for, so returning before it is
-// being served would race the CA — and losing that race spends a
+// being served would race the CA, and losing that race spends a
 // failed-validation slot rather than merely retrying.
 func TestPresentWaitsForTheEdgeToServeTheChallenge(t *testing.T) {
 	dir := t.TempDir()
@@ -258,7 +258,7 @@ func TestAnUnchangedSetDoesNotRepublish(t *testing.T) {
 	if err := pub.SetCertificates(ModeACME, certs); err != nil {
 		t.Fatalf("SetCertificates: %v", err)
 	}
-	first, err := os.ReadFile(bundlePath) // #nosec G304 — a test path
+	first, err := os.ReadFile(bundlePath) // #nosec G304; a test path
 	if err != nil {
 		t.Fatalf("read bundle: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestAnUnchangedSetDoesNotRepublish(t *testing.T) {
 	if err := pub.SetCertificates(ModeACME, certs); err != nil {
 		t.Fatalf("SetCertificates again: %v", err)
 	}
-	second, err := os.ReadFile(bundlePath) // #nosec G304 — a test path
+	second, err := os.ReadFile(bundlePath) // #nosec G304; a test path
 	if err != nil {
 		t.Fatalf("read bundle again: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestAnUnchangedSetDoesNotRepublish(t *testing.T) {
 	if err := pub.SetCertificates(ModeACME, []Certificate{testCertificate(t, "other.example.com")}); err != nil {
 		t.Fatalf("SetCertificates with a change: %v", err)
 	}
-	third, err := os.ReadFile(bundlePath) // #nosec G304 — a test path
+	third, err := os.ReadFile(bundlePath) // #nosec G304; a test path
 	if err != nil {
 		t.Fatalf("read bundle after a change: %v", err)
 	}

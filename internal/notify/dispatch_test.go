@@ -87,7 +87,7 @@ func TestPublishNeverBlocksAndCountsDrops(t *testing.T) {
 	// noticing forty crashed allocs is already having a bad minute; making it
 	// wait on Telegram would turn this into an outage amplifier.
 	ch := newRecorder("slow")
-	ch.block = make(chan struct{}) // never released — the channel is wedged
+	ch.block = make(chan struct{}) // never released: the channel is wedged
 
 	d, err := notify.New(notify.Config{
 		Routes:     []notify.Route{{Channel: ch, Filter: allEvents(t)}},
@@ -122,7 +122,7 @@ func TestPublishNeverBlocksAndCountsDrops(t *testing.T) {
 }
 
 func TestCoalescesAStormIntoOneMessage(t *testing.T) {
-	// §11: "42 allocs restarted in 5m" — one message, not 42.
+	// §11: "42 allocs restarted in 5m"; one message, not 42.
 	ch := newRecorder("chat")
 	c := newClock()
 
@@ -196,7 +196,7 @@ func TestAFullBatchGoesWithoutWaitingOutTheWindow(t *testing.T) {
 
 func TestRateLimitProtectsTheThirdParty(t *testing.T) {
 	// §11: "a crash-looping fleet must never get the Telegram bot rate-limited
-	// or blocked" — which is a limit imposed on Kanea if Kanea does not impose
+	// or blocked", which is a limit imposed on Kanea if Kanea does not impose
 	// one on itself.
 	ch := newRecorder("chat")
 	c := newClock()
@@ -222,7 +222,7 @@ func TestRateLimitProtectsTheThirdParty(t *testing.T) {
 	waitFor(t, func() bool { return d.Stats().Suppressed >= 4 })
 
 	if got := ch.attempts(); got != 2 {
-		t.Fatalf("%d messages sent, want 2 — the rest should be suppressed", got)
+		t.Fatalf("%d messages sent, want 2: the rest should be suppressed", got)
 	}
 
 	// And the limit is a window, not a cap: a minute later it sends again.
@@ -310,7 +310,7 @@ func TestProjectRoutesOnlySeeTheirOwnProject(t *testing.T) {
 
 func TestShutdownFlushesWhatIsPending(t *testing.T) {
 	// A digest two seconds from being sent when the daemon restarts is a digest
-	// nobody ever sees — and the events in it are exactly the ones that
+	// nobody ever sees, and the events in it are exactly the ones that
 	// preceded the restart.
 	ch := newRecorder("chat")
 	c := newClock()
@@ -360,7 +360,7 @@ func (s *sink) count() int {
 func TestTheFeedSeesEventsNoChannelWanted(t *testing.T) {
 	// §11 says all channels are mirrored into the dashboard feed. The feed is
 	// the record and the channels are the notification, so an event that no
-	// filter matched still belongs in the record — otherwise the dashboard
+	// filter matched still belongs in the record: otherwise the dashboard
 	// shows only what someone configured a chat for.
 	ch := newRecorder("chat")
 	narrow, err := notify.NewFilter([]string{"cert.*"}, notify.SeverityInfo)
@@ -417,7 +417,7 @@ func TestShutdownSendsEvenWhatTheRateLimitWasHolding(t *testing.T) {
 			Channel: ch, Filter: allEvents(t), RateLimit: 1,
 		}},
 		// Two per message, so the second flush is held whole rather than
-		// trimmed by the hold cap — the cap is a separate behaviour.
+		// trimmed by the hold cap; the cap is a separate behaviour.
 		MaxBatch: 2,
 		Now:      c.now,
 	})
@@ -441,7 +441,7 @@ func TestShutdownSendsEvenWhatTheRateLimitWasHolding(t *testing.T) {
 
 	sent := ch.sent()
 	if len(sent) != 2 {
-		t.Fatalf("%d messages, want 2 — one allowed, one final flush", len(sent))
+		t.Fatalf("%d messages, want 2: one allowed, one final flush", len(sent))
 	}
 	// And the held events are in the final message rather than lost.
 	if len(sent[1]) != 2 {

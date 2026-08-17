@@ -64,8 +64,8 @@ const (
 	edgeRoutesOff = "off"
 )
 
-// runAgent is kanead: the control plane. It owns the state file — bbolt is
-// single-writer, so nothing else may open it — and therefore also serves the
+// runAgent is kanead: the control plane. It owns the state file (bbolt is
+// single-writer, so nothing else may open it) and therefore also serves the
 // API that the CLI uses to reach that state.
 func runAgent(args []string) error {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
@@ -78,7 +78,7 @@ func runAgent(args []string) error {
 	backupS3Region := fs.String("backup-s3-region", "", "S3 region")
 	backupS3AccessKey := fs.String("backup-s3-access-key", "", "S3 access key id")
 	backupS3Secret := fs.String("backup-s3-secret-key", "",
-		"`secret:` reference to the S3 secret key (never a literal — R3)")
+		"`secret:` reference to the S3 secret key (never a literal; R3)")
 	backupS3PathStyle := fs.Bool("backup-s3-path-style", true,
 		"address the bucket as /bucket/key rather than as a subdomain")
 	backupInterval := fs.Duration("backup-interval", backup.DefaultSnapshotInterval,
@@ -135,7 +135,7 @@ func runAgent(args []string) error {
 	edgeCerts := fs.String("edge-certs", edge.DefaultBundlePath,
 		"where to publish certificates for kanea-edge")
 	edgeGroup := fs.String("edge-group", "",
-		"group allowed to read the certificate bundle — the kanea-edge user's (default: owner only)")
+		"group allowed to read the certificate bundle; the kanea-edge user's (default: owner only)")
 	tlsDefault := fs.String("tls-default", string(certsource.ModeACME),
 		"certificate source for an exposed service whose spec declares no tls block: "+
 			"acme, self-signed, provided, or plaintext (PRD §6.2 R20)")
@@ -221,13 +221,13 @@ func runAgent(args []string) error {
 	syncInterval := fs.Duration("sync-interval", DefaultSyncInterval,
 		"how often projects with a git source are polled; a webhook makes a push land sooner")
 	notifyAllowPrivate := fs.Bool("notify-allow-private", false,
-		"allow notification targets on private/loopback addresses — for an internal chat server (PRD §11)")
+		"allow notification targets on private/loopback addresses: for an internal chat server (PRD §11)")
 	notifyAllowHTTP := fs.Bool("notify-allow-http", false,
 		"allow plain-http notification targets; https is required by default")
 	eventRetention := fs.Int("event-retention", notify.DefaultRetention,
 		"how many notification events are kept in the store")
 	insecureRegistry := fs.Bool("insecure-registry", false,
-		"allow pushing built images over plain HTTP — for a node-local registry only")
+		"allow pushing built images over plain HTTP; for a node-local registry only")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -323,7 +323,7 @@ func runAgent(args []string) error {
 
 	// The §15.1 server config (PRD v1.51): probed once at its well-known path,
 	// explicit with --config, "off" to refuse a stray file. Everything it can
-	// grant is an operator input and empty by default — no file, no flags, no
+	// grant is an operator input and empty by default: no file, no flags, no
 	// host volumes and no passthrough.
 	nodeCfg, err := serverConfigForRun(*serverConfig, nodeconfig.DefaultPath)
 	if err != nil {
@@ -354,7 +354,7 @@ func runAgent(args []string) error {
 
 	// The API/dashboard listener (§15.1 bind, v1.61): --listen wins, "none" is
 	// the explicit socket-only, the file fills in otherwise. The half is
-	// atomic — the source that supplies the address supplies its TLS story.
+	// atomic: the source that supplies the address supplies its TLS story.
 	apiL := resolveAPIListen(*listen, *listenCert, *listenKey, nodeCfg)
 	if apiL.source == "--listen" && nodeCfg.Bind != nil {
 		logger.Info("server config bind stanza is not consulted (--listen wins)",
@@ -367,7 +367,7 @@ func runAgent(args []string) error {
 	apiInsecureCookies := *insecureCookies
 	if apiL.mode == nodeconfig.TLSPlaintext {
 		if public, err := api.IsPublicAddr(apiL.addr); err == nil && public {
-			// Typed, so allowed — and said loudly, once, where the decision
+			// Typed, so allowed, and said loudly, once, where the decision
 			// lives. The Secure cookie attribute is dropped with it: a Secure
 			// cookie over plain HTTP is a login that silently fails (v1.61).
 			apiInsecureCookies = true
@@ -395,7 +395,7 @@ func runAgent(args []string) error {
 	}
 
 	// Device and socket grants are the same kind of operator input and the same
-	// empty default (PRD §6.2 R17–R18). A configured socket grant is logged at
+	// empty default (PRD §6.2 R17-R18). A configured socket grant is logged at
 	// warn: it is node-level control for whoever holds it, and the one place
 	// that is unambiguously recorded should be the node's own log.
 	passthroughPath, passthroughSource, err := resolvePassthroughPath(*passthroughConfig, nodeCfg)
@@ -428,8 +428,8 @@ func runAgent(args []string) error {
 	}
 
 	// External secret providers (PRD §5.2.13): a sync loop pulls mapped
-	// values into the store above, so everything downstream — including every
-	// consumer wired in this function — reads them with no idea where they
+	// values into the store above, so everything downstream (including every
+	// consumer wired in this function) reads them with no idea where they
 	// came from. The reconciler never waits for a pass; the store serves
 	// whatever the last one wrote.
 	if *secretsSyncInterval < secretSyncMinInterval {
@@ -519,7 +519,7 @@ func runAgent(args []string) error {
 
 	// The mount manager is built here rather than earlier because it needs the
 	// notifier: a volume that will not mount, and one the supervisor recovered,
-	// are both things an operator should hear about (v1.69) — and before that
+	// are both things an operator should hear about (v1.69), and before that
 	// existed the entire story lived in the daemon log.
 	mounts := storage.New(storage.Config{
 		CredentialDir: filepath.Join(*dataDir, credentialSubdir),
@@ -540,7 +540,7 @@ func runAgent(args []string) error {
 
 	// The function invoker (v1.39, §11): event triggers tee off the
 	// dispatcher's feed, cron triggers run on its own schedule, and both POST
-	// to VIPs the Store derived — never a URL a spec could hold (R26).
+	// to VIPs the Store derived, never a URL a spec could hold (R26).
 	// Attached to the tee before notifier.Run starts; woken by the same
 	// store-change signal the reconciler gets, so `kanea apply` wires a new
 	// trigger with no restart.
@@ -590,7 +590,7 @@ func runAgent(args []string) error {
 	}
 
 	// The directory verifier is built before the auth store so it wires at
-	// construction — no mutation window — and like OIDC it fails on bad
+	// construction (no mutation window) and like OIDC it fails on bad
 	// config at startup, in front of the operator; only *reachability* is a
 	// warning (§3.20: an unreachable directory is weather).
 	directory, err := buildLDAP(ctx, ldapSettings{
@@ -613,7 +613,7 @@ func runAgent(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Account lockouts survive the restart (v1.37) — before this, restarting
+	// Account lockouts survive the restart (v1.37); before this, restarting
 	// the daemon reset the §13.3 brute-force defence.
 	if err := users.LoadLockouts(ctx); err != nil {
 		logger.Warn("cannot restore login lockouts; starting without them", "error", err)
@@ -675,7 +675,7 @@ func runAgent(args []string) error {
 
 	// The settings service (v1.46): the API's window onto what this block just
 	// decided, and the runtime path for changing it. routesNotify wakes the
-	// notification reloader — pulsed by the fan-out below and directly by
+	// notification reloader: pulsed by the fan-out below and directly by
 	// settings mutations.
 	routesNotify := make(chan struct{}, 1)
 	settingsSvc := &settingsService{
@@ -725,7 +725,7 @@ func runAgent(args []string) error {
 	// The MCP transport and the API server each need the other: the transport is
 	// a route on the API, and its backend is the API's own handler. One of them
 	// has to be told about the other after both exist, and a lazy reference is
-	// the honest way to write that down — the alternative is a second HTTP
+	// the honest way to write that down: the alternative is a second HTTP
 	// client dialling this process's own socket to reach a handler already in
 	// memory.
 	var apiServer *api.Server
@@ -787,7 +787,7 @@ func runAgent(args []string) error {
 
 	// A managed listener certificate (bind.api_tls acme/self-signed, v1.61)
 	// rides the §7.3 pass: the request is registered here, and the pass
-	// delivers each issuance — and each renewal — through the holder the
+	// delivers each issuance (and each renewal) through the holder the
 	// listener's handshakes read.
 	var apiGetCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 	switch apiL.mode {
@@ -829,7 +829,7 @@ func runAgent(args []string) error {
 		Usage:   volumeUsage, VolumeDir: volumes,
 		Breaker: breaker, Node: nodeReader,
 		// The editor's renderer parses with the node's own base domain and
-		// variables — the same options the GitOps sync uses, so a spec means
+		// variables; the same options the GitOps sync uses, so a spec means
 		// the same thing whichever door it arrives through (v1.38, v1.63).
 		Spec:   specRenderer{opts: jobspec.Options{BaseDomain: *baseDomain, NodeVars: nodeCfg.Variables}},
 		Exec:   driver,
@@ -868,7 +868,7 @@ func runAgent(args []string) error {
 	invokerNotify := make(chan struct{}, 1)
 	go fanOut(ctx, notify, reconcileNotify, certNotify, invokerNotify, routesNotify)
 	// The notification reloader (v1.46): rebuilds the dispatcher's routes when
-	// channel config changes, through whichever door — HCL apply, GitOps sync,
+	// channel config changes, through whichever door; HCL apply, GitOps sync,
 	// or the settings routes, which also pulse routesNotify directly.
 	go runNotifyReload(ctx, routesNotify, notifyCfg, notifyCfg.egress(), notifier, logger)
 	go invokerWaker(ctx, invokerNotify, invoker)
@@ -950,7 +950,7 @@ func runAgent(args []string) error {
 
 // Auth and audit housekeeping.
 const (
-	// defaultAuditRetention is how long audit entries are kept (§14, A09 —
+	// defaultAuditRetention is how long audit entries are kept (§14, A09:
 	// "log retention configurable"). Long enough that an incident found late
 	// still has a trail, short enough that the bucket does not grow forever.
 	defaultAuditRetention = 90 * 24 * time.Hour
@@ -963,7 +963,7 @@ const (
 // sweepAuthState clears expired sessions and prunes the audit log.
 //
 // Sessions are also removed when a caller presents an expired one, so this is
-// the path for the ones nobody comes back for — the browser tab that was closed
+// the path for the ones nobody comes back for: the browser tab that was closed
 // and never reopened. Without it, every login leaves a record forever.
 func sweepAuthState(ctx context.Context, users *auth.Store, trail *audit.Log,
 	retention time.Duration, logger *slog.Logger) {
@@ -999,11 +999,11 @@ func sweepAuthState(ctx context.Context, users *auth.Store, trail *audit.Log,
 
 // Network driver names for --network.
 const (
-	// networkEBPF is the product: Kanea's own eBPF datapath — connect-time
+	// networkEBPF is the product: Kanea's own eBPF datapath; connect-time
 	// service LB, per-project policy, per-CPU counters (PRD v1.36, §5.2.5).
 	networkEBPF = "ebpf"
 	// networkNetns gives each alloc a bare namespace and nothing else. It exists
-	// so kanead can run on a host without the datapath — a laptop, a CI job —
+	// so kanead can run on a host without the datapath; a laptop, a CI job;
 	// and is not a supported deployment: no policy is enforced and no service is
 	// load balanced, so allocs are unreachable by name.
 	networkNetns = "netns"
@@ -1019,7 +1019,7 @@ func validNetworkMode(mode string) error {
 	return nil
 }
 
-// agentCIDRs is the parsed subnet trio the ebpf mode runs on — six with
+// agentCIDRs is the parsed subnet trio the ebpf mode runs on: six with
 // dual-stack (PRD v1.41); the *6 prefixes are invalid when v6 is off.
 type agentCIDRs struct {
 	node, cluster, service    netip.Prefix
@@ -1028,7 +1028,7 @@ type agentCIDRs struct {
 
 // parseAgentCIDRs validates the subnets against each other, mirroring the
 // shape of preflight's checkSubnets: `kanea doctor` can only warn in advance,
-// while this is the refusal that actually gates startup — GitOps and systemd
+// while this is the refusal that actually gates startup; GitOps and systemd
 // reach kanead without ever passing through doctor.
 //
 // The v6 trio is all-or-nothing, refused by name: a v6 alloc address without
@@ -1119,7 +1119,7 @@ func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string) (
 //
 // An Init failure in ebpf mode is a hard startup error, deliberately unlike
 // the warn-and-continue the old external agent got: there is no separate
-// process that might come up later. Loading the programs *is* the datapath —
+// process that might come up later. Loading the programs *is* the datapath:
 // if that fails, nothing will ever pass traffic, there is nothing to retry
 // against, and a control plane that started anyway would converge every alloc
 // onto a network that silently drops everything.
@@ -1153,8 +1153,8 @@ const (
 
 // buildDNS constructs the embedded resolver, or nil when it is not wanted.
 //
-// The listen address defaults to the node CIDR's .1 — the address Init puts on
-// the datapath's host anchor (kanea0) — rather than a wildcard. That is a
+// The listen address defaults to the node CIDR's .1 (the address Init puts on
+// the datapath's host anchor (kanea0)) rather than a wildcard. That is a
 // security decision, not a convenience one: a resolver bound to 0.0.0.0 is
 // reachable on the node's public interface, which makes it a DNS amplification
 // source and lets anyone on the network enumerate the services running here.
@@ -1210,7 +1210,7 @@ func nameserverOf(dns *network.DNS) string {
 // Forwarding to the host's own resolvers by default keeps a workload's view
 // of the internet identical to the node's, which is what an operator expects
 // when they configure DNS once in /etc/resolv.conf. The stanza exists for the
-// node where that stopped being what they wanted — resolv.conf is read once
+// node where that stopped being what they wanted: resolv.conf is read once
 // at startup and held, so pinning belongs in config, not in whatever DHCP
 // last wrote.
 func upstreamResolvers(configured string, fromFile []string) ([]string, error) {

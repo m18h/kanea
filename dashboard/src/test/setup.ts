@@ -1,7 +1,7 @@
 import { vi } from 'vitest'
 
 /**
- * uPlot draws on a canvas 2d context, which jsdom does not provide — any test
+ * uPlot draws on a canvas 2d context, which jsdom does not provide: any test
  * that renders Overview or ServiceDetail would crash on the real library. The
  * mock records the calls UPlotChart makes so its lifecycle (create, setData,
  * setSize, destroy) is assertable; everything visual is out of scope for
@@ -11,7 +11,7 @@ vi.mock('uplot', () => {
   class FakeUPlot {
     static instances: FakeUPlot[] = []
     // The path builders UPlotChart reaches for (spline). A factory returning
-    // a no-op builder is enough — nothing draws in jsdom.
+    // a no-op builder is enough: nothing draws in jsdom.
     static paths = { spline: () => () => null }
     opts: unknown
     data: unknown

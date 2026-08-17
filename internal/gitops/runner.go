@@ -15,21 +15,21 @@ import (
 
 // The pipeline runner: one build, start to finish (PRD §10.2).
 //
-// It owns the *sequence* — check out, build, deploy — and nothing else. The
+// It owns the *sequence* (check out, build, deploy) and nothing else. The
 // checkout is the syncer's, the build is the builder's, and the deploy is the
 // reconciler's by way of a seam, because an image reference written into
 // desired state is a state mutation and this package does not own state.
 //
 // Every step is recorded on the run as it happens rather than at the end. A
 // build that hangs for ten minutes should show "building, 10m" in the
-// dashboard, not "queued" — and a daemon killed mid-build should leave a
+// dashboard, not "queued", and a daemon killed mid-build should leave a
 // record that says where it got to.
 
 // Deployer applies a built image to a service's desired state.
 //
 // A seam rather than a Store handle: pinning a digest is a change to what
 // runs, and the reconciler owns that. It also means a build can be run with
-// deployment turned off — which is what `kanea build` without `--deploy` is.
+// deployment turned off, which is what `kanea build` without `--deploy` is.
 type Deployer interface {
 	// Deploy pins an image reference on a service. The reference carries a
 	// digest, never a tag: §14 A08 wants the thing that runs to be the thing
@@ -45,7 +45,7 @@ type BuildSpec struct {
 	Dockerfile string
 	// Target is the image repository to push to.
 	Target string
-	// Tag may contain the built-in variables — see ExpandTag.
+	// Tag may contain the built-in variables: see ExpandTag.
 	Tag string
 	// CacheRepo enables registry-backed layer caching.
 	CacheRepo string
@@ -170,7 +170,7 @@ func (r *Runner) Queue(ctx context.Context, req Request) (Run, error) {
 func (r *Runner) Execute(ctx context.Context, run Run, req Request) (Run, error) {
 	// 0600: kanead is the only reader. The CLI and the dashboard both reach
 	// build logs through the API, so there is no group that needs this file.
-	logs, err := os.OpenFile(r.LogPath(run), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 — a path this runner composed
+	logs, err := os.OpenFile(r.LogPath(run), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304; a path this runner composed
 	if err != nil {
 		return r.fail(ctx, run, fmt.Errorf("open build log: %w", err))
 	}

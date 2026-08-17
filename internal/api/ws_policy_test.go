@@ -78,7 +78,7 @@ func (h *policyHarness) closed(t *testing.T) bool {
 // The whole of PRD v1.70's socket policy in one table. A log *data* frame is
 // the only thing a full buffer may discard: every other topic's frames
 // supersede the one before, so a silent drop leaves a client believing stale
-// data is current — and an error frame nobody receives is a panel that shows no
+// data is current, and an error frame nobody receives is a panel that shows no
 // error, which is worse than one showing a gap.
 func TestOnlyALogDataFrameSurvivesAFullSendBuffer(t *testing.T) {
 	tests := []struct {
@@ -118,7 +118,7 @@ func TestOnlyALogDataFrameSurvivesAFullSendBuffer(t *testing.T) {
 			h := newPolicyHarness(t)
 
 			if queued := h.session.emit(tc.frame); queued != tc.wantQueued {
-				t.Errorf("emit queued = %v, want %v — the buffer is full", queued, tc.wantQueued)
+				t.Errorf("emit queued = %v, want %v: the buffer is full", queued, tc.wantQueued)
 			}
 			if got := h.closed(t); got != tc.wantClosed {
 				t.Errorf("connection closed = %v, want %v", got, tc.wantClosed)
@@ -174,7 +174,7 @@ func TestALineTooLargeForABatchIsStillKept(t *testing.T) {
 		t.Fatalf("batch holds %d lines, want just the oversized one", len(f.batch.Lines))
 	}
 	if got := len(f.batch.Lines[0].Line); got != len(huge) {
-		t.Errorf("line length = %d, want %d — it must not be truncated", got, len(huge))
+		t.Errorf("line length = %d, want %d: it must not be truncated", got, len(huge))
 	}
 	if f.batch.Dropped != 1 {
 		t.Errorf("dropped = %d, want 1 for the line the cap pushed out", f.batch.Dropped)
@@ -195,7 +195,7 @@ func TestAppendDropsTheOldestAndCountsEveryOne(t *testing.T) {
 		t.Errorf("batch holds %d lines, want maxBatchLines (%d)", len(f.batch.Lines), maxBatchLines)
 	}
 	if delivered, dropped := len(f.batch.Lines), f.batch.Dropped; delivered+dropped != produced {
-		t.Errorf("delivered %d + dropped %d = %d, want %d — every line is one or the other",
+		t.Errorf("delivered %d + dropped %d = %d, want %d: every line is one or the other",
 			delivered, dropped, delivered+dropped, produced)
 	}
 }
@@ -237,8 +237,8 @@ func TestAFlushWithNoLinesSendsNothingAndKeepsItsCarry(t *testing.T) {
 	}
 }
 
-// A frame the buffer refused reached nobody, so everything in it — its lines
-// and the drops it was reporting — becomes the next frame's gap. A count, never
+// A frame the buffer refused reached nobody, so everything in it (its lines
+// and the drops it was reporting) becomes the next frame's gap. A count, never
 // a queue: holding the lines would be the unbounded daemon-side buffer §17
 // forbids.
 func TestARefusedFrameBecomesTheNextFramesDropCount(t *testing.T) {

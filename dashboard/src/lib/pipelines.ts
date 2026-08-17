@@ -35,15 +35,15 @@ export function runStateLabel(state: string): string {
  * runDuration is how long a run took, or has been going.
  *
  * A running build is measured against now, so the number moves while you watch
- * it. A finished one is measured against its own end, so it stops — a duration
+ * it. A finished one is measured against its own end, so it stops: a duration
  * that kept climbing after a build ended would be a lie about a finished thing.
  */
 export function runDuration(run: Run, now: number = Date.now()): string {
   const ms = runDurationMs(run, now)
-  return ms === undefined ? '—' : humanDuration(ms)
+  return ms === undefined ? '-' : humanDuration(ms)
 }
 
-/** runDurationMs is the same number before rendering — what a sorted Duration
+/** runDurationMs is the same number before rendering: what a sorted Duration
  * column compares, where "unparseable" must stay distinct from "instant". */
 export function runDurationMs(run: Run, now: number = Date.now()): number | undefined {
   const started = Date.parse(run.started_at)
@@ -57,10 +57,10 @@ export function runDurationMs(run: Run, now: number = Date.now()): number | unde
 /** stepDuration is the same for one step. */
 export function stepDuration(step: RunStep, now: number = Date.now()): string {
   const started = Date.parse(step.started_at)
-  if (!Number.isFinite(started)) return '—'
+  if (!Number.isFinite(started)) return '-'
 
   const ended = step.finished_at ? Date.parse(step.finished_at) : now
-  if (!Number.isFinite(ended)) return '—'
+  if (!Number.isFinite(ended)) return '-'
   return humanDuration(Math.max(0, ended - started))
 }
 
@@ -83,6 +83,6 @@ export function shortID(id: string): string {
 
 /** shortSHA abbreviates a commit. */
 export function shortSHA(sha: string | undefined): string {
-  if (!sha) return '—'
+  if (!sha) return '-'
   return sha.length > 7 ? sha.slice(0, 7) : sha
 }

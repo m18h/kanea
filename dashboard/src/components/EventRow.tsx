@@ -12,7 +12,7 @@ const severityTone: Record<KaneaEvent['severity'], StatusTone> = {
 /**
  * EventRow is the compact event line the Dashboard cards use: severity dot,
  * message, muted `source · time` beneath. The Events page renders its own
- * table rows — this is the card-sized form.
+ * table rows: this is the card-sized form.
  */
 export function EventRow({ event }: { event: KaneaEvent }) {
   const scope = eventScope(event)

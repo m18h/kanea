@@ -52,7 +52,7 @@ func TestSpecHashIgnoresWhatDoesNotNeedANewContainer(t *testing.T) {
 	unchanged.Restart = reconciler.RestartPolicy{Attempts: 99}
 	unchanged.Update = reconciler.UpdatePolicy{MaxParallel: 4}
 	// Trigger config is read live by the invokers, like Publish is by the
-	// edge — editing a cron schedule must not roll the alloc (R26).
+	// edge; editing a cron schedule must not roll the alloc (R26).
 	unchanged.Function = &reconciler.FunctionMeta{
 		HTTP:   true,
 		Events: []reconciler.EventTrigger{{On: []string{"deploy.failed"}}},
@@ -93,11 +93,11 @@ func TestSpecHashIgnoresWhatDoesNotNeedANewContainer(t *testing.T) {
 			mode := uint32(0o700)
 			d.Volumes = []reconciler.Volume{{Name: "data", MountPath: "/data", Mode: &mode}}
 		},
-		// The runtime decides which shim runs the container (R25) — moving a
+		// The runtime decides which shim runs the container (R25); moving a
 		// service between runc and wasmtime cannot happen in place.
 		"runtime": func(d *reconciler.Desired) { d.Runtime = "io.containerd.wasmtime.v1" },
 		// The declared capability list is baked in at creation (R13, v1.56):
-		// opting out of the baseline — or granting past it — needs new
+		// opting out of the baseline (or granting past it) needs new
 		// containers.
 		"capabilities": func(d *reconciler.Desired) { d.Capabilities = []string{"none"} },
 	} {
@@ -203,7 +203,7 @@ func TestRollingStopsWhenAnAllocIsDown(t *testing.T) {
 
 	w := world(old, reconciler.SpecHash(old))
 	w.Desired = []reconciler.Desired{next}
-	// Index 2 is not running at all — a crash mid-deploy. The budget is
+	// Index 2 is not running at all: a crash mid-deploy. The budget is
 	// availability, so it is already spent and no healthy alloc is taken down
 	// on top of it.
 	delete(w.Actual, reconciler.AllocID("shop", "web", 2))
@@ -325,7 +325,7 @@ func TestBackoffIsNotWaitedOutAfterADeploy(t *testing.T) {
 //
 // This is the upgrade-safety property, and it is not a detail. SpecHash decides
 // whether an alloc is replaced, so a field that serialised as a zero value
-// instead of being omitted would change the hash of every service on the node —
+// instead of being omitted would change the hash of every service on the node:
 // and upgrading kanead would silently roll every container on it. The literal
 // below is the pre-feature digest of this exact Desired; if a change here moves
 // it, that is the question being asked, and the answer is almost always no.
@@ -382,7 +382,7 @@ func TestVolumeOwnershipHalvesAreIndependent(t *testing.T) {
 }
 
 // A tcp port must hash to exactly what it hashed before v1.42's Protocol field
-// existed — the same upgrade-safety property the R23 test above pins. The
+// existed: the same upgrade-safety property the R23 test above pins. The
 // empty string with omitempty vanishes from the JSON, so a pre-v1.42 record
 // and a post-v1.42 tcp port produce the same bytes; a udp port is a different
 // spec and must not.

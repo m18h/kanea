@@ -40,7 +40,7 @@ describe('renderResponseSchema', () => {
 })
 
 describe('applySpec', () => {
-  // A 422 is a completed request whose answer is the diagnostic list — the
+  // A 422 is a completed request whose answer is the diagnostic list: the
   // editor needs positions, not a thrown string.
   it('returns diagnostics on 422 rather than throwing', async () => {
     stubFetch(422, {

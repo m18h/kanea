@@ -1,7 +1,7 @@
 // Package runtime is the containerd driver: it turns an alloc specification
 // into a running container and reports what happened to it.
 //
-// Everything here is per-alloc and stateless — the reconciler owns desired
+// Everything here is per-alloc and stateless: the reconciler owns desired
 // state, the Store owns durable state, and this package owns only the
 // conversation with containerd (PRD §5.2.4).
 //
@@ -11,7 +11,7 @@
 //   - Hardening defaults (PRD §14, A05): every alloc drops ALL capabilities,
 //     sets no-new-privileges, and gets its own PID, IPC, UTS, mount and cgroup
 //     namespaces. A service may request capabilities back (PRD §6.2 R13), but
-//     only from a permitted set that jobspec enforces — there is no `privileged`
+//     only from a permitted set that jobspec enforces: there is no `privileged`
 //     escape hatch in the v1 spec, and the allowlist must not become one.
 //   - Resource limits (PRD §6.2 R11, §5.2.11): no container ever runs
 //     unlimited. Missing limits are a programming error, not a default.
@@ -45,7 +45,7 @@ var (
 
 // RuntimeWasmtime is the containerd runtime name for the wasmtime runwasi shim
 // (PRD v1.39, §6.2 R25). containerd resolves it to a binary named
-// containerd-shim-wasmtime-v1 on its own PATH — which is why the generated
+// containerd-shim-wasmtime-v1 on its own PATH, which is why the generated
 // containerd unit sets Environment=PATH (internal/provision/units.go).
 const RuntimeWasmtime = "io.containerd.wasmtime.v1"
 
@@ -66,7 +66,7 @@ type AllocSpec struct {
 	// Image is a pullable reference, ideally digest-pinned.
 	Image string
 	// Runtime selects the containerd runtime. Empty means containerd's
-	// default (the runc shim) — the meaning every alloc had before v1.39, so
+	// default (the runc shim): the meaning every alloc had before v1.39, so
 	// empty must never be spelled out. The only other accepted value is
 	// RuntimeWasmtime: the set is closed here, not passed through, because a
 	// runtime name is a binary containerd will execute as root.
@@ -78,14 +78,14 @@ type AllocSpec struct {
 	// (PRD §6.2 R13): the reconciler resolves the baseline, the union with a
 	// service's declared grants, and the "none" opt-out before anything
 	// reaches this package. This package grants exactly what it is given and
-	// defaults nothing — every entry must be a real CAP_* name (Validate).
+	// defaults nothing: every entry must be a real CAP_* name (Validate).
 	Capabilities []string
 	// Env is the resolved environment. Secret values are already materialised
 	// by the caller; this package never resolves secret: references.
 	Env map[string]string
 	// User is the numeric identity the workload runs as (PRD §6.2 R23). Nil
 	// leaves the image's own USER directive in force, which is what every spec
-	// written before R23 means — so a nil here must never be read as root.
+	// written before R23 means, so a nil here must never be read as root.
 	User *User
 	// Resources are mandatory limits (R11).
 	Resources Resources
@@ -114,8 +114,8 @@ type AllocSpec struct {
 // Numeric, and resolved by the caller. This package will not look a name up:
 // doing so means reading /etc/passwd out of the container's rootfs, which lets
 // a container-controlled file decide which uid the control plane runs a process
-// as. It is also why oci.WithUser and oci.WithUserID are not used to apply this
-// — both consult the rootfs even when handed a number.
+// as. It is also why oci.WithUser and oci.WithUserID are not used to apply this:
+// both consult the rootfs even when handed a number.
 type User struct {
 	UID uint32
 	GID uint32
@@ -186,7 +186,7 @@ type Status struct {
 	Image string
 	// OOMKilled reports that the kernel OOM-killed a process in this alloc's
 	// cgroup (PRD v1.68, §17). Read from `memory.events`, never inferred from
-	// exit 137 — `kanea stop` produces 137 too, and calling that a memory
+	// exit 137: `kanea stop` produces 137 too, and calling that a memory
 	// problem would be worse than saying nothing.
 	//
 	// False is not "not OOM-killed": it is also what an unreadable or
@@ -207,7 +207,7 @@ type Status struct {
 // respect that matters: one discards output and has a deadline, the other
 // carries a person's terminal and lasts as long as they keep typing.
 type ExecOptions struct {
-	// Command is an argument array, executed directly. Never a shell string —
+	// Command is an argument array, executed directly. Never a shell string:
 	// that is the same command-injection rule the health check follows (§14
 	// A03), and it matters more here, where the input reaches a real shell only
 	// because the operator asked for one by name.
@@ -271,12 +271,12 @@ type Driver interface {
 	// Exec runs a command inside a running alloc and returns its exit code.
 	// It backs the `exec` health check (R7): argument array, never a shell.
 	Exec(ctx context.Context, project, id string, cmd []string, timeout time.Duration) (uint32, error)
-	// ExecStream runs a command with its streams attached — the debug shell of
+	// ExecStream runs a command with its streams attached: the debug shell of
 	// PRD §16.2, as opposed to the health check above, which discards output.
 	ExecStream(ctx context.Context, project, id string, opts ExecOptions) (uint32, error)
 	// Wait blocks until the alloc exits or the context is cancelled.
 	Wait(ctx context.Context, project, id string) (Exit, error)
-	// Exits streams task exits for a project — the reconciler's crash signal,
+	// Exits streams task exits for a project: the reconciler's crash signal,
 	// so it never has to poll. The channel closes when ctx is done.
 	Exits(ctx context.Context, project string) (<-chan Exit, error)
 	// Close releases the containerd connection.

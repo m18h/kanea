@@ -41,7 +41,7 @@ const (
 // others do not, so a gap can be named to the client and is (LogBatch.Dropped).
 // The snapshot topics are deliberately not on this list. Each of their frames
 // supersedes the one before it, so a silent drop leaves a client believing
-// stale data is current — and feedStoreKind makes that worse, because its
+// stale data is current, and feedStoreKind makes that worse, because its
 // send() both emits and advances the index it compares against, so a dropped
 // snapshot is recorded as sent and the client waits for an unrelated Store
 // write to be told anything again. They also tick once a second or slower, so a
@@ -92,13 +92,13 @@ const (
 	// wsWriteTimeout bounds a single write to a client. A browser that stops
 	// reading must not pin the goroutine feeding it.
 	wsWriteTimeout = 10 * time.Second
-	// wsPingInterval detects a peer that vanished without closing — a laptop
-	// lid, a dropped VPN — which TCP alone can take much longer to notice.
+	// wsPingInterval detects a peer that vanished without closing (a laptop
+	// lid, a dropped VPN) which TCP alone can take much longer to notice.
 	wsPingInterval = 30 * time.Second
 	// wsSendBuffer is how many frames may queue for one client before the
 	// overflow policy applies. A slow reader is never allowed to grow an
 	// unbounded queue in the daemon (PRD §17's backpressure rule, applied to
-	// the socket); what happens instead is per topic — see lossyTopic.
+	// the socket); what happens instead is per topic: see lossyTopic.
 	wsSendBuffer = 64
 	// wsDefaultMaxConns caps concurrent sockets. Per-user caps arrive with auth
 	// in M5; until then this is the whole-daemon bound.
@@ -184,12 +184,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	session.run(r.Context())
 }
 
-// checkOrigin enforces the Origin allowlist (PRD §12.1, §14 A01 — CSWSH).
+// checkOrigin enforces the Origin allowlist (PRD §12.1, §14 A01: CSWSH).
 //
 // A cross-site WebSocket hijack needs a browser: the attacker's page opens a
 // socket to this daemon and the browser attaches the user's cookies. Browsers
 // always send Origin on an Upgrade, so checking it is the defence. A request
-// with no Origin is not a browser, cannot be a hijack, and is allowed — that is
+// with no Origin is not a browser, cannot be a hijack, and is allowed: that is
 // how the CLI and `kanea` itself connect.
 func (s *Server) checkOrigin(r *http.Request) error {
 	origin := r.Header.Get("Origin")
@@ -331,14 +331,14 @@ func (s *wsSession) write(ctx context.Context, frame ServerFrame) error {
 // What happens on overflow is per topic (PRD v1.70). A data frame on a lossy
 // topic is dropped and the caller is told, so the gap can be counted where
 // whoever is reading will see it; anything else closes the connection, which is
-// what this used to do unconditionally — and unconditionally was the defect: a
+// what this used to do unconditionally, and unconditionally was the defect: a
 // log tail bursting past the buffer took the services, allocs and stats feeds
 // on the same socket down with it, and the client reconnected into the same
 // burst forever. An error frame is never droppable at any topic, because a
 // panel showing no error is worse than one showing a gap.
 //
 // The peer that reads *nothing* is still caught, by writeLoop's ping under
-// wsWriteTimeout — that, not the buffer, is what frees the connection slot.
+// wsWriteTimeout: that, not the buffer, is what frees the connection slot.
 func (s *wsSession) emit(frame ServerFrame) bool {
 	select {
 	case s.send <- frame:

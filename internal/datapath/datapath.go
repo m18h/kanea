@@ -18,7 +18,7 @@ import (
 const HostInterface = "kanea0"
 
 // NFTableName is the one nftables table Kanea owns (the masquerade rule
-// lives in it). Exported for `kanea doctor`, which checks its presence — a
+// lives in it). Exported for `kanea doctor`, which checks its presence: a
 // missing table on a running node means a firewall manager flushed the
 // ruleset (PRD v1.65).
 const NFTableName = "kanea"
@@ -37,9 +37,9 @@ type Config struct {
 	// connect-time rewrite, and blackholed on the host for the same reason.
 	ServiceCIDR netip.Prefix
 	// NodeCIDR6, ClusterCIDR6 and ServiceCIDR6 are the opt-in dual-stack trio
-	// (PRD v1.41): all three set, or none — parseAgentCIDRs refuses anything
+	// (PRD v1.41): all three set, or none; parseAgentCIDRs refuses anything
 	// else by name, and newDatapath re-checks. Invalid (zero) prefixes mean
-	// v4-only, which is the default and today's behavior — except that the tc
+	// v4-only, which is the default and today's behavior: except that the tc
 	// programs then drop IPv6 instead of passing it unpoliced.
 	NodeCIDR6    netip.Prefix
 	ClusterCIDR6 netip.Prefix
@@ -47,7 +47,7 @@ type Config struct {
 	// BPFDir is the bpffs pin root. Empty means dpmap.PinRoot.
 	BPFDir string
 	// Store allocates the numeric project/service ids behind the maps. They
-	// are monotonic and never reused — reuse would make a pinned map lie
+	// are monotonic and never reused: reuse would make a pinned map lie
 	// after a restart.
 	Store IDStore
 	// DNS, when set, has its zone republished on every service sync: a
@@ -67,7 +67,7 @@ type zoneSetter interface {
 // appliedService is what SyncServices remembers having programmed for one
 // frontend, so an unchanged service costs no map writes on the next pass.
 // The applied cache is keyed by dpmap.SvcAddr, so one entry per family per
-// port — a v6 twin is its own frontend programming.
+// port: a v6 twin is its own frontend programming.
 type appliedService struct {
 	id       uint16
 	backends []dpmap.Backend
@@ -85,8 +85,8 @@ func (a appliedService) equal(b appliedService) bool {
 	return true
 }
 
-// Datapath implements the reconciler's network seams — Network,
-// NetworkInspector, LoadBalancer and PolicySyncer — over the eBPF datapath.
+// Datapath implements the reconciler's network seams (Network,
+// NetworkInspector, LoadBalancer and PolicySyncer) over the eBPF datapath.
 type Datapath struct {
 	nodeCIDR    netip.Prefix
 	clusterCIDR netip.Prefix
@@ -132,8 +132,8 @@ const egressEnsureInterval = 30 * time.Second
 
 // EnsureEgress re-asserts the node-level egress plumbing that something else
 // on the node can destroy while kanead runs (PRD v1.65): a firewalld reload
-// or `ufw enable` flushes the ruleset — the `kanea` table and its masquerade
-// rule with it — and previously nothing noticed until the next kanead
+// or `ufw enable` flushes the ruleset (the `kanea` table and its masquerade
+// rule with it) and previously nothing noticed until the next kanead
 // restart. The reconciler calls this every pass; the rebuild is one atomic
 // nftables transaction, throttled here.
 func (d *Datapath) EnsureEgress(ctx context.Context) error {
@@ -275,7 +275,7 @@ func (d *Datapath) Init(ctx context.Context) error {
 		return fmt.Errorf("datapath: config6 map: %w", err)
 	}
 	// The cluster maps (v1.65): until these are written the programs keep the
-	// pre-v1.65 deny — external return traffic drops — so they land here,
+	// pre-v1.65 deny (external return traffic drops) so they land here,
 	// before any veth exists to carry traffic.
 	if err := d.maps.SetClusterCIDR(cidrFor(d.clusterCIDR)); err != nil {
 		return fmt.Errorf("datapath: cluster map: %w", err)
@@ -296,7 +296,7 @@ func (d *Datapath) Init(ctx context.Context) error {
 	}
 	// Re-attach the tc programs to every owned veth (v1.65): FilterReplace is
 	// atomic, so an upgraded kanead delivers its current programs to
-	// attachments the previous process made — without this, a datapath fix
+	// attachments the previous process made; without this, a datapath fix
 	// reaches only allocs created after the upgrade. Best effort per link: a
 	// veth mid-teardown must not fail Init.
 	for _, l := range links {
@@ -348,7 +348,7 @@ func cidrFor(p netip.Prefix) dpmap.CIDR {
 }
 
 // cidrFor6 renders the v6 cluster prefix, or the all-zero "not configured"
-// value when v6 is off — which the programs read as the fail-closed deny.
+// value when v6 is off, which the programs read as the fail-closed deny.
 func cidrFor6(p netip.Prefix) dpmap.CIDR6 {
 	var cfg dpmap.CIDR6
 	if !p.IsValid() {
@@ -378,7 +378,7 @@ func maskFor(p netip.Prefix) [4]byte {
 }
 
 // configFor6 renders the v6 service CIDR into config6's value. An invalid
-// prefix renders all-zero, which the programs read as "v6 disabled" — the
+// prefix renders all-zero, which the programs read as "v6 disabled": the
 // deliberate coupling that makes writing it unconditionally correct.
 func configFor6(p netip.Prefix) dpmap.Config6 {
 	var cfg dpmap.Config6

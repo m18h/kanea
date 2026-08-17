@@ -7,7 +7,7 @@ import "regexp"
 // field was empty.
 const Placeholder = "[redacted]"
 
-// Redaction patterns (PRD §14, A07 — no credentials in logs or audit).
+// Redaction patterns (PRD §14, A07: no credentials in logs or audit).
 //
 // The rule they encode is narrow on purpose. Over-redaction is not free: an
 // audit trail that hides which secret path was written, or which image digest
@@ -24,7 +24,7 @@ var (
 	// records to this package, and an import back would be a cycle.
 	bearerToken = regexp.MustCompile(`(kanea_[A-Za-z0-9]+)\.[A-Za-z0-9_\-]+`)
 
-	// assignedSecret matches `password=…`, `token=…` and friends — the query
+	// assignedSecret matches `password=…`, `token=…` and friends: the query
 	// string and environment shapes. A bare colon is excluded so the
 	// `secret:project/name` reference form of §6.2 R3 survives: that is a name,
 	// not a value, and it is the most useful thing an audit entry can carry

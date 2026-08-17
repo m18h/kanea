@@ -12,10 +12,10 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-// check9 — batch map ops and the generation-flip update pattern.
+// check9: batch map ops and the generation-flip update pattern.
 func check9(e *env) error {
 	// 9a: do BatchUpdate/BatchLookup/BatchDelete work on this kernel? They do
-	// not on the 5.10 floor for HASH maps in older point releases — record
+	// not on the 5.10 floor for HASH maps in older point releases: record
 	// the errno rather than treating absence as failure.
 	batchOK, batchDetail := probeBatch()
 	info("9a batch map ops", batchDetail)
@@ -122,7 +122,7 @@ func errnoText(err error) string {
 	return err.Error()
 }
 
-// check10 — getpeername after connect-time DNAT: does it return the backend
+// check10; getpeername after connect-time DNAT: does it return the backend
 // address (no fixup program needed) or the VIP (fixup needed)?
 func check10(e *env) error {
 	vipAddr := fmt.Sprintf("%s:%d", vip3, vipPort) // hairpin: single backend p1
@@ -154,11 +154,11 @@ func fixupVerdict(isBackend, isVIP bool) string {
 	}
 }
 
-// check11 — BPF_PROG_TEST_RUN for the SCHED_CLS programs, and the
+// check11: BPF_PROG_TEST_RUN for the SCHED_CLS programs, and the
 // bpf_sock_addr.protocol compile/verify probe.
 func check11(e *env) error {
-	// 11a: run P2 (to_container) against a crafted cross-project SYN — expect
-	// TC_ACT_SHOT (2) — and a crafted non-SYN — expect TC_ACT_OK (0).
+	// 11a: run P2 (to_container) against a crafted cross-project SYN (expect
+	// TC_ACT_SHOT (2)) and a crafted non-SYN; expect TC_ACT_OK (0).
 	src := e.pods["p1"].ip // projA
 	dst := e.pods["p4"].ip // projB
 	syn := buildTCPPacket(src, dst, tcpSYN)
@@ -185,10 +185,10 @@ func check11(e *env) error {
 	if protoErr == nil {
 		check("11b bpf_sock_addr.protocol usable (variant verifies)", true, "ctx->protocol verified and loaded")
 	} else {
-		// A verify failure here is the finding, not a harness bug — record it.
+		// A verify failure here is the finding, not a harness bug: record it.
 		info("11b protocol-field load error", protoErr.Error())
 		check("11b bpf_sock_addr.protocol usable (variant verifies)", false,
-			"variant did NOT verify — gate on ctx->type only at the floor")
+			"variant did NOT verify: gate on ctx->type only at the floor")
 	}
 	return nil
 }

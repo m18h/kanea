@@ -3,7 +3,7 @@
 // The load-bearing unknown behind the functions feature is how the shim
 // behaves under Kanea's OCI spec: the hardening opts, the netns join, the
 // cgroup caps, exec's absence, and the scratch-image pull path. This harness
-// converts each into a PASS/FAIL line against a real containerd — the same
+// converts each into a PASS/FAIL line against a real containerd: the same
 // discipline spikes ② and ⑤ used.
 //
 // Run on a Linux node (root), with Kanea's containerd (or any 2.x) running
@@ -97,7 +97,7 @@ func main() {
 	}
 }
 
-// A: the shim must be resolvable the way containerd resolves it — by binary
+// A: the shim must be resolvable the way containerd resolves it; by binary
 // name on ITS path, which for Kanea's unit includes the install prefix.
 func checkShimResolvable() {
 	for _, dir := range []string{
@@ -113,7 +113,7 @@ func checkShimResolvable() {
 }
 
 // B: the scratch image pulls/loads through the ordinary path (WithPullUnpack
-// equivalent — mkimage.sh imports, so this is a lookup).
+// equivalent; mkimage.sh imports, so this is a lookup).
 func checkImagePull(ctx context.Context, client *containerd.Client, ref string) containerd.Image {
 	img, err := client.GetImage(ctx, ref)
 	if err != nil {
@@ -124,12 +124,12 @@ func checkImagePull(ctx context.Context, client *containerd.Client, ref string) 
 		report("FAIL", "scratch image present", err.Error())
 		return nil
 	}
-	// Unpack into the snapshotter — what Kanea's EnsureImage does via
+	// Unpack into the snapshotter: what Kanea's EnsureImage does via
 	// WithPullUnpack. ctr import does not unpack, and without a prepared
 	// snapshot chain WithNewSnapshot fails with "parent snapshot ... not
 	// found". The default (host-platform) snapshotter is used deliberately:
 	// Kanea pulls with no platform matcher, so a module image must be labelled
-	// host-platform (linux/<arch>), not wasm/wasip2 — the packaging finding.
+	// host-platform (linux/<arch>), not wasm/wasip2; the packaging finding.
 	if err := img.Unpack(ctx, ""); err != nil {
 		report("FAIL", "scratch image unpacks (host platform)", firstLine(err.Error()))
 		return nil
@@ -211,11 +211,11 @@ func checkExecAbsence(ctx context.Context, task containerd.Task) {
 		return
 	}
 	_, _ = proc.Delete(ctx, containerd.WithProcessKill)
-	report("FAIL", "exec is absent", "task.Exec succeeded — the ErrNoExec assumption is wrong")
+	report("FAIL", "exec is absent", "task.Exec succeeded; the ErrNoExec assumption is wrong")
 }
 
 // E: the module serves wasi-http. The wasmtime shim serves the proxy
-// component inside the instance's OWN network namespace (correct isolation —
+// component inside the instance's OWN network namespace (correct isolation:
 // crossing it to the alloc's VIP is the datapath's job, exercised end to end
 // in check H on a kanead node). So the reachability probe enters the task's
 // netns rather than dialling the host: nsenter into task.Pid()'s net ns and
@@ -265,7 +265,7 @@ func checkShimRSS(task containerd.Task) {
 	report("INFO", "shim RSS", "VmRSS not found")
 }
 
-// G: the cgroup memory cap is real — a module allocating past it must be
+// G: the cgroup memory cap is real; a module allocating past it must be
 // OOM-killed, not carried. Starts the hog module under a tight memory.max
 // (== swap, so it cannot swap around the cap) and waits: an exit is the cap
 // working; surviving past the timeout while allocating is the cap not being
@@ -318,11 +318,11 @@ func checkMemoryCap(ctx context.Context, client *containerd.Client, img containe
 	case st := <-exitCh:
 		code, _, _ := st.Result()
 		report("PASS", "memory cap OOM-kills a hog",
-			fmt.Sprintf("hog exited under a %d MiB cap (code %d — SIGKILL/OOM)", limit>>20, code))
+			fmt.Sprintf("hog exited under a %d MiB cap (code %d; SIGKILL/OOM)", limit>>20, code))
 	case <-time.After(20 * time.Second):
 		_ = task.Kill(ctx, 9)
 		report("FAIL", "memory cap OOM-kills a hog",
-			fmt.Sprintf("hog still running after 20s under a %d MiB cap — the cap is not enforced on the sandbox", limit>>20))
+			fmt.Sprintf("hog still running after 20s under a %d MiB cap; the cap is not enforced on the sandbox", limit>>20))
 	}
 }
 

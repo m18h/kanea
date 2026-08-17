@@ -272,7 +272,7 @@ func dialExecWS(
 
 func TestExecWithACookieAloneIsRefused(t *testing.T) {
 	// A cookie is what a cross-site page can ride. Without the CSRF token the
-	// handshake must die exactly as a headerless PUT does — this pins the
+	// handshake must die exactly as a headerless PUT does: this pins the
 	// pre-v1.64 behavior as intended for token-less browsers, not as a bug.
 	fake := &fakeExecer{}
 	h := newAuthHarness(t, withExec(fake))
@@ -289,7 +289,7 @@ func TestExecWithACookieAloneIsRefused(t *testing.T) {
 
 func TestExecWithTheSubprotocolTokenRuns(t *testing.T) {
 	// The browser carrier (PRD v1.64): the token rides Sec-WebSocket-Protocol
-	// beside the negotiable name. The server must echo only the name — an
+	// beside the negotiable name. The server must echo only the name: an
 	// echoed token entry would reflect the credential into the response.
 	fake := &fakeExecer{code: 7}
 	h := newAuthHarness(t, withExec(fake))

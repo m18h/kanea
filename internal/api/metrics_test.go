@@ -187,7 +187,7 @@ func TestStatsTopicStreamsAServiceAndItsAllocs(t *testing.T) {
 	// "No data" is a gap, not a zero: a chart that draws them the same way
 	// tells an operator a stopped scraper is an idle service.
 	if sample.Memory != nil {
-		t.Errorf("memory = %v, want absent — nothing was recorded", *sample.Memory)
+		t.Errorf("memory = %v, want absent; nothing was recorded", *sample.Memory)
 	}
 	if len(sample.Allocs) != 2 {
 		t.Fatalf("allocs = %+v, want both records", sample.Allocs)
@@ -282,7 +282,7 @@ func TestExporterReportsTheEdgeDown(t *testing.T) {
 			h := newAuthHarness(t, opts...)
 
 			// Published unconditionally. A gap in kanea_edge_service_* has two
-			// causes — the edge is down, or nothing is exposed — and without
+			// causes (the edge is down, or nothing is exposed) and without
 			// this they are indistinguishable.
 			if body := scrapeMetrics(t, h); !strings.Contains(body, "kanea_edge_up 0") {
 				t.Errorf("expected kanea_edge_up 0:\n%s", body)
@@ -306,7 +306,7 @@ func TestServerUpIsOnlyPublishedForProbedAllocs(t *testing.T) {
 			ID: "shop-web-1", Project: "shop", Service: "web", Index: 1,
 			State: reconciler.AllocRunning, Healthy: false, LastProbeAt: time.Now(),
 		},
-		// Never probed — the service declares no `check` block. Healthy is
+		// Never probed; the service declares no `check` block. Healthy is
 		// written solely by a probe, so this record's false is not a fact
 		// about the alloc, and publishing it would report every check-free
 		// service as entirely down.

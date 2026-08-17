@@ -40,7 +40,7 @@ func echoUpstream(t *testing.T) fakeUpstream {
 
 func getURL(t *testing.T, url string) (string, int) {
 	t.Helper()
-	resp, err := http.Get(url) // #nosec G107 — test URL
+	resp, err := http.Get(url) // #nosec G107; test URL
 	if err != nil {
 		t.Fatalf("get %s: %v", url, err)
 	}
@@ -85,7 +85,7 @@ func TestFunctionsPortDispatchesByPathAndStripsThePrefix(t *testing.T) {
 }
 
 // The §7.2.1 chain applies on the functions port the way it does on any http
-// listener — a control the spec declared and the dispatcher dropped would be
+// listener: a control the spec declared and the dispatcher dropped would be
 // R16's silently-ignored rule all over again.
 func TestFunctionsPortAppliesMiddleware(t *testing.T) {
 	up := echoUpstream(t)
@@ -127,7 +127,7 @@ func TestFunctionsPortLifecycle(t *testing.T) {
 }
 
 // No port configured: routes must not bind anything, and must not reject the
-// snapshot — the rest of the file serves, and the condition is a warning.
+// snapshot; the rest of the file serves, and the condition is a warning.
 func TestFunctionsPortDisabledIsANoOp(t *testing.T) {
 	set := newTestFunctionsSet(t, 0)
 	set.Apply([]FunctionRoute{{

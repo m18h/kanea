@@ -4,7 +4,7 @@
 // inlined** (§6.2, R3): a job spec names `secret:shop/db-password` and the
 // value is resolved in-process at alloc start. And they are **write-only over
 // the API** (§13.3, §16.3): an operator or an agent can set a secret and list
-// what exists, but nothing outside this process can read a value back — so a
+// what exists, but nothing outside this process can read a value back, so a
 // compromised token cannot exfiltrate what it could only overwrite.
 package secrets
 
@@ -36,7 +36,7 @@ var (
 	ErrNotFound = errors.New("secrets: not found")
 	// ErrInvalidPath marks a malformed reference.
 	ErrInvalidPath = errors.New("secrets: invalid path")
-	// ErrUndecryptable means the record exists but this key cannot open it —
+	// ErrUndecryptable means the record exists but this key cannot open it;
 	// almost always a master key that was replaced or restored from elsewhere.
 	ErrUndecryptable = errors.New("secrets: cannot decrypt")
 )
@@ -53,7 +53,7 @@ type record struct {
 	Updated    time.Time `json:"updated"`
 	// Source names the external provider that last wrote this secret
 	// ("doppler/ci"), empty for an operator write (§5.2.13). Metadata beside
-	// the timestamps, never secret material — and omitempty, so every record
+	// the timestamps, never secret material, and omitempty, so every record
 	// written before v1.44 keeps decoding (and re-encoding) exactly as it did.
 	Source string `json:"source,omitempty"`
 }
@@ -116,7 +116,7 @@ func Open(cfg Config) (*Store, error) {
 		// every encrypted backup unreadable (§15.3).
 		cfg.Logger.Warn("generated a new secrets master key",
 			"path", cfg.KeyPath,
-			"detail", "back this file up now — without it every stored secret and "+
+			"detail", "back this file up now: without it every stored secret and "+
 				"every encrypted backup is unrecoverable (key escrow arrives with `kanea init`)")
 	}
 
@@ -130,7 +130,7 @@ func Open(cfg Config) (*Store, error) {
 // Put writes a secret, creating or replacing it.
 //
 // An operator write clears any provider provenance: whoever typed `kanea
-// secret put` took manual control, and the metadata should say so — until the
+// secret put` took manual control, and the metadata should say so; until the
 // sync's next pass reasserts a mapping that still exists (§5.2.13).
 func (s *Store) Put(ctx context.Context, secretPath string, value []byte) error {
 	return s.put(ctx, secretPath, value, "")
@@ -198,7 +198,7 @@ func (s *Store) put(ctx context.Context, secretPath string, value []byte, source
 
 // Resolve returns a secret's value.
 //
-// In-process only. Nothing reachable from the API calls this — that is what
+// In-process only. Nothing reachable from the API calls this: that is what
 // "write-only over the API" means, and it is enforced by not exposing a read
 // route rather than by a permission check that could be misconfigured.
 func (s *Store) Resolve(ctx context.Context, ref string) ([]byte, error) {
@@ -223,7 +223,7 @@ func (s *Store) Resolve(ctx context.Context, ref string) ([]byte, error) {
 
 // Describe returns one secret's metadata, without decrypting it. It is what
 // the sync subsystem reads to tell a manual overwrite (Source cleared by Put)
-// from an external rotation (§5.2.13) — metadata only, like List.
+// from an external rotation (§5.2.13): metadata only, like List.
 func (s *Store) Describe(ctx context.Context, ref string) (Info, error) {
 	clean, err := CleanPath(ref)
 	if err != nil {
@@ -238,8 +238,8 @@ func (s *Store) Describe(ctx context.Context, ref string) (Info, error) {
 
 // Exists reports whether a secret is set, without decrypting it.
 //
-// Validation needs this — a spec referencing a secret that was never created
-// should fail at plan time — and it must not require the ability to read.
+// Validation needs this (a spec referencing a secret that was never created
+// should fail at plan time) and it must not require the ability to read.
 func (s *Store) Exists(ctx context.Context, ref string) (bool, error) {
 	clean, err := CleanPath(ref)
 	if err != nil {

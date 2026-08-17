@@ -18,7 +18,7 @@ import (
 // state, then images are re-pulled, then allocs and edge routes come back.
 //
 // Only the first two steps live here. The rest are the reconciler's ordinary
-// job — a restored Store is a Store with desired state in it, and convergence
+// job: a restored Store is a Store with desired state in it, and convergence
 // is what the reconciler does with one. That is the point of §18's rule that
 // derived state is never restored: there is no third code path for "coming back
 // from a backup", because it is the same path as "starting up".
@@ -52,7 +52,7 @@ type RestoreOptions struct {
 // database at the target path.
 //
 // It does not touch a running node. The caller stops the daemon, restores, and
-// starts it — which is what `kanea restore` does, and why the target must not
+// starts it, which is what `kanea restore` does, and why the target must not
 // already exist.
 func (a *Archiver) Restore(ctx context.Context, opts RestoreOptions) (RestoreResult, error) {
 	log := opts.Logger
@@ -130,7 +130,7 @@ func (a *Archiver) replay(
 			// in the missing segment would never happen, and the record it
 			// removed would come back from the dead.
 			return applied, index, fmt.Errorf(
-				"%w — restored state is good up to index %d; "+
+				"%w: restored state is good up to index %d; "+
 					"re-run with --skip-replay to accept the snapshot alone", err, index)
 		}
 

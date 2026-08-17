@@ -43,7 +43,7 @@ const (
 	RunSucceeded RunState = "succeeded"
 	// RunFailed did not. The step that failed carries the reason.
 	RunFailed RunState = "failed"
-	// RunCancelled was stopped deliberately — by an operator, or by a daemon
+	// RunCancelled was stopped deliberately: by an operator, or by a daemon
 	// shutting down mid-build. Distinct from failed because it says nothing
 	// about the source.
 	RunCancelled RunState = "cancelled"
@@ -298,15 +298,15 @@ const DefaultRunRetention = 20
 
 // SweepOrphans closes runs a crash left non-terminal (v1.37).
 //
-// The graceful path never leaves one — shutdown drains the queue and cancels
-// what is waiting — but a crash does, and a run nothing will ever move again
+// The graceful path never leaves one (shutdown drains the queue and cancels
+// what is waiting) but a crash does, and a run nothing will ever move again
 // reads as a build still happening, forever. Prune skips non-terminal runs,
 // so it would also be pinned against retention.
 //
 // A queued run is cancelled with the drain's vocabulary rather than
 // re-enqueued: the request it was queued with is derived from the project
 // config, and re-deriving it now could build something other than what was
-// queued. A running run is failed — a build was lost mid-flight, and its log
+// queued. A running run is failed: a build was lost mid-flight, and its log
 // may stop mid-line. Everything lands in one Apply batch: the sweep is one
 // event, not one per stranded run.
 func (r *Runs) SweepOrphans(ctx context.Context) ([]Run, error) {
@@ -410,7 +410,7 @@ func (r *Run) EndStep(name string, at time.Time, err error) {
 //
 // A nil error succeeds it; anything else fails it and records why. The step is
 // closed too if one is still open, because a run cannot be finished while a
-// step inside it is still running — that shape would render as a spinner that
+// step inside it is still running: that shape would render as a spinner that
 // never stops.
 func (r *Run) Finish(at time.Time, err error) {
 	for i := range r.Steps {

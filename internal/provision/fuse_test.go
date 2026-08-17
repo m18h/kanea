@@ -4,7 +4,7 @@ import "testing"
 
 // Every distribution ships /etc/fuse.conf with user_allow_other present and
 // commented out. Treating that as "set" is the one mistake this check exists
-// to avoid — it would leave every S3 volume failing at the first deploy with
+// to avoid: it would leave every S3 volume failing at the first deploy with
 // an error about a mount option.
 func TestFuseAllowOtherDetection(t *testing.T) {
 	tests := []struct {

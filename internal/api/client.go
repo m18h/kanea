@@ -205,7 +205,7 @@ func (c *Client) Scale(ctx context.Context, project, service string, count int) 
 }
 
 // Restart requests a rolling restart. The server bumps the service's
-// generation — which is SpecHash material — so the reconciler rolls its
+// generation (which is SpecHash material) so the reconciler rolls its
 // allocs through the update policy: a restart is a spec change, not a second
 // path to the runtime.
 func (c *Client) Restart(ctx context.Context, project, service string) (ApplyResponse, error) {
@@ -353,12 +353,12 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) (er
 
 // dialError turns a connection failure into the question the user actually
 // needs answered: "is kanead running?" rather than a bare ENOENT on a socket
-// path most people have never seen — and for EACCES, the remedy rather than
+// path most people have never seen, and for EACCES, the remedy rather than
 // the errno, because "permission denied" on a 0600 socket is working as
 // designed and the caller needs to know which door is theirs (§13.1, v1.48).
 func (c *Client) dialError(err error) error {
 	if errors.Is(err, fs.ErrPermission) {
-		return fmt.Errorf("permission denied on %s — run with sudo, or join the %s group "+
+		return fmt.Errorf("permission denied on %s; run with sudo, or join the %s group "+
 			"(sudo usermod -aG %s $USER, then log in again): %w",
 			c.Socket(), SocketGroup, SocketGroup, err)
 	}
@@ -382,7 +382,7 @@ func decodeError(resp *http.Response) error {
 //
 // The status is carried rather than folded into the message because callers act
 // on it: a queued build refused with 429 is worth retrying in a moment, and the
-// same refusal at 409 — no build block, no git source — never will be. Without
+// same refusal at 409 (no build block, no git source) never will be. Without
 // the code the two are one indistinguishable string.
 type StatusError struct {
 	Status  int
@@ -400,7 +400,7 @@ func (e *StatusError) Retryable() bool {
 
 // ListSecrets returns metadata for the secrets that exist.
 //
-// Metadata only — there is no client method to read a value, because there is
+// Metadata only: there is no client method to read a value, because there is
 // no server route to read one (PRD §13.3).
 func (c *Client) ListSecrets(ctx context.Context, prefix string) ([]secrets.Info, error) {
 	path := PathSecrets
@@ -414,7 +414,7 @@ func (c *Client) ListSecrets(ctx context.Context, prefix string) ([]secrets.Info
 	return resp.Secrets, nil
 }
 
-// SecretProviders returns external-provider sync status (PRD §5.2.13) —
+// SecretProviders returns external-provider sync status (PRD §5.2.13):
 // metadata only, like everything on this surface.
 func (c *Client) SecretProviders(ctx context.Context) ([]secretsource.ProviderStatus, error) {
 	var resp SecretProvidersResponse

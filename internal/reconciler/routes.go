@@ -13,7 +13,7 @@ import (
 
 // syncEdgeRoutes publishes the route table kanea-edge serves from.
 //
-// The edge is a separate process and cannot read the Store — bbolt locks the
+// The edge is a separate process and cannot read the Store: bbolt locks the
 // whole file, so a second opener blocks until kanead exits. What it gets
 // instead is this projection, written whenever the routes change (PRD §5.2.6).
 //
@@ -69,7 +69,7 @@ func (r *Reconciler) syncEdgeRoutes(ctx context.Context, w World, vips map[strin
 // wrote. Remembering would make kanead unable to repair its own output: a
 // snapshot deleted on a reboot, truncated by a full disk, or hand-edited by an
 // operator would never be rewritten, because nothing about desired state
-// changed — and the edge would come back to an empty table and 404 the whole
+// changed, and the edge would come back to an empty table and 404 the whole
 // node. The snapshot is derived state, so it is rebuilt rather than remembered
 // (constraint #9), at the cost of one small read per pass.
 func (r *Reconciler) snapshotIsPublished(routes []edge.Route, listeners []edge.Listener, functions []edge.FunctionRoute) bool {
@@ -96,7 +96,7 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 		}
 		vip := vips[d.Project+"/"+d.Service]
 		if vip == "" {
-			// No frontend yet — the service has no ports, or the LB has not
+			// No frontend yet: the service has no ports, or the LB has not
 			// been programmed. Publishing a route with no upstream would be a
 			// 502 generator.
 			r.log.Debug("exposed service has no frontend yet",
@@ -106,7 +106,7 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 
 		// One edge.Route per expose block (v1.50): each has its own domains,
 		// port, middleware and marker, and the edge has routed a flat list by
-		// domain since v1.15 — N routes naming one service are as ordinary as
+		// domain since v1.15; N routes naming one service are as ordinary as
 		// N services.
 		for _, e := range exposes {
 			domains := EdgeDomainsFor(d, e, r.baseDomain)
@@ -125,7 +125,7 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 			}
 
 			// R16 rejects a collision at plan time, but plan sees one applied
-			// set and this sees all of them — two projects applied separately
+			// set and this sees all of them: two projects applied separately
 			// can still claim one host. First writer wins in a stable order, so
 			// the outcome does not depend on map iteration, and the loser is
 			// named in the log rather than silently dropped.
@@ -168,13 +168,13 @@ func (r *Reconciler) buildRoutes(w World, vips map[string]string) []edge.Route {
 //
 // It mirrors buildRoutes: stable order, a service with no VIP is skipped, and a
 // collision on a node port is first-writer-wins with the loser named. The
-// upstream is the service frontend, so a rolling deploy never flaps a listener
-// — a VIP is durable state, and only deleting the service removes it.
+// upstream is the service frontend, so a rolling deploy never flaps a listener:
+// a VIP is durable state, and only deleting the service removes it.
 //
 // udp listeners are the exception on both counts (v1.42): a udp port has no
 // frontend to dial, so the listener carries the running backend addresses
 // directly, and a service whose only ports are udp legitimately has no VIP. A
-// scale event *does* change a udp listener — the projection republishes on
+// scale event *does* change a udp listener: the projection republishes on
 // backend churn, which is why listenersEqual compares the backend list.
 func (r *Reconciler) buildListeners(w World, vips map[string]string, attachments map[string]network.Attachment) []edge.Listener {
 	var listeners []edge.Listener
@@ -259,8 +259,8 @@ func backendAddrs(backends []network.Backend) []string {
 }
 
 // buildFunctionRoutes is the functions-port dispatch table (PRD §7.2.3):
-// http-triggered functions whose route resolved to no hostname — no declared
-// domains and no base domain — reached as /<project>/<function>/… instead.
+// http-triggered functions whose route resolved to no hostname (no declared
+// domains and no base domain) reached as /<project>/<function>/… instead.
 //
 // Which mode a function gets is decided here, on the node, exactly as
 // ResolveTLSMode decides a certificate source: the spec never encodes it, so
@@ -281,7 +281,7 @@ func (r *Reconciler) buildFunctionRoutes(w World, vips map[string]string) []edge
 			continue
 		}
 		// (project, service) is unique in desired state, so unlike domains and
-		// node ports the prefix cannot collide — there is no claim map here
+		// node ports the prefix cannot collide: there is no claim map here
 		// because there is nothing to claim.
 		out = append(out, edge.FunctionRoute{
 			Project: d.Project, Function: d.Service,
@@ -314,7 +314,7 @@ func listenersEqual(a, b []edge.Listener) bool {
 			x.Port == y.Port && x.Mode == y.Mode &&
 			x.Upstream == y.Upstream && x.UpstreamPort == y.UpstreamPort &&
 			// Backends are how a udp listener reaches anything, so backend
-			// churn must republish — leaving them out is the exact mistake
+			// churn must republish: leaving them out is the exact mistake
 			// routesArePublished made with listeners (PRD v1.33).
 			slices.Equal(x.Backends, y.Backends) &&
 			x.MaxConns == y.MaxConns &&
@@ -336,7 +336,7 @@ func (r *Reconciler) domainsFor(d Desired) []string {
 // Explicit beats the pre-v1.33 bool beats the node's default. The node default
 // is applied here rather than at apply time so that changing --tls-default
 // takes effect on the next pass instead of on the next `kanea run` of every
-// service — and so that a stored record says what the *spec* asked for and
+// service, and so that a stored record says what the *spec* asked for and
 // nothing more.
 //
 // A service with no expose block gets "": there is nothing to serve.
@@ -360,7 +360,7 @@ func (e *Expose) ResolveTLSMode(nodeDefault string) string {
 //
 // Exported because certificate issuance has to ask the same question the route
 // table does. Answering it twice, differently, would mean requesting a
-// certificate for a name the edge does not route — an issuance guaranteed to
+// certificate for a name the edge does not route: an issuance guaranteed to
 // fail validation, and to keep failing.
 func EdgeDomains(d Desired, baseDomain string) []string {
 	var out []string
@@ -371,7 +371,7 @@ func EdgeDomains(d Desired, baseDomain string) []string {
 }
 
 // EdgeDomainsFor is EdgeDomains for one route (v1.50). Only the first block
-// may generate the auto-FQDN — one generated name per service, R16's rule —
+// may generate the auto-FQDN: one generated name per service, R16's rule;
 // so an extra block with no domains resolves to nothing.
 func EdgeDomainsFor(d Desired, e *Expose, baseDomain string) []string {
 	if e == nil {
@@ -401,7 +401,7 @@ func canonicalDomain(d string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(d), "."))
 }
 
-// sortedDesired orders services so route building is deterministic — which is
+// sortedDesired orders services so route building is deterministic, which is
 // what makes "first writer wins" a rule rather than a coin flip.
 func sortedDesired(desired []Desired) []Desired {
 	out := make([]Desired, len(desired))
@@ -415,7 +415,7 @@ func sortedDesired(desired []Desired) []Desired {
 // routesEqual reports whether two route tables are the same.
 //
 // Every field buildRoutes sets must be compared here, or an edit to it
-// publishes exactly once and never again — the routesArePublished lesson
+// publishes exactly once and never again: the routesArePublished lesson
 // (PRD v1.33).
 func routesEqual(a, b []edge.Route) bool {
 	return slices.EqualFunc(a, b, func(x, y edge.Route) bool {

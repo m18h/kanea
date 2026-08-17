@@ -69,7 +69,7 @@ func TestParseQueryRejectsMalformedMessages(t *testing.T) {
 }
 
 // A name longer than the protocol allows must be refused rather than
-// accumulated — the bound is what stops a small datagram from producing an
+// accumulated: the bound is what stops a small datagram from producing an
 // unbounded allocation.
 func TestParseQueryRejectsOversizedName(t *testing.T) {
 	buf := make([]byte, dnsHeaderLen)

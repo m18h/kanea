@@ -2,7 +2,7 @@ package api
 
 // GET /v1/functions (PRD v1.39, §12.2, §16.1): the functions view.
 //
-// A function IS a service — the marker is Desired.Function != nil (R25) — so
+// A function IS a service (the marker is Desired.Function != nil (R25)) so
 // this route is a filtered join over the same records the services list
 // serves, plus what makes a function worth a page of its own: its triggers,
 // the invoker's counters, and an invocation rate from the datapath's connect
@@ -35,10 +35,10 @@ type InvokerSource interface {
 const (
 	// FunctionActive: running, and healthy where a probe exists.
 	FunctionActive = "active"
-	// FunctionIdle: observed traffic present and zero over the window —
+	// FunctionIdle: observed traffic present and zero over the window;
 	// absent data renders active, never idle ("no data is never zero").
 	FunctionIdle = "idle"
-	// FunctionTrapping: the crash-loop condition wearing its wasm name — a
+	// FunctionTrapping: the crash-loop condition wearing its wasm name; a
 	// trap is a nonzero exit is a crash.
 	FunctionTrapping = "trapping"
 	// FunctionStopped: scaled to zero on purpose.
@@ -55,7 +55,7 @@ type FunctionView struct {
 	RunModule string `json:"run_module,omitempty"`
 	Count     int    `json:"count"`
 	Runtime   string `json:"runtime"`
-	// MemoryBytes is the R11 cap — the MEM CAP column, real (cgroup).
+	// MemoryBytes is the R11 cap: the MEM CAP column, real (cgroup).
 	MemoryBytes int64 `json:"memory_bytes"`
 
 	HTTP    bool                      `json:"http"`
@@ -71,7 +71,7 @@ type FunctionView struct {
 	Restarts int `json:"restarts"`
 
 	// InvocationsPerMinute is derived from the datapath's per-VIP connect
-	// counters (§9.1) — nil when no sample exists, never zero.
+	// counters (§9.1): nil when no sample exists, never zero.
 	InvocationsPerMinute *float64 `json:"invocations_per_minute,omitempty"`
 	// Invoker is the event/cron invoker's own bookkeeping; absent until the
 	// first invocation.
@@ -81,7 +81,7 @@ type FunctionView struct {
 // FunctionsResponse is the route's body.
 type FunctionsResponse struct {
 	Functions []FunctionView `json:"functions"`
-	// InvokerDropped counts events the invoker's queue refused — a cap nobody
+	// InvokerDropped counts events the invoker's queue refused: a cap nobody
 	// can see is indistinguishable from a leak.
 	InvokerDropped int64 `json:"invoker_dropped,omitempty"`
 }
@@ -150,7 +150,7 @@ func (s *Server) handleListFunctions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// functionRate reads the latest flows_per_second sample for a function —
+// functionRate reads the latest flows_per_second sample for a function:
 // the datapath's connect counter, which sees edge, east-west and invoker
 // traffic alike (§9.1). Nil when no sample exists: under --network netns
 // there is no datapath, and "no data is never zero".
@@ -185,7 +185,7 @@ func countAllocs(d reconciler.Desired, records []reconciler.AllocRecord) (runnin
 
 // functionStatus derives the §12.2 chip. Honest derivations only:
 //
-//   - trapping: an alloc exited recently or is waiting out restart backoff —
+//   - trapping: an alloc exited recently or is waiting out restart backoff;
 //     the existing crash-loop condition wearing its wasm name.
 //   - stopped: count 0, on purpose.
 //   - idle: an observed rate of zero AND an invoker that has recorded

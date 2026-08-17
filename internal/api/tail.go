@@ -9,7 +9,7 @@ import (
 )
 
 // tailer streams one alloc's log file, optionally starting from the last N
-// lines. It reads what is there and returns — following is the caller's loop —
+// lines. It reads what is there and returns: following is the caller's loop;
 // so a slow client can never block a workload's writer. That is the same
 // property PRD §17 demands of the log pipeline: the reader is never in the
 // workload's path.
@@ -24,7 +24,7 @@ type tailer struct {
 }
 
 func newTailer(path, allocID string, tail int, prefix bool) (*tailer, error) {
-	f, err := os.Open(path) // #nosec G304 — path is composed from the alloc id
+	f, err := os.Open(path) // #nosec G304; path is composed from the alloc id
 	if err != nil {
 		return nil, err
 	}

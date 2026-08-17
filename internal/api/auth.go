@@ -39,15 +39,15 @@ const SessionCookie = "kanea_session"
 // cookie but cannot set a custom header without a preflight the browser will
 // refuse. On a WebSocket upgrade the constructor cannot set this header either,
 // which is what CSRFProtocolPrefix exists for.
-const CSRFHeader = "X-Kanea-CSRF" // #nosec G101 — a header name, not a credential
+const CSRFHeader = "X-Kanea-CSRF" // #nosec G101: a header name, not a credential
 
 // CSRFProtocolPrefix carries the CSRF token on a WebSocket upgrade, where the
 // browser cannot set a custom header (PRD v1.64): the client offers a
 // Sec-WebSocket-Protocol entry "kanea-csrf.<token>" beside the route's
-// negotiable subprotocol. Honored only on an Upgrade request — Upgrade and
+// negotiable subprotocol. Honored only on an Upgrade request: Upgrade and
 // Sec-* are browser-forbidden headers, so no cross-site fetch or form can
-// produce that shape — and the server never echoes the token entry back.
-const CSRFProtocolPrefix = "kanea-csrf." // #nosec G101 — a prefix, not a credential
+// produce that shape, and the server never echoes the token entry back.
+const CSRFProtocolPrefix = "kanea-csrf." // #nosec G101: a prefix, not a credential
 
 // Authenticator is the slice of the auth store the API needs.
 //
@@ -95,7 +95,7 @@ type AuditResponse struct {
 }
 
 // policy is what a route requires. Every route declares one at registration:
-// the alternative — a middleware that infers requirements from the path — makes
+// the alternative (a middleware that infers requirements from the path) makes
 // "which routes are protected" a question about string matching rather than
 // something readable next to the handler (PRD §14, A01).
 type policy struct {
@@ -105,11 +105,11 @@ type policy struct {
 	// and an audit entry whether it succeeds or fails.
 	mutates bool
 	// selfService lifts the admin requirement from a mutation a caller performs
-	// on themselves — logging out. It is an explicit opt-out rather than a
+	// on themselves: logging out. It is an explicit opt-out rather than a
 	// per-route role field, so a new mutating route that says nothing about
 	// roles is admin-only by default rather than open by omission.
 	selfService bool
-	// adminOnly marks a read that is still privileged — the audit log itself.
+	// adminOnly marks a read that is still privileged: the audit log itself.
 	adminOnly bool
 	// public exempts the route from authentication. Exactly two routes may set
 	// it (§5.2.1): health, and login. Everything else is deny-by-default.
@@ -177,8 +177,8 @@ func (s *Server) route(p policy, h http.HandlerFunc) http.Handler {
 
 		if p.mutates {
 			// Recorded after the fact, because the outcome is half of what makes
-			// the entry worth having. The window that leaves — the action landed,
-			// the record did not — is real but narrow: it needs the Store to fail
+			// the entry worth having. The window that leaves (the action landed,
+			// the record did not) is real but narrow: it needs the Store to fail
 			// between two writes, and a Store that is failing has already failed
 			// the mutation. It is logged loudly and counted rather than hidden,
 			// and it is the reason an audit entry is never the only evidence.
@@ -214,7 +214,7 @@ func (s *Server) identify(r *http.Request) (auth.Identity, error) {
 			return auth.Identity{}, err
 		}
 		// Via carries how the session was established (v1.47): "session",
-		// "oidc" or "ldap". Whatever it says, this is a browser cookie —
+		// "oidc" or "ldap". Whatever it says, this is a browser cookie:
 		// checkCSRF's allowlist is what enforces that reading.
 		return auth.Identity{
 			Subject: session.Subject, Role: session.Role, Via: session.Via(),
@@ -222,7 +222,7 @@ func (s *Server) identify(r *http.Request) (auth.Identity, error) {
 	}
 
 	// The unix socket is the credential. It is created 0600 and owned by the
-	// user running kanead, so reaching it means being that user — who can
+	// user running kanead, so reaching it means being that user: who can
 	// already replace the binary, read the master key and mint any token they
 	// like. Demanding a second credential from them would be theatre, and
 	// §13.1 names this as the local path. It is recorded as MethodSocket so an
@@ -252,13 +252,13 @@ func bearerToken(r *http.Request) string {
 // Only cookie authentication needs it. A bearer token is not attached by the
 // browser to a cross-site request, so there is nothing to ride; a socket caller
 // is not a browser at all. SameSite=Lax on the cookie is defence in depth, not
-// a substitute — it does not cover every navigation, and it is a property of the
+// a substitute: it does not cover every navigation, and it is a property of the
 // browser rather than of this server (PRD §13.3).
 //
 // An allowlist skip, not "skip unless via session": since v1.47 a cookie
 // identity's Via can read "ldap" or "oidc", and every one of those is still a
 // browser cookie a cross-site request can ride. The old predicate would have
-// silently exempted them — a hole opened by bookkeeping.
+// silently exempted them: a hole opened by bookkeeping.
 func (s *Server) checkCSRF(r *http.Request, id auth.Identity) error {
 	if id.Via == auth.MethodToken || id.Via == auth.MethodSocket {
 		return nil
@@ -281,8 +281,8 @@ func (s *Server) checkCSRF(r *http.Request, id auth.Identity) error {
 	return nil
 }
 
-// presentedCSRF finds the token the request carries: the header, or — on a
-// WebSocket upgrade only — a Sec-WebSocket-Protocol entry with the
+// presentedCSRF finds the token the request carries: the header, or (on a
+// WebSocket upgrade only) a Sec-WebSocket-Protocol entry with the
 // CSRFProtocolPrefix. The Upgrade gate is the security property: off a
 // websocket handshake the subprotocol header is attacker-settable by any
 // same-machine client, and honoring it there would widen every cookie-auth
@@ -443,7 +443,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, auth.ErrRateLimited):
 			status = http.StatusTooManyRequests
 		case errors.Is(err, auth.ErrLDAPNoRole):
-			// The directory vouched for them; Kanea has no role for them —
+			// The directory vouched for them; Kanea has no role for them;
 			// the difference between "log in again" and "ask an
 			// administrator" (v1.47, the OIDC no-role rule).
 			status = http.StatusForbidden
@@ -456,8 +456,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}, auth.Identity{})
 		// Node-level, with no project: a failed login belongs to nobody's
 		// project. The attempted name is included for the same reason the audit
-		// entry carries it — a brute force is only visible as a pattern of
-		// names — and one failure is a typo, which is why §11 files this as a
+		// entry carries it (a brute force is only visible as a pattern of
+		// names) and one failure is a typo, which is why §11 files this as a
 		// warning and the dispatcher coalesces it into a count.
 		s.emit(notify.EventAuthLoginFailed, "", "",
 			fmt.Sprintf("failed login for %q from %s", req.User, sourceOf(r)))
@@ -500,7 +500,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	// Expired in the past and emptied: a browser that ignores one usually
 	// honours the other.
-	// #nosec G124 — the flags come from sessionCookie, which sets HttpOnly and
+	// #nosec G124: the flags come from sessionCookie, which sets HttpOnly and
 	// SameSite unconditionally; Secure is the documented InsecureCookies opt-out.
 	cleared := s.sessionCookie("", time.Unix(0, 0))
 	cleared.MaxAge = -1
@@ -585,7 +585,7 @@ var errNoAuthConfigured = errors.New("api: no authentication is configured on th
 
 // sessionCookie builds the session cookie with the flags §13.3 requires.
 func (s *Server) sessionCookie(value string, expires time.Time) *http.Cookie {
-	// #nosec G124 — HttpOnly and SameSite are set unconditionally below. Secure
+	// #nosec G124: HttpOnly and SameSite are set unconditionally below. Secure
 	// is conditional on purpose: a daemon reached over plain HTTP on a private
 	// network is a supported deployment, and a cookie a browser refuses to send
 	// is not a security win, it is a login screen nobody can get past. The
@@ -614,10 +614,10 @@ func (s *Server) sessionCookie(value string, expires time.Time) *http.Cookie {
 // secureHeaders sets the response headers every route shares (PRD §14).
 //
 // Applied to the whole mux rather than per route, so a handler that is added
-// later cannot forget them — including the ones that answer errors and the
+// later cannot forget them: including the ones that answer errors and the
 // dashboard's static files. The Content-Security-Policy is deliberately NOT
 // set here: it belongs to the dashboard package, which is the only thing
-// serving HTML. Two CSP headers on one response are not defence in depth —
+// serving HTML. Two CSP headers on one response are not defence in depth:
 // browsers intersect them, so a duplicate silently tightens the policy the
 // app was written against.
 func secureHeaders(next http.Handler) http.Handler {
@@ -678,7 +678,7 @@ func (w *recordingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 func (w *recordingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// auditDetail records extra context on the audit entry — for exec, the command
+// auditDetail records extra context on the audit entry: for exec, the command
 // that was asked for, which is the whole point of auditing an exec at all.
 func auditDetail(r *http.Request, detail string) {
 	if f, ok := r.Context().Value(auditFieldsKey{}).(*auditFields); ok {

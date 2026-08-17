@@ -27,7 +27,7 @@ const (
 	MetricCPU = "cpu"
 	// MetricMemory is percent of the declared memory limit.
 	MetricMemory = "memory"
-	// MetricMemoryBytes is the raw figure, for the dashboard's graphs — a
+	// MetricMemoryBytes is the raw figure, for the dashboard's graphs: a
 	// percentage is what you scale on, bytes are what you look at.
 	MetricMemoryBytes = "memory_bytes"
 	// MetricPIDs is the current process count.
@@ -82,8 +82,8 @@ type ContainerdConfig struct {
 
 // ContainerdScraper turns containerd's Prometheus endpoint into samples.
 //
-// One HTTP call covers every container on the node. The alternative — asking
-// each task for its own metrics — is thousands of shim RPCs a minute at the
+// One HTTP call covers every container on the node. The alternative (asking
+// each task for its own metrics) is thousands of shim RPCs a minute at the
 // §21 target, which is the cost §9.1 exists to avoid.
 //
 // It speaks HTTP to containerd's metrics listener rather than going through the
@@ -193,7 +193,7 @@ func (s *ContainerdScraper) Scrape(ctx context.Context) (recorded int, err error
 // built: parsing the whole body to discard nine tenths of it would make the
 // metrics pipeline the most expensive thing on the node.
 //
-// M0 spike ② left this open — "M6 should re-measure at 2 000-alloc scale" — so
+// M0 spike ② left this open ("M6 should re-measure at 2 000-alloc scale") so
 // BenchmarkScrapeParse does, on a body of that shape:
 //
 //	2.2 ms per scrape, 439 MB/s, 1.2 MB allocated
@@ -313,7 +313,7 @@ func (s *ContainerdScraper) parse(body io.Reader, at time.Time) (int, error) {
 // alloc's limit.
 //
 // The endpoint reports microseconds of CPU used since the container started, so
-// a single reading says nothing about current load — the rate between two
+// a single reading says nothing about current load: the rate between two
 // readings does. The first scrape of a container therefore records nothing,
 // which is correct and is why an autoscaler must distinguish "no data" from
 // "no load".
@@ -400,7 +400,7 @@ func splitExpositionLine(line []byte) (name, labels, value []byte, ok bool) {
 
 // labelValue extracts one label from a raw Prometheus label set.
 //
-// Quote-aware, and it has to be: a label *value* may legally contain commas —
+// Quote-aware, and it has to be: a label *value* may legally contain commas;
 // a container id, an escaped path. Splitting on commas first truncates such a
 // value at the first one, which reads as a perfectly plausible label and
 // attributes every sample to the wrong subject.

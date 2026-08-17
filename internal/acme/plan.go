@@ -22,7 +22,7 @@ type Exposure struct {
 	Domains []string
 	// Auto reports whether Domains are the generated FQDNs of §7.2 rather than
 	// operator-declared custom domains. Only generated names can be collapsed
-	// into a wildcard — a custom domain is somebody else's zone, and Kanea has
+	// into a wildcard: a custom domain is somebody else's zone, and Kanea has
 	// no standing to ask for `*.` of it.
 	Auto bool
 }
@@ -32,7 +32,7 @@ type PlanOptions struct {
 	// BaseDomain is the suffix generated FQDNs are built under.
 	BaseDomain string
 	// Wildcards reports whether a DNS-01 solver is configured. Without one a
-	// wildcard cannot be issued at all — HTTP-01 cannot validate a name that
+	// wildcard cannot be issued at all: HTTP-01 cannot validate a name that
 	// does not resolve to one host.
 	Wildcards bool
 	// Threshold overrides DefaultWildcardThreshold.
@@ -47,7 +47,7 @@ type Plan struct {
 	PerService int
 	Wildcard   int
 	// OverThreshold is set when there are more per-service certificates than
-	// the threshold allows and nothing could be done about it — which today
+	// the threshold allows and nothing could be done about it, which today
 	// means DNS-01 is not configured. It is the condition §7.3 wants said
 	// loudly rather than discovered as a rate-limit rejection.
 	OverThreshold bool
@@ -58,7 +58,7 @@ type Plan struct {
 // The rule, from §7.3: per-service certificates while there are few, wildcards
 // once there are many. The switch exists because Let's Encrypt counts
 // certificates per registered domain per week, and a node with fifty services
-// redeploying twice a day walks into that limit — at which point *nothing*
+// redeploying twice a day walks into that limit: at which point *nothing*
 // issues, including the renewal of a certificate already in production.
 //
 // The wildcard is per project, not per node: the generated names of §7.2 are

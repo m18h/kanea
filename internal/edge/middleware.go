@@ -16,7 +16,7 @@ import (
 //
 // Parsing CIDRs and durations in the request path would be wasted work on every
 // request, but the real reason is failure timing: a malformed rule discovered
-// mid-request has no good answer — allow and the control is not enforced, deny
+// mid-request has no good answer; allow and the control is not enforced, deny
 // and a typo takes the service down. Discovered at reload, it is a rejected
 // snapshot and the last good table keeps serving.
 type compiled struct {

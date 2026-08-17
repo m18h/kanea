@@ -20,7 +20,7 @@ import (
 // The h2c upstream path (PRD §5.2.6, §6.2 R28, v1.41). gRPC needs HTTP/2 end
 // to end: inbound is Go's automatic ALPN on :443 (pinned below), and outbound
 // is the second shared transport a grpc-marked route selects. These tests use
-// x/net/http2 directly rather than grpc-go — what the edge must get right are
+// x/net/http2 directly rather than grpc-go: what the edge must get right are
 // wire properties (prior-knowledge h2c, trailers, streaming flush), and a
 // dependency on the gRPC stack would test its client more than this proxy.
 
@@ -46,7 +46,7 @@ func h2cUpstream(t *testing.T, handler http.HandlerFunc) Route {
 }
 
 // h2Client is a TLS client that negotiates HTTP/2 with the edge while dialling
-// a loopback address — the grpc-test twin of trustingClient, which pins
+// a loopback address: the grpc-test twin of trustingClient, which pins
 // HTTP/1.1 by building its own http.Transport.
 func h2Client(t *testing.T, cert Certificate, secureURL string) *http.Client {
 	t.Helper()
@@ -147,7 +147,7 @@ func TestGRPCRouteDialsTheUpstreamOverH2C(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	// The first chunk must arrive while the handler is still blocked —
+	// The first chunk must arrive while the handler is still blocked:
 	// streaming, not buffering (Go's ReverseProxy flushes immediately for
 	// unknown-length responses regardless of FlushInterval).
 	first := make([]byte, len("chunk1"))
@@ -166,7 +166,7 @@ func TestGRPCRouteDialsTheUpstreamOverH2C(t *testing.T) {
 		t.Errorf("rest = %q", rest)
 	}
 	if got := resp.Trailer.Get("Grpc-Status"); got != "0" {
-		t.Errorf("Grpc-Status trailer = %q, want 0 — gRPC cannot signal completion without it", got)
+		t.Errorf("Grpc-Status trailer = %q, want 0; gRPC cannot signal completion without it", got)
 	}
 }
 
@@ -194,7 +194,7 @@ func TestAnUnmarkedRouteStillDialsHTTP1(t *testing.T) {
 	}
 }
 
-// An HTTP/1.1 client on a grpc-marked route is still forwarded — over h2c —
+// An HTTP/1.1 client on a grpc-marked route is still forwarded: over h2c;
 // and gets a well-formed h1 response back. Real gRPC clients never do this;
 // the property matters because :80 exists and a curl must not wedge.
 func TestAGRPCRouteServesAPlainHTTP1Client(t *testing.T) {
@@ -231,7 +231,7 @@ func TestAGRPCRouteServesAPlainHTTP1Client(t *testing.T) {
 }
 
 // A dead upstream answers a request that is gRPC on the wire with the
-// trailers-only refusal — 200 + Grpc-Status 14 — because a raw 502 renders as
+// trailers-only refusal (200 + Grpc-Status 14) because a raw 502 renders as
 // "unexpected HTTP status" garbage in a gRPC client. A plain request on the
 // same route keeps the anonymous 502.
 func TestADeadGRPCUpstreamRefusesInGRPCTerms(t *testing.T) {
@@ -344,7 +344,7 @@ func TestGRPCLabelRequiresTheMarkerAndTheWire(t *testing.T) {
 	}
 	if got := sample(t, body,
 		`kanea_edge_service_requests_total{service="shop/api",code="200",method="GET",protocol="https"}`); got != "1" {
-		t.Errorf("https series = %s, want 1 — the browser GET must not be labelled grpc", got)
+		t.Errorf("https series = %s, want 1: the browser GET must not be labelled grpc", got)
 	}
 }
 
@@ -353,7 +353,7 @@ func TestGRPCLabelRequiresTheMarkerAndTheWire(t *testing.T) {
 // to h2 streams).
 func TestAGRPCStreamOutlivesTheBodyTimeout(t *testing.T) {
 	route := h2cUpstream(t, func(w http.ResponseWriter, r *http.Request) {
-		// Echo the body back as it arrives — a stand-in for a bidi stream.
+		// Echo the body back as it arrives: a stand-in for a bidi stream.
 		w.Header().Set("Content-Type", "application/grpc")
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
@@ -407,7 +407,7 @@ func TestAGRPCStreamOutlivesTheBodyTimeout(t *testing.T) {
 	}
 }
 
-// Inbound HTTP/2 on :443 is Go's automatic ALPN — nothing in the edge
+// Inbound HTTP/2 on :443 is Go's automatic ALPN: nothing in the edge
 // configures it, which means nothing stops a future tls.Config edit from
 // turning it off silently. This is the tripwire.
 func TestInboundTLSNegotiatesHTTP2(t *testing.T) {
@@ -445,6 +445,6 @@ func TestInboundTLSNegotiatesHTTP2(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.ProtoMajor != 2 {
-		t.Errorf("negotiated %s, want HTTP/2 — gRPC support just silently broke", resp.Proto)
+		t.Errorf("negotiated %s, want HTTP/2; gRPC support just silently broke", resp.Proto)
 	}
 }

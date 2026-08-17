@@ -16,7 +16,7 @@ import (
 //
 // **The arithmetic that chose the shape.** The §21 target is 2 000 allocs on a
 // node, each contributing CPU and memory, plus rps and three latency
-// percentiles for up to 500 exposed services — call it 6 000 series. At 5 s for
+// percentiles for up to 500 exposed services: call it 6 000 series. At 5 s for
 // an hour that is 720 raw points each, plus 360 at one minute for six hours:
 //
 //	6 000 series × 1 080 points × 4 bytes = ~26 MiB
@@ -46,7 +46,7 @@ const (
 // MaxSeries caps how many series are tracked.
 //
 // The subjects are allocs and services, so the set is bounded by what the node
-// runs — until something churns. A crash-looping service that changed alloc ids
+// runs: until something churns. A crash-looping service that changed alloc ids
 // every restart would otherwise grow this map without limit, and the one
 // process that must not die of memory pressure is the one that would restart
 // everything else (AGENTS.md #11). Past the cap new series are refused and
@@ -155,7 +155,7 @@ func (m *Metrics) Record(key Key, at time.Time, value float64) {
 // hours still *holds* its last value, and returning that as "latest" would let
 // a caller publish a stale number as current. "Latest" has to mean latest
 // within the retention this tier promises, or every caller has to remember to
-// check a timestamp — and one of them will not.
+// check a timestamp, and one of them will not.
 func (m *Metrics) Latest(key Key) (Point, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -285,7 +285,7 @@ func isChildSubject(sub, service string) bool {
 //
 // A slot is `unix / interval`, so a point's timestamp is implied by where it
 // sits and never stored. An unwritten slot holds NaN, which is what makes a gap
-// distinguishable from a zero — the difference between "no traffic" and "no
+// distinguishable from a zero: the difference between "no traffic" and "no
 // data", which an autoscaler must not confuse.
 type ring struct {
 	interval time.Duration

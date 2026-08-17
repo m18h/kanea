@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Datapath east-west metrics (PRD v1.36, §9.1) — on by default.
+// Datapath east-west metrics (PRD v1.36, §9.1): on by default.
 //
 // The edge is the primary signal for exposed services because it is already in
 // the request path. What this adds is the traffic the edge never sees:
@@ -16,14 +16,14 @@ import (
 // because another service is calling it has no north-south signal at all.
 //
 // The numbers come from the datapath's own per-CPU counters, read straight off
-// the pinned maps — no agent, no scrape endpoint, no cost per request. That is
+// the pinned maps: no agent, no scrape endpoint, no cost per request. That is
 // what lets this be on by default where Hubble, which cost L7 parsing per
 // request and 152.8 MiB of resident cilium-agent, had to be opt-in.
 //
 // The metric names are the ones Hubble's scraper published, kept deliberately:
 // a scaling spec written against `flows_per_second` keeps its meaning. What
-// the datapath counts under it is connection attempts rather than flows —
-// the connect-time hook is where its counter lives — which is the same signal
+// the datapath counts under it is connection attempts rather than flows
+// (the connect-time hook is where its counter lives) which is the same signal
 // at a coarser grain.
 
 // East-west metric names, distinct from the edge's north-south ones. A rule
@@ -43,7 +43,7 @@ const NodeSubject = "node"
 // FlowSource is the consumer-side slice of the datapath's counters this
 // scraper differences. Both maps are cumulative and keyed by
 // "project/service"; a source folds whatever it cannot attribute into
-// NodeSubject rather than dropping it — a number nobody can break down is
+// NodeSubject rather than dropping it: a number nobody can break down is
 // still a number worth having.
 type FlowSource interface {
 	// ServiceConnects returns cumulative connection attempts per service.
@@ -65,7 +65,7 @@ type DatapathConfig struct {
 //
 // Like the edge scraper, the differencing lives here: two readings and the
 // wall clock between them is a measurement, and the counters themselves never
-// enter the time series — only rates do, one series per subject, which is the
+// enter the time series; only rates do, one series per subject, which is the
 // cardinality bound everything in this package respects (constraint #2).
 type DatapathScraper struct {
 	source  FlowSource
@@ -150,7 +150,7 @@ func (s *DatapathScraper) Scrape(ctx context.Context) (subjects int, err error) 
 	at := s.now()
 
 	// Totals per subject, plus the node itself. The node figure is what the
-	// whole datapath did — attributed traffic included — not just the
+	// whole datapath did (attributed traffic included) not just the
 	// leftovers, so it reads as a node total rather than a residue.
 	current := map[string]*flowSample{NodeSubject: {at: at}}
 	sampleFor := func(subject string) *flowSample {
@@ -211,7 +211,7 @@ func (s *DatapathScraper) record(subject string, sample *flowSample, at time.Tim
 		return false
 	}
 
-	// A counter that went backwards means the maps were recreated — a pin-dir
+	// A counter that went backwards means the maps were recreated: a pin-dir
 	// schema rebuild. There is no rate across that discontinuity, so this
 	// reading becomes the new baseline.
 	flows := sample.flows - previous.flows

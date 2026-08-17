@@ -37,7 +37,7 @@ const S3HelperUser = "kanea-s3"
 //
 // Idempotent, and tolerant of a host that has no FUSE at all: a node that
 // never mounts an S3 volume should not fail its install over a package it does
-// not use. What it must not do is stay quiet — a warning here is how the
+// not use. What it must not do is stay quiet: a warning here is how the
 // operator finds out before the first deploy rather than during it.
 func SetupFUSE(ctx context.Context, log *slog.Logger) error {
 	if log == nil {
@@ -51,7 +51,7 @@ func SetupFUSE(ctx context.Context, log *slog.Logger) error {
 
 // ensureFuseConf adds user_allow_other if it is not already effective.
 func ensureFuseConf(log *slog.Logger) error {
-	raw, err := os.ReadFile(FuseConfPath) // #nosec G304 — a package constant
+	raw, err := os.ReadFile(FuseConfPath) // #nosec G304; a package constant
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read %s: %w", FuseConfPath, err)
 	}

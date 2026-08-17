@@ -98,7 +98,7 @@ func DeleteMutation(kind Kind, key string) Mutation {
 
 // PutValue is the one-call convenience for a single unconditional write.
 // Batches should build mutations and pass them to Apply together, so they
-// commit — and replicate — atomically.
+// commit (and replicate) atomically.
 func PutValue[T any](ctx context.Context, s Applier, kind Kind, key string, value T) (uint64, error) {
 	m, err := PutMutation(kind, key, value)
 	if err != nil {
@@ -109,7 +109,7 @@ func PutValue[T any](ctx context.Context, s Applier, kind Kind, key string, valu
 
 // PutRawMutation builds an upsert for a value that is already encoded.
 //
-// It exists for callers holding bytes rather than a Go value — the ACME manager
+// It exists for callers holding bytes rather than a Go value: the ACME manager
 // serialises its own records so that internal/acme need not know what a Store
 // is. The payload is checked here rather than trusted: a record that is not
 // valid JSON would survive the write and fail every later read, which turns a

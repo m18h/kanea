@@ -79,7 +79,7 @@ func readBatch(t *testing.T, conn *websocket.Conn) api.LogBatch {
 // The bug this whole change exists for, as a test: the dashboard asks for a
 // 200-line tail, and per-line frames put 200 of them into a 64-slot send buffer
 // whose overflow closed the connection. It died in about 20 ms on a real node.
-// The ping at the end is the assertion that matters — before the fix there was
+// The ping at the end is the assertion that matters: before the fix there was
 // nothing left to answer it.
 func TestATailOfTwoHundredLinesArrivesAsOneFrame(t *testing.T) {
 	h := newHarness(t)
@@ -98,7 +98,7 @@ func TestATailOfTwoHundredLinesArrivesAsOneFrame(t *testing.T) {
 
 	send(t, conn, api.ClientFrame{Type: "ping"})
 	if got := receive(t, conn).Type; got != "pong" {
-		t.Fatalf("after the tail the socket answered %q, want a pong — it used to be closed", got)
+		t.Fatalf("after the tail the socket answered %q, want a pong; it used to be closed", got)
 	}
 }
 
@@ -273,7 +273,7 @@ func TestTheOldestLinesAreTheOnesDropped(t *testing.T) {
 
 // The feed used to pick its allocs once at subscribe and return outright when
 // none had a log file yet, so a subscription that outlived a deploy, restart or
-// scale-up streamed nothing — with an open socket and no error (PRD v1.70).
+// scale-up streamed nothing, with an open socket and no error (PRD v1.70).
 func TestALogFeedPicksUpAnAllocThatStartsLater(t *testing.T) {
 	h := newHarness(t)
 	seedAlloc(t, h, "shop", "web", 0)

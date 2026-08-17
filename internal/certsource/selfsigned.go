@@ -39,7 +39,7 @@ type SelfSigned struct {
 // CAStoreKey is where this node's own CA lives.
 //
 // In the certs bucket beside the ACME account key, so it travels in the
-// encrypted archive and is restored with everything else — no separate backup
+// encrypted archive and is restored with everything else: no separate backup
 // path, no restore ordering, no second permission story (§15.3).
 const CAStoreKey = "ca/self-signed"
 
@@ -109,7 +109,7 @@ func (s *SelfSigned) Mode() Mode { return ModeSelfSigned }
 // Ensure issues what is missing and renews what is due.
 //
 // The shape is acme.Sync's: load once, keep what still covers its request and
-// is not due, mint the rest — and one failure never suppresses the others.
+// is not due, mint the rest, and one failure never suppresses the others.
 func (s *SelfSigned) Ensure(ctx context.Context, reqs []Request) (Result, error) {
 	held, err := s.load(ctx)
 	if err != nil {
@@ -144,7 +144,7 @@ func (s *SelfSigned) Ensure(ctx context.Context, reqs []Request) (Result, error)
 // CACertificate returns the CA certificate PEM.
 //
 // It does not generate one. A GET must not mutate state, and a CA that exists
-// because somebody looked is a CA nobody decided to have — generation belongs
+// because somebody looked is a CA nobody decided to have: generation belongs
 // in Ensure, where an actual service asked to be served. Until then this is
 // ErrNoCA, and the API turns that into a 404 that says why.
 func (s *SelfSigned) CACertificate(ctx context.Context) ([]byte, error) {
@@ -212,7 +212,7 @@ func (s *SelfSigned) issue(ctx context.Context, domains []string, now time.Time)
 
 	notBefore := now.Add(-clockSkewAllowance)
 	notAfter := now.Add(LeafValidity)
-	// A requested name that parses as an IP becomes an IP SAN, not a DNS SAN —
+	// A requested name that parses as an IP becomes an IP SAN, not a DNS SAN:
 	// clients match the two differently, and a dashboard reached at a bare
 	// address needs the former (PRD v1.61, bind.api_tls). Service domains are
 	// DNS-1123 by construction and never take this branch.

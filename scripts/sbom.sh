@@ -2,7 +2,7 @@
 # Writes the SBOMs a release publishes (PRD §14 A06, §21).
 #
 # The release workflow runs this between building the archives and writing
-# checksums.txt, so every SBOM is covered by the same sha256 manifest — and
+# checksums.txt, so every SBOM is covered by the same sha256 manifest, and
 # therefore by the one cosign signature over it, with no second signing step.
 # That ordering is the whole design: an SBOM nobody can authenticate describes
 # software nobody can authenticate.
@@ -11,7 +11,7 @@
 #
 #   <archive>.spdx.json         what is actually IN the artefact you downloaded.
 #                               syft reads the Go binary's own build info, so
-#                               this lists the modules the linker kept — not the
+#                               this lists the modules the linker kept, not the
 #                               ones the build merely walked past.
 #
 #   kanea_<ver>_source.spdx.json  what the build consumed. This is the only
@@ -24,7 +24,7 @@
 # The offline bundles are deliberately NOT scanned. A bundle is a carrier for
 # upstream tarballs and an OCI archive; syft does not descend into nested
 # archives, so it would emit a near-empty document that reads as "this bundle
-# contains nothing" — worse than no document at all. What a bundle carries is
+# contains nothing": worse than no document at all. What a bundle carries is
 # already published, more precisely than an SBOM would state it, by
 # internal/provision/components.json: name, version and SHA-256 per component,
 # compiled into the binary and verified at install time.
@@ -76,7 +76,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # cmd/kanea/sbom_contract_test.go drives this function and asserts both.
 sbom_name() { printf '%s.spdx.json' "$1"; }
 
-# Only the binary archives — see the header for why the bundles are not here.
+# Only the binary archives: see the header for why the bundles are not here.
 ARCHIVES=()
 for archive in "$DIST"/kanea_"${VERSION}"_*.tar.gz; do
   [ -e "$archive" ] || continue

@@ -9,7 +9,7 @@ import (
 // stanza from /etc/kanea/kanea.hcl, served read-only so client-side parses
 // (`kanea plan`/`run`, MCP's spec tools) resolve the same defaults the
 // server-side parses read from the loaded nodeconfig. Variables are never
-// secrets — that is R30's stated contract, which is what makes an
+// secrets: that is R30's stated contract, which is what makes an
 // any-authenticated-caller read the right tier.
 
 // PathVars is the node-variables route.

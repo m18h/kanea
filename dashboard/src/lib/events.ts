@@ -17,7 +17,7 @@ export interface ScaleDecision {
 /**
  * parseScaleDecision reads an autoscaler event back into a decision row.
  *
- * There is no decisions endpoint — the evaluator's choices surface only as
+ * There is no decisions endpoint: the evaluator's choices surface only as
  * `scale.up` / `scale.down` events (PRD §9.2), so the "3 → 5" the mockup shows
  * is extracted from the message when it is there and omitted when it is not.
  * Nothing is fabricated: a message without counts renders as its own text.

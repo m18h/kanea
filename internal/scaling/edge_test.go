@@ -113,7 +113,7 @@ func TestEdgePercentilesDescribeTheInterval(t *testing.T) {
 		t.Fatal("no p95")
 	}
 	// Every request in this interval was ~3 ms, so the p95 belongs in the
-	// single-digit millisecond buckets — not up with the previous interval's
+	// single-digit millisecond buckets, not up with the previous interval's
 	// two-second requests, which the cumulative histogram still contains.
 	if p95 > 25 {
 		t.Fatalf("p95 = %v ms; the previous interval's slow requests leaked in", p95)

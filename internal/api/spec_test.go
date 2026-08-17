@@ -15,7 +15,7 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// fakeRenderer answers with whatever the test seeded — the handler contract
+// fakeRenderer answers with whatever the test seeded: the handler contract
 // is what is under test here; the real renderer has its own tests beside
 // toDesired in cmd/kanea.
 type fakeRenderer struct {

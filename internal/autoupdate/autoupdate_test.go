@@ -253,7 +253,7 @@ func TestAnUpdateThatDoesNotConvergeIsReverted(t *testing.T) {
 	}
 }
 
-// Before the deadline the watcher does nothing at all — a slow pull is not a
+// Before the deadline the watcher does nothing at all: a slow pull is not a
 // failed update.
 func TestAnUpdateInsideItsDeadlineIsLeftAlone(t *testing.T) {
 	h := newHarness(t, autoService())

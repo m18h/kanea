@@ -14,7 +14,7 @@ import (
 // does not say.
 //
 // 256 is a per-listener figure; --max-published-conns bounds the whole process.
-// A connection costs roughly 24 KiB — two goroutines and a connSet entry — and
+// A connection costs roughly 24 KiB (two goroutines and a connSet entry) and
 // the splice buffers io.Copy uses for TCP→TCP are kernel pipes, not Go heap.
 const DefaultMaxConns = 256
 
@@ -24,7 +24,7 @@ const DefaultMaxConns = 256
 // takes longer is a service that is down rather than one that is far away.
 const dialTimeout = 5 * time.Second
 
-// ErrTooManyConns is returned to nothing — a refused connection is simply
+// ErrTooManyConns is returned to nothing: a refused connection is simply
 // closed, because there is no protocol-independent way to say "busy" on a
 // stream the edge does not parse. It exists so the refusal is countable.
 var ErrTooManyConns = errors.New("edge: listener is at its connection limit")
@@ -63,7 +63,7 @@ func newConnLimiter(limit int) *connLimiter { return &connLimiter{max: limit} }
 
 // acquire takes one slot, or reports that there is none.
 //
-// Refused when full, never queued — the discipline internal/gitops uses for
+// Refused when full, never queued: the discipline internal/gitops uses for
 // builds. A queued TCP connection looks connected to the client and is not, and
 // a client that thinks it has a session will wait out its own timeout rather
 // than failing over.
@@ -276,7 +276,7 @@ func (t *relay) closeLive() int {
 // because it is still waiting for input.
 // It reports the bytes moved in each direction: in is client→upstream, out is
 // upstream→client. The counts come from io.Copy's own return rather than from a
-// wrapping reader, so the splice fast path below is preserved — a wrapper would
+// wrapping reader, so the splice fast path below is preserved: a wrapper would
 // force every byte through the Go heap purely to be counted.
 func relayBytes(client, upstream net.Conn) (in, out int64) {
 	var wg sync.WaitGroup
@@ -299,14 +299,14 @@ func relayBytes(client, upstream net.Conn) (in, out int64) {
 // kernel-to-kernel and never enter the Go heap. That is the whole cost of a
 // published port: one userspace hop that touches no user data.
 // It returns the bytes copied, which io.Copy reports even when it stops on an
-// error — a connection reset partway through still moved everything before it.
+// error: a connection reset partway through still moved everything before it.
 func copyAndCloseWrite(dst, src net.Conn) int64 {
 	n, _ := io.Copy(dst, src) //nolint:errcheck // cleanup path
 	if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 		_ = cw.CloseWrite() //nolint:errcheck // cleanup path
 		return n
 	}
-	// Not half-closeable — a fake in a test, or a wrapped connection. Closing
+	// Not half-closeable: a fake in a test, or a wrapped connection. Closing
 	// outright is the honest fallback: leaving it open would hang the peer.
 	_ = dst.Close() //nolint:errcheck // cleanup path
 	return n

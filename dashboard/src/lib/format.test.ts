@@ -11,8 +11,8 @@ describe('formatUptime', () => {
   })
 
   it('refuses to render a nonsense value', () => {
-    expect(formatUptime(-1)).toBe('—')
-    expect(formatUptime(Number.NaN)).toBe('—')
+    expect(formatUptime(-1)).toBe('-')
+    expect(formatUptime(Number.NaN)).toBe('-')
   })
 })
 
@@ -27,8 +27,8 @@ describe('relativeAge', () => {
   })
 
   it('is a dash for a missing or unparsable timestamp', () => {
-    expect(relativeAge(undefined, now)).toBe('—')
-    expect(relativeAge('garbage', now)).toBe('—')
+    expect(relativeAge(undefined, now)).toBe('-')
+    expect(relativeAge('garbage', now)).toBe('-')
   })
 })
 
@@ -66,7 +66,7 @@ describe('replicationLag', () => {
     expect(replicationLag('2026-08-09T09:32:00Z', now)).toBe('5h')
   })
 
-  // "never" is an empty state, not a zero lag — a destination nothing has
+  // "never" is an empty state, not a zero lag: a destination nothing has
   // reached is the opposite of a destination that is caught up.
   it('says never when nothing has shipped', () => {
     expect(replicationLag(undefined, now)).toBe('never')

@@ -1,9 +1,9 @@
 package jobspec
 
-// The `function` block (PRD v1.39, §6.2 R25–R26): a wasm module run as a
+// The `function` block (PRD v1.39, §6.2 R25-R26): a wasm module run as a
 // long-running wasi-http service on the wasmtime shim.
 //
-// A function lowers, at parse time, to an ordinary Service — one Store kind,
+// A function lowers, at parse time, to an ordinary Service: one Store kind,
 // one reconcile path, so deploys, pin carry-over, the autoscaler's listing and
 // the spec editor are inherited rather than reimplemented. What makes it a
 // function afterwards is Service.Function, which carries the triggers the
@@ -12,8 +12,8 @@ package jobspec
 // R25's refusals are mostly structural: hclFunction simply has no field for a
 // volume, device, socket, capabilities, user or scaling block, so declaring
 // one is an HCL "block not expected here" error at the exact line. The two
-// refusals that need naming — an exec health check, and function.* event
-// patterns — are validated here.
+// refusals that need naming (an exec health check, and function.* event
+// patterns) are validated here.
 
 import (
 	"fmt"
@@ -30,7 +30,7 @@ import (
 const DefaultFunctionPort = 8080
 
 // DefaultFunctionMemory is the memory default for functions, in MiB. Small,
-// because a wasm module's baseline is kilobytes — and unlike services, which
+// because a wasm module's baseline is kilobytes, and unlike services, which
 // default to unbounded since v1.58, a function keeps a real cap: R25 promises
 // the sandbox's limits are enforced, and an unbounded module would break it.
 const DefaultFunctionMemory = 64
@@ -48,8 +48,8 @@ type Function struct {
 	// Port is the wasi-http server's listen port (the lowered service's sole
 	// declared port, named "http").
 	Port int
-	// HTTP records that a `trigger "http"` was declared. Its detail — domains,
-	// tls, middleware — lowers onto Service.Expose, exactly as for a service.
+	// HTTP records that a `trigger "http"` was declared. Its detail (domains,
+	// tls, middleware) lowers onto Service.Expose, exactly as for a service.
 	HTTP bool
 	// Events and Crons are read live by the invokers; they are deliberately
 	// not part of the reconciler's spec hash (a cron edit must not roll the
@@ -108,7 +108,7 @@ type hclFunction struct {
 // refuses the ones that do not.
 type hclTrigger struct {
 	Kind string `hcl:"kind,label"`
-	// http — the expose sub-schema, verbatim (R16/R20 apply unchanged).
+	// http: the expose sub-schema, verbatim (R16/R20 apply unchanged).
 	Domains       []string          `hcl:"domains,optional"`
 	TLS           *hclTLS           `hcl:"tls,block"`
 	IPRestriction *hclIPRestriction `hcl:"ip_restriction,block"`
@@ -147,7 +147,7 @@ func convertFunction(f *hclFunction) (*Service, hcl.Diagnostics) {
 	}
 
 	// The synthetic task: the module is the image, and the function's name is
-	// the task's — there is no second name to invent and nothing to review in
+	// the task's; there is no second name to invent and nothing to review in
 	// one.
 	svc.Task = &Task{
 		DefRange:        f.DefRange,
@@ -246,7 +246,7 @@ func convertFunction(f *hclFunction) (*Service, hcl.Diagnostics) {
 
 // validateFunction is R25's named refusals and all of R26, run from
 // validateServices for every service that was lowered from a function block.
-// The structural rules — no volumes, no devices, no user — need nothing here:
+// The structural rules (no volumes, no devices, no user) need nothing here:
 // the block has no field to write them into.
 func validateFunction(svc *Service) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -261,7 +261,7 @@ func validateFunction(svc *Service) hcl.Diagnostics {
 		})
 	}
 
-	// R26 — a function with no trigger is an error, not a service nothing
+	// R26; a function with no trigger is an error, not a service nothing
 	// calls: the silent-channel rule (v1.24), applied to compute.
 	if !fn.HTTP && len(fn.Events) == 0 && len(fn.Crons) == 0 {
 		diags = append(diags, &hcl.Diagnostic{
@@ -300,7 +300,7 @@ func validateFunction(svc *Service) hcl.Diagnostics {
 		diags = append(diags, checkSecretRef(fn.SigningRef, svc.Project, "signing_ref", fn.DefRange)...)
 	}
 
-	// R25 — the wasmtime shim has no exec primitive, so an exec probe on a
+	// R25: the wasmtime shim has no exec primitive, so an exec probe on a
 	// function would be a check that can never pass, refused here by name.
 	for _, h := range svc.HealthChecks {
 		if h.Type == HealthExec {
@@ -343,11 +343,11 @@ func validateEventTrigger(svc *Service, ev *EventTrigger) hcl.Diagnostics {
 			})
 			continue
 		}
-		// R26 — a pattern that would match a function.* event is a feedback
+		// R26; a pattern that would match a function.* event is a feedback
 		// loop with no damping: this function's own invoke_failed would
 		// invoke it. Checked with the same Filter the dispatcher uses, so
 		// the refusal and the runtime matcher cannot drift. The invoker skips
-		// function.* events at match time too — the two-layer discipline R23
+		// function.* events at match time too: the two-layer discipline R23
 		// uses for ownership refusals.
 		filter, err := notify.NewFilter([]string{p}, notify.SeverityInfo)
 		if err == nil && filter.Match(notify.Event{

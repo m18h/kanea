@@ -2,7 +2,7 @@ package auth_test
 
 // Login dispatch with a directory verifier configured (PRD v1.47). The
 // verifier here is a fake: what the directory protocol does is ldap_test.go's
-// problem — these tests are about what the Store does with each answer.
+// problem; these tests are about what the Store does with each answer.
 
 import (
 	"context"
@@ -98,7 +98,7 @@ func TestAnUnknownNameFallsThroughToTheDirectory(t *testing.T) {
 		t.Fatalf("verifier consulted %d times, want 1", f.calls)
 	}
 	// Subject and role come from the verifier, and the session says how it
-	// was established — that is what lets a later audit entry read via: ldap
+	// was established; that is what lets a later audit entry read via: ldap
 	// rather than claiming a local login that never happened.
 	if session.Subject != "dirk" || session.Role != auth.RoleViewer {
 		t.Errorf("session = %+v, want the verifier's identity", session)
@@ -110,7 +110,7 @@ func TestAnUnknownNameFallsThroughToTheDirectory(t *testing.T) {
 	// The cookie resolves like any other session's.
 	resolved, err := a.Session(ctx, cookie)
 	if err != nil || resolved.Via() != auth.MethodLDAP {
-		t.Errorf("Session = %+v, %v — the method must survive the round trip", resolved, err)
+		t.Errorf("Session = %+v, %v: the method must survive the round trip", resolved, err)
 	}
 }
 
@@ -120,20 +120,20 @@ func TestANoRoleRefusalPropagatesAndPersistsNothing(t *testing.T) {
 	ctx := context.Background()
 
 	// Each refusal propagates typed, so the API can answer 403 rather than
-	// 401 — "ask an administrator", not "log in again".
+	// 401: "ask an administrator", not "log in again".
 	for i := range auth.DefaultLoginLimit.Attempts {
 		if _, _, err := a.Login(ctx, "dirk", "a-password", "10.0.0.1"); !errors.Is(err, auth.ErrLDAPNoRole) {
 			t.Fatalf("attempt %d = %v, want ErrLDAPNoRole", i, err)
 		}
 	}
 
-	// It still spends a limiter slot — a group-mapping refusal is a guess too,
+	// It still spends a limiter slot: a group-mapping refusal is a guess too,
 	// from the limiter's point of view.
 	if _, _, err := a.Login(ctx, "dirk", "a-password", "10.0.0.1"); !errors.Is(err, auth.ErrRateLimited) {
 		t.Fatalf("attempt %d = %v, want ErrRateLimited", auth.DefaultLoginLimit.Attempts+1, err)
 	}
 	if f.calls != auth.DefaultLoginLimit.Attempts {
-		t.Errorf("verifier consulted %d times, want %d — the limiter runs first",
+		t.Errorf("verifier consulted %d times, want %d: the limiter runs first",
 			f.calls, auth.DefaultLoginLimit.Attempts)
 	}
 
@@ -147,7 +147,7 @@ func TestANoRoleRefusalPropagatesAndPersistsNothing(t *testing.T) {
 
 func TestAnUnavailableDirectoryCountsAgainstNobody(t *testing.T) {
 	// Counting an outage as failures would let a directory outage lock every
-	// account out — the user did nothing wrong.
+	// account out: the user did nothing wrong.
 	f := &fakeVerifier{err: auth.ErrLDAPUnavailable}
 	a, _, _ := newAuthWithVerifier(t, f)
 	ctx := context.Background()
@@ -169,7 +169,7 @@ func TestAnUnavailableDirectoryCountsAgainstNobody(t *testing.T) {
 	f.err, f.role = nil, auth.RoleViewer
 	session, _, err := a.Login(ctx, "dirk", "a-password", "10.0.0.1")
 	if err != nil {
-		t.Fatalf("login after the outage = %v — outage attempts were counted", err)
+		t.Fatalf("login after the outage = %v: outage attempts were counted", err)
 	}
 	if session.Subject != "dirk" || f.calls != 11 {
 		t.Errorf("session = %+v after %d calls, want dirk after 11", session, f.calls)
@@ -205,13 +205,13 @@ func TestTheLimiterRunsBeforeTheVerifier(t *testing.T) {
 		t.Fatalf("a directory refusal was persisted: %v", err)
 	}
 
-	// The directory would say yes now — and must not be asked.
+	// The directory would say yes now, and must not be asked.
 	f.err, f.role = nil, auth.RoleAdmin
 	if _, _, err := a.Login(ctx, "dirk", "right-this-time", "10.0.0.1"); !errors.Is(err, auth.ErrRateLimited) {
 		t.Fatalf("locked-out login = %v, want ErrRateLimited", err)
 	}
 	if f.calls != auth.DefaultLoginLimit.Attempts {
-		t.Errorf("verifier consulted %d times, want %d — the lockout did not shield it",
+		t.Errorf("verifier consulted %d times, want %d: the lockout did not shield it",
 			f.calls, auth.DefaultLoginLimit.Attempts)
 	}
 }

@@ -3,13 +3,13 @@
 // internal/datapath/bpf/kanea.c, plus the reference backend selection and
 // the generation-flip plan the linux map writer executes.
 //
-// The package is pure Go — no build tags, no cilium/ebpf import — so the
+// The package is pure Go (no build tags, no cilium/ebpf import) so the
 // layouts and the flip's atomicity properties are testable on any platform.
 //
 // Byte layout: a BPF map key or value is raw bytes; the C structs use
 // host-endian __u16/__u32/__u64 fields and network-order __be16/__be32
 // fields. Marshal/Unmarshal here encode host-endian fields with
-// binary.LittleEndian explicitly — matching the bpfel object, which is the
+// binary.LittleEndian explicitly: matching the bpfel object, which is the
 // one a v1 node loads (amd64 and arm64 are both little-endian; big-endian
 // nodes, the bpfeb object, are out of scope for v1). IPs and ports declared
 // __be* are encoded in network byte order: an IP travels as its [4]byte
@@ -54,7 +54,7 @@ const (
 	MapStatsDrops  = "stats_drops"
 	MapConfig      = "config"
 
-	// The v6 twins (v1.41): separate maps beside the v4 ones, never widened —
+	// The v6 twins (v1.41): separate maps beside the v4 ones, never widened;
 	// widening a pinned map's key changes its ABI and would wipe every node's
 	// pins at upgrade. allow_v4 and stats_svc are id-keyed and shared; the
 	// v4 name of the former is historical, not a family restriction.
@@ -66,7 +66,7 @@ const (
 	MapConfig6      = "config6"
 
 	// The cluster CIDR maps (v1.65): new maps beside config, never a widened
-	// dp_config — the same ABI rule that kept the v6 maps separate. Their
+	// dp_config; the same ABI rule that kept the v6 maps separate. Their
 	// all-zero birth state reads as "no cluster configured", which the
 	// programs treat as the pre-v1.65 deny.
 	MapClusterV4 = "cluster_v4"
@@ -335,7 +335,7 @@ func (v *EpStats) Unmarshal(b []byte) error {
 
 // Config is config's single value: struct dp_config in kanea.c. Both
 // fields are __be32 and travel in network order. A zero mask means "no
-// service CIDR configured" — the program guards on it, so the zero value
+// service CIDR configured": the program guards on it, so the zero value
 // an ARRAY map is born with drops nothing.
 type Config struct {
 	ServiceCIDRNet  [4]byte // network order
@@ -360,7 +360,7 @@ func (v *Config) Unmarshal(b []byte) error {
 	return nil
 }
 
-// CIDR is cluster_v4's single value: struct dp_cidr in kanea.c — one prefix
+// CIDR is cluster_v4's single value: struct dp_cidr in kanea.c; one prefix
 // as net+mask, both network order. A zero mask means "no cluster configured";
 // the programs read that as the pre-v1.65 deny, so the value an ARRAY map is
 // born with fails closed.
@@ -455,7 +455,7 @@ func (k *SvcKey6) Unmarshal(b []byte) error {
 }
 
 // BackendVal6 is svc_backends6's value: struct backend_val6 in kanea.c.
-// The key is the shared BackendKey — the generation flip is one mechanism
+// The key is the shared BackendKey: the generation flip is one mechanism
 // for both families.
 type BackendVal6 struct {
 	IP   [16]byte // network order
@@ -507,7 +507,7 @@ func (k *DropKey6) Unmarshal(b []byte) error {
 }
 
 // Config6 is config6's single value: struct dp_config6 in kanea.c. An
-// all-zero mask is the v6 enable switch read as "off" — it is the value an
+// all-zero mask is the v6 enable switch read as "off": it is the value an
 // ARRAY map is born with, so a node whose kanead never configured v6 fails
 // closed (the tc programs drop ETH_P_IPV6 outright).
 type Config6 struct {

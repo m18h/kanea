@@ -13,7 +13,7 @@ import (
 	"github.com/m18h/kanea/internal/secrets"
 )
 
-// fakeTarget is an in-memory Target that counts writes — the point of half
+// fakeTarget is an in-memory Target that counts writes: the point of half
 // these tests is how many times PutManaged runs.
 type fakeTarget struct {
 	mu      sync.Mutex
@@ -136,7 +136,7 @@ func TestAChangedValueIsWrittenWithItsSource(t *testing.T) {
 	}
 }
 
-// A provider that cannot serve a mapping leaves the local value alone — never
+// A provider that cannot serve a mapping leaves the local value alone, never
 // deletes, never blanks. Removal is `kanea secret rm`'s job alone (§5.2.13).
 func TestAProviderFailureLeavesTheLocalValueAlone(t *testing.T) {
 	target := newFakeTarget()
@@ -155,7 +155,7 @@ func TestAProviderFailureLeavesTheLocalValueAlone(t *testing.T) {
 	}
 }
 
-// One provider failing entirely must not stop another from syncing — the
+// One provider failing entirely must not stop another from syncing: the
 // certificate sources' isolation rule.
 func TestOneProviderFailingDoesNotStopAnother(t *testing.T) {
 	target := newFakeTarget()
@@ -209,8 +209,8 @@ func TestAManualOverwriteIsReasserted(t *testing.T) {
 	}
 }
 
-// An ordinary rotation — provider value moves while the local record is still
-// provider-stamped — is not a contested write and must not warn.
+// An ordinary rotation (provider value moves while the local record is still
+// provider-stamped) is not a contested write and must not warn.
 func TestARotationDoesNotWarn(t *testing.T) {
 	target := newFakeTarget()
 	prov := &fakeProvider{kind: KindDoppler, name: "ci",
@@ -285,7 +285,7 @@ func TestStatusKeepsLastSyncedThroughAFailure(t *testing.T) {
 	}
 }
 
-// An undecryptable local record — a dead master key — is repaired by the
+// An undecryptable local record (a dead master key) is repaired by the
 // provider's fresh value rather than wedging the mapping forever.
 func TestAnUndecryptableRecordIsReplaced(t *testing.T) {
 	target := newFakeTarget()

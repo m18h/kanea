@@ -108,7 +108,7 @@ func TestCacheHeaders(t *testing.T) {
 }
 
 func TestBuiltReportsWhetherAssetsArePresent(t *testing.T) {
-	// Both answers are legitimate — this asserts it does not panic and agrees
+	// Both answers are legitimate: this asserts it does not panic and agrees
 	// with what the handler serves.
 	built := dashboard.Built()
 	resp := get(t, dashboard.Handler("/", nil), "/")
@@ -121,7 +121,7 @@ func TestBuiltReportsWhetherAssetsArePresent(t *testing.T) {
 }
 
 // The security headers protect the origin, not one page, so every answer
-// carries them — the 200, the 404 and the 405 alike.
+// carries them: the 200, the 404 and the 405 alike.
 func TestSecurityHeaders(t *testing.T) {
 	h := dashboard.Handler("/", nil)
 

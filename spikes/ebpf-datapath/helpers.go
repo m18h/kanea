@@ -55,7 +55,7 @@ func childMain() {
 	}
 }
 
-// __serve <port>... — listen on every port; each accepted connection gets a
+// __serve <port>...: listen on every port; each accepted connection gets a
 // one-line banner naming the address that served it, which is how a client
 // learns which backend a VIP connect actually landed on.
 func childServe(ports []string) error {
@@ -84,7 +84,7 @@ func childServe(ports []string) error {
 	select {}
 }
 
-// __connect <addr> <timeoutMS> — one dial; prints a parseable result line.
+// __connect <addr> <timeoutMS>: one dial; prints a parseable result line.
 func childConnect(args []string) error {
 	if len(args) != 2 {
 		return errors.New("usage: __connect <addr> <timeoutMS>")
@@ -104,7 +104,7 @@ func childConnect(args []string) error {
 	return nil
 }
 
-// __hammer <addr> <durMS> <concurrency> — dial in a loop, tally per-backend
+// __hammer <addr> <durMS> <concurrency>: dial in a loop, tally per-backend
 // counts and errors. Its output is what the atomicity checks assert on.
 func childHammer(args []string) error {
 	if len(args) != 3 {
@@ -158,7 +158,7 @@ func childHammer(args []string) error {
 	return nil
 }
 
-// __childload — re-attach the pinned connect4 program at the root cgroup
+// __childload: re-attach the pinned connect4 program at the root cgroup
 // and pin the new link, then exit. The parent verifies the rewrite still
 // happens once this process is gone.
 func childLoad() error {
@@ -177,7 +177,7 @@ func childLoad() error {
 	return nil
 }
 
-// __childtc <ifname> — attach the pinned tc programs to an interface the
+// __childtc <ifname>: attach the pinned tc programs to an interface the
 // parent created, then exit.
 func childTC(args []string) error {
 	if len(args) != 1 {
@@ -222,7 +222,7 @@ func dialAndRead(addr string, timeout time.Duration) (banner, peer string, err e
 }
 
 // getpeername reads the peer address with the raw syscall, not from Go's
-// bookkeeping — check 10 is about what the kernel says after the DNAT.
+// bookkeeping: check 10 is about what the kernel says after the DNAT.
 func getpeername(conn net.Conn) string {
 	tc, ok := conn.(*net.TCPConn)
 	if !ok {
@@ -321,7 +321,7 @@ func parseConnectLine(out string) (ok bool, banner string, elapsed time.Duration
 }
 
 // parseQuotedField extracts a `key="..."` field whose Go-quoted value may
-// contain spaces — which strings.Fields would have split, truncating every
+// contain spaces, which strings.Fields would have split, truncating every
 // banner ("KANEA <addr>") and every multi-word errno ("operation not
 // permitted") to empty. It finds `key="` and unquotes from that quote to its
 // matching close, honouring the backslash escapes fmt's %q emits.

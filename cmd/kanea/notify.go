@@ -18,7 +18,7 @@ import (
 // runs. It lives here rather than in internal/notify because the dependency has
 // to point one way: the job spec validates event filters against notify's
 // vocabulary, so notify cannot also depend on the job spec. Wiring is the
-// binary's job anyway — the same reason toDesired lives beside the CLI.
+// binary's job anyway: the same reason toDesired lives beside the CLI.
 //
 // It is deliberately strict: a channel that cannot be built is an error, not a
 // warning that gets logged and forgotten, because a notification channel
@@ -27,7 +27,7 @@ import (
 // RoutesFor builds the routes a project's notification block asks for.
 //
 // One route per channel rather than one per project, so a project can send
-// deploy failures to email and everything to a webhook — and so a channel that
+// deploy failures to email and everything to a webhook, and so a channel that
 // gets rate limited does not hold back the others.
 func RoutesFor(
 	ctx context.Context, project string, n *jobspec.Notifications,
@@ -106,7 +106,7 @@ func RoutesFor(
 	routes := make([]notify.Route, 0, len(built))
 	for _, ch := range built {
 		// Project-scoped, always. A project's own notification block must not
-		// become a way to watch another project's failures — the same boundary
+		// become a way to watch another project's failures: the same boundary
 		// R5 draws for secrets.
 		routes = append(routes, notify.Route{Channel: ch, Filter: filter, Project: project})
 	}
@@ -130,7 +130,7 @@ type notifySettings struct {
 //
 // The feed exists even with no channels configured. §11 mirrors every channel
 // into the dashboard, and a node whose operator has not set up Telegram still
-// wants to see that a cert renewal failed — so the feed is the floor, and
+// wants to see that a cert renewal failed, so the feed is the floor, and
 // channels are what is built on top of it.
 func buildNotifier(
 	ctx context.Context, cfg notifySettings, logger *slog.Logger,
@@ -142,7 +142,7 @@ func buildNotifier(
 		return nil, nil, nil, err
 	}
 	// The dispatcher's Sink is a tee: the feed is the record and comes first,
-	// and the function invoker (v1.39, §11) attaches as the second consumer —
+	// and the function invoker (v1.39, §11) attaches as the second consumer;
 	// after construction, before Run starts. Routes reload on config change
 	// since v1.46; the Sink remains the one place a live event trigger sees
 	// everything regardless of what channels exist.
@@ -157,7 +157,7 @@ func buildNotifier(
 			"reason", "--notify-allow-private is set")
 	}
 
-	// Projects' channels plus the node-level defaults (v1.46) — the same
+	// Projects' channels plus the node-level defaults (v1.46): the same
 	// builder the runtime reloader uses, so startup and reload cannot drift.
 	routes, err := allNotifyRoutes(ctx, cfg, egress, logger)
 	if err != nil {

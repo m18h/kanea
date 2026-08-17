@@ -11,7 +11,7 @@
 
 **Every archive Kanea writes is encrypted with a key derived from
 `<data-dir>/master.key`. Without that file, every backup is unreadable, and
-there is no recovery path — not a slow one, not an expensive one, none.**
+there is no recovery path. Not a slow one, not an expensive one, none.**
 
 That is not a policy choice that can be revisited during an incident. The
 archives are sealed with XChaCha20-Poly1305 under a key derived from that file;
@@ -28,14 +28,14 @@ To check that the copy you found is the right one without restoring anything:
 kanea backup list          # on any node with the key and the destination
 ```
 
-Each archive's manifest carries a `key_id` — a non-secret fingerprint derived
+Each archive's manifest carries a `key_id`, a non-secret fingerprint derived
 from the master key. If the id in the manifest does not match the key you hold,
 a restore refuses with a message saying exactly that, rather than failing with
 an authentication error you would have to interpret.
 
 `kanea init` runs the escrow ceremony: it prints the key once and requires you
 to type it back before it writes anything. That is deliberately not a y/n
-prompt — the point is to establish that you actually recorded it.
+prompt: the point is to establish that you actually recorded it.
 
 > **If you did not use `kanea init`,** the daemon generated the key on first use
 > and logged a warning. Nothing enforced a copy. Take one now, on every node:
@@ -50,9 +50,9 @@ prompt — the point is to establish that you actually recorded it.
 
 | Backed up | Not backed up |
 |---|---|
-| The whole Store: projects, services, allocs, certs (including the self-signed CA at `ca/self-signed`), secrets, pipelines, audit log, accounts and tokens | Container images — re-pulled from the registry |
-| Change segments between snapshots (RPO bound) | The datapath's pinned BPF maps — **derived state, repopulated from desired state, never restored** (§18) |
-| | Workload logs and metrics — file and in-memory pipelines, by design (constraint #2) |
+| The whole Store: projects, services, allocs, certs (including the self-signed CA at `ca/self-signed`), secrets, pipelines, audit log, accounts and tokens | Container images, re-pulled from the registry |
+| Change segments between snapshots (RPO bound) | The datapath's pinned BPF maps, which are **derived state, repopulated from desired state, never restored** (§18) |
+| | Workload logs and metrics, which are file and in-memory pipelines by design (constraint #2) |
 | | Container filesystems and local volume contents |
 
 Two consequences worth internalising before you need them:
@@ -67,13 +67,13 @@ Two consequences worth internalising before you need them:
   Store and travels in the encrypted archive, so a real restore brings it back
   and every device that trusted it still trusts it. Rebuilding a node from
   scratch instead mints a fresh one, and **every phone, laptop and TV that had
-  the old certificate installed has to be re-trusted** — `kanea ca show` on the
-  new node, installed again everywhere. That is a cost measured in devices, not
+  the old certificate installed has to be re-trusted**, with `kanea ca show` on
+  the new node, installed again everywhere. That is a cost measured in devices, not
   minutes, and it is the reason the CA is in the archive rather than being a
   key-ceremony artefact like the master key. Certificates an operator *provided*
   (`--tls-certs-config`) are files on the node and are not in the archive at all;
   back them up with the rest of `/etc`. The same goes for the server config
-  `/etc/kanea/kanea.hcl` (host-path allowlist, device/socket grants — PRD §15.1)
+  `/etc/kanea/kanea.hcl` (host-path allowlist, device/socket grants, PRD §15.1)
   and any separate file `--passthrough-config` names: node policy lives outside
   the archive by design, so restoring a node means restoring `/etc/kanea` too.
 
@@ -84,8 +84,8 @@ Two consequences worth internalising before you need them:
 | | Target | What decides it |
 |---|---|---|
 | **RPO** | ≤ 5 minutes | Change segments ship every 60 s by default (`--backup-segment-interval`) |
-| **RTO — control plane** | ≤ 15 minutes | Restore is a download, a decrypt and a replay |
-| **RTO — workloads** | Best effort | Image pulls; a registry mirror helps most |
+| **RTO, control plane** | ≤ 15 minutes | Restore is a download, a decrypt and a replay |
+| **RTO, workloads** | Best effort | Image pulls; a registry mirror helps most |
 
 Check the first one is actually true on your node *before* you need it:
 
@@ -101,11 +101,11 @@ The dashboard's Settings page shows the same numbers beside the destination.
 flags are the seed; a `settings/backup` record written from the dashboard's
 Settings page or `PUT /v1/settings/backup` wins over them, and deleting the
 record reverts to the flags. Changing the destination at runtime is safe by
-construction — the new destination is probed with a real test write *before*
+construction: the new destination is probed with a real test write *before*
 anything commits, the old one receives a final segment ship, and the new one
 gets an immediate full snapshot. One consequence for this runbook: when
 reconstructing which bucket a dead node was shipping to, the unit file alone
-is not the answer — the settings record (in the Store, and therefore in the
+is not the answer. The settings record (in the Store, and therefore in the
 archives themselves) may have superseded it. `kanea backup list` on a live
 node, or the newest archive's manifest in whichever bucket you find, is
 authoritative. The offline `kanea restore` command always takes its
@@ -130,9 +130,9 @@ kanea install --bundle ./kanea-bundle.tar.gz   # or from a bundle, no egress
 ```
 
 The version matrix is compiled into that binary, so installing the *right*
-Kanea version installs the right containerd with it — and carries the eBPF
-datapath inside itself — one fewer thing to reconstruct correctly under time
-pressure. `kanea doctor --offline`
+Kanea version installs the right containerd with it, and carries the eBPF
+datapath inside itself, which is one fewer thing to reconstruct correctly under
+time pressure. `kanea doctor --offline`
 confirms it before you go further.
 
 If the disaster you are recovering from also took your network, the bundle is
@@ -141,7 +141,7 @@ Keep one alongside the master key if the node is somewhere a network cannot be
 assumed.
 
 **Do not start `kanead` yet.** A daemon that starts on an empty data directory
-initialises a new, empty store and generates a *new* master key — which is the
+initialises a new, empty store and generates a *new* master key. That is the
 one mistake in this document that cannot be undone, because the new key will not
 open the old archives.
 
@@ -196,13 +196,13 @@ From here it is an ordinary startup. The reconciler reads desired state and
 converges: the datapath's maps are repopulated from that state rather than
 restored, images are pulled, allocs are re-attached, and edge routes come back
 as services become healthy. There is no separate "recovery mode", which is the
-point — coming back from a backup is the same code path as starting up.
+point: coming back from a backup is the same code path as starting up.
 
 ---
 
 ## 4. Restore onto a running node
 
-For a node that is up but wrong — a bad apply, a deletion nobody meant.
+For a node that is up but wrong: a bad apply, a deletion nobody meant.
 
 ```bash
 kanea backup list
@@ -292,7 +292,7 @@ will make this archive readable.
 ### The schema is newer than the binary
 
 ```
-store: invalid: on-disk schema v2 is newer than this binary's v1 — upgrade kanea
+store: invalid: on-disk schema v2 is newer than this binary's v1; upgrade kanea
 ```
 
 Refused on purpose. An older binary writing to a newer database drops the fields
@@ -318,7 +318,7 @@ the next start retries against the same state.
 failure count since start.
 
 The replicator also emits `backup.failed` when replication starts failing and
-`backup.succeeded` when it recovers — **on transitions only**, so a destination
+`backup.succeeded` when it recovers, **on transitions only**, so a destination
 that has been down since yesterday is one message rather than one a minute. Put
 them in a project's `notifications { on = [...] }` filter and this becomes
 something that tells you rather than something you check.
@@ -328,14 +328,14 @@ something that tells you rather than something you check.
 ## 8. Limits, stated so they are not discovered during an incident
 
 - **Interoperability is established against MinIO only.** CI runs the S3 client
-  against MinIO, which verifies SigV4 — so the signature is known to be one a
+  against MinIO, which verifies SigV4, so the signature is known to be one a
   real service accepts, **in both addressing styles**: path-style and
   virtual-hosted are separate signatures, because virtual-hosted moves the
   bucket into the host header and the host header is signed. What remains
   untested is the services themselves: AWS S3, R2, B2 and Wasabi have not been
   in the loop, and each has quirks around region handling and what it does with
   a request the others accept. **Run `kanea backup verify` after configuring a
-  new destination**, before you rely on it — it writes, lists and deletes
+  new destination**, before you rely on it. It writes, lists and deletes
   through the same code path a real backup uses.
 - **An archive above 5 GiB is refused rather than split.** Multipart upload is
   not implemented. A single node's Store is orders of magnitude below the limit;
@@ -343,6 +343,6 @@ something that tells you rather than something you check.
 - **Archives are authenticated, not signed.** Tampering is detected on read
   because every chunk is AEAD-sealed and the manifest carries a hash. There is
   no signature, so an archive cannot be cryptographically attributed to the node
-  that wrote it — which matters only for a bucket several nodes write to.
+  that wrote it, which matters only for a bucket several nodes write to.
 - **Local volumes are not in an archive.** See §1. A service that keeps data in
   a volume needs its own backup for that volume.

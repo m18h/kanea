@@ -14,7 +14,7 @@ import (
 //
 // The cgroup layout is the point, not the service files. Constraint #11 says
 // the control plane has a kernel-guaranteed memory floor and workloads have a
-// ceiling, and neither is something Go can arrange for itself — `memory.min`
+// ceiling, and neither is something Go can arrange for itself: `memory.min`
 // and `OOMScoreAdjust` are systemd's to set. A Kanea installed without these
 // units runs, and the first time the node is under memory pressure the OOM
 // killer picks whatever is largest, which is usually kanead.
@@ -38,7 +38,7 @@ type unitOptions struct {
 	// rather than living only in the operator's shell history.
 	nodeCIDR    string
 	clusterCIDR string
-	// The dual-stack trio (v1.41), rendered only when set — there are no
+	// The dual-stack trio (v1.41), rendered only when set: there are no
 	// v6 defaults, and the unit for a v4-only node must stay byte-identical.
 	nodeCIDR6    string
 	clusterCIDR6 string
@@ -67,7 +67,7 @@ func writeUnits(o *out, opts unitOptions) error {
 		{"kanea-edge.service", edgeService(opts)},
 	}
 
-	// #nosec G301 — /etc/systemd/system is 0755 on every distribution, and
+	// #nosec G301; /etc/systemd/system is 0755 on every distribution, and
 	// systemd is not the only thing that reads it: `systemctl cat` runs as the
 	// invoking user. The units carry no secrets, which is exactly why R3 keeps
 	// credentials out of them.
@@ -77,9 +77,9 @@ func writeUnits(o *out, opts unitOptions) error {
 	for _, file := range files {
 		path := filepath.Join(opts.dir, file.name)
 		// 0644: systemd units are read by systemd and by whoever is debugging
-		// them. They carry no secrets — credentials are `secret:` references
+		// them. They carry no secrets: credentials are `secret:` references
 		// resolved at runtime (R3), which is exactly why that rule exists.
-		if err := os.WriteFile(path, []byte(file.content), 0o644); err != nil { // #nosec G306 — unit files are world-readable by design
+		if err := os.WriteFile(path, []byte(file.content), 0o644); err != nil { // #nosec G306; unit files are world-readable by design
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 		o.printf("Wrote %s\n", path)
@@ -92,7 +92,7 @@ func writeUnits(o *out, opts unitOptions) error {
 // MemoryMin is the load-bearing line. It is a *protection*, not a limit: the
 // kernel reclaims from other cgroups before it reclaims from this one, which is
 // what makes "kanead survives a workload eating the node" a guarantee rather
-// than a hope. §5.2.11 sets the default at 256 MiB (v1.62) — enough for a
+// than a hope. §5.2.11 sets the default at 256 MiB (v1.62): enough for a
 // control plane that does not build; build nodes raise --reserve.
 func kaneaSlice(opts unitOptions) string {
 	return heredoc(`
@@ -170,14 +170,14 @@ func kaneadService(opts unitOptions) string {
 		#
 		# No network unit to order after: the eBPF datapath is kanead's own
 		# (PRD v1.36, §5.2.5). The After=cilium.service that used to sit here
-		# named a unit that never existed — the supervised unit was
-		# kanea-cilium.service — so it ordered nothing, silently.
+		# named a unit that never existed (the supervised unit was
+		# kanea-cilium.service) so it ordered nothing, silently.
 
 		[Service]
 		# Type=exec, not notify: kanead sends no sd_notify readiness message, and
 		# systemd would wait for one that never comes and then kill the service.
-		# exec still catches the common failure — a missing or unexecutable
-		# binary — which Type=simple would report as a successful start.
+		# exec still catches the common failure (a missing or unexecutable
+		# binary) which Type=simple would report as a successful start.
 		Type=exec
 		ExecStart=` + opts.binary + ` agent --data-dir ` + opts.dataDir + ` --log-dir ` + opts.logDir +
 		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + v6Flags + listenFlags + `
@@ -191,7 +191,7 @@ func kaneadService(opts unitOptions) string {
 
 		# kanead needs root: it creates network namespaces, writes cgroups and
 		# talks to containerd's socket. Deliberately NO mount-namespace sandbox
-		# (PRD v1.53): kanead is the node's mount manager — it bind-mounts alloc
+		# (PRD v1.53): kanead is the node's mount manager; it bind-mounts alloc
 		# netns files under /run/netns for runc to join, and mounts SMB/NFS/S3
 		# volumes for containerd to bind into containers. ProtectSystem,
 		# ProtectHome, PrivateTmp and even a bare ReadWritePaths= each give the
@@ -230,7 +230,7 @@ func edgeService(opts unitOptions) string {
 		After=network-online.target
 		Wants=network-online.target
 		# Deliberately not After=kanead.service. The edge reads a route snapshot
-		# from disk and serves traffic whether or not the control plane is up —
+		# from disk and serves traffic whether or not the control plane is up:
 		# that separation is the whole reason it is its own process (PRD §5.2.6).
 
 		[Service]
@@ -246,7 +246,7 @@ func edgeService(opts unitOptions) string {
 		# Binding privileged ports is all the privilege it needs, and it drops
 		# the rest. The ambient capability lives in the effective set for the
 		# process's lifetime, so a bind on a published port below 1024 (§7.2.2)
-		# an hour after startup is exactly as permitted as :443 at t=0 — there is
+		# an hour after startup is exactly as permitted as :443 at t=0: there is
 		# nothing to add here when a spec asks for one.
 		AmbientCapabilities=CAP_NET_BIND_SERVICE
 		CapabilityBoundingSet=CAP_NET_BIND_SERVICE

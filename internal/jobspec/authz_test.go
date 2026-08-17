@@ -1,6 +1,6 @@
 package jobspec_test
 
-// R27 (v1.40): the auth block — one mode, R5-scoped references, jwt key/alg
+// R27 (v1.40): the auth block; one mode, R5-scoped references, jwt key/alg
 // consistency.
 
 import (

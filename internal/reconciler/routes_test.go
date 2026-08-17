@@ -132,7 +132,7 @@ func TestReconcileRepublishesOnlyOnChange(t *testing.T) {
 	}
 }
 
-// A protocol-only edit must republish — the routesArePublished lesson: a
+// A protocol-only edit must republish; the routesArePublished lesson: a
 // field buildRoutes sets but routesEqual does not compare publishes exactly
 // once and never again (R28, v1.41).
 func TestProtocolEditIsRepublished(t *testing.T) {
@@ -152,13 +152,13 @@ func TestProtocolEditIsRepublished(t *testing.T) {
 	h.reconcile(t)
 
 	if got := loadRoutes(t, path).Routes[0].Protocol; got != "grpc" {
-		t.Errorf("protocol = %q after the edit, want grpc — the equality check is missing the field", got)
+		t.Errorf("protocol = %q after the edit, want grpc: the equality check is missing the field", got)
 	}
 }
 
 // Removing the expose block withdraws the route.
 // functionService is a lowered function with an http trigger and no declared
-// domains — the case the mode resolution decides (§7.2.3).
+// domains: the case the mode resolution decides (§7.2.3).
 func functionService() reconciler.Desired {
 	d := desiredWithPort(1)
 	d.Runtime = "io.containerd.wasmtime.v1"
@@ -169,7 +169,7 @@ func functionService() reconciler.Desired {
 
 // The node-side mode resolution (§7.2.3, R20's pattern): with a base domain a
 // function is host-routed like any service; with none it goes to the
-// functions-port dispatch table — and never to both.
+// functions-port dispatch table, and never to both.
 func TestFunctionRoutesResolveByBaseDomain(t *testing.T) {
 	t.Run("base domain present", func(t *testing.T) {
 		h, path := routeHarness(t, "apps.example.com")
@@ -203,7 +203,7 @@ func TestFunctionRoutesResolveByBaseDomain(t *testing.T) {
 	})
 }
 
-// The snapshotIsPublished comparison must cover the functions table — the
+// The snapshotIsPublished comparison must cover the functions table; the
 // routesArePublished lesson: a half-compared snapshot publishes an edit
 // exactly once and never again.
 func TestFunctionTableEditsRepublish(t *testing.T) {
@@ -217,7 +217,7 @@ func TestFunctionTableEditsRepublish(t *testing.T) {
 		t.Fatalf("unexpected initial table: %+v", before.Functions)
 	}
 
-	// Edit only the function's middleware — nothing else in the snapshot
+	// Edit only the function's middleware: nothing else in the snapshot
 	// changes, so a comparison that skipped functions would find it equal.
 	d.Expose.RateLimit = &edge.RateLimit{Requests: 10, Window: "1m", Per: "ip"}
 	h.setDesired(t, d)
@@ -273,7 +273,7 @@ func TestReconcileResolvesADomainCollisionDeterministically(t *testing.T) {
 	h.reconcile(t)
 
 	snap := loadRoutes(t, path)
-	// One claim survives — Validate would reject two — and it is the same one
+	// One claim survives (Validate would reject two) and it is the same one
 	// every time: "blog/www" sorts before "shop/web".
 	if len(snap.Routes) != 1 {
 		t.Fatalf("routes = %+v, want exactly one surviving claim", snap.Routes)
@@ -314,8 +314,8 @@ func statOf(t *testing.T, path string) string {
 }
 
 // kanead must repair its own output. A snapshot deleted on reboot, truncated by
-// a full disk, or hand-edited would otherwise never be rewritten — nothing
-// about desired state changed — and the edge would come back to an empty table
+// a full disk, or hand-edited would otherwise never be rewritten (nothing
+// about desired state changed) and the edge would come back to an empty table
 // and 404 the whole node.
 func TestReconcileRepublishesAfterTheSnapshotIsLost(t *testing.T) {
 	h, path := routeHarness(t, "apps.example.com")
@@ -366,7 +366,7 @@ func TestResolveTLSMode(t *testing.T) {
 		// which is what lets this change ship without a schema migration.
 		{"pre-v1.33 record", &reconciler.Expose{LetsEncrypt: true}, "self-signed", "acme"},
 		// The new field wins over the old one on a record that somehow carries
-		// both — R20 refuses that combination at plan time.
+		// both; R20 refuses that combination at plan time.
 		{"both, explicit wins", &reconciler.Expose{TLSMode: "provided", LetsEncrypt: true}, "acme", "provided"},
 		// letsencrypt = false used to be indistinguishable from an absent
 		// field, and still is: it defers to the node.
@@ -452,7 +452,7 @@ func TestReconcilePublishesListeners(t *testing.T) {
 
 // The trap this whole change is most likely to fall into. snapshotIsPublished
 // used to compare only routes, so a listener-only edit would be published once
-// and never again — a steady-state pass finds the routes equal and returns
+// and never again: a steady-state pass finds the routes equal and returns
 // early, and the edit sits in memory forever.
 func TestPublishChangeIsRepublished(t *testing.T) {
 	h, path := routeHarness(t, "apps.example.com")
@@ -509,7 +509,7 @@ func TestReconcileResolvesAPortCollisionDeterministically(t *testing.T) {
 }
 
 // A tcp listener carries only what it can enforce. A record written by hand
-// with a rate limit on one must not produce a snapshot the edge refuses —
+// with a rate limit on one must not produce a snapshot the edge refuses:
 // which would freeze routing at the last good table.
 func TestBuildListenersDropsMiddlewareATCPListenerCannotApply(t *testing.T) {
 	h, path := routeHarness(t, "apps.example.com")
@@ -574,8 +574,8 @@ func udpService(count int) reconciler.Desired {
 	return d
 }
 
-// A udp listener carries backend addresses, not the VIP — the LB cannot front
-// datagrams — and a udp-only service holds no frontend at all.
+// A udp listener carries backend addresses, not the VIP (the LB cannot front
+// datagrams) and a udp-only service holds no frontend at all.
 func TestReconcilePublishesAUDPListenerWithBackends(t *testing.T) {
 	h, path := routeHarness(t, "apps.example.com")
 	h.setDesired(t, udpService(2))
@@ -594,7 +594,7 @@ func TestReconcilePublishesAUDPListenerWithBackends(t *testing.T) {
 		t.Errorf("listener = %+v", l)
 	}
 	if l.Upstream != "" {
-		t.Errorf("upstream = %q, want none — a udp listener dials backends", l.Upstream)
+		t.Errorf("upstream = %q, want none: a udp listener dials backends", l.Upstream)
 	}
 	if len(l.Backends) != 2 {
 		t.Errorf("backends = %v, want both running allocs", l.Backends)
@@ -644,7 +644,7 @@ func TestMixedProtocolServiceKeepsItsTCPFrontend(t *testing.T) {
 	}
 }
 
-// A pre-v1.50 record — one expose block — must serialize exactly as it always
+// A pre-v1.50 record (one expose block) must serialize exactly as it always
 // has: ExtraExposes rides omitempty, so the key exists only on records that
 // declared a second route. A key appearing on every record would be a
 // byte-level change to state nobody edited (the R23 lesson).

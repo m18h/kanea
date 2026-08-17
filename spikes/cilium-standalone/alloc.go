@@ -15,7 +15,7 @@ import (
 )
 
 // alloc is one workload placement: what M2's reconciler will derive from a job
-// spec. Labels are the Cilium security identity — Kanea's isolation boundary.
+// spec. Labels are the Cilium security identity: Kanea's isolation boundary.
 type alloc struct {
 	ID     string   // >= 5 chars, DNS-1123-ish (see cniRuntime)
 	Labels []string // e.g. kanea=true, project=shop, service=web
@@ -65,7 +65,7 @@ func ensureImage(ctx context.Context, client *containerd.Client) (containerd.Ima
 //
 // Labelling before start matters: between CNI ADD and the endpoint patch the
 // endpoint carries reserved:init, which is policy-enforced (deny) in both
-// directions — a workload started in that window sees its traffic dropped.
+// directions; a workload started in that window sees its traffic dropped.
 func setupAlloc(ctx context.Context, e *env, img containerd.Image, a alloc) (*running, error) {
 	if err := createNetns(a.ID); err != nil {
 		return nil, err

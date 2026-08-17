@@ -5,7 +5,7 @@
 @layer base {
   :root {
     /* Light: warm off-white ground, ink foreground, amber accent darkened to
-       #bc7d0f territory — the brand's #f2b544 fails as text on white, so the
+       #bc7d0f territory; the brand's #f2b544 fails as text on white, so the
        light theme carries the hue at a text-safe lightness instead. */
     --background: 40 20% 98%;
     --foreground: 240 10% 8%;
@@ -43,7 +43,7 @@
   }
 
   .dark {
-    /* Dark: the mockup — near-black layered surfaces (#0e0e10 page, #131316
+    /* Dark: the mockup; near-black layered surfaces (#0e0e10 page, #131316
        card), brand amber #f2b544 (the same amber Mark.tsx carries). */
     --background: 240 7% 6%;
     --foreground: 240 5% 93%;

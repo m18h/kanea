@@ -120,7 +120,7 @@ func (c *ciliumClient) endpoints(ctx context.Context) ([]epModel, error) {
 }
 
 // endpointByContainer looks an endpoint up by the identifier the CNI plugin
-// records — this is how Kanea will map alloc -> endpoint.
+// records: this is how Kanea will map alloc -> endpoint.
 func (c *ciliumClient) endpointByContainer(ctx context.Context, id string) (*epModel, error) {
 	var out epModel
 	code, msg, err := c.do(ctx, http.MethodGet, "/endpoint/container-id:"+id, nil, &out)
@@ -137,7 +137,7 @@ func (c *ciliumClient) endpointByContainer(ctx context.Context, id string) (*epM
 //
 // The Cilium CNI plugin hardcodes an empty label set in its
 // EndpointChangeRequest and only forwards K8S_POD_* CNI args, so an endpoint
-// created by CNI starts with reserved:init — and init endpoints are policy
+// created by CNI starts with reserved:init, and init endpoints are policy
 // enforced (deny) in both directions. An agent API call is therefore mandatory,
 // and it must be this one:
 //
@@ -149,7 +149,7 @@ func (c *ciliumClient) endpointByContainer(ctx context.Context, id string) (*epM
 //
 // It is retried: the call lands while the endpoint created by CNI ADD is still
 // regenerating, and the agent then answers 500 "error while regenerating
-// endpoint" — observed on roughly 1 in 8 attaches here. Kanea must treat this
+// endpoint"; observed on roughly 1 in 8 attaches here. Kanea must treat this
 // as retryable, not as an attach failure.
 func (c *ciliumClient) setIdentityLabels(ctx context.Context, containerID string, lbls []string) error {
 	body := map[string]any{"labels": lbls, "state": "waiting-for-identity"}

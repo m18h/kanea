@@ -2,7 +2,7 @@
 // §15.1): the decisions that change while a node runs, as opposed to the facts
 // about the node that stay on kanead's argv.
 //
-// Records live in the existing kv bucket under a `settings/` prefix — no new
+// Records live in the existing kv bucket under a `settings/` prefix: no new
 // Kind, no schema migration, and they replicate and restore with everything
 // else, which is the reason they are here and not in a file. Precedence is the
 // v1.46 rule: flags are the seed; a record, once written, wins; deleting it
@@ -34,7 +34,7 @@ const (
 // validates the *shape* of a reference, and resolution stays with the caller.
 const secretPrefix = "secret:"
 
-// Duration is a time.Duration that travels as a string ("5m", "6h") — the
+// Duration is a time.Duration that travels as a string ("5m", "6h"): the
 // spelling operators already use on the flags this record supersedes.
 type Duration time.Duration
 
@@ -61,7 +61,7 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
 // BackupSettings is the `settings/backup` record: where replication ships and
-// on what cadence. Exactly one destination — a directory or an S3 bucket.
+// on what cadence. Exactly one destination: a directory or an S3 bucket.
 type BackupSettings struct {
 	// Dir is a filesystem destination.
 	Dir string `json:"dir,omitempty"`
@@ -78,14 +78,14 @@ type BackupSettings struct {
 type S3Destination struct {
 	// URL is "s3://bucket[/prefix]".
 	URL string `json:"url"`
-	// Endpoint is required — no region-to-endpoint table, deliberately, for
+	// Endpoint is required; no region-to-endpoint table, deliberately, for
 	// the reason the flags refuse to guess one: a guessed endpoint is how
 	// backups end up in a jurisdiction nobody chose.
 	Endpoint string `json:"endpoint"`
 	Region   string `json:"region,omitempty"`
 	// AccessKey is the key id: configuration, like on the flags.
 	AccessKey string `json:"access_key,omitempty"`
-	// SecretKeyRef is a `secret:` reference (R3). Never a literal — the record
+	// SecretKeyRef is a `secret:` reference (R3). Never a literal: the record
 	// replicates in cleartext metadata terms, and Validate refuses by shape
 	// anything that looks like a pasted key.
 	SecretKeyRef string `json:"secret_key_ref,omitempty"`
@@ -98,8 +98,8 @@ func (s *S3Destination) UsePathStyle() bool {
 	return s.PathStyle == nil || *s.PathStyle
 }
 
-// Validate refuses a record the daemon could not act on. Resolution — the
-// secret reference, the endpoint's reachability — happens at use, not here;
+// Validate refuses a record the daemon could not act on. Resolution (the
+// secret reference, the endpoint's reachability) happens at use, not here;
 // this is about shape, so a refusal can land in front of whoever typed it.
 func (b BackupSettings) Validate() error {
 	switch {
@@ -120,7 +120,7 @@ func (b BackupSettings) Validate() error {
 			// a credential stored beside the state it protects, shipped in
 			// every backup.
 			return fmt.Errorf("settings: secret_key_ref must be a %s reference, "+
-				"e.g. %sshared/backup-s3 — never the key itself", secretPrefix, secretPrefix)
+				"e.g. %sshared/backup-s3, never the key itself", secretPrefix, secretPrefix)
 		}
 	}
 	if b.SnapshotInterval < 0 || b.SegmentInterval < 0 {
@@ -136,13 +136,13 @@ func (b BackupSettings) Validate() error {
 // default channels §11 has promised since v1.1. Routes built from it carry no
 // project scope, so they see every project's events.
 type NotificationSettings struct {
-	// Channels reuses the project spec's own type — one shape, wherever a
+	// Channels reuses the project spec's own type: one shape, wherever a
 	// channel is declared, and the same builder turns both into routes.
 	Channels *jobspec.Notifications `json:"channels,omitempty"`
 }
 
-// Validate refuses what the dispatcher could not run. Channel construction —
-// resolving references, dialing nothing — stays with the builder; this checks
+// Validate refuses what the dispatcher could not run. Channel construction
+// (resolving references, dialing nothing) stays with the builder; this checks
 // the shape and the event vocabulary, which is one place (internal/notify).
 func (n NotificationSettings) Validate() error {
 	ch := n.Channels

@@ -93,8 +93,8 @@ func testListener(port int, mode string) Listener {
 // newTestSet builds a listener set that binds on ephemeral ports.
 //
 // listen is injected rather than mocked away: the properties worth testing here
-// — a socket surviving a config change, one bind failing without taking the
-// others down — are properties of real sockets.
+// (a socket surviving a config change, one bind failing without taking the
+// others down) are properties of real sockets.
 func newTestSet(t *testing.T) (*listenerSet, map[int]net.Listener) {
 	t.Helper()
 	set := newListenerSet(NewProxy(ProxyConfig{Logger: slog.New(slog.DiscardHandler)}), Config{
@@ -242,7 +242,7 @@ func TestListenerSetWithdrawsAPort(t *testing.T) {
 }
 
 // A published http listener serves the service it was bound for without
-// consulting the Host header — the header on a connection to an IP literal
+// consulting the Host header: the header on a connection to an IP literal
 // would match no domain.
 func TestPublishedHTTPListenerIgnoresTheHostHeader(t *testing.T) {
 	upstream := newFakeUpstream(t, "jellyfin")

@@ -282,8 +282,8 @@ func TestNewContainerdScraperRequiresItsCollaborators(t *testing.T) {
 	}
 }
 
-// The parser is the hot path — tens of megabytes every five seconds at the §21
-// target — so it is worth knowing what one pass over a realistic body costs.
+// The parser is the hot path (tens of megabytes every five seconds at the §21
+// target) so it is worth knowing what one pass over a realistic body costs.
 func BenchmarkScrapeParse(b *testing.B) {
 	c := newClock()
 	allocs := allocMap{}
@@ -341,7 +341,7 @@ func BenchmarkScrapeParse(b *testing.B) {
 }
 
 // A label *value* may legally contain commas. A parser that splits on commas
-// before honouring quotes truncates it at the first one — which reads as a
+// before honouring quotes truncates it at the first one, which reads as a
 // perfectly plausible label and attributes every sample to the wrong subject.
 func TestLabelParsingHonoursQuotedCommas(t *testing.T) {
 	c := newClock()

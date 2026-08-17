@@ -23,7 +23,7 @@ import (
 // gcpsmProvider fetches from GCP Secret Manager, authenticating with a
 // service-account key: a hand-built RS256 JWT exchanged for an access token
 // at the key's own token_uri (the OAuth2 jwt-bearer grant). The metadata
-// server — GCP's ambient identity — is out by design (§5.2.13).
+// server (GCP's ambient identity) is out by design (§5.2.13).
 //
 // The access token is cached like Azure's; the JWT itself is minted fresh per
 // exchange because it is one RSA signature over a hundred bytes.
@@ -45,7 +45,7 @@ type gcpsmProvider struct {
 const (
 	gcpDefaultEndpoint = "https://secretmanager.googleapis.com"
 	gcpScope           = "https://www.googleapis.com/auth/cloud-platform"
-	gcpJWTBearerGrant  = "urn:ietf:params:oauth:grant-type:jwt-bearer" // #nosec G101 — a grant-type URN, not a credential
+	gcpJWTBearerGrant  = "urn:ietf:params:oauth:grant-type:jwt-bearer" // #nosec G101: a grant-type URN, not a credential
 )
 
 func newGCPSM(cfg providerConfig, client *http.Client, log *slog.Logger) *gcpsmProvider {
@@ -155,7 +155,7 @@ func (g *gcpsmProvider) invalidateToken() {
 	g.token, g.tokenExpiry = "", time.Time{}
 }
 
-// accessToken returns the cached token — and the project it is for — or
+// accessToken returns the cached token (and the project it is for) or
 // exchanges a fresh self-signed JWT at the key's token_uri.
 func (g *gcpsmProvider) accessToken(ctx context.Context) (token, project string, err error) {
 	g.mu.Lock()

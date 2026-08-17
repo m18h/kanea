@@ -63,7 +63,7 @@ type Entry struct {
 	ID   string    `json:"id"`
 	Time time.Time `json:"time"`
 	// Actor is the authenticated subject, or "" for an action nobody was
-	// authenticated for — which is itself worth recording.
+	// authenticated for, which is itself worth recording.
 	Actor string `json:"actor,omitempty"`
 	Role  string `json:"role,omitempty"`
 	// Via is how the actor authenticated (session, token, socket).
@@ -155,7 +155,7 @@ func Open(ctx context.Context, cfg Config) (*Log, error) {
 	l := &Log{store: cfg.Store, log: cfg.Logger, now: cfg.Now}
 
 	// The chain continues across restarts, so the head is read back rather than
-	// restarted at zero — otherwise every restart would look like a break.
+	// restarted at zero: otherwise every restart would look like a break.
 	page, err := l.List(ctx, Filter{Limit: 1})
 	if err != nil {
 		return nil, err
@@ -221,7 +221,7 @@ func (l *Log) List(ctx context.Context, f Filter) (Page, error) {
 		Reverse: !f.Oldest,
 	}
 	// The key is the timestamp, so a time window is a key range and costs
-	// nothing to apply — unlike the field filters below, which have to decode.
+	// nothing to apply; unlike the field filters below, which have to decode.
 	if opts.After == "" {
 		switch {
 		case f.Oldest && !f.Since.IsZero():
@@ -279,7 +279,7 @@ func (l *Log) List(ctx context.Context, f Filter) (Page, error) {
 //
 // This is the one deletion the log allows, and it is deliberately shaped so it
 // cannot be aimed: a caller names a time, never an entry. Pruning does break the
-// chain at the cut — that is unavoidable, and it is why an export is signed
+// chain at the cut: that is unavoidable, and it is why an export is signed
 // before its window is pruned rather than after.
 func (l *Log) Prune(ctx context.Context, before time.Time) (int, error) {
 	pruned := 0
@@ -425,7 +425,7 @@ const (
 // boundKey is the cursor that starts a scan at a time boundary.
 //
 // The Store's After is exclusive in both directions, so the key is placed one
-// tick outside the instant asked for — below it for a forward scan, above it
+// tick outside the instant asked for: below it for a forward scan, above it
 // for a reverse one. Both windows then include an entry stamped exactly at the
 // boundary, which is what "since 09:00" means to the person asking.
 func boundKey(at time.Time, side bound) string {
@@ -454,7 +454,7 @@ func timeFromID(id string) (time.Time, error) {
 
 // chainHash is the entry's hash over its content and its predecessor's hash.
 //
-// It covers every field except Hash itself, in a fixed order — a hash over a
+// It covers every field except Hash itself, in a fixed order: a hash over a
 // JSON encoding would depend on Go's field ordering staying put, which is not a
 // property to bet tamper evidence on.
 func chainHash(e Entry) string {
@@ -464,7 +464,7 @@ func chainHash(e Entry) string {
 		e.Via, e.TokenID, e.Action, e.Target, string(e.Result),
 		fmt.Sprint(e.Status), e.Source, e.Detail,
 	} {
-		// Length-prefixed so ("ab","c") and ("a","bc") do not hash alike — the
+		// Length-prefixed so ("ab","c") and ("a","bc") do not hash alike: the
 		// difference between two adjacent fields is exactly what an edit moves.
 		buf = append(buf, fmt.Sprintf("%d:%s\n", len(field), field)...)
 	}

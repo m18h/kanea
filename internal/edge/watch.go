@@ -15,7 +15,7 @@ import (
 //
 // Polling rather than an inotify watch: the file is small, one stat-and-read a
 // second is nothing, and it has no missed-event semantics to get wrong. A watch
-// would also have to handle the rename that publishing does — the inode the
+// would also have to handle the rename that publishing does: the inode the
 // watch was registered on is not the one that ends up in place.
 const DefaultPollInterval = time.Second
 
@@ -39,7 +39,7 @@ type Watcher struct {
 	// costs a read and a compare rather than a parse and a rebuild.
 	last []byte
 	// rejected is the raw bytes last refused. Held separately from last so a
-	// bad file is retried rather than remembered as loaded — but still only
+	// bad file is retried rather than remembered as loaded, but still only
 	// reported once, because a snapshot that stays broken would otherwise log
 	// an error on every poll, forever, at whatever the poll interval is.
 	rejected []byte
@@ -119,7 +119,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 // reload reads the snapshot and applies it if it changed.
 func (w *Watcher) reload() {
-	body, err := os.ReadFile(w.path) // #nosec G304 — the path is operator configuration
+	body, err := os.ReadFile(w.path) // #nosec G304; the path is operator configuration
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if !w.missing {
@@ -140,7 +140,7 @@ func (w *Watcher) reload() {
 	}
 
 	if err := w.apply(body); err != nil {
-		// Deliberately not fatal, and deliberately loud — but only once per
+		// Deliberately not fatal, and deliberately loud, but only once per
 		// distinct bad file. A rejected projection means routing is frozen at
 		// the last good state, which is a degraded control plane rather than a
 		// degraded site; a file that stays broken must not also fill the disk

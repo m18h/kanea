@@ -1,7 +1,7 @@
 package auth_test
 
 // Session.Method wire-format compatibility (PRD v1.47). The field is new;
-// the records are not — a Store full of pre-v1.47 sessions must keep working,
+// the records are not: a Store full of pre-v1.47 sessions must keep working,
 // and re-serialising an old record must not change its bytes (the R23 lesson).
 
 import (
@@ -57,7 +57,7 @@ func TestASessionCarriesItsMethodOnTheWire(t *testing.T) {
 func TestAnEmptyMethodSerialisesToNothing(t *testing.T) {
 	// omitempty is load-bearing (the R23 lesson): a session with no method
 	// must serialise byte-identically to a pre-v1.47 one, so an upgrade never
-	// rewrites what an old record means — and Via() fills the gap at read time.
+	// rewrites what an old record means, and Via() fills the gap at read time.
 	s := auth.Session{
 		Hash: "abc", Subject: "ada", Role: auth.RoleAdmin,
 		Created: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),

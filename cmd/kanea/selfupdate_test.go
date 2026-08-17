@@ -41,7 +41,7 @@ func releaseArchive(t *testing.T, contents string) []byte {
 }
 
 // fakeRelease serves the GitHub surface selfUpdate speaks: the /releases/latest
-// redirect and the per-asset download URLs. No signature assets — the
+// redirect and the per-asset download URLs. No signature assets: the
 // checksum-only posture, which is also the honest CI environment.
 func fakeRelease(t *testing.T, tag string, assets map[string][]byte) *releaseSource {
 	t.Helper()
@@ -76,7 +76,7 @@ func TestLatestResolvesFromTheRedirect(t *testing.T) {
 }
 
 // A repository with no release redirects to /releases, and the literal
-// "releases" must not compose into an archive name — the install script's
+// "releases" must not compose into an archive name: the install script's
 // lesson, kept in the binary.
 func TestLatestRefusesANonReleaseRedirect(t *testing.T) {
 	mux := http.NewServeMux()
@@ -116,7 +116,7 @@ func TestSelfUpdateInstallsAVerifiedRelease(t *testing.T) {
 	})
 
 	target := filepath.Join(t.TempDir(), "kanea")
-	if err := os.WriteFile(target, []byte("the old binary"), 0o755); err != nil { // #nosec G306 — a binary
+	if err := os.WriteFile(target, []byte("the old binary"), 0o755); err != nil { // #nosec G306: a binary
 		t.Fatal(err)
 	}
 
@@ -124,7 +124,7 @@ func TestSelfUpdateInstallsAVerifiedRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("selfUpdate: %v", err)
 	}
-	got, err := os.ReadFile(target) // #nosec G304 — a test path
+	got, err := os.ReadFile(target) // #nosec G304; a test path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestSelfUpdateInstallsAVerifiedRelease(t *testing.T) {
 	if !strings.Contains(joined, "installed v9.9.9") {
 		t.Errorf("notes = %q, want the install note", joined)
 	}
-	// The signature posture is always said out loud, whichever branch ran —
+	// The signature posture is always said out loud, whichever branch ran;
 	// cosign absent and signature absent both read as "not fully verified".
 	if !strings.Contains(joined, "signature") && !strings.Contains(joined, "cosign") {
 		t.Errorf("notes = %q, want the signature posture stated", joined)
@@ -152,7 +152,7 @@ func TestSelfUpdateRefusesACorruptArchive(t *testing.T) {
 	})
 
 	target := filepath.Join(t.TempDir(), "kanea")
-	if err := os.WriteFile(target, []byte("the old binary"), 0o755); err != nil { // #nosec G306 — a binary
+	if err := os.WriteFile(target, []byte("the old binary"), 0o755); err != nil { // #nosec G306: a binary
 		t.Fatal(err)
 	}
 
@@ -160,7 +160,7 @@ func TestSelfUpdateRefusesACorruptArchive(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("err = %v, want the checksum refusal", err)
 	}
-	got, _ := os.ReadFile(target) // #nosec G304 — a test path
+	got, _ := os.ReadFile(target) // #nosec G304: a test path
 	if string(got) != "the old binary" {
 		t.Fatal("a refused archive still replaced the binary")
 	}
@@ -173,7 +173,7 @@ func TestSelfUpdateRefusesAReleaseMissingItsChecksums(t *testing.T) {
 		// no checksums.txt
 	})
 	target := filepath.Join(t.TempDir(), "kanea")
-	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil { // #nosec G306 — a binary
+	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil { // #nosec G306; a binary
 		t.Fatal(err)
 	}
 	if _, err := source.selfUpdate(context.Background(), "v9.9.9", asset, target); err == nil {
@@ -214,7 +214,7 @@ func TestExtractBinaryIgnoresStrayEntriesAndFindsKanea(t *testing.T) {
 	if err := extractBinary(archive, dest); err != nil {
 		t.Fatalf("extractBinary: %v", err)
 	}
-	if got, _ := os.ReadFile(dest); string(got) != "it" { // #nosec G304 — a test path
+	if got, _ := os.ReadFile(dest); string(got) != "it" { // #nosec G304; a test path
 		t.Fatalf("extracted %q, want the kanea entry", got)
 	}
 }
@@ -284,16 +284,16 @@ func TestInstallOverIsAtomicAcrossFilesystemsByCopy(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "staged")
 	target := filepath.Join(dir, "kanea")
-	if err := os.WriteFile(src, []byte("new"), 0o755); err != nil { // #nosec G306 — a binary
+	if err := os.WriteFile(src, []byte("new"), 0o755); err != nil { // #nosec G306; a binary
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil { // #nosec G306 — a binary
+	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil { // #nosec G306; a binary
 		t.Fatal(err)
 	}
 	if err := installOver(src, target); err != nil {
 		t.Fatalf("installOver: %v", err)
 	}
-	got, err := os.ReadFile(target) // #nosec G304 — a test path
+	got, err := os.ReadFile(target) // #nosec G304; a test path
 	if err != nil || string(got) != "new" {
 		t.Fatalf("target = %q, %v; want the new binary", got, err)
 	}

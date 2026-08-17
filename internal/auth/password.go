@@ -31,7 +31,7 @@ func HashPassword(plaintext string) (string, error) {
 		return "", fmt.Errorf("%w: use at least %d characters", ErrWeakPassword, MinPasswordLength)
 	}
 	// bcrypt silently truncates at 72 bytes, so a longer password would have
-	// its tail ignored — someone using a passphrase would get less security
+	// its tail ignored; someone using a passphrase would get less security
 	// than they think, without being told.
 	if len(plaintext) > 72 {
 		return "", fmt.Errorf("%w: bcrypt ignores anything past 72 bytes; "+
@@ -56,7 +56,7 @@ func VerifyPassword(plaintext, hash string) bool {
 // dummyHash is compared against when a user does not exist.
 //
 // Without it, a login for an unknown user returns immediately while one for a
-// known user spends ~250 ms in bcrypt — a timing difference that enumerates
+// known user spends ~250 ms in bcrypt: a timing difference that enumerates
 // valid account names. Comparing against a real hash makes both paths cost the
 // same (§14, A07).
 var dummyHash = mustHash("kanea-timing-equaliser-not-a-real-password")
@@ -89,6 +89,6 @@ type LoginLimit struct {
 }
 
 // DefaultLoginLimit is §14 A07's "5/min/IP + exponential account backoff",
-// expressed as a fixed lockout — simpler to reason about than an escalating
+// expressed as a fixed lockout: simpler to reason about than an escalating
 // one, and a minute of lockout already makes online guessing hopeless.
 var DefaultLoginLimit = LoginLimit{Attempts: 5, Window: time.Minute, Lockout: time.Minute}

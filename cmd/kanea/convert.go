@@ -16,7 +16,7 @@ import (
 // millicores the runtime needs for a CFS quota.
 //
 // The spec expresses CPU in MHz, Nomad-style, but a CFS quota is a fraction of
-// a core — so a conversion factor is unavoidable. 1000 MHz = one core is the
+// a core, so a conversion factor is unavoidable. 1000 MHz = one core is the
 // nominal figure used here, which makes `cpu = 500` half a core on every host.
 // The alternative (measuring real core frequency at startup) would make the
 // same spec mean different things on different machines, which is worse for a
@@ -38,7 +38,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 		}
 		image := svc.Task.Image
 		if image == "" && svc.Build == nil {
-			// R8 allows a build block with no image — the first successful build
+			// R8 allows a build block with no image: the first successful build
 			// pins the digest (§10.2). Without one, nothing will ever fill it
 			// in, so say so here rather than fail later with a confusing pull
 			// error for an empty reference.
@@ -119,7 +119,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			}
 		}
 		// One converted route per expose block (v1.50). The first lands on
-		// Expose, the rest on ExtraExposes — a single-route record must
+		// Expose, the rest on ExtraExposes: a single-route record must
 		// serialize exactly as it always has.
 		for _, e := range svc.Exposes {
 			converted := convertExpose(svc, e)
@@ -154,7 +154,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				// and `kanea plan` shows what will actually be applied (R24).
 				UID: convertID(v.UID), GID: convertID(v.GID), Mode: mode,
 				// R31's budget. Already parsed and validated in jobspec, so
-				// this is a copy — and it is deliberately not SpecHash
+				// this is a copy, and it is deliberately not SpecHash
 				// material (hashableVolumes strips it), so changing it never
 				// rolls the alloc.
 				SizeBytes: v.SizeBytes,
@@ -222,7 +222,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 // convertExpose carries the spec's ingress declaration into desired state.
 //
 // The domains are left exactly as declared, including empty. Generating the
-// auto-FQDN needs the server's base_domain, which lives in node configuration —
+// auto-FQDN needs the server's base_domain, which lives in node configuration:
 // so it is the agent's to fill in, not the CLI's, and baking a name in here
 // would make the same spec mean different things depending on which machine
 // parsed it.
@@ -248,12 +248,12 @@ func convertExpose(svc *jobspec.Service, e *jobspec.Expose) *reconciler.Expose {
 		out.TLSMode, out.TLSName = t.Mode, t.Name
 		// The pre-v1.33 spelling, translated at the boundary rather than
 		// carried inward: a stored record names a certificate source (R20), and
-		// `letsencrypt = true` names exactly one of them. Only true translates
-		// — false was indistinguishable from an absent block before v1.33 and
+		// `letsencrypt = true` names exactly one of them. Only true translates:
+		// false was indistinguishable from an absent block before v1.33 and
 		// still defers to the node's --tls-default.
 		//
-		// The mode itself is *not* resolved here. toDesired runs client-side —
-		// `kanea run`, the MCP server, the pipeline — so baking a node's
+		// The mode itself is *not* resolved here. toDesired runs client-side
+		// (`kanea run`, the MCP server, the pipeline) so baking a node's
 		// --tls-default in at conversion would make one spec mean different
 		// things on two machines. An empty mode on a stored record means "the
 		// node decides", and the node decides it in ResolveTLSMode.
@@ -272,7 +272,7 @@ func convertExpose(svc *jobspec.Service, e *jobspec.Expose) *reconciler.Expose {
 
 // convertAuthPolicy carries the R27 auth block into desired state as the
 // references it declares. Resolution to verifier material happens on the
-// node, in the reconciler's projection — never here, and never in the Store.
+// node, in the reconciler's projection, never here, and never in the Store.
 func convertAuthPolicy(a *jobspec.Auth) *reconciler.AuthPolicy {
 	if a == nil {
 		return nil
@@ -320,7 +320,7 @@ func convertHeaders(h *jobspec.Headers) *edge.Headers {
 // reconciler's form, resolving the named port to a number.
 //
 // Only the first is used. The spec allows several blocks, but "healthy" is one
-// bit and combining checks needs a rule (all? any?) the PRD does not state —
+// bit and combining checks needs a rule (all? any?) the PRD does not state:
 // inventing one here would be a stealth spec decision.
 // convertScaling carries the `scaling` block onto the desired state.
 func convertScaling(svc *jobspec.Service) *reconciler.ScalingPolicy {
@@ -383,9 +383,9 @@ func convertUser(u *jobspec.User) *runtime.User {
 	if u == nil {
 		return nil
 	}
-	out := &runtime.User{UID: uint32(u.UID), GID: uint32(u.GID)} // #nosec G115 — bounded by validateUser
+	out := &runtime.User{UID: uint32(u.UID), GID: uint32(u.GID)} // #nosec G115; bounded by validateUser
 	for _, g := range u.Groups {
-		out.AdditionalGIDs = append(out.AdditionalGIDs, uint32(g)) // #nosec G115 — same bound
+		out.AdditionalGIDs = append(out.AdditionalGIDs, uint32(g)) // #nosec G115; same bound
 	}
 	return out
 }
@@ -395,7 +395,7 @@ func convertID(id *int) *uint32 {
 	if id == nil {
 		return nil
 	}
-	v := uint32(*id) // #nosec G115 — bounded by validateVolumeOwnership
+	v := uint32(*id) // #nosec G115: bounded by validateVolumeOwnership
 	return &v
 }
 

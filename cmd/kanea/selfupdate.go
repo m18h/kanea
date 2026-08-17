@@ -20,8 +20,8 @@ import (
 )
 
 // The fetch half of `kanea upgrade` (PRD §15.4, v1.59). This is the one
-// download whose hash cannot live in the embedded manifest — a binary cannot
-// know the digest of its successor — so verification is the installer's:
+// download whose hash cannot live in the embedded manifest (a binary cannot
+// know the digest of its successor) so verification is the installer's:
 // sha256 against the release's checksums.txt always, cosign keyless
 // verification of that file when cosign is on the node, a loud note when it
 // is not. Verifying Sigstore in-process was rejected: sigstore-go is the
@@ -31,7 +31,7 @@ import (
 // the install script, so a fork upgrades from itself.
 const defaultRepo = "m18h/kanea"
 
-// oidcIssuer pins who vouched for the signing certificate — the same identity
+// oidcIssuer pins who vouched for the signing certificate: the same identity
 // the release workflow verifies against itself before publishing.
 const oidcIssuer = "https://token.actions.githubusercontent.com"
 
@@ -42,7 +42,7 @@ const maxArchiveBytes = 512 << 20
 // releaseTag is the grammar a resolved tag must match before it composes
 // into a URL. GitHub's /releases/latest redirect for a repo with no release
 // ends in the literal "releases", which would otherwise become a
-// plausible-looking archive name and an unreadable 404 — the install
+// plausible-looking archive name and an unreadable 404: the install
 // script's lesson, kept here.
 var releaseTag = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
@@ -66,7 +66,7 @@ func newReleaseSource() *releaseSource {
 	}
 }
 
-// latest resolves the newest release tag from the redirect GitHub serves —
+// latest resolves the newest release tag from the redirect GitHub serves:
 // no JSON API, no unauthenticated rate limit, the install script's method.
 func (s *releaseSource) latest(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, s.base+"/releases/latest", nil)
@@ -92,7 +92,7 @@ func (s *releaseSource) latest(ctx context.Context) (string, error) {
 // assetName is the naming contract with release.yml.
 func assetName(tag string) (string, error) {
 	if runtime.GOOS != "linux" {
-		return "", fmt.Errorf("kanea releases are linux binaries; this is %s — "+
+		return "", fmt.Errorf("kanea releases are linux binaries; this is %s; "+
 			"upgrade the node, not this machine", runtime.GOOS)
 	}
 	switch runtime.GOARCH {
@@ -104,7 +104,7 @@ func assetName(tag string) (string, error) {
 }
 
 // fetch downloads one release asset into dir and returns its path. Optional
-// assets (the signature pair) return "" on a 404 rather than failing — a
+// assets (the signature pair) return "" on a 404 rather than failing: a
 // release published without them is the checksum-only case, said out loud by
 // the caller.
 func (s *releaseSource) fetch(ctx context.Context, tag, name, dir string, optional bool) (string, error) {
@@ -126,7 +126,7 @@ func (s *releaseSource) fetch(ctx context.Context, tag, name, dir string, option
 	}
 
 	path := filepath.Join(dir, name)
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 — a path this process built
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304; a path this process built
 	if err != nil {
 		return "", err
 	}
@@ -149,12 +149,12 @@ func checksumFor(checksums []byte, asset string) (string, error) {
 			return fields[0], nil
 		}
 	}
-	return "", fmt.Errorf("checksums.txt has no entry for %s — do not run this archive", asset)
+	return "", fmt.Errorf("checksums.txt has no entry for %s: do not run this archive", asset)
 }
 
 // verifyChecksum compares a file against its published sha256.
 func verifyChecksum(path, wantHex string) error {
-	f, err := os.Open(path) // #nosec G304 — a path this process built
+	f, err := os.Open(path) // #nosec G304: a path this process built
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func verifyChecksum(path, wantHex string) error {
 	}
 	got := hex.EncodeToString(h.Sum(nil))
 	if got != wantHex {
-		return fmt.Errorf("checksum mismatch for %s (got %s, want %s) — do not run this archive",
+		return fmt.Errorf("checksum mismatch for %s (got %s, want %s); do not run this archive",
 			filepath.Base(path), got, wantHex)
 	}
 	return nil
@@ -189,9 +189,9 @@ func verifySignature(ctx context.Context, base, checksums, sig, pem string) (not
 		"--signature", sig,
 		"--certificate-identity-regexp", identity,
 		"--certificate-oidc-issuer", oidcIssuer,
-		checksums) // #nosec G204 — fixed argv over files this process wrote
+		checksums) // #nosec G204: fixed argv over files this process wrote
 	if out, runErr := cmd.CombinedOutput(); runErr != nil {
-		return "", fmt.Errorf("signature verification failed — do not run this archive:\n%s",
+		return "", fmt.Errorf("signature verification failed; do not run this archive:\n%s",
 			strings.TrimSpace(string(out)))
 	}
 	return "signature verified", nil
@@ -201,7 +201,7 @@ func verifySignature(ctx context.Context, base, checksums, sig, pem string) (not
 // Anything else in the archive is ignored; a `kanea` entry that is not a
 // plain file, or an archive without one, is refused.
 func extractBinary(archive, dest string) error {
-	f, err := os.Open(archive) // #nosec G304 — a path this process built
+	f, err := os.Open(archive) // #nosec G304; a path this process built
 	if err != nil {
 		return err
 	}
@@ -225,11 +225,11 @@ func extractBinary(archive, dest string) error {
 		if hdr.Typeflag != tar.TypeReg {
 			return fmt.Errorf("the kanea entry in %s is not a regular file", filepath.Base(archive))
 		}
-		out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) // #nosec G302,G304 — a binary, at a path this process built
+		out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) // #nosec G302,G304; a binary, at a path this process built
 		if err != nil {
 			return err
 		}
-		_, err = io.Copy(out, io.LimitReader(tr, maxArchiveBytes)) // #nosec G110 — capped
+		_, err = io.Copy(out, io.LimitReader(tr, maxArchiveBytes)) // #nosec G110; capped
 		if cerr := out.Close(); err == nil {
 			err = cerr
 		}
@@ -237,7 +237,7 @@ func extractBinary(archive, dest string) error {
 	}
 }
 
-// installOver replaces the running binary's own path with the file at src —
+// installOver replaces the running binary's own path with the file at src:
 // a rename(2) within the same directory, so the swap is atomic and a process
 // already executing the old image keeps its inode.
 func installOver(src, target string) error {
@@ -257,12 +257,12 @@ func installOver(src, target string) error {
 }
 
 func copyFile(src, dest string) error {
-	in, err := os.Open(src) // #nosec G304 — a path this process built
+	in, err := os.Open(src) // #nosec G304: a path this process built
 	if err != nil {
 		return err
 	}
 	defer in.Close()                                                         //nolint:errcheck // read-only
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) // #nosec G302,G304 — a binary, at a path this process built
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) // #nosec G302,G304; a binary, at a path this process built
 	if err != nil {
 		return err
 	}
@@ -276,7 +276,7 @@ func copyFile(src, dest string) error {
 	return err
 }
 
-// runningBinaryPath resolves this process's own binary — the path the new
+// runningBinaryPath resolves this process's own binary: the path the new
 // release is installed over. Unlike init.go's executablePath it has no
 // fallback: installing over a guessed path is how the wrong file gets
 // replaced as root.
@@ -289,7 +289,7 @@ func runningBinaryPath() (string, error) {
 }
 
 // selfUpdate downloads and verifies the release asset for tag and installs
-// it over target. It returns notes the caller should print — the signature
+// it over target. It returns notes the caller should print: the signature
 // posture is a fact the operator must see either way.
 func (s *releaseSource) selfUpdate(ctx context.Context, tag, asset, target string) (notes []string, err error) {
 	work, err := os.MkdirTemp("", "kanea-upgrade-")
@@ -306,7 +306,7 @@ func (s *releaseSource) selfUpdate(ctx context.Context, tag, asset, target strin
 	if err != nil {
 		return nil, err
 	}
-	sums, err := os.ReadFile(checksums) // #nosec G304 — a path this process built
+	sums, err := os.ReadFile(checksums) // #nosec G304: a path this process built
 	if err != nil {
 		return nil, err
 	}

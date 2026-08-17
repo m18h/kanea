@@ -211,7 +211,7 @@ func TestParseRefusesByName(t *testing.T) {
 	}
 }
 
-// A rewritten credential file with the same size is still a change — the
+// A rewritten credential file with the same size is still a change: the
 // certbot lesson, applied to provider tokens.
 func TestChangedSeesACredentialRewrite(t *testing.T) {
 	dir := t.TempDir()
@@ -249,8 +249,8 @@ func TestCurrentKeepsTheLastGoodConfig(t *testing.T) {
 	}
 }
 
-// Provider instances survive an unchanged pass — that is what keeps Azure's
-// and GCP's cached tokens alive between passes — and a credential rewrite
+// Provider instances survive an unchanged pass (that is what keeps Azure's
+// and GCP's cached tokens alive between passes) and a credential rewrite
 // rebuilds them, which is what drops a cache built on a rotated secret.
 func TestCurrentRebuildsOnlyOnAChange(t *testing.T) {
 	dir := t.TempDir()

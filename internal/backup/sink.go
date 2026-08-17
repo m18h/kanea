@@ -27,7 +27,7 @@ type Sink interface {
 	// a concurrent List must never see a half-written object.
 	//
 	// It reads the body and does not own it: the caller closes. Stated because
-	// the natural S3 implementation gets this wrong — net/http closes a request
+	// the natural S3 implementation gets this wrong: net/http closes a request
 	// body that is already an io.ReadCloser, which silently takes the caller's
 	// file handle with it.
 	Put(ctx context.Context, name string, size int64, body io.Reader) error
@@ -59,7 +59,7 @@ var ErrNotFound = errors.New("backup: no such object")
 // It is not a lesser sink for testing. A directory on a separate disk, an NFS
 // mount, or a USB drive an operator rotates are all real backup targets for a
 // single-node platform, and §15.3's requirement is that state leaves the
-// process — not that it leaves the building. It is also the only sink a restore
+// process, not that it leaves the building. It is also the only sink a restore
 // test can use in CI without a bucket.
 type FileSink struct {
 	root string
@@ -91,13 +91,13 @@ func (f *FileSink) Describe() string { return "file://" + f.root }
 
 // resolve maps an object name onto a path inside the root.
 //
-// Object names come from manifests, and a manifest comes from the bucket — so
+// Object names come from manifests, and a manifest comes from the bucket, so
 // on restore they are attacker-influenced. A name containing ".." must not be
 // able to write outside the backup directory, which is why this checks the
 // resolved path rather than trusting the join.
 func (f *FileSink) resolve(name string) (string, error) {
 	// Rejected rather than normalised. `path.Clean` would confine "../escaped"
-	// to "escaped" — safe, but it means two different names address the same
+	// to "escaped": safe, but it means two different names address the same
 	// object, and a manifest naming one part could then be made to overwrite
 	// another. Every name this package generates is a plain `prefix/id.ext`, so
 	// anything else is either a bug or an attempt.
@@ -135,7 +135,7 @@ func (f *FileSink) Put(_ context.Context, name string, _ int64, body io.Reader) 
 			return
 		}
 		// The write already failed; this is only about not leaving litter. A
-		// leftover .partial- file is inert — List skips them — so the failure
+		// leftover .partial- file is inert (List skips them) so the failure
 		// is logged rather than allowed to replace the error that matters.
 		if rmErr := os.Remove(tmp.Name()); rmErr != nil {
 			f.log.Warn("cannot remove a partial archive file",
@@ -169,7 +169,7 @@ func (f *FileSink) Get(_ context.Context, name string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.Open(full) // #nosec G304 — resolve confines the path to the sink root
+	file, err := os.Open(full) // #nosec G304; resolve confines the path to the sink root
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 	}

@@ -128,21 +128,21 @@ func TestEveryKnownEventHasASeverity(t *testing.T) {
 			t.Errorf("%s is not in KnownEvents", name)
 		}
 	}
-	// Twenty-six from §11 (v1.39 added function.invoke_failed — and
+	// Twenty-six from §11 (v1.39 added function.invoke_failed, and
 	// deliberately no function.invoked, which would be a metric at event
 	// cardinality; v1.44 added secret.synced/sync_failed; v1.69 added the four
-	// volume.* names), plus notify.test — the test action's payload, which is
+	// volume.* names), plus notify.test: the test action's payload, which is
 	// in the vocabulary so it renders like any other event, and which the test
 	// action deliberately does not route through the filters.
 	if got, want := len(notify.KnownEvents()), 27; got != want {
-		t.Errorf("KnownEvents has %d entries, want %d — §11 lists 26 plus notify.test", got, want)
+		t.Errorf("KnownEvents has %d entries, want %d: §11 lists 26 plus notify.test", got, want)
 	}
 }
 
 func TestEventIDsAreTimeOrderedAndUnique(t *testing.T) {
 	// The Store orders by key bytes, so an id that does not sort by time makes
-	// "the last 50 events" a full scan. And a burst — a fleet restart emits
-	// one per alloc — must not collide within a nanosecond.
+	// "the last 50 events" a full scan. And a burst (a fleet restart emits
+	// one per alloc) must not collide within a nanosecond.
 	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	first := notify.NewEvent(notify.EventServiceCrashed, "shop", "web", "one", at)
 	same := notify.NewEvent(notify.EventServiceCrashed, "shop", "api", "two", at)

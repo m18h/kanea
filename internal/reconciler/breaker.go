@@ -9,8 +9,8 @@ import (
 
 // The global circuit breaker (PRD §4.3).
 //
-// It exists for one failure mode: a node where something systemic has broken —
-// a full disk, a dead registry, a bad kernel upgrade — and every alloc that
+// It exists for one failure mode: a node where something systemic has broken
+// (a full disk, a dead registry, a bad kernel upgrade) and every alloc that
 // starts fails within seconds. The reconciler's job is to restart failed
 // allocs, so its correct behaviour becomes the thing amplifying the problem,
 // and the autoscaler's correct behaviour adds replicas to services that cannot
@@ -44,8 +44,8 @@ type Breaker struct {
 // Defaults for the breaker.
 const (
 	// DefaultBreakerThreshold is how many alloc failures inside the window trip
-	// it. Ten is well above the noise of a single service crash-looping — which
-	// its own restart backoff already handles — and well below what a node-wide
+	// it. Ten is well above the noise of a single service crash-looping (which
+	// its own restart backoff already handles) and well below what a node-wide
 	// fault produces in the same time.
 	DefaultBreakerThreshold = 10
 	// DefaultBreakerWindow is the period failures are counted over.
@@ -63,8 +63,8 @@ type BreakerConfig struct {
 	Cooldown  time.Duration
 	Logger    *slog.Logger
 	Now       func() time.Time
-	// Persist is called on trip and on reset — the transitions, never the
-	// per-failure samples — so the open state can survive a restart (v1.37).
+	// Persist is called on trip and on reset (the transitions, never the
+	// per-failure samples) so the open state can survive a restart (v1.37).
 	// A daemon restart is most likely during exactly the node-wide fault the
 	// breaker guards against, and before this the restart silently re-enabled
 	// the rollouts the breaker had paused. Called outside the breaker's lock;
@@ -97,7 +97,7 @@ func NewBreaker(cfg BreakerConfig) *Breaker {
 
 // Restore seeds the breaker from state persisted before a restart (v1.37).
 //
-// The trip count always carries over — the exporter's counter should not
+// The trip count always carries over: the exporter's counter should not
 // restart at zero. The open state carries over only while its cooldown still
 // has time left; a trip that expired while the daemon was down reads as
 // closed, exactly as it would have had the daemon stayed up. The failure
@@ -118,7 +118,7 @@ func (b *Breaker) Restore(trippedAt time.Time, trips, failures int) {
 	}
 	b.trippedAt = trippedAt
 	// The failures that tripped it, stamped at the trip. They make Allow's
-	// refusal honest and age out of the window on their own — the cooldown
+	// refusal honest and age out of the window on their own: the cooldown
 	// outlives the window, so they can never contribute to a second trip.
 	for range failures {
 		b.failures = append(b.failures, trippedAt)
@@ -150,12 +150,12 @@ func (b *Breaker) RecordFailure(service string) bool {
 		"failures", failures, "window", b.window, "cooldown", b.cooldown,
 		"last_service", service,
 		"detail", "this many allocs failing across the node usually means something "+
-			"systemic — disk, registry, or the runtime — rather than one bad service")
+			"systemic; disk, registry, or the runtime, rather than one bad service")
 	b.mu.Unlock()
 
 	// Outside the lock: a Store write must never sit between Allow and its
 	// caller. The fault the breaker just tripped on may be the disk, so the
-	// write is best-effort by design — the in-memory state is authoritative.
+	// write is best-effort by design: the in-memory state is authoritative.
 	if b.persist != nil {
 		b.persist(now, trips, failures)
 	}

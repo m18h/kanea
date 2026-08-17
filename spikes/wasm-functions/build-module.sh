@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds testdata/hello.wasm — a wasi-http hello server for the spike.
+# Builds testdata/hello.wasm: a wasi-http hello server for the spike.
 #
 # Two toolchains are tried, either is fine:
 #   - cargo + cargo-component (rust, the reference wasi-http producer)

@@ -15,7 +15,7 @@ import (
 // Account management routes (PRD §13.2, §13.3).
 const (
 	PathUsers  = "/v1/users"
-	PathTokens = "/v1/tokens" // #nosec G101 — a route, not a credential
+	PathTokens = "/v1/tokens" // #nosec G101: a route, not a credential
 )
 
 // Accounts manages users and tokens.

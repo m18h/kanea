@@ -79,7 +79,7 @@ export function Overview() {
   })
 
   // Functions are services too, but every surface counts them under
-  // Functions — the sidebar badge and the Services page both filter them
+  // Functions: the sidebar badge and the Services page both filter them
   // out, so the tile must agree rather than show a number one higher.
   const list = (services.data?.services ?? []).filter((s) => s.function == null)
   const byService = groupAllocs(allocs.data?.allocs ?? [])
@@ -274,7 +274,7 @@ function UtilisationCard({
       : undefined
 
   // The GPU panel exists only when a GPU is visible: a GPU-less node gets no
-  // panel, not an empty one — absence is not a 0% card.
+  // panel, not an empty one; absence is not a 0% card.
   const gpus = machine?.gpus ?? []
   const hasGPU = gpus.length > 0 || gpu.values.some((v) => v !== null)
   const vramUsed = gpus.reduce((sum, g) => sum + (g.vram_used_bytes ?? 0), 0)

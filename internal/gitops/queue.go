@@ -10,8 +10,8 @@ import (
 
 // The build queue.
 //
-// Builds are serialised — §10.2 makes isolation collective, so a second
-// concurrent build shares the first's budget rather than getting its own — and
+// Builds are serialised: §10.2 makes isolation collective, so a second
+// concurrent build shares the first's budget rather than getting its own, and
 // a queue is therefore a real state a run sits in rather than an instant it
 // passes through. That is why `queued` is in the run state machine.
 //
@@ -53,7 +53,7 @@ type QueueConfig struct {
 	Logger *slog.Logger
 	Now    func() time.Time
 	// Emit publishes build events. The signature is strings rather than a
-	// notify.Event so this package does not depend on notify — the daemon
+	// notify.Event so this package does not depend on notify: the daemon
 	// adapts, which keeps the dependency pointing one way.
 	Emit func(project, service, name, message string)
 }
@@ -106,7 +106,7 @@ func (q *Queue) Run(ctx context.Context) {
 	for {
 		// Checked before the select, not only inside it. A select whose cases
 		// are both ready picks at random, so a cancelled context does not stop
-		// it from taking one more item — and executing that item would fail
+		// it from taking one more item, and executing that item would fail
 		// every Store write, leaving the run stuck at "queued" with nothing
 		// left to move it.
 		if ctx.Err() != nil {

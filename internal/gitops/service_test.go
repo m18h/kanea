@@ -182,7 +182,7 @@ func TestSyncOfAnUnchangedCommitDoesNothing(t *testing.T) {
 
 func TestSyncRejectsAForeignProject(t *testing.T) {
 	// The security boundary of GitOps. A repository speaks for its own project
-	// and no other — without this, whoever can push to one project's source can
+	// and no other: without this, whoever can push to one project's source can
 	// redefine every service on the node, which is the cross-project escalation
 	// R5 blocks for secrets arriving through a different door.
 	h := newServiceHarness(t, nil)

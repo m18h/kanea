@@ -21,7 +21,7 @@ func renderText(t *testing.T, text string) ([]reconciler.Desired, []gitops.Confi
 	}
 	for _, d := range result.Diagnostics {
 		if d.Severity == "error" {
-			t.Fatalf("render diagnostics: %s (%s:%d) — %s", d.Summary, d.File, d.Line, d.Detail)
+			t.Fatalf("render diagnostics: %s (%s:%d); %s", d.Summary, d.File, d.Line, d.Detail)
 		}
 	}
 	return result.Services, result.Pipelines
@@ -230,7 +230,7 @@ func TestGeneratedSpecRoundTripsToTheSameDesired(t *testing.T) {
 }
 
 // R11 (v1.58): an omitted limit is unbounded (zero in the record), and it
-// must regenerate as omission — a generated `cpu = 0` would read as a
+// must regenerate as omission; a generated `cpu = 0` would read as a
 // declaration nobody made, and a generated default would re-bound a service
 // the operator left unbounded.
 func TestUnboundedResourcesRoundTripAsOmission(t *testing.T) {
@@ -320,7 +320,7 @@ function "resize-avatar" {
 `
 
 // A lowered function must regenerate as a `function` block that lowers back to
-// the identical Desired — runtime, triggers and all (R25). A service block
+// the identical Desired: runtime, triggers and all (R25). A service block
 // carrying runtime internals could not be re-parsed into what is running.
 func TestGeneratedFunctionRoundTripsToTheSameDesired(t *testing.T) {
 	original, pipelines := renderText(t, functionRoundTripSpec)
@@ -431,7 +431,7 @@ func TestRenderReportsDiagnosticsWithPositions(t *testing.T) {
 	}
 }
 
-// R28 (v1.41): a grpc-marked service round-trips — the protocol attribute is
+// R28 (v1.41): a grpc-marked service round-trips; the protocol attribute is
 // regenerated and the port named "grpc" is re-selected by the same rule.
 func TestGeneratedGRPCServiceRoundTripsToTheSameDesired(t *testing.T) {
 	const grpcSpec = `

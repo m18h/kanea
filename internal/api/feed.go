@@ -18,7 +18,7 @@ import (
 //
 // The return value exists for the lossy topics (PRD v1.70, §12.1): a feed whose
 // frames may be dropped is the only thing that can account for what it lost, so
-// it has to be told. Feeds on the snapshot topics ignore it — a full buffer
+// it has to be told. Feeds on the snapshot topics ignore it: a full buffer
 // there still closes the connection, so there is nothing to account for.
 type emitFunc func(payload any) bool
 
@@ -31,7 +31,7 @@ type feedFunc func(ctx context.Context, emit emitFunc)
 // stream yet (that is the CDC replicator, §15.3, M10), and adding one just for
 // the dashboard would be a second source of truth for "what changed". A second
 // is well inside what a human watching a page notices, and the poll is a
-// bounded, paginated read — the shape §5.2.2 requires.
+// bounded, paginated read: the shape §5.2.2 requires.
 const FeedInterval = time.Second
 
 // feedFor resolves a subscription request to the feed that serves it.
@@ -195,8 +195,8 @@ func (s *Server) feedAllocs(ctx context.Context, emit emitFunc) {
 //
 // Gating on the index rather than diffing: every mutation bumps it (§15.2), so
 // it is a cheap, exact "has anything changed" that costs one read instead of a
-// full comparison. It over-sends — an unrelated alloc write re-sends the service
-// list — which is the right trade at this scale and stops being one only when
+// full comparison. It over-sends (an unrelated alloc write re-sends the service
+// list) which is the right trade at this scale and stops being one only when
 // the payload is large enough to notice.
 func (s *Server) feedStoreKind(ctx context.Context, emit emitFunc,
 	snapshot func(context.Context) (any, error),
@@ -254,14 +254,14 @@ type LogLine struct {
 //
 // One frame per tick rather than one per line (PRD v1.70). Per line, a 200-line
 // tail is 200 frames into a 64-slot send buffer, which is a closed connection
-// before the panel has painted — and it closed the whole multiplexed socket,
+// before the panel has painted, and it closed the whole multiplexed socket,
 // taking every other topic with it. Batching bounds the frame count at the tick
 // rate whatever the workload writes, at a cost of at most one PollInterval of
 // latency.
 type LogBatch struct {
 	// Lines is never empty: a tick that produced nothing emits no frame.
 	Lines []LogLine `json:"lines"`
-	// Dropped counts lines this subscription will never deliver — trimmed by
+	// Dropped counts lines this subscription will never deliver: trimmed by
 	// the per-frame cap, clamped off an oversized tail request, or lost with a
 	// frame the send buffer refused. It rides in the frame so the gap is
 	// visible where the gap is, rather than in a number elsewhere that nobody
@@ -274,12 +274,12 @@ const (
 	// maxBatchLines and maxBatchBytes bound a single frame. Without them,
 	// batching trades an unbounded frame *count* for an unbounded frame *size*:
 	// one line may be maxLineBytes (64 KiB), so a thousand-line frame could be
-	// 64 MiB — allocated per tick, per subscriber, on a write with a timeout.
+	// 64 MiB; allocated per tick, per subscriber, on a write with a timeout.
 	// The byte bound is the load-bearing one; the line bound keeps a chatty but
 	// terse workload from building an equally large frame out of small lines.
 	// Both are measured over the raw line bytes rather than the encoded JSON:
 	// escaping can expand a line, so the bound holds within a constant factor,
-	// and a factor is all this needs — the difference it exists to prevent is
+	// and a factor is all this needs; the difference it exists to prevent is
 	// 256 KiB against 64 MiB.
 	maxBatchLines = 1000
 	maxBatchBytes = 256 << 10
@@ -287,8 +287,8 @@ const (
 	// bound before it is a frame bound: seekToLastLines reads the file
 	// *backwards* to satisfy it, and §17 caps a service's logs at 100 MiB, so
 	// an unbounded tail is a 100 MiB backwards scan whose result the frame cap
-	// would discard anyway. Clamped rather than refused — a refusal blanks the
-	// panel — and the clamp is not silent: what it removed is counted into the
+	// would discard anyway. Clamped rather than refused (a refusal blanks the
+	// panel) and the clamp is not silent: what it removed is counted into the
 	// first batch's Dropped like any other gap. The REST log route keeps its
 	// unbounded tail; it is a plain stream with no queue behind it.
 	maxTailLines = 1000
@@ -351,7 +351,7 @@ type logFollower struct {
 
 	tails map[string]*tailer
 	// writers hold the split state for a line straddling two reads, which
-	// belongs to a file rather than to the loop — so it is keyed like the
+	// belongs to a file rather than to the loop, so it is keyed like the
 	// tailers and torn down with them.
 	writers map[string]*lineWriter
 
@@ -369,14 +369,14 @@ type logFollower struct {
 	batch LogBatch
 	bytes int
 	// carry counts lines lost with a frame that was itself refused, plus
-	// anything the tail clamp removed. A count, never a queue — holding the
+	// anything the tail clamp removed. A count, never a queue: holding the
 	// lines would be the unbounded daemon-side buffer §17 forbids.
 	carry int
 }
 
 // resync brings the tailer set in line with the allocs the service has now.
 //
-// Gated on the Store index having moved — the pattern feedStoreKind uses — plus
+// Gated on the Store index having moved (the pattern feedStoreKind uses) plus
 // an unconditional retry whenever nothing is being tailed. The retry is the case
 // the index gate cannot see: the alloc record exists and its log file does not
 // yet, which is every alloc for the moment between creation and its first write.
@@ -523,7 +523,7 @@ type lineWriter struct {
 }
 
 // maxLineBytes bounds an unterminated line. A workload writing megabytes with
-// no newline — a stack trace, a progress bar, a hostile one — must not grow
+// no newline (a stack trace, a progress bar, a hostile one) must not grow
 // this buffer without limit, so it is flushed as-is at the cap.
 const maxLineBytes = 64 << 10
 

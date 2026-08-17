@@ -19,7 +19,7 @@ import (
 
 const (
 	regUser = "kanea"
-	regPass = "kaneabuild" // #nosec G101 — local spike registry
+	regPass = "kaneabuild" // #nosec G101: local spike registry
 )
 
 type env struct {
@@ -102,10 +102,10 @@ func runBuilder(ctx context.Context, e *env, b *builder, r buildReq, o runOpts) 
 	removeContainer(ctx, e.client, id)
 	defer removeContainer(ctx, e.client, id)
 
-	if err := os.MkdirAll(r.OutDir, 0o777); err != nil { // #nosec G301 — rootless builders write here
+	if err := os.MkdirAll(r.OutDir, 0o777); err != nil { // #nosec G301: rootless builders write here
 		return runResult{}, err
 	}
-	_ = os.Chmod(r.OutDir, 0o777) // #nosec G302 — buildkit-rootless runs as uid 1000
+	_ = os.Chmod(r.OutDir, 0o777) // #nosec G302; buildkit-rootless runs as uid 1000
 
 	img, err := e.client.GetImage(ctx, b.Image)
 	if err != nil {

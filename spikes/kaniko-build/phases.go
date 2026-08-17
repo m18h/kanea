@@ -16,7 +16,7 @@ func tagFor(b *builder, phase string) string {
 	return fmt.Sprintf("%s/kanea/%s-%s:v1", regAddr, b.Name, phase)
 }
 
-// phaseBuild — the core question: build a Dockerfile as a containerd task and
+// phaseBuild; the core question: build a Dockerfile as a containerd task and
 // push it to an authenticated registry, with no Docker daemon anywhere.
 func phaseBuild(ctx context.Context, e *env, b *builder) error {
 	fmt.Printf("\n── %s: build + push as a containerd task ──\n", b.Name)
@@ -55,7 +55,7 @@ func phaseBuild(ctx context.Context, e *env, b *builder) error {
 	hasDigest := rerr == nil && strings.HasPrefix(reported, "sha256:")
 	detail := reported
 	if hasDigest && digest != "" && reported != digest {
-		detail += " (differs from the registry digest — index vs manifest)"
+		detail += " (differs from the registry digest; index vs manifest)"
 	}
 	check(b.Name+": reports the produced image digest, pinnable by the deploy",
 		hasDigest, detail)
@@ -63,7 +63,7 @@ func phaseBuild(ctx context.Context, e *env, b *builder) error {
 	return nil
 }
 
-// phaseCache — PRD §10.2 requires layer caching via a cache repo.
+// phaseCache: PRD §10.2 requires layer caching via a cache repo.
 func phaseCache(ctx context.Context, e *env, b *builder) error {
 	fmt.Printf("\n── %s: layer cache ──\n", b.Name)
 
@@ -118,7 +118,7 @@ func phaseCache(ctx context.Context, e *env, b *builder) error {
 	return nil
 }
 
-// phaseHardening — how much privilege does each builder actually need? Kanea's
+// phaseHardening: how much privilege does each builder actually need? Kanea's
 // workload default is drop-ALL-caps + no-new-privileges (AGENTS.md #6); a
 // builder that needs more is a documented exception, and one that needs
 // `privileged` is a security regression the PRD would have to justify.
@@ -154,7 +154,7 @@ func phaseHardening(ctx context.Context, e *env, b *builder) error {
 	return nil
 }
 
-// phaseLimits — PRD §10.2: builds run under cgroup CPU/memory caps so they
+// phaseLimits; PRD §10.2: builds run under cgroup CPU/memory caps so they
 // cannot starve workloads.
 func phaseLimits(ctx context.Context, e *env, b *builder) error {
 	fmt.Printf("\n── %s: under build isolation limits ──\n", b.Name)
@@ -183,7 +183,7 @@ func phaseLimits(ctx context.Context, e *env, b *builder) error {
 	return nil
 }
 
-// phaseFailure — PRD §10.2/§22 R4 require build failures to surface clearly:
+// phaseFailure; PRD §10.2/§22 R4 require build failures to surface clearly:
 // non-zero exit plus logs a user can act on.
 func phaseFailure(ctx context.Context, e *env, b *builder) error {
 	fmt.Printf("\n── %s: failing build surfaces cleanly ──\n", b.Name)
@@ -211,7 +211,7 @@ func phaseFailure(ctx context.Context, e *env, b *builder) error {
 
 func orNone(s string) string {
 	if s == "" {
-		return "none — even privileged failed"
+		return "none: even privileged failed"
 	}
 	return s
 }

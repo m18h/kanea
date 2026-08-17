@@ -3,11 +3,11 @@
 //
 // Every function is a long-running wasi-http server; this package is the two
 // kanead-side callers that POST to it. The event invoker is a tee on the
-// notification dispatcher's feed — routes are startup-static, the Sink sees
-// every event live — and the cron scheduler is a timer over the same target
+// notification dispatcher's feed (routes are startup-static, the Sink sees
+// every event live) and the cron scheduler is a timer over the same target
 // table. Both derive every URL from the function's Store-allocated VIP: the
 // spec has no field for a target (R26), which is why this client is
-// deliberately NOT behind notify's SSRF egress guard — its destinations are
+// deliberately NOT behind notify's SSRF egress guard; its destinations are
 // private by construction and cannot be chosen by a spec author. Consulting
 // the guard would be theatre; weakening it for private ranges would be a hole.
 package functions
@@ -33,7 +33,7 @@ import (
 // Defaults for the invoker.
 const (
 	// DefaultQueueDepth bounds events waiting to be matched. Past it, Record
-	// drops and counts — constraint #8's Publish discipline, copied exactly.
+	// drops and counts: constraint #8's Publish discipline, copied exactly.
 	DefaultQueueDepth = 1024
 	// DefaultMaxAttempts bounds delivery attempts, retries included.
 	DefaultMaxAttempts = 3
@@ -49,7 +49,7 @@ const (
 	// hold against a function that answers with a stream.
 	maxResponseBytes = 64 << 10
 	// latencyRing is how many recent invocation latencies are kept, per
-	// function — in memory, never the Store (constraint #2).
+	// function: in memory, never the Store (constraint #2).
 	latencyRing = 32
 )
 
@@ -58,10 +58,10 @@ const (
 type Target struct {
 	Project string
 	Service string
-	// BaseURL is http://<VIP>:<port> — derived, never declared (R26).
+	// BaseURL is http://<VIP>:<port>: derived, never declared (R26).
 	BaseURL string
 	// SigningRef names the secret event/cron POSTs are MACed with (R26,
-	// v1.40). Empty means unsigned. A reference, resolved per delivery — the
+	// v1.40). Empty means unsigned. A reference, resolved per delivery: the
 	// resolved secret never lives on the target list.
 	SigningRef string
 	Events     []EventTrigger
@@ -94,7 +94,7 @@ type Source interface {
 }
 
 // Stats is one function's invocation counters, served over the API and reset
-// by a restart — the rate lives in the datapath's counters (§9.1), this is
+// by a restart: the rate lives in the datapath's counters (§9.1), this is
 // the invoker's own bookkeeping.
 type Stats struct {
 	Invocations uint64    `json:"invocations"`
@@ -109,7 +109,7 @@ type Config struct {
 	Source Source
 	Logger *slog.Logger
 	// Resolver turns a function's signing_ref into its secret, per delivery
-	// (R26, v1.40). Nil means signing references cannot be honoured — a
+	// (R26, v1.40). Nil means signing references cannot be honoured: a
 	// function that declares one then fails to invoke rather than sending
 	// unsigned, which is the fail-closed direction.
 	Resolver Resolver
@@ -211,7 +211,7 @@ func New(cfg Config) (*Invoker, error) {
 	if cfg.Client == nil {
 		cfg.Client = &http.Client{
 			Timeout: cfg.Timeout,
-			// Refused, not followed — the same rule the egress guard applies
+			// Refused, not followed; the same rule the egress guard applies
 			// (§14 A10): a redirect is the answer changing its own address.
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return errors.New("functions: redirects are refused")
@@ -400,7 +400,7 @@ func (i *Invoker) fireDueCrons(ctx context.Context) {
 			}
 			due = append(due, delivery{target: t.Target, path: c.path, schedule: c.expr})
 			// Next from now, not from the missed tick: ticks a stopped daemon
-			// slept through are skipped, never replayed (PRD v1.37's shape —
+			// slept through are skipped, never replayed (PRD v1.37's shape;
 			// catch-up state would be per-sample durable state).
 			if next, err := c.schedule.Next(now); err == nil {
 				c.next = next
@@ -473,7 +473,7 @@ func (i *Invoker) invokeAsync(ctx context.Context, t Target, path, kind string, 
 }
 
 // invoke POSTs with bounded retries; exhausting them emits
-// function.invoke_failed (§11) — the only function.* event, and one no
+// function.invoke_failed (§11): the only function.* event, and one no
 // function trigger can match.
 func (i *Invoker) invoke(ctx context.Context, t Target, path, kind string, body []byte) {
 	if path == "" {
@@ -486,7 +486,7 @@ func (i *Invoker) invoke(ctx context.Context, t Target, path, kind string, body 
 
 	// Resolve the signing secret once per invocation, not per attempt: the
 	// value is the same across retries, and a reference that stops resolving
-	// fails the invocation rather than sending unsigned (R26) — a declared
+	// fails the invocation rather than sending unsigned (R26); a declared
 	// control silently dropped is worse than one never claimed.
 	var signing []byte
 	if t.SigningRef != "" {
@@ -543,7 +543,7 @@ func (i *Invoker) post(ctx context.Context, url, kind string, body, signing []by
 	req.Header.Set("X-Kanea-Trigger", kind)
 	if signing != nil {
 		// The timestamp is inside the MAC and on the wire, exactly as the
-		// webhook channel does it — one Sign, one format.
+		// webhook channel does it: one Sign, one format.
 		ts := strconv.FormatInt(i.now().Unix(), 10)
 		req.Header.Set(notify.TimestampHeader, ts)
 		req.Header.Set(notify.SignatureHeader, notify.Sign(signing, ts, body))
@@ -565,7 +565,7 @@ func (i *Invoker) post(ctx context.Context, url, kind string, body, signing []by
 }
 
 // failSigning records an invocation lost because its signature could not be
-// produced. Counted as a failure and surfaced as function.invoke_failed — the
+// produced. Counted as a failure and surfaced as function.invoke_failed; the
 // fail-closed direction (R26): unsigned delivery to a function that verifies
 // is a dropped control wearing a delivery's clothes.
 func (i *Invoker) failSigning(t Target, kind, reason string) {
@@ -601,7 +601,7 @@ func (i *Invoker) recordOutcome(name string, started time.Time, ok bool) {
 }
 
 // Snapshot returns a copy of every function's counters, keyed by
-// "project/service". Absent until the first invocation — "no data is never
+// "project/service". Absent until the first invocation: "no data is never
 // zero" applies to bookkeeping too.
 func (i *Invoker) Snapshot() map[string]Stats {
 	i.mu.Lock()

@@ -15,12 +15,12 @@ import (
 
 // sizeRefusedBy names the drivers a volume budget cannot be declared on, and
 // why. It is deliberately the ownershipRefusedBy shape, and deliberately
-// separate from it: the two refusals have different memberships — a host volume
+// separate from it: the two refusals have different memberships; a host volume
 // takes a budget perfectly well (it is a directory on this node) and cannot
 // take ownership, while s3 is the reverse.
 var sizeRefusedBy = map[string]string{
 	StorageS3: "an s3 volume is a FUSE mount over an object store, where measuring usage means " +
-		"listing the bucket — one request per directory, on a schedule, to produce a number " +
+		"listing the bucket; one request per directory, on a schedule, to produce a number " +
 		"the object store already bills you for. Kanea does not walk it, so a budget on it " +
 		"could never be evaluated",
 }
@@ -46,7 +46,7 @@ func validateVolumeSize(spec *Spec, svc *Service, v *Volume) hcl.Diagnostics {
 		Severity: hcl.DiagError,
 		Summary:  "Storage driver cannot carry a volume budget",
 		Detail: fmt.Sprintf("Volume %q of service %q is backed by storage %q of type %q, which "+
-			"cannot be given a size: %s. Remove it — and note that size is a budget Kanea "+
+			"cannot be given a size: %s. Remove it, and note that size is a budget Kanea "+
 			"reports and notifies on, never a quota it enforces (R31).",
 			v.Name, svc.Name, v.Storage, st.Type, why),
 		Subject: v.DefRange.Ptr(),

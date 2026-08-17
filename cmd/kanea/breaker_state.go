@@ -12,7 +12,7 @@ import (
 
 // Durable circuit-breaker state (v1.37, PRD §4.3).
 //
-// The breaker pauses rollouts and scale actions during a node-wide fault —
+// The breaker pauses rollouts and scale actions during a node-wide fault:
 // and a daemon restart is most likely during exactly such a fault. Before
 // v1.37 the restart silently closed the breaker, un-pausing rollouts into the
 // still-broken node. Only the transitions are written (a trip, an operator

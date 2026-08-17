@@ -104,7 +104,7 @@ func TestLoginRateLimit(t *testing.T) {
 		}
 	}
 
-	// Locked out — and the correct password does not get through either, which
+	// Locked out, and the correct password does not get through either, which
 	// is the point: an attacker must not be able to tell they found it.
 	if _, _, err := a.Login(ctx, "admin", goodPassword, "10.0.0.1"); !errors.Is(err, auth.ErrRateLimited) {
 		t.Fatalf("after 5 failures = %v, want ErrRateLimited", err)
@@ -262,7 +262,7 @@ func TestAuthenticateTokenRejectsRubbish(t *testing.T) {
 	}
 }
 
-// A token whose id exists but whose secret is wrong must fail — otherwise the
+// A token whose id exists but whose secret is wrong must fail: otherwise the
 // public half alone would be a credential.
 func TestTokenIDAloneIsNotACredential(t *testing.T) {
 	a, _ := newAuth(t)
@@ -468,7 +468,7 @@ func newAuthWithStore(t *testing.T) (*auth.Store, store.Store, *clock) {
 	return a, st, c
 }
 
-// newAuthOver builds an auth store over an existing Store — "the restart":
+// newAuthOver builds an auth store over an existing Store; "the restart":
 // same state on disk, fresh process memory.
 func newAuthOver(t *testing.T, st store.Store, c *clock) *auth.Store {
 	t.Helper()
@@ -496,7 +496,7 @@ func TestAccountLockoutSurvivesARestart(t *testing.T) {
 	if err := restarted.LoadLockouts(ctx); err != nil {
 		t.Fatalf("LoadLockouts: %v", err)
 	}
-	// The correct password does not get through the restored lockout either —
+	// The correct password does not get through the restored lockout either;
 	// same rule as the live one.
 	if _, _, err := restarted.Login(ctx, "admin", goodPassword, "10.0.0.2"); !errors.Is(err, auth.ErrRateLimited) {
 		t.Fatalf("after a restart mid-lockout = %v, want ErrRateLimited", err)

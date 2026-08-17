@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-// dopplerProvider fetches one Doppler config's secrets in a single call —
+// dopplerProvider fetches one Doppler config's secrets in a single call:
 // `GET /v3/configs/config/secrets/download?format=json` returns the whole
 // flat name→value map, which is the batch shape a pass wants anyway.
 type dopplerProvider struct {

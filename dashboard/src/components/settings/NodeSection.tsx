@@ -26,7 +26,7 @@ export function NodeSection({ node }: { node: NodeConfig }) {
       <div className="flex items-baseline gap-3">
         <h2 className="text-lg font-semibold tracking-tight">Node</h2>
         <span className="text-xs text-muted-foreground">
-          These are unit flags — edit the kanead unit and restart to change them.
+          These are unit flags: edit the kanead unit and restart to change them.
         </span>
       </div>
 
@@ -37,19 +37,19 @@ export function NodeSection({ node }: { node: NodeConfig }) {
           </CardHeader>
           <CardContent>
             <KeyValue label="Listen" mono>
-              {node.listen || '—'}
+              {node.listen || '-'}
             </KeyValue>
             <KeyValue label="TLS">
               <Badge variant={node.tls ? 'ok' : 'muted'}>{node.tls ? 'on' : 'off'}</Badge>
             </KeyValue>
             <KeyValue label="Base domain" mono>
-              {node.base_domain || '—'}
+              {node.base_domain || '-'}
             </KeyValue>
             <KeyValue label="TLS default" mono>
-              {node.tls_default || '—'}
+              {node.tls_default || '-'}
             </KeyValue>
             <KeyValue label="DNS listen" mono>
-              {node.dns_listen || '—'}
+              {node.dns_listen || '-'}
             </KeyValue>
             <KeyValue label="Data dir" mono>
               {node.data_dir}
@@ -108,10 +108,10 @@ export function NodeSection({ node }: { node: NodeConfig }) {
                   </Badge>
                 </KeyValue>
                 <KeyValue label="Allowed" mono>
-                  {policy.data.publish_ports || node.publish_ports || '—'}
+                  {policy.data.publish_ports || node.publish_ports || '-'}
                 </KeyValue>
                 <KeyValue label="Reserved" mono>
-                  {(policy.data.reserved ?? []).join(', ') || '—'}
+                  {(policy.data.reserved ?? []).join(', ') || '-'}
                 </KeyValue>
               </>
             ) : policy.isError ? (

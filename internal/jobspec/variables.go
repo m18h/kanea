@@ -10,7 +10,7 @@ import (
 )
 
 // Shared variables (PRD §6.2 R30, v1.63). A top-level `variables { }` block
-// names values the rest of the spec references as ${name} — the same flat
+// names values the rest of the spec references as ${name}: the same flat
 // vocabulary as the R2 built-ins, evaluated by the one EvalContext the whole
 // decode already runs against. The blocks are extracted and evaluated here,
 // *before* the structural decode, so their results are in scope for it.
@@ -33,7 +33,7 @@ var variablesSchema = &hcl.BodySchema{
 }
 
 // specVariables evaluates every top-level variables block. A value may
-// reference node variables and built-ins — the definition context deliberately
+// reference node variables and built-ins: the definition context deliberately
 // excludes the spec's own variables, so a sibling reference fails as an
 // unknown variable rather than opening an ordering-and-cycles story (R30).
 func specVariables(body hcl.Body, opts Options) (map[string]string, hcl.Diagnostics) {
@@ -130,7 +130,7 @@ func variableString(v cty.Value) (string, error) {
 	return s.AsString(), nil
 }
 
-// overlayVars merges maps left to right, later entries winning — the R30
+// overlayVars merges maps left to right, later entries winning: the R30
 // precedence chain is overlayVars(node, spec, caller).
 func overlayVars(maps ...map[string]string) map[string]string {
 	out := map[string]string{}

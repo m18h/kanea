@@ -18,8 +18,8 @@ import (
 )
 
 // WebSocket passthrough (PRD §5.2.6, v1.41). There is deliberately no
-// websocket code in the proxy — httputil.ReverseProxy carries the Upgrade
-// natively — so what these tests pin is that the machinery *around* it never
+// websocket code in the proxy (httputil.ReverseProxy carries the Upgrade
+// natively) so what these tests pin is that the machinery *around* it never
 // breaks the session: the middleware chain runs before the upgrade, the body
 // deadline and the server's idle timeout leave a hijacked connection alone,
 // and the metrics count the session without timing it.
@@ -49,7 +49,7 @@ func wsEcho(t *testing.T) (*httptest.Server, Route) {
 	}))
 }
 
-// wsDial connects through addr while addressing the route's domain — the
+// wsDial connects through addr while addressing the route's domain: the
 // Host-routing equivalent of pointing DNS at the edge.
 func wsDial(ctx context.Context, t *testing.T, addr, domain string) *websocket.Conn {
 	t.Helper()
@@ -112,8 +112,8 @@ func TestWebSocketEchoesThroughTheEdge(t *testing.T) {
 
 // IdleTimeout applies between requests on a kept-alive connection; a hijacked
 // connection has left the server's accounting entirely. If this ever regresses
-// — a wrapper that stops forwarding Hijack, a deadline applied to the raw conn
-// — every WebSocket dies at the idle timeout while idle, which is most of a
+// (a wrapper that stops forwarding Hijack, a deadline applied to the raw conn)
+// every WebSocket dies at the idle timeout while idle, which is most of a
 // WebSocket's life.
 func TestWebSocketSurvivesTheServersIdleTimeout(t *testing.T) {
 	_, route := wsEcho(t)
@@ -195,7 +195,7 @@ func TestWebSocketUpgradeMeetsTheRateLimit(t *testing.T) {
 	resp := request(p, http.MethodGet, "web.shop.example.com", "/", upgradeHeaders)
 	_ = resp.Body.Close()
 	// httptest's recorder cannot be hijacked, so the first upgrade fails at the
-	// hijack — after it spent its token, which is all this test needs.
+	// hijack: after it spent its token, which is all this test needs.
 
 	resp = request(p, http.MethodGet, "web.shop.example.com", "/", upgradeHeaders)
 	_ = resp.Body.Close()
@@ -210,7 +210,7 @@ func TestWebSocketUpgradeMeetsTheRateLimit(t *testing.T) {
 // A WebSocket is counted but never timed (§9.1.1): the observation's duration
 // is the session's lifetime, and one long session would poison the p95 the
 // autoscaler reads. The 101 lands in requests_total under protocol=websocket;
-// the latency histograms never see it — which also keeps _count equal to the
+// the latency histograms never see it, which also keeps _count equal to the
 // +Inf bucket, without which the exposition is malformed.
 func TestAWebSocketIsCountedButNeverTimed(t *testing.T) {
 	_, route := wsEcho(t)
@@ -235,13 +235,13 @@ func TestAWebSocketIsCountedButNeverTimed(t *testing.T) {
 	body := render(t, p.Metrics())
 	if got := sample(t, body,
 		`kanea_edge_service_request_duration_ms_count{service="shop/web",code="101",method="GET",protocol="websocket"}`); got != "0" {
-		t.Errorf("labelled histogram _count = %s, want 0 — a session length entered the latency histogram", got)
+		t.Errorf("labelled histogram _count = %s, want 0: a session length entered the latency histogram", got)
 	}
 	if got := sample(t, body, `kanea_edge_request_duration_ms_count{service="shop/web"}`); got != "0" {
 		t.Errorf("aggregate histogram _count = %s, want 0", got)
 	}
 	if got := sample(t, body, `kanea_edge_requests_total{service="shop/web"}`); got != "1" {
-		t.Errorf("requests_total = %s, want 1 — counted is not optional", got)
+		t.Errorf("requests_total = %s, want 1; counted is not optional", got)
 	}
 	if got := sample(t, body,
 		`kanea_edge_request_duration_ms_bucket{service="shop/web",le="+Inf"}`); got != "0" {
@@ -249,8 +249,8 @@ func TestAWebSocketIsCountedButNeverTimed(t *testing.T) {
 	}
 }
 
-// An upgrade attempted over HTTP/2 cannot be hijacked — http2's ResponseWriter
-// is not a Hijacker — and the failure must be a clean 502, not a panic. The
+// An upgrade attempted over HTTP/2 cannot be hijacked (http2's ResponseWriter
+// is not a Hijacker) and the failure must be a clean 502, not a panic. The
 // backend here answers 101 to a request that never asked to upgrade, which is
 // exactly what the h2 path delivers: inbound h2 strips connection-specific
 // headers, so the upstream's 101 is always unsolicited from the proxy's view.
@@ -306,7 +306,7 @@ func TestAnH2InboundUpgradeAttemptFailsCleanly(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.ProtoMajor != 2 {
-		t.Fatalf("negotiated %s, want HTTP/2 — the test is not exercising the h2 path", resp.Proto)
+		t.Fatalf("negotiated %s, want HTTP/2: the test is not exercising the h2 path", resp.Proto)
 	}
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("h2 protocol-switch attempt = %d, want a clean 502", resp.StatusCode)

@@ -9,7 +9,7 @@ package api
 //
 // That has one honest consequence, stated here rather than left to be
 // discovered: `toDesired` inlines a storage block into every volume that
-// references it, and nothing on the node remembers the rest — so a storage
+// references it, and nothing on the node remembers the rest, so a storage
 // resource **nothing references does not appear**. It is the same fact that
 // makes §16.2's generator refuse to regenerate a spec with volume blocks.
 //
@@ -39,8 +39,8 @@ type UsageSource interface {
 const (
 	// MountOK: present, and inside its budget if it declared one.
 	MountOK = "ok"
-	// MountOver: measured above its declared budget. Still serving — a budget
-	// is not a quota (R31) — which is exactly why it needs saying.
+	// MountOver: measured above its declared budget. Still serving (a budget
+	// is not a quota (R31)) which is exactly why it needs saying.
 	MountOver = "over"
 	// MountUnmeasured: nothing has been measured yet, or the walk did not come
 	// back, or the driver is not walked. Never rendered as zero (§9.2).
@@ -52,14 +52,14 @@ type VolumeMount struct {
 	Project string `json:"project"`
 	Service string `json:"service"`
 	// Volume is the volume's name within the service, carrying the alloc index
-	// for a local volume — those exist once per alloc, each with its own
+	// for a local volume: those exist once per alloc, each with its own
 	// contents.
 	Volume    string `json:"volume"`
 	MountPath string `json:"mount_path,omitempty"`
 	ReadOnly  bool   `json:"read_only,omitempty"`
 	// Path is the host directory backing it.
 	Path string `json:"path,omitempty"`
-	// UsedBytes is the measured usage, absent when unmeasured — a gap, never a
+	// UsedBytes is the measured usage, absent when unmeasured: a gap, never a
 	// zero, because "empty" and "not looked at" are different facts.
 	UsedBytes *int64 `json:"used_bytes,omitempty"`
 	// SizeBytes is the declared budget (R31), absent when none was declared.
@@ -166,7 +166,7 @@ func mountView(t reconciler.VolumeTarget, usage map[string]storage.Usage) Volume
 
 // storageNameOf answers what to group a volume under. A volume that names no
 // storage resource is a local one, and local storage is the default that needs
-// no declaration — so it groups under its own name rather than under "".
+// no declaration, so it groups under its own name rather than under "".
 func storageNameOf(t reconciler.VolumeTarget) string {
 	if t.Storage != "" {
 		return t.Storage

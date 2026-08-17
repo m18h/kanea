@@ -444,7 +444,7 @@ func TestRedact(t *testing.T) {
 		},
 		{
 			name: "secret reference survives",
-			// A `secret:` reference is a name, not a value — and it is the most
+			// A `secret:` reference is a name, not a value, and it is the most
 			// useful thing an audit entry can say about a secret.
 			in:     "resolved secret:shop/db-password for shop/web",
 			gone:   "",

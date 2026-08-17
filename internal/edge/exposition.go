@@ -24,7 +24,7 @@ import (
 // escapeLabelValue escapes a value for the exposition format.
 //
 // Explicitly, rather than with %q. A Go-quoted string escapes non-ASCII as
-// \xNN and \uNNNN, and Prometheus does not unescape either — a certificate
+// \xNN and \uNNNN, and Prometheus does not unescape either: a certificate
 // whose common name is not ASCII would render as a label no scraper reads back
 // correctly. The format defines exactly three escapes and this emits exactly
 // those, leaving UTF-8 to travel as itself.
@@ -274,7 +274,7 @@ func (m *Metrics) writeLabelled(out *printer, s snapshot) {
 	}
 
 	// In flight, not "open connections". The handler sees requests, and with
-	// keep-alive those are not the same thing — one connection carries many.
+	// keep-alive those are not the same thing: one connection carries many.
 	// Only the entrypoint gauge below counts connections, because ConnState is
 	// the only place a connection is actually visible. Naming this one
 	// open_connections to match Traefik would be naming it after a quantity it
@@ -482,7 +482,7 @@ func loadCounter[K comparable](mu *sync.RWMutex, m map[K]*atomic.Uint64, key K) 
 
 // clampGauge floors a connection gauge at zero.
 //
-// Open-connection tracking is two atomics moved from different goroutines — a
+// Open-connection tracking is two atomics moved from different goroutines: a
 // close racing an open can read transiently negative. A negative connection
 // count is not a measurement anyone can act on, and it makes a Prometheus graph
 // look broken rather than busy.

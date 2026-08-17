@@ -3,7 +3,7 @@ package main
 // The backup manager (PRD v1.46): the swappable owner of the replication
 // pipeline. Before it, "which destination" was decided once at startup; now a
 // PUT on /v1/settings/backup replaces the destination at runtime, and this is
-// the machinery that makes the swap safe — the one property it must never give
+// the machinery that makes the swap safe: the one property it must never give
 // up is that a bad new destination cannot stop a working old one.
 
 import (
@@ -29,7 +29,7 @@ const (
 const destinationProbeTimeout = 30 * time.Second
 
 // backupManager implements api.Backups over a replaceable pipeline. It is
-// always non-nil — a node can go unconfigured → configured at runtime now — so
+// always non-nil (a node can go unconfigured → configured at runtime now) so
 // "nothing is configured" is ErrNotConfigured from a method rather than a nil
 // interface, and the API maps it to the same 503 it always answered.
 type backupManager struct {
@@ -46,7 +46,7 @@ func newBackupManager(log *slog.Logger) *backupManager {
 	return &backupManager{log: log, source: sourceNone}
 }
 
-// adopt installs a pipeline without probing it — the startup path, where the
+// adopt installs a pipeline without probing it: the startup path, where the
 // destination was either running yesterday or written by the operator into
 // the unit, and where a down bucket must not keep the daemon from starting.
 func (m *backupManager) adopt(svc *backupService, source string) {
@@ -89,7 +89,7 @@ func (m *backupManager) launchLocked() {
 	}()
 }
 
-// stopLocked halts the current pipeline and waits for its final ship — which
+// stopLocked halts the current pipeline and waits for its final ship, which
 // lands in the *old* destination, so nothing pending is lost to the swap.
 // Callers hold mu.
 func (m *backupManager) stopLocked() {

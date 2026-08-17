@@ -6,7 +6,7 @@ import { formatMetric } from '@/lib/state'
 import { cn } from '@/lib/utils'
 
 /** The display smoothing window (samples). Five at the 5s cadence reads as a
- * ~25s average — enough to turn per-sample jitter into a trend line without
+ * ~25s average: enough to turn per-sample jitter into a trend line without
  * hiding a real spike. */
 const smoothWindow = 5
 
@@ -17,7 +17,7 @@ export interface UPlotChartProps {
   unit: string
   label: string
   tone: 1 | 2 | 3 | 4
-  /** percent pins y to 0–100; auto pads 10% over the max with a 0 floor. */
+  /** percent pins y to 0-100; auto pads 10% over the max with a 0 floor. */
   scale: ChartScale
   className?: string | undefined
 }
@@ -27,7 +27,7 @@ export interface UPlotChartProps {
  *
  * The instance is created per mount and destroyed on unmount (StrictMode runs
  * that pair twice, harmlessly); new samples arrive by setData, which uPlot
- * redraws without rebuilding — that is what makes the chart move smoothly
+ * redraws without rebuilding: that is what makes the chart move smoothly
  * where the SVG sparkline visibly stepped. A theme flip recreates the chart:
  * colors are baked in at creation and the event is rare.
  */

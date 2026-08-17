@@ -29,7 +29,7 @@ var ErrUnsafePath = errors.New("archive member escapes the destination")
 // maxFileSize caps a single extracted member at 1 GiB.
 //
 // A decompression bomb is a real archive with a real hash, so the manifest's
-// pin does not protect against one — it only means the bomb had to be shipped
+// pin does not protect against one: it only means the bomb had to be shipped
 // by the upstream project. containerd's largest binary is ~50 MiB and the cap
 // is twenty times that, so it can only ever fire on something already wrong.
 const maxFileSize = 1 << 30
@@ -185,7 +185,7 @@ func safeArchivePath(name string) bool {
 	if name == "" || name == "." {
 		return false
 	}
-	// Absolute, or a Windows-style volume — neither belongs in an archive of
+	// Absolute, or a Windows-style volume: neither belongs in an archive of
 	// Linux binaries, and both are a way to leave the destination.
 	if path.IsAbs(name) || strings.HasPrefix(name, "/") || filepath.IsAbs(name) {
 		return false
@@ -207,7 +207,7 @@ func safeArchivePath(name string) bool {
 //
 // The destination is resolved through symlinks first, because the check has to
 // be about where the write actually lands. A `dest` that is itself a symlink is
-// ordinary — /usr/local is one on some distributions — so resolving it is not a
+// ordinary (/usr/local is one on some distributions) so resolving it is not a
 // concession, it is the only way the comparison means anything.
 func resolveUnder(dest, rel string) (string, error) {
 	if !safeArchivePath(path.Clean(rel)) {

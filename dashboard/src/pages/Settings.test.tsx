@@ -99,7 +99,7 @@ const settingsBody = {
         SMTP: null,
         On: ['deploy.*', '*.failed'],
         Severity: 'warning',
-        // The wire really carries this — jobspec.Notifications is untagged —
+        // The wire really carries this; jobspec.Notifications is untagged;
         // and the schema must strip it rather than choke on it.
         DefRange: { Filename: 'x.hcl' },
       },

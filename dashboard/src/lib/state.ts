@@ -18,7 +18,7 @@ export function allocStateVariant(state: string): NonNullable<BadgeProps['varian
 
 /**
  * reasonLabels renders a termination reason the way a person says it (PRD
- * v1.68). Kept in step with cmd/kanea/describe.go's map of the same name — the
+ * v1.68). Kept in step with cmd/kanea/describe.go's map of the same name: the
  * dashboard and `kanea describe` are answering the same question and should not
  * word it differently.
  */
@@ -46,7 +46,7 @@ export interface ExitReason {
  * allocExitReason describes why an alloc last stopped, or why it never started.
  *
  * Returns null when there is nothing to say. A record written before v1.68 has
- * an exit code and no reason, and still renders as the code — an upgrade must
+ * an exit code and no reason, and still renders as the code: an upgrade must
  * not make an existing alloc less legible than it was.
  */
 export function allocExitReason(alloc: Alloc): ExitReason | null {
@@ -89,7 +89,7 @@ export interface Health {
 /**
  * serviceHealth summarises a service the way `kanea status` does.
  *
- * "ok" means settled, not merely "nothing has failed yet" — a service that is
+ * "ok" means settled, not merely "nothing has failed yet": a service that is
  * still starting is not ok, or the dashboard would look green during exactly
  * the window an operator is watching it.
  */
@@ -123,7 +123,7 @@ export interface CodeClass {
  *
  * The exposition keeps exact codes because Prometheus users want them; a
  * dashboard tile does not. Five buckets fit on a card and answer the question
- * a glance is asking — is anything failing — where twenty codes would need
+ * a glance is asking (is anything failing) where twenty codes would need
  * reading rather than seeing.
  *
  * Returned in class order rather than by volume: 5xx is always in the same
@@ -166,7 +166,7 @@ export function serviceStatusTone(health: Health): { tone: StatusTone; word: str
 /** formatUptime renders elapsed seconds the way the mockup header reads:
  * the two largest units that are non-zero ("41d 6h", "6h 12m", "12m"). */
 export function formatUptime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  if (!Number.isFinite(seconds) || seconds < 0) return '-'
   const days = Math.floor(seconds / 86_400)
   const hours = Math.floor((seconds % 86_400) / 3_600)
   const minutes = Math.floor((seconds % 3_600) / 60)
@@ -176,12 +176,12 @@ export function formatUptime(seconds: number): string {
   return `${Math.floor(seconds)}s`
 }
 
-/** relativeAge renders how old a timestamp is in its single largest unit —
+/** relativeAge renders how old a timestamp is in its single largest unit:
  * the allocs table's AGE column ("41d", "6h", "3m", "0s"). */
 export function relativeAge(iso: string | undefined, now: number = Date.now()): string {
-  if (!iso) return '—'
+  if (!iso) return '-'
   const at = new Date(iso).getTime()
-  if (Number.isNaN(at)) return '—'
+  if (Number.isNaN(at)) return '-'
   const seconds = Math.max(0, Math.floor((now - at) / 1000))
   if (seconds >= 86_400) return `${Math.floor(seconds / 86_400)}d`
   if (seconds >= 3_600) return `${Math.floor(seconds / 3_600)}h`

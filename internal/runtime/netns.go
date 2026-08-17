@@ -26,7 +26,7 @@ func NetnsPath(allocID string) string {
 // The ordering matters: create the netns, attach the datapath (which writes
 // the alloc's identity and plumbs its veth, §5.2.5), and only then start the
 // task. Attaching the network after the task starts leaves a window in which
-// the workload runs with no connectivity — and under the datapath, with no
+// the workload runs with no connectivity, and under the datapath, with no
 // identity, so its traffic is dropped.
 //
 // It is idempotent: an existing netns is reused rather than recreated, so a
@@ -60,7 +60,7 @@ func CreateNetns(allocID string) (string, error) {
 // and after the task is gone: CNI DEL needs the namespace to still exist in
 // order to clean up (M0 spike ②).
 //
-// Missing is success — teardown is idempotent.
+// Missing is success: teardown is idempotent.
 func DeleteNetns(allocID string) error {
 	if allocID == "" {
 		return nil
@@ -74,7 +74,7 @@ func DeleteNetns(allocID string) error {
 	return nil
 }
 
-// NetnsExists reports whether the alloc's namespace is present — the check a
+// NetnsExists reports whether the alloc's namespace is present: the check a
 // reconciler uses to detect drift (someone deleted it by hand).
 func NetnsExists(allocID string) bool {
 	_, err := os.Stat(NetnsPath(allocID))
@@ -84,9 +84,9 @@ func NetnsExists(allocID string) bool {
 // runIP shells out to iproute2. There is no stable Go API for creating a
 // *persistent* named netns (it requires a bind mount into /run/netns held by a
 // live process), and `ip netns` is the canonical implementation. Arguments are
-// always passed as an array — never a shell string (PRD §14, A03).
+// always passed as an array, never a shell string (PRD §14, A03).
 func runIP(args ...string) (string, error) {
-	cmd := exec.Command("ip", args...) // #nosec G204 — fixed argv, no shell
+	cmd := exec.Command("ip", args...) // #nosec G204: fixed argv, no shell
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(bytes.TrimSpace(out))), err
 }

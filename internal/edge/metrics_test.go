@@ -35,8 +35,8 @@ func obs(service string, d time.Duration, status int) Observation {
 
 // sample finds one metric line's value.
 //
-// Split on the *last* space, not the first: a label value may contain one —
-// `tls_version="TLS 1.3"` does — and cutting at the first would return the
+// Split on the *last* space, not the first: a label value may contain one
+// (`tls_version="TLS 1.3"` does) and cutting at the first would return the
 // tail of the label set instead of the number.
 func sample(t *testing.T, body, want string) string {
 	t.Helper()
@@ -147,8 +147,8 @@ func TestCountersAreCumulativeAcrossScrapes(t *testing.T) {
 	second := render(t, m)
 
 	// Reading must not reset anything: kanead differences two readings, and a
-	// scrape that consumed the counters would make a second reader — or a
-	// retried scrape — see traffic that never happened.
+	// scrape that consumed the counters would make a second reader (or a
+	// retried scrape) see traffic that never happened.
 	if sample(t, first, `kanea_edge_requests_total{service="shop/web"}`) != "1" {
 		t.Error("first scrape did not report the request")
 	}
@@ -232,7 +232,7 @@ func TestMetricsAreConcurrencySafe(t *testing.T) {
 
 	body := render(t, m)
 	if got := sample(t, body, `kanea_edge_requests_total{service="shop/svc"}`); got != "1600" {
-		t.Errorf("requests = %s, want 1600 — a counter was lost to a race", got)
+		t.Errorf("requests = %s, want 1600: a counter was lost to a race", got)
 	}
 }
 

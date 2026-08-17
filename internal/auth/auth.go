@@ -90,8 +90,8 @@ type User struct {
 
 // Token is a bearer credential for the CLI, MCP or CI.
 //
-// The secret itself is never stored: only a SHA-256 of it. A Store that leaks —
-// through a backup, a snapshot, a bug — must not hand over working credentials,
+// The secret itself is never stored: only a SHA-256 of it. A Store that leaks
+// (through a backup, a snapshot, a bug) must not hand over working credentials,
 // and a hash means the only copy of the token is the one shown at creation.
 type Token struct {
 	// ID is the public half, used to name and revoke a token.
@@ -158,7 +158,7 @@ const (
 // NewToken mints a token and returns it with its one-time secret.
 //
 // The secret is returned exactly once, here. Nothing stores it, so a lost token
-// is replaced rather than recovered — which is the property that makes a
+// is replaced rather than recovered, which is the property that makes a
 // leaked Store harmless.
 func NewToken(name string, role Role, expires time.Time, now time.Time) (Token, string, error) {
 	if name == "" {
@@ -178,7 +178,7 @@ func NewToken(name string, role Role, expires time.Time, now time.Time) (Token, 
 	}
 
 	// The presented form carries the id so a lookup is a single Get rather than
-	// a scan comparing hashes — which would be linear in the number of tokens
+	// a scan comparing hashes, which would be linear in the number of tokens
 	// and a timing signal.
 	presented := TokenPrefix + id + "." + secret
 	return Token{

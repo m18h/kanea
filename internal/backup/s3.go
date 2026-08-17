@@ -23,7 +23,7 @@ import (
 // service-model runtime, a credential-provider chain, an IMDS client and a
 // retry framework to perform four verbs. Signature Version 4 is fully specified
 // and about two hundred lines. What is *not* reimplemented is TLS, HTTP or the
-// hashing — those come from the standard library.
+// hashing: those come from the standard library.
 //
 // "S3-compatible" is the target, not S3: MinIO, Garage, Backblaze B2, Wasabi
 // and Cloudflare R2 all speak this, which matters for a platform whose users
@@ -32,7 +32,7 @@ import (
 // S3Config configures the sink.
 type S3Config struct {
 	// Endpoint is the service URL, e.g. https://s3.eu-west-1.amazonaws.com or
-	// https://minio.internal:9000. Required — there is no built-in region
+	// https://minio.internal:9000. Required: there is no built-in region
 	// endpoint table, because guessing an endpoint is how backups end up in
 	// the wrong jurisdiction.
 	Endpoint string
@@ -122,7 +122,7 @@ func NewS3Sink(cfg S3Config) (*S3Sink, error) {
 		cfg.Logger.Warn("shipping backups over plain HTTP",
 			"endpoint", endpoint.String(),
 			"detail", "archive contents are encrypted, but the request signature and "+
-				"object names are not — prefer https unless this is a private network")
+				"object names are not; prefer https unless this is a private network")
 	}
 
 	return &S3Sink{
@@ -135,7 +135,7 @@ func NewS3Sink(cfg S3Config) (*S3Sink, error) {
 	}, nil
 }
 
-// Describe names the sink. The credentials are not in it — this string ends up
+// Describe names the sink. The credentials are not in it: this string ends up
 // in logs and in error messages an operator pastes into an issue.
 func (s *S3Sink) Describe() string {
 	target := "s3://" + s.bucket
@@ -157,7 +157,7 @@ func (s *S3Sink) key(name string) string {
 //
 // A single PUT, not a multipart upload. That caps an archive at the 5 GiB
 // single-object limit, which is far above a bbolt database holding the state of
-// one node — and multipart is a second protocol with its own abort-and-clean-up
+// one node, and multipart is a second protocol with its own abort-and-clean-up
 // failure modes, which is not worth carrying for a case that does not arise.
 // The size is required for the same reason: a signed request needs a
 // Content-Length, and chunked signing is a third protocol again.
@@ -172,7 +172,7 @@ func (s *S3Sink) Put(ctx context.Context, name string, size int64, body io.Reade
 
 	// NopCloser is not cosmetic. http.NewRequest uses an io.ReadCloser body
 	// directly rather than wrapping it, and the transport closes what it was
-	// given — so passing an *os.File here hands the caller's file handle to
+	// given, so passing an *os.File here hands the caller's file handle to
 	// net/http, which closes it, and the caller's own Close then fails. That
 	// surfaced as an upload that succeeded and an archive whose manifest was
 	// never written: invisible, every time. The Sink contract is that Put reads
@@ -345,7 +345,7 @@ func (s *S3Sink) expect(resp *http.Response, what string, allowed ...int) error 
 
 	// The body is read for its Code, which is the difference between "your
 	// clock is wrong", "that bucket does not exist" and "those credentials are
-	// not allowed to write here" — three failures an operator fixes in three
+	// not allowed to write here": three failures an operator fixes in three
 	// completely different places.
 	var body s3Error
 	detail := resp.Status
@@ -397,7 +397,7 @@ func (s *S3Sink) requestWithQuery(
 // unsignedPayload tells S3 not to include a body hash in the signature.
 //
 // The alternative is hashing the payload before sending it, which for a
-// multi-hundred-megabyte snapshot means reading it twice — once to hash, once
+// multi-hundred-megabyte snapshot means reading it twice: once to hash, once
 // to send. The body's integrity is not left to the transport: it is an AEAD
 // stream whose every chunk is authenticated, and the manifest records its
 // SHA-256 independently. TLS covers the wire.

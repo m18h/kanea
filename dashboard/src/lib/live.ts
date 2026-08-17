@@ -5,7 +5,7 @@ import { LiveSocket, socketURL } from '@/lib/socket'
  *
  * It lives in its own module so every hook reaches it the same way. The daemon
  * caps concurrent connections (§14, A07), so "one socket per page" is a real
- * constraint rather than a tidiness preference — two accessors in two modules
+ * constraint rather than a tidiness preference: two accessors in two modules
  * is how that quietly becomes two connections.
  *
  * Created lazily so importing a hook in a test does not open one.

@@ -128,7 +128,7 @@ func TestLimiterResetsWhenTheRuleChanges(t *testing.T) {
 	}
 }
 
-// Sweeping is housekeeping — the cap is the safety property — but without it a
+// Sweeping is housekeeping (the cap is the safety property) but without it a
 // node that saw a spike holds the high-water mark of buckets forever.
 func TestLimiterSweepsIdleBuckets(t *testing.T) {
 	clock := &testClock{now: time.Unix(1_700_000_000, 0)}

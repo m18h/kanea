@@ -15,7 +15,7 @@ type Ended = { code: number | null; message?: string }
 /**
  * ExecTerminal is a shell inside an alloc: xterm.js wired to the exec
  * websocket. xterm (~75 KB) loads through a dynamic import so nobody pays
- * for it until a shell is actually opened — verify the build keeps it as a
+ * for it until a shell is actually opened: verify the build keeps it as a
  * separate chunk.
  *
  * There is no reconnect: when the process exits or the socket drops, the

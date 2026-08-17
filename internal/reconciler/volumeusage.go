@@ -14,7 +14,7 @@ import (
 // gets measured and the thing that gets shown cannot drift apart.
 type VolumeTarget struct {
 	// Key identifies this volume across passes, stable across a redeploy so a
-	// volume keeps its measurement — and its over-budget verdict — when the
+	// volume keeps its measurement (and its over-budget verdict) when the
 	// service it belongs to is updated.
 	Key     string
 	Project string
@@ -54,8 +54,8 @@ func (t VolumeTarget) usage() storage.UsageTarget {
 //     declared path is used rather than the resolved one: resolution happens on
 //     the node just before an alloc starts, and a service that has never
 //     started yet still has a directory worth listing.
-//   - a **mounted** volume (nfs, smb, s3) is one mount per service by design —
-//     mounting a bucket once per alloc would be N mounts of the same bytes — so
+//   - a **mounted** volume (nfs, smb, s3) is one mount per service by design
+//     (mounting a bucket once per alloc would be N mounts of the same bytes) so
 //     it too is a single target. s3 is dropped by the sampler itself, which is
 //     where the reason lives.
 //   - a **local** volume is per alloc: `<volumeDir>/<p>/<s>/<index>/<name>`.

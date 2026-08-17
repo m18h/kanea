@@ -16,7 +16,7 @@ updates:
     # A release must be 7 days old before Dependabot proposes it. npm's
     # supply-chain incidents are caught and yanked within days of publish;
     # the cooldown keeps this repo out of that window. Bumping past it is
-    # still possible by hand — `npm install pkg@version` — which is the
+    # still possible by hand (`npm install pkg@version`) which is the
     # right amount of friction for taking a day-old package.
     cooldown:
       default-days: 7

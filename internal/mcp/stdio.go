@@ -18,8 +18,8 @@ import (
 // forward and no session to build, which is why ServeStdio passes a nil Session.
 //
 // Nothing may be written to stdout that is not a JSON-RPC message. That is the
-// one rule of this transport and it is easy to break — a stray fmt.Println, a
-// logger with the wrong writer — so the logger is required to be pointed
+// one rule of this transport and it is easy to break (a stray fmt.Println, a
+// logger with the wrong writer) so the logger is required to be pointed
 // somewhere else, and the CLI points it at stderr.
 
 // ServeStdio reads messages from in and writes replies to out until in ends or
@@ -36,7 +36,7 @@ func (s *Server) ServeStdio(ctx context.Context, in io.Reader, out io.Writer) er
 
 	// A cancelled context has to interrupt a read that is blocked on a client
 	// that has gone quiet. Closing is the only way to unblock os.Stdin, and the
-	// caller owns it — so the read runs on its own goroutine and this one
+	// caller owns it, so the read runs on its own goroutine and this one
 	// returns when either finishes.
 	lines := make(chan []byte)
 	readErr := make(chan error, 1)

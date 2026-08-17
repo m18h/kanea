@@ -11,7 +11,7 @@ import (
 // The two rules are one story and are implemented together. Each is inert
 // alone: a non-root user with no writable volume cannot start, and a volume
 // owned by a uid nothing runs as is decoration. Together they are what lets a
-// stock image start with no capabilities at all — the CHOWN/SETUID/SETGID trio
+// stock image start with no capabilities at all: the CHOWN/SETUID/SETGID trio
 // R13 grants exists so an image can do at startup what these state up front.
 
 // resolveVolumeOwnership fills each volume's undeclared ownership from its
@@ -23,8 +23,8 @@ import (
 // that will actually be applied.
 //
 // It is also the difference between the feature working and not. A spec that
-// sets task.user and forgets the volume gets a permission denial at startup —
-// precisely the failure R23/R24 exist to remove — and requiring both would put
+// sets task.user and forgets the volume gets a permission denial at startup
+// (precisely the failure R23/R24 exist to remove) and requiring both would put
 // the same two numbers in every spec for no decision anybody makes twice.
 //
 // **Inheritance stops at a driver that cannot carry ownership.** A `host` or
@@ -57,7 +57,7 @@ func resolveVolumeOwnership(spec *Spec) {
 					v.GID = &gid
 				}
 			}
-			// A volume that ends up owned — inherited or declared — takes the
+			// A volume that ends up owned (inherited or declared) takes the
 			// default mode if it named none.
 			if v.Owned() {
 				applyDefaultMode(v)
@@ -80,7 +80,7 @@ func applyDefaultMode(v *Volume) {
 // Shape and range only. There is nothing else to check: the block names no
 // path, no grant and no host resource, so unlike R15 and R17 there is no
 // second, node-side half of this rule. A uid is just a number, and whether the
-// image has a user by that number is the image's business — a spec that names
+// image has a user by that number is the image's business: a spec that names
 // one the image does not know still runs, which is the point of numeric IDs.
 func validateUser(svc *Service) hcl.Diagnostics {
 	u := svc.Task.User
@@ -161,7 +161,7 @@ func validateVolumeOwnership(spec *Spec, svc *Service, v *Volume) hcl.Diagnostic
 				Severity: hcl.DiagError,
 				Summary:  "Invalid volume mode",
 				Detail: fmt.Sprintf("Volume %q of service %q: %s. Write it as octal digits in a "+
-					"string, e.g. mode = \"0700\" — HCL has no octal literal, so an unquoted 0700 "+
+					"string, e.g. mode = \"0700\"; HCL has no octal literal, so an unquoted 0700 "+
 					"would be read as decimal.", v.Name, svc.Name, err),
 				Subject: v.DefRange.Ptr(),
 			})
@@ -201,16 +201,16 @@ func validateVolumeOwnership(spec *Spec, svc *Service, v *Volume) hcl.Diagnostic
 // ownershipRefusedBy names the drivers that cannot carry ownership, and why.
 //
 // Both refusals are structural rather than unimplemented. A host directory is
-// the operator's — R15 says Kanea never creates it and never deletes it, and
+// the operator's: R15 says Kanea never creates it and never deletes it, and
 // chowning it is the same trespass under a smaller name. And the kernel NFS
 // client has no uid= option at all: ownership is decided by the server and
 // idmapd, so a field here would be a claim made at the layer least able to
 // detect that it was false.
 var ownershipRefusedBy = map[string]string{
 	StorageHost: "a host volume is a directory the operator owns, and Kanea never changes its " +
-		"ownership (R15 — it may create a missing one with create = true, and even then it " +
+		"ownership (R15; it may create a missing one with create = true, and even then it " +
 		"does not chown it). Set the ownership on the node, outside Kanea",
-	StorageNFS: "the kernel NFS client has no uid= or gid= mount option — ownership is the NFS " +
+	StorageNFS: "the kernel NFS client has no uid= or gid= mount option; ownership is the NFS " +
 		"server's to decide, through its export options and idmapd",
 }
 

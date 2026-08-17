@@ -20,7 +20,7 @@ const (
 	awsTestRegion    = "eu-west-1"
 )
 
-// verifySigV4 recomputes the request's signature server-side and compares —
+// verifySigV4 recomputes the request's signature server-side and compares;
 // the MinIO lesson: a fake that accepts anything verifies nothing, and the
 // s3-interop job exists because every unit test used to pass a
 // strings.Reader.

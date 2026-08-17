@@ -20,7 +20,7 @@ import (
 )
 
 // fakeDriver is an in-memory containerd stand-in. It models the states the
-// reconciler must handle — including the ones that are hard to produce on
+// reconciler must handle: including the ones that are hard to produce on
 // demand against a real daemon, like "exited with code 137 five times".
 type fakeDriver struct {
 	mu       sync.Mutex
@@ -459,7 +459,7 @@ func TestReconcileCreatesDesiredAllocs(t *testing.T) {
 		}
 	}
 
-	// A second pass has nothing to do — the loop must be idempotent.
+	// A second pass has nothing to do: the loop must be idempotent.
 	if res := h.reconcile(t); res.Planned != 0 {
 		t.Errorf("second pass planned %d actions, want 0", res.Planned)
 	}
@@ -512,7 +512,7 @@ func TestReconcileRestartsCrashedAllocAfterBackoff(t *testing.T) {
 	id := reconciler.AllocID("shop", "web", 0)
 	h.driver.crash(id, 137, h.now)
 
-	// First pass observes the crash and starts the backoff — it must not
+	// First pass observes the crash and starts the backoff: it must not
 	// restart immediately, or a crash loop would spin.
 	res := h.reconcile(t)
 	if res.Observed != 1 {
@@ -704,7 +704,7 @@ func TestReconcileRemovesAllocsWhenServiceIsDeleted(t *testing.T) {
 	if len(page.Records) != 0 {
 		t.Errorf("%d alloc records survived service deletion", len(page.Records))
 	}
-	// And the network is detached — otherwise namespaces would leak per deploy.
+	// And the network is detached; otherwise namespaces would leak per deploy.
 	if len(h.network.attached) != 0 {
 		t.Errorf("network still attached: %v", h.network.attached)
 	}
@@ -904,7 +904,7 @@ func TestRunReactsToTrigger(t *testing.T) {
 }
 
 func TestDeletingAServiceClearsEvenFailedAllocRecords(t *testing.T) {
-	// A failed alloc keeps its record so `kanea ps` can explain itself — but
+	// A failed alloc keeps its record so `kanea ps` can explain itself, but
 	// only while the service exists. Deleting the service must not leave a
 	// ghost row that no command can clear.
 	h := newHarness(t)
@@ -959,7 +959,7 @@ func TestReconcileReapsOrphanedAttachments(t *testing.T) {
 	if h.network.isAttached("ghost-web-0") {
 		t.Error("orphaned attachment survived the sweep")
 	}
-	// The live alloc must be untouched — reaping deletes, so a false positive
+	// The live alloc must be untouched: reaping deletes, so a false positive
 	// here would cut the network out from under a running workload.
 	if !h.network.isAttached(reconciler.AllocID("shop", "web", 0)) {
 		t.Error("sweep detached a live alloc")
@@ -1017,7 +1017,7 @@ func TestReconcileSyncsPolicyForEveryProject(t *testing.T) {
 	}
 }
 
-// An endpoint that no policy selects has no ingress enforcement at all — it is
+// An endpoint that no policy selects has no ingress enforcement at all: it is
 // reachable from every workload on the node. So a policy write that fails must
 // stop the pass *before* anything attaches: convergence stalling is
 // recoverable, a workload started unprotected is not.
@@ -1106,8 +1106,8 @@ func TestReconcileSkipsServicesWithoutPorts(t *testing.T) {
 }
 
 // The VIP is the address DNS answers with and clients cache. It has to survive
-// everything that legitimately churns underneath it — restarts, rescheduling,
-// scale changes — or existing clients end up pointing at nothing.
+// everything that legitimately churns underneath it (restarts, rescheduling,
+// scale changes) or existing clients end up pointing at nothing.
 func TestServiceVIPIsStableAcrossChurn(t *testing.T) {
 	h := newHarness(t)
 	h.setDesired(t, desiredWithPort(2))
@@ -1131,8 +1131,8 @@ func TestServiceVIPIsStableAcrossChurn(t *testing.T) {
 	}
 }
 
-// The assignment lives in the Store precisely so a fresh reconciler — a kanead
-// restart, or a datapath rebuilt from scratch — hands back the same address.
+// The assignment lives in the Store precisely so a fresh reconciler (a kanead
+// restart, or a datapath rebuilt from scratch) hands back the same address.
 func TestServiceVIPSurvivesReconcilerRestart(t *testing.T) {
 	h := newHarness(t)
 	h.setDesired(t, desiredWithPort(1))
@@ -1176,7 +1176,7 @@ func TestBackendsExcludeAllocsThatAreNotRunning(t *testing.T) {
 	}
 }
 
-// An endpoint whose identity has not resolved cannot receive traffic anyway —
+// An endpoint whose identity has not resolved cannot receive traffic anyway:
 // advertising it just sends requests into a drop. Since v1.65 the pass first
 // tries to repair such an endpoint, so this pins the un-repairable case: the
 // exclusion must hold when repair cannot help.
@@ -1197,7 +1197,7 @@ func TestBackendsExcludeUnreadyEndpoints(t *testing.T) {
 }
 
 // A not-Ready attachment whose alloc the Store still declares is repaired
-// map-only and advertised again in the same pass (v1.65) — the state a
+// map-only and advertised again in the same pass (v1.65): the state a
 // pinned-map schema wipe leaves behind must not persist until the alloc is
 // replaced.
 func TestUnreadyAttachmentsAreRepairedAndReadvertised(t *testing.T) {
@@ -1283,7 +1283,7 @@ func TestServiceVIPsAreDistinct(t *testing.T) {
 	}
 }
 
-// Stale load balancing points at allocs that were healthy seconds ago — a
+// Stale load balancing points at allocs that were healthy seconds ago: a
 // degraded service, not an unprotected one. Failing the pass would stop crash
 // recovery over a routing update.
 func TestLoadBalancerFailureDoesNotStallConvergence(t *testing.T) {
@@ -1301,8 +1301,8 @@ func TestLoadBalancerFailureDoesNotStallConvergence(t *testing.T) {
 }
 
 // A restarted alloc must return to the backend set in the pass that restarts
-// it, not the one after. Its record still reads "backoff" at that moment —
-// written by the pass that observed the crash — while containerd already
+// it, not the one after. Its record still reads "backoff" at that moment
+// (written by the pass that observed the crash) while containerd already
 // reports it running. Trusting the record would drop a healthy backend for a
 // full interval on every crash.
 func TestBackendsIncludeAllocRestartedThisPass(t *testing.T) {
@@ -1519,7 +1519,7 @@ func TestReconcileWaitsForAServiceWithNoImageYet(t *testing.T) {
 	// A service declared with a `build` block and no `task.image` is legitimate
 	// (§6.2 R8): the first successful build pins the digest. Until then there is
 	// nothing to pull, and scheduling it anyway would fail an alloc against an
-	// empty reference on every backoff for as long as the build takes — which
+	// empty reference on every backoff for as long as the build takes, which
 	// looks to an operator exactly like a broken deploy rather than a pending one.
 	h := newHarness(t)
 	waiting := desired(2)
@@ -1613,12 +1613,12 @@ func TestDeployGivesTheNewSpecItsOwnRestartBudget(t *testing.T) {
 
 // TestLocalVolumeOwnershipIsApplied chowns to the caller's own ids, which is
 // the one chown an unprivileged test process is allowed to make. It still
-// exercises the syscall — the interesting failure is not calling it at all.
+// exercises the syscall: the interesting failure is not calling it at all.
 func TestLocalVolumeOwnershipIsApplied(t *testing.T) {
 	volumeDir := t.TempDir()
 	h := newHarness(t, func(c *reconciler.Config) { c.VolumeDir = volumeDir })
 
-	uid, gid := uint32(os.Getuid()), uint32(os.Getgid()) // #nosec G115 — real ids
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid()) // #nosec G115; real ids
 	mode := uint32(0o700)
 	d := desired(1)
 	d.Volumes = []reconciler.Volume{{
@@ -1640,7 +1640,7 @@ func TestLocalVolumeOwnershipIsApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat volume: %v", err)
 	}
-	// 0700 rather than the 0750 MkdirAll creates, and it must survive umask —
+	// 0700 rather than the 0750 MkdirAll creates, and it must survive umask;
 	// MkdirAll honours it, so a mode that was only ever passed to MkdirAll
 	// would come out masked.
 	if got := info.Mode().Perm(); got != os.FileMode(mode) {
@@ -1703,7 +1703,7 @@ func TestVolumeOwnershipFailureFailsTheAlloc(t *testing.T) {
 }
 
 // A host volume is the operator's directory. R15 says Kanea never creates it
-// and never deletes it, and R24 says it never chowns it either — the refusal
+// and never deletes it, and R24 says it never chowns it either: the refusal
 // is at `plan`, and this is the structural half of it.
 func TestHostVolumeIsNeverChowned(t *testing.T) {
 	hostDir := t.TempDir()
@@ -1720,10 +1720,10 @@ func TestHostVolumeIsNeverChowned(t *testing.T) {
 		t.Fatalf("new reconciler: %v", err)
 	}
 
-	// Ownership on a host volume cannot be declared — validation refuses it —
+	// Ownership on a host volume cannot be declared: validation refuses it;
 	// so this asserts that a record carrying it anyway still does not touch
 	// the directory.
-	uid, mode := uint32(os.Getuid()), uint32(0o700) // #nosec G115 — real id
+	uid, mode := uint32(os.Getuid()), uint32(0o700) // #nosec G115; real id
 	d := desired(1)
 	d.Volumes = []reconciler.Volume{{
 		Name: "config", Storage: "app-config", MountPath: "/etc/app",

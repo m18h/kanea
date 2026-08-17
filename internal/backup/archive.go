@@ -74,7 +74,7 @@ type Part struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
 	// SHA256 is over the *ciphertext*, so an archive can be verified by anyone
-	// holding the bucket and nothing else — including a node that has lost its
+	// holding the bucket and nothing else: including a node that has lost its
 	// master key and needs to know whether the backup is worth recovering the
 	// key for.
 	SHA256 string `json:"sha256"`
@@ -87,7 +87,7 @@ var ErrNoArchives = errors.New("backup: no archives found")
 //
 // An interface because the operation is "hand me a consistent copy of the
 // database on disk", and bbolt's answer to that (a compacting copy) is not the
-// only possible one — a future Raft store answers it differently.
+// only possible one: a future Raft store answers it differently.
 type Snapshotter interface {
 	// Snapshot writes a consistent copy of the state to path and reports the
 	// index it is consistent as of.
@@ -102,7 +102,7 @@ func (s StoreSnapshotter) Snapshot(ctx context.Context, path string) (uint64, er
 	// The index is read first. Compact runs in a read transaction, so anything
 	// committed after this point is not in the copy; recording the earlier
 	// index means a restore replays a few changes it already has rather than
-	// missing changes it does not — the safe direction, because applying a
+	// missing changes it does not: the safe direction, because applying a
 	// change twice is a no-op and skipping one loses state.
 	index, err := s.Store.Index(ctx)
 	if err != nil {
@@ -178,8 +178,8 @@ var ErrNotConfigured = errors.New(
 	"backup: no destination is configured (set one with --backup-dir/--backup-s3, or PUT /v1/settings/backup)")
 
 // Probe verifies the sink end to end: write a small object, list it back,
-// delete it. It runs through the sink's real Put — the reader-ownership defect
-// the s3-interop job caught was invisible to every fake — so a destination
+// delete it. It runs through the sink's real Put (the reader-ownership defect
+// the s3-interop job caught was invisible to every fake) so a destination
 // that passes has proven auth, addressing style and writability, which is what
 // a hot swap (v1.46) needs to know before it stops working replication.
 func (a *Archiver) Probe(ctx context.Context) error {
@@ -219,7 +219,7 @@ func (a *Archiver) Create(ctx context.Context, reason string, counts map[string]
 		return Manifest{}, err
 	}
 	// The staged copy is the whole database in plaintext. It goes as soon as it
-	// is uploaded, success or failure — leaving it behind would put an
+	// is uploaded, success or failure: leaving it behind would put an
 	// unencrypted copy of every secret in a temp directory, which is the one
 	// cleanup failure on this path that is worth saying out loud.
 	defer a.discard(staged, "plaintext snapshot")
@@ -247,7 +247,7 @@ func (a *Archiver) upload(ctx context.Context, name, path string) (_ Part, err e
 	// and neither is known until the encryption has run. The alternative is
 	// buffering the whole ciphertext in memory, which is the thing the chunked
 	// format exists to avoid.
-	source, err := os.Open(path) // #nosec G304 — a path this package just wrote
+	source, err := os.Open(path) // #nosec G304; a path this package just wrote
 	if err != nil {
 		return Part{}, fmt.Errorf("backup: open snapshot: %w", err)
 	}
@@ -257,7 +257,7 @@ func (a *Archiver) upload(ctx context.Context, name, path string) (_ Part, err e
 	// back to feed the sink, because Put needs a length the encryption only
 	// produces by running.
 	sealed := path + ".enc"
-	target, err := os.OpenFile(sealed, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 — same
+	target, err := os.OpenFile(sealed, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304; same
 	if err != nil {
 		return Part{}, fmt.Errorf("backup: stage ciphertext: %w", err)
 	}
@@ -281,8 +281,8 @@ func (a *Archiver) upload(ctx context.Context, name, path string) (_ Part, err e
 
 // putManifest writes the manifest, which is what makes an archive real.
 //
-// Unencrypted, deliberately. It holds no secret — hashes, sizes, an index, a
-// key fingerprint and counts — and it is what someone recovering from a bucket
+// Unencrypted, deliberately. It holds no secret (hashes, sizes, an index, a
+// key fingerprint and counts) and it is what someone recovering from a bucket
 // with no key needs to read to know what is there and whether it is intact.
 func (a *Archiver) putManifest(ctx context.Context, m Manifest) error {
 	body, err := json.MarshalIndent(m, "", "  ")
@@ -381,7 +381,7 @@ func (a *Archiver) verifyPart(ctx context.Context, part Part) (err error) {
 		return fmt.Errorf("%w: %s is %d bytes, the manifest says %d",
 			ErrCorrupt, part.Name, size, part.Size)
 	}
-	// Constant-time is not about secrecy here — the hash is public — but the
+	// Constant-time is not about secrecy here (the hash is public) but the
 	// comparison is free and the habit is worth keeping consistent.
 	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(hash.Sum(nil))), []byte(part.SHA256)) != 1 {
 		return fmt.Errorf("%w: %s does not match its manifest hash", ErrCorrupt, part.Name)
@@ -398,7 +398,7 @@ func (a *Archiver) verifyPart(ctx context.Context, part Part) (err error) {
 func (a *Archiver) Fetch(ctx context.Context, m Manifest, path string) (err error) {
 	if m.KeyID != "" && m.KeyID != a.keys.ID {
 		return fmt.Errorf("%w: archive %s was encrypted under key %s, this node holds %s "+
-			"(recover the escrowed key from the `kanea init` ceremony — see docs/DR_RUNBOOK.md)",
+			"(recover the escrowed key from the `kanea init` ceremony; see docs/DR_RUNBOOK.md)",
 			ErrKey, m.ID, m.KeyID, a.keys.ID)
 	}
 	if err := a.verifyPart(ctx, m.Snapshot); err != nil {
@@ -411,7 +411,7 @@ func (a *Archiver) Fetch(ctx context.Context, m Manifest, path string) (err erro
 	}
 	defer func() { err = errors.Join(err, body.Close()) }()
 
-	target, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 — caller's path
+	target, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304; caller's path
 	if err != nil {
 		return fmt.Errorf("backup: create %s: %w", path, err)
 	}

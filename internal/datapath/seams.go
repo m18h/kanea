@@ -18,7 +18,7 @@ type Link struct {
 // these calls is the property this package exists to keep.
 type Nl interface {
 	// EnsureHost creates the kanea0 dummy if needed, gives it hostIP/32 (and
-	// hostIP6/128 with NODAD when dual-stack — a zero hostIP6 means v4-only),
+	// hostIP6/128 with NODAD when dual-stack: a zero hostIP6 means v4-only),
 	// brings it up, and installs the blackhole routes for the service CIDRs
 	// so un-rewritten VIP traffic cannot escape via the default route. With
 	// v6 enabled it also turns v6 forwarding on and writes the netns-side
@@ -40,7 +40,7 @@ type Nl interface {
 	// mapping the gateway to the host veth's MAC. Zero ip6/gw6 means v4-only,
 	// and the netns then gets disable_ipv6 instead of a second family; set,
 	// eth0 additionally gets ip6/128 (NODAD, accept_ra=0, no autoconf), an
-	// AF_INET6 PERMANENT neighbor for gw6, and a cluster-CIDR6 route via it —
+	// AF_INET6 PERMANENT neighbor for gw6, and a cluster-CIDR6 route via it;
 	// deliberately NOT a v6 default route (PRD v1.41: internal-only, external
 	// v6 fails fast to Happy Eyeballs).
 	ConfigurePeer(netnsPath string, ip, gw, ip6, gw6 netip.Addr, hostMAC string) error
@@ -48,7 +48,7 @@ type Nl interface {
 	// host device (both families when podIP6 is set) and brings the device up.
 	SetHostUp(hostDev string, podIP, podIP6 netip.Addr, podMAC string) error
 	// InstallRoute installs the host route to one pod address (/32 or /128 by
-	// family) — the last step of an attach, because it is the one that makes
+	// family): the last step of an attach, because it is the one that makes
 	// the alloc reachable. Called once per family.
 	InstallRoute(podIP netip.Addr, hostDev string, srcIP netip.Addr) error
 	// DeleteVeth removes the host device (the peer dies with it). Absent is
@@ -64,14 +64,14 @@ type Nl interface {
 type Maps interface {
 	// PutIdentity and DeleteIdentity dispatch on the address family inside
 	// the implementation: identity_v4 or identity_v6 by ip.Is4(). One method,
-	// because a caller never cares which map holds an identity — only that
+	// because a caller never cares which map holds an identity: only that
 	// the address has one.
 	PutIdentity(ip netip.Addr, id dpmap.Identity) error
 	DeleteIdentity(ip netip.Addr) error
 	// ApplyFlip executes a dpmap.FlipPlan in order against one service entry,
 	// in the family the key's address selects (svc_v4/svc_backends or
 	// svc_v6/svc_backends6). The key is supplied here because dpmap.Op
-	// deliberately does not carry it — the plan is key-neutral, the executor
+	// deliberately does not carry it: the plan is key-neutral, the executor
 	// is not.
 	ApplyFlip(key dpmap.SvcAddr, ops []dpmap.Op) error
 	// DeleteService removes the service entry itself, turning the VIP back
@@ -84,12 +84,12 @@ type Maps interface {
 	// service-id-keyed and family-neutral; the name is historical.)
 	Allows() (map[dpmap.AllowKey]struct{}, error)
 	// Identities returns the merged identity_v4 + identity_v6 contents, for
-	// rebuild and inspection — the netip.Addr key carries the family.
+	// rebuild and inspection: the netip.Addr key carries the family.
 	Identities() (map[netip.Addr]dpmap.Identity, error)
 	// Services returns the merged svc_v4 + svc_v6 contents, for diffing.
 	Services() (map[dpmap.SvcAddr]dpmap.SvcVal, error)
 	SetConfig(cfg dpmap.Config) error
-	// SetConfig6 writes config6 — always, because its all-zero mask is the
+	// SetConfig6 writes config6: always, because its all-zero mask is the
 	// v6 enable switch and a node whose v6 was turned off must overwrite
 	// whatever an earlier process pinned.
 	SetConfig6(cfg dpmap.Config6) error
@@ -109,7 +109,7 @@ type Firewall interface {
 }
 
 // Netns is the namespace seam, implemented on linux by runtime.CreateNetns and
-// friends — namespace creation stays the runtime's, not the datapath's.
+// friends: namespace creation stays the runtime's, not the datapath's.
 type Netns interface {
 	// Create makes (or finds) the alloc's persistent netns and returns its path.
 	Create(allocID string) (string, error)

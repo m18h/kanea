@@ -111,7 +111,7 @@ func TestPublicListenerWithoutTLSIsRefused(t *testing.T) {
 
 func TestLoopbackListenerNeedsNoTLS(t *testing.T) {
 	// Loopback carries credentials over a wire nobody else is on, so plain HTTP
-	// is a reasonable local default — and it is what the dashboard behind
+	// is a reasonable local default, and it is what the dashboard behind
 	// kanea-edge uses.
 	for _, addr := range []string{"127.0.0.1:0", "localhost:0", "[::1]:0"} {
 		t.Run(addr, func(t *testing.T) {

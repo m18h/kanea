@@ -66,13 +66,13 @@ type DNSConfig struct {
 // It answers `<service>.<project>.kanea` with the service's frontend VIP and
 // `alloc-<id>.<service>.<project>.kanea` with that alloc's address, and
 // forwards everything else. Names are injected into each alloc's resolv.conf,
-// so this is what makes `${service.x.host}` resolve to something stable —
+// so this is what makes `${service.x.host}` resolve to something stable:
 // the whole reason service references are DNS names and never IPs (PRD §7.1.1).
 //
 // The design constraint is that it must degrade rather than stall. Every
 // upstream query is bounded by a timeout and by a concurrency cap, and neither
 // a slow upstream nor a flood of external lookups can delay an answer for an
-// internal name — those are served from memory with no I/O at all.
+// internal name: those are served from memory with no I/O at all.
 type DNS struct {
 	listen         string
 	upstreams      []string
@@ -97,7 +97,7 @@ type zone struct {
 	records map[string][]netip.Addr
 }
 
-// NewDNS builds the resolver. It does not bind — call Serve.
+// NewDNS builds the resolver. It does not bind: call Serve.
 func NewDNS(cfg DNSConfig) (*DNS, error) {
 	if cfg.Listen == "" {
 		return nil, errors.New("dns: listen address is required")
@@ -154,7 +154,7 @@ func validateNodeLocal(listen string) error {
 		return fmt.Errorf("dns: listen address %q must be an IP, not a name: %w", listen, err)
 	}
 	if addr.IsUnspecified() {
-		return fmt.Errorf("dns: refusing to listen on %s — bind a node-local address, "+
+		return fmt.Errorf("dns: refusing to listen on %s; bind a node-local address, "+
 			"a wildcard bind publishes an open resolver on every interface", host)
 	}
 	return nil
@@ -325,7 +325,7 @@ func (d *DNS) answerInternal(request []byte, q query) []byte {
 
 	// The name exists; the answer set is filtered per query type (v1.41):
 	// A sees the v4 addresses, AAAA the v6 ones, ANY both. For a type we do
-	// not hold — AAAA on a v4-only node being the one that matters — the
+	// not hold (AAAA on a v4-only node being the one that matters) the
 	// answer stays NODATA: NOERROR with no records. NXDOMAIN here would be a
 	// lie about the name itself, and a dual-stack client that believes it may
 	// never try the A query at all.
@@ -360,7 +360,7 @@ func (d *DNS) answerInternal(request []byte, q query) []byte {
 		answered = true
 	}
 	if !answered {
-		// NODATA, the deliberate answer since v1 — now per type instead of
+		// NODATA, the deliberate answer since v1: now per type instead of
 		// blanket for everything that is not A.
 		return newResponse(request, q, rcodeNoError, true).finish()
 	}

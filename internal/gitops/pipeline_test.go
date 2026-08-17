@@ -86,7 +86,7 @@ func TestRunsRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// Created directly rather than through the helper, which advances the clock
-	// after stamping StartedAt — the duration under test is measured from it.
+	// after stamping StartedAt: the duration under test is measured from it.
 	run, err := runs.Create(ctx, gitops.Run{Project: "shop", Service: "web"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -145,7 +145,7 @@ func TestListIsNewestFirst(t *testing.T) {
 	for i, run := range got {
 		want := created[len(created)-1-i]
 		if run.ID != want.ID {
-			t.Fatalf("run[%d] = %s, want %s — not newest first", i, run.ID, want.ID)
+			t.Fatalf("run[%d] = %s, want %s, not newest first", i, run.ID, want.ID)
 		}
 	}
 }
@@ -275,7 +275,7 @@ func TestPruneKeepsRunsStillInFlight(t *testing.T) {
 			t.Fatalf("Update: %v", err)
 		}
 	}
-	// A build that is still going is not history yet, whatever its age —
+	// A build that is still going is not history yet, whatever its age;
 	// deleting it would leave a runner writing to a record that is gone.
 	running := create(t, runs, c, "shop", "web")
 	running.Start(c.at)
@@ -372,7 +372,7 @@ func TestRunIDsSortChronologicallyAndAreUnique(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	if len(stored) != len(ids) {
-		t.Fatalf("stored %d runs, created %d — ids collided in the Store", len(stored), len(ids))
+		t.Fatalf("stored %d runs, created %d; ids collided in the Store", len(stored), len(ids))
 	}
 }
 

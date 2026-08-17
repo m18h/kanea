@@ -9,7 +9,7 @@ import (
 )
 
 // The v6 VIP twin (PRD v1.41): its own lb/vip6/ key space, allocated in the
-// same pass and the same Apply batch — and the lb/vip/ records stay
+// same pass and the same Apply batch, and the lb/vip/ records stay
 // byte-identical, so a rollback or a replicated Store from a v4-only node
 // reads unchanged.
 

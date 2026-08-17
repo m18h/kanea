@@ -35,12 +35,12 @@ type Publisher struct {
 	// bySource is each source's current contribution, keyed by mode.
 	//
 	// Per source, not one flat list. Three sources publish into this file on
-	// their own schedules — ACME twice a day, a file-backed source every
-	// minute — and any one of them writing the whole set would drop the other
+	// their own schedules (ACME twice a day, a file-backed source every
+	// minute) and any one of them writing the whole set would drop the other
 	// two. That bug is the reason this map exists.
 	bySource   map[Mode][]Certificate
 	challenges map[string]string
-	// auth is the R27 verifier material (v1.40) — the fourth contribution to
+	// auth is the R27 verifier material (v1.40): the fourth contribution to
 	// the restricted bundle, replaced wholesale by its one writer (the
 	// reconciler's projection) the way each certificate source replaces its
 	// own slice.
@@ -55,8 +55,8 @@ type Publisher struct {
 //
 // An operator who put a certificate on this node meant it; a publicly trusted
 // certificate beats one only this node's devices trust; self-signed is the
-// floor. Collisions are rare by construction — a domain belongs to one service
-// (R16) and a service names one mode — so they arrive only through wildcards,
+// floor. Collisions are rare by construction (a domain belongs to one service
+// (R16) and a service names one mode) so they arrive only through wildcards,
 // and the rule exists to be deterministic rather than to be busy.
 var mergeOrder = []Mode{ModeSelfSigned, ModeACME, ModeProvided}
 
@@ -64,7 +64,7 @@ var mergeOrder = []Mode{ModeSelfSigned, ModeACME, ModeProvided}
 type PublisherConfig struct {
 	// Path is the bundle file (see edge.DefaultBundlePath).
 	Path string
-	// GID is the group allowed to read it — the edge user's. Zero makes the
+	// GID is the group allowed to read it: the edge user's. Zero makes the
 	// file owner-only, which is right when kanead and the edge run as the same
 	// user and refuses to hand keys to anyone else when they do not.
 	GID int
@@ -119,7 +119,7 @@ func NewPublisher(cfg PublisherConfig) (*Publisher, error) {
 // SetCertificates replaces one source's contribution and republishes.
 //
 // Per source, never wholesale. A source is called on every pass with everything
-// it should be holding, including nothing, so replacing its slice is correct —
+// it should be holding, including nothing, so replacing its slice is correct:
 // but replacing the *file's* contents from one source would drop the others.
 func (p *Publisher) SetCertificates(mode Mode, certs []Certificate) error {
 	p.mu.Lock()
@@ -136,8 +136,8 @@ func (p *Publisher) SetCertificates(mode Mode, certs []Certificate) error {
 // SetAuth replaces the R27 verifier material and republishes (v1.40).
 //
 // One writer, wholesale: unlike certificates there is no second source to
-// merge with — the reconciler's projection is the only thing that resolves
-// the spec's references — so the certificate sources' per-mode discipline
+// merge with (the reconciler's projection is the only thing that resolves
+// the spec's references) so the certificate sources' per-mode discipline
 // would be ceremony here. The index still bumps only on a byte change, which
 // is what keeps a steady-state reconcile pass from reloading the edge.
 func (p *Publisher) SetAuth(entries []edge.AuthEntry) error {
@@ -151,7 +151,7 @@ func (p *Publisher) SetAuth(entries []edge.AuthEntry) error {
 //
 // The wait is the point. Publishing is a file write the edge polls for, so
 // returning as soon as it is written and letting lego tell the CA to validate
-// is a race — and losing it does not merely retry, it spends a
+// is a race, and losing it does not merely retry, it spends a
 // failed-validation slot that takes an hour to clear (PRD §7.3).
 func (p *Publisher) Present(ctx context.Context, domain, token, keyAuth string) error {
 	p.mu.Lock()
@@ -222,7 +222,7 @@ func (p *Publisher) write() error {
 // resolving a name claimed twice by mergeOrder. The caller holds the lock.
 //
 // Resolved here rather than left to the keyring's last-writer-wins means the
-// edge never has to know a precedence rule — which is the property that lets a
+// edge never has to know a precedence rule, which is the property that lets a
 // fourth source be added without touching it.
 func (p *Publisher) merged() []edge.Certificate {
 	winner := map[string]Mode{}

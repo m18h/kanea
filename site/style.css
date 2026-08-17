@@ -29,7 +29,7 @@
     --border: hsl(240 6% 89%);
     --accent: hsl(173 80% 27%);
     --accent-dim: hsl(173 60% 92%);
-    /* logo/kanea-mark-light.svg — the same amber, darkened for contrast on
+    /* logo/kanea-mark-light.svg; the same amber, darkened for contrast on
        white. Same hue, so it still reads as one mark. */
     --mark: #e09b1a;
     --shadow: 0 1px 2px hsl(240 10% 4% / .06), 0 8px 24px hsl(240 10% 4% / .06);
@@ -256,7 +256,7 @@ footer .sp { margin-left: auto; }
 .sidebar a.sub { padding-left: 22px; font-size: .855rem; }
 .sidebar a.sub[aria-current] { background: var(--accent-dim); }
 
-/* On a narrow screen the contents collapse behind a button — a 39-entry list
+/* On a narrow screen the contents collapse behind a button: a 39-entry list
    above the first paragraph is not navigation, it is a wall. */
 .toc-toggle { display: none; }
 @media (max-width: 900px) {

@@ -171,7 +171,7 @@ func TestProxyPreservesTheClientHost(t *testing.T) {
 	}
 }
 
-// A 502 tells the client the request failed and nothing else — not the internal
+// A 502 tells the client the request failed and nothing else, not the internal
 // address, not the service name, not why.
 func TestProxyLeaksNothingWhenTheUpstreamIsDown(t *testing.T) {
 	srv, route := upstream(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

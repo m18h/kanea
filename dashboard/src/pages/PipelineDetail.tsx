@@ -101,7 +101,7 @@ export function PipelineDetail({
         />
         <StatTile
           label="Trigger"
-          value={<span className="text-base">{data?.trigger ?? '—'}</span>}
+          value={<span className="text-base">{data?.trigger ?? '-'}</span>}
           sub={
             data?.trigger === 'webhook' ? (
               <span className="text-status-ok">HMAC signature verified</span>
@@ -110,12 +110,12 @@ export function PipelineDetail({
         />
         <StatTile
           label="Duration"
-          value={<span className="text-base">{data ? runDuration(data) : '—'}</span>}
+          value={<span className="text-base">{data ? runDuration(data) : '-'}</span>}
           sub="rootless BuildKit · slot 1"
         />
         <StatTile
           label="Artifact"
-          value={<span className="break-all text-base">{data?.image ?? '—'}</span>}
+          value={<span className="break-all text-base">{data?.image ?? '-'}</span>}
           sub={
             data?.digest ? (
               // The digest, not a signature: what ran is what was built
@@ -161,7 +161,7 @@ export function PipelineDetail({
               showLineNumbers
               heightClass="h-[28rem]"
               toolbar={{ expand: true }}
-              title={`${project}/${service} — build log`}
+              title={`${project}/${service}; build log`}
               emptyText={live ? 'Waiting for the build to start…' : 'No log for this run.'}
             />
           </CardContent>
@@ -180,7 +180,7 @@ function StepRow({ step }: { step: RunStep }) {
         <span className={running ? 'font-medium text-primary' : ''}>{step.name}</span>
       </span>
       <span className="font-mono text-xs tabular-nums text-muted-foreground">
-        {step.state === 'pending' ? '—' : stepDuration(step)}
+        {step.state === 'pending' ? '-' : stepDuration(step)}
       </span>
     </div>
   )
@@ -200,7 +200,7 @@ function stepTone(state: string): StatusTone {
 }
 
 /** DownloadRaw hands the fetched log over as a file, no extra endpoint. A
- * blob URL rather than a data: URI — it stays valid under a strict CSP and
+ * blob URL rather than a data: URI; it stays valid under a strict CSP and
  * does not grow the DOM attribute with the whole log. */
 function DownloadRaw({ text }: { text: string }) {
   const url = useMemo(() => URL.createObjectURL(new Blob([text], { type: 'text/plain' })), [text])

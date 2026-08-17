@@ -16,11 +16,11 @@ import (
 // Key prefixes for auth records.
 //
 // They live in the KV bucket rather than a new one: the bucket set is fixed by
-// PRD §5.2.3, and `audit` is for the audit trail — putting credentials there
+// PRD §5.2.3, and `audit` is for the audit trail; putting credentials there
 // would mean a log reader was also reading password hashes.
 const (
 	userPrefix    = "auth/user/"
-	tokenPrefix   = "auth/token/" // #nosec G101 — a key prefix, not a credential
+	tokenPrefix   = "auth/token/" // #nosec G101: a key prefix, not a credential
 	sessionPrefix = "auth/session/"
 	lockoutPrefix = "auth/lockout/"
 )
@@ -36,7 +36,7 @@ type Store struct {
 
 	limiter *loginLimiter
 	// external verifies passwords for names with no local account (v1.47,
-	// LDAP). Nil means local-only — today's behaviour, bit for bit.
+	// LDAP). Nil means local-only: today's behaviour, bit for bit.
 	external PasswordVerifier
 }
 
@@ -167,8 +167,8 @@ func (s *Store) DeleteUser(ctx context.Context, name string) error {
 
 // checkNotLastAdmin refuses a change that would leave no admin account.
 //
-// Not a hard lock-out — the local unix socket is always admin (§13.1), so a
-// node is recoverable — but a dashboard operator who removes their own account
+// Not a hard lock-out (the local unix socket is always admin (§13.1), so a
+// node is recoverable) but a dashboard operator who removes their own account
 // should be told, not silently locked out of the only interface they use.
 func (s *Store) checkNotLastAdmin(ctx context.Context, name string) error {
 	users, err := s.Users(ctx)
@@ -275,7 +275,7 @@ func (s *Store) Session(ctx context.Context, cookieValue string) (Session, error
 	if session.Expired(s.now()) {
 		// Removed on read rather than swept: an expired session is discovered
 		// exactly when someone tries to use it, which is when it matters. A
-		// failure to delete is not a failure to reject — the caller is refused
+		// failure to delete is not a failure to reject: the caller is refused
 		// either way, and the sweep will pick it up.
 		if err := s.DeleteSession(ctx, cookieValue); err != nil {
 			s.log.Debug("cannot remove an expired session", "error", err)
@@ -331,7 +331,7 @@ func (s *Store) Login(ctx context.Context, name, password, source string) (Sessi
 	user, err := s.User(ctx, name)
 	if err != nil {
 		// No local record. With a directory configured, this is the
-		// fallthrough (v1.47) — and only this: a *local* account is answered
+		// fallthrough (v1.47), and only this: a *local* account is answered
 		// by bcrypt alone below, so a directory account can never shadow a
 		// local admin and a wrong local password never costs a bind.
 		if s.external != nil {
@@ -353,8 +353,8 @@ func (s *Store) Login(ctx context.Context, name, password, source string) (Sessi
 	}
 
 	if s.limiter.succeed(source, name) {
-		// The account had failure state, so a lockout record may be persisted
-		// — a good login is the transition that retires it.
+		// The account had failure state, so a lockout record may be persisted:
+		// a good login is the transition that retires it.
 		if _, err := s.store.Apply(ctx, store.DeleteMutation(authKind, lockoutPrefix+name)); err != nil {
 			s.log.Warn("cannot clear a persisted lockout", "user", name, "error", err)
 		}
@@ -369,7 +369,7 @@ func (s *Store) Login(ctx context.Context, name, password, source string) (Sessi
 
 // loginExternal is the directory half of Login (v1.47). The limiter already
 // ran; what differs from the local path is deliberate: no EqualiseTiming (a
-// bind is network time Kanea does not control — §3.20 states the leak), no
+// bind is network time Kanea does not control; §3.20 states the leak), no
 // persisted lockouts (directory names are not Store accounts, the v1.37
 // rule), and an unavailable directory counts against no one.
 func (s *Store) loginExternal(ctx context.Context, name, password, source string) (Session, string, error) {
@@ -386,8 +386,8 @@ func (s *Store) loginExternal(ctx context.Context, name, password, source string
 
 	case errors.Is(err, ErrLDAPNoRole):
 		// The directory vouched for them; Kanea has no role for them. It
-		// still spends a limiter slot — group-mapping refusals are guesses
-		// too, from the limiter's point of view — and propagates so the API
+		// still spends a limiter slot (group-mapping refusals are guesses
+		// too, from the limiter's point of view) and propagates so the API
 		// can answer 403 rather than 401.
 		s.limiter.fail(source, name)
 		s.log.Warn("login failed", "user", name, "source", source, "reason", "no mapped role")
@@ -395,8 +395,8 @@ func (s *Store) loginExternal(ctx context.Context, name, password, source string
 
 	case errors.Is(err, ErrLDAPUnavailable):
 		// The user did nothing wrong: counting an outage as failures would
-		// let a directory outage lock every account out. Logged at error —
-		// this is the operator's problem — and refused uniformly.
+		// let a directory outage lock every account out. Logged at error
+		// (this is the operator's problem) and refused uniformly.
 		s.log.Error("directory login unavailable", "user", name, "source", source, "error", err)
 		return Session{}, "", fmt.Errorf("%w: directory unavailable", ErrUnauthenticated)
 
@@ -409,8 +409,8 @@ func (s *Store) loginExternal(ctx context.Context, name, password, source string
 
 // lockoutRecord is a persisted account lockout (v1.37, §13.3).
 //
-// Only the locking transition is written — at most one write per account per
-// lockout period, never one per failed attempt — and only for names that are
+// Only the locking transition is written (at most one write per account per
+// lockout period, never one per failed attempt) and only for names that are
 // real accounts, whose key space the operator bounded. Per-source lockouts
 // stay memory-only deliberately: the source key space is attacker-chosen, and
 // persisting it would convert a brute-force attempt into replication traffic.
@@ -436,7 +436,7 @@ func (s *Store) recordFailure(ctx context.Context, name, source string) {
 
 // LoadLockouts restores account lockouts persisted before a restart (v1.37).
 //
-// Before this, restarting the daemon cleared every active lockout — an
+// Before this, restarting the daemon cleared every active lockout: an
 // attacker who could wait out (or provoke) a restart reset the §13.3
 // brute-force defence. Records whose lockout has expired are reaped here,
 // which bounds the prefix to the accounts currently locked.
@@ -573,7 +573,7 @@ func (l *loginLimiter) check(source, account string) error {
 
 // fail records a failure against both the source and the account.
 //
-// It reports whether this failure is the one that locked the *account* — the
+// It reports whether this failure is the one that locked the *account*: the
 // transition, which is the only thing the caller persists (v1.37).
 func (l *loginLimiter) fail(source, account string) (lockedTil time.Time, lockedAccount bool) {
 	l.mu.Lock()
@@ -618,8 +618,8 @@ func (l *loginLimiter) succeed(source, account string) (hadAccountState bool) {
 // seed restores a persisted account lockout into the limiter (v1.37).
 //
 // first is stamped now rather than reconstructed: the original window closed
-// with the process that watched it, and what matters — until when the account
-// is refused — travels in lockedTil.
+// with the process that watched it, and what matters (until when the account
+// is refused) travels in lockedTil.
 func (l *loginLimiter) seed(account string, til time.Time, failures int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -629,7 +629,7 @@ func (l *loginLimiter) seed(account string, til time.Time, failures int) {
 // prune drops entries that can no longer matter. The caller holds the lock.
 //
 // Without it the map grows with every distinct source address, which is a set
-// chosen by whoever is attacking — the same bound the edge's rate limiter needs.
+// chosen by whoever is attacking: the same bound the edge's rate limiter needs.
 func (l *loginLimiter) prune(now time.Time) {
 	for key, state := range l.counts {
 		stale := now.Sub(state.first) > l.limit.Window

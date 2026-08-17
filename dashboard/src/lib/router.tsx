@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
  * about wheel-reinvention: every published version carries open high-severity
  * advisories, and `npm audit --audit-level=high` is a release gate (AGENTS.md
  * constraint #7), not a judgement call. Almost all of those advisories are in
- * SSR, RSC and framework-mode features this dashboard does not use — but a
+ * SSR, RSC and framework-mode features this dashboard does not use, but a
  * dependency cannot be partially adopted, and the gate cannot be waived.
  *
  * What the dashboard actually needs is small: the current path, a way to

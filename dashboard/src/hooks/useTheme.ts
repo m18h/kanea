@@ -7,7 +7,7 @@ export function useTheme(): [Theme, (next: Theme) => void] {
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = window.localStorage.getItem('kanea-theme')
     if (stored === 'light' || stored === 'dark') return stored
-    // Dark by default, whatever the OS says — an ops dashboard is a thing
+    // Dark by default, whatever the OS says; an ops dashboard is a thing
     // left open on a monitor. The toggle persists an explicit choice.
     return 'dark'
   })

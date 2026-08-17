@@ -18,7 +18,7 @@ func (m *Manager) mountCommand(ctx context.Context, req Request) (name string, a
 	// Ownership on a driver that cannot carry it is refused at `plan` (R24), so
 	// reaching here means a record got into the Store some other way. Refusing
 	// again costs nothing and keeps the guarantee true rather than merely
-	// usually true — a volume that silently ignored the ownership it was given
+	// usually true: a volume that silently ignored the ownership it was given
 	// is exactly the outcome the rule exists to prevent.
 	if req.owned() {
 		if why, refused := ownershipRefusedBy[req.Resource.Type]; refused {
@@ -107,7 +107,7 @@ func (m *Manager) smbCommand(ctx context.Context, req Request) (string, []string
 //
 // mountpoint-s3 is the default and is read-mostly: it refuses append,
 // write-at-offset, chmod and symlink. s3fs is the opt-in read-write driver and
-// carries its own caveat — it *silently* ignores truncate, returning success
+// carries its own caveat: it *silently* ignores truncate, returning success
 // while leaving the file unchanged.
 func (m *Manager) s3Command(ctx context.Context, req Request) (string, []string, func(), error) {
 	credPath, cleanup, err := m.writeCredentials(ctx, req, awsCredentialFile)

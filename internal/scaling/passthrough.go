@@ -8,7 +8,7 @@ import (
 
 // Edge metric passthrough (PRD §9.1.1).
 //
-// The edge publishes two families. The aggregate one — one series per service —
+// The edge publishes two families. The aggregate one: one series per service;
 // is differenced into the rings by EdgeScraper and is the autoscaler's input.
 // The labelled one carries {code,method,protocol} and is **not** differenced,
 // not stored in the time series, and not aggregated: it is held here as the
@@ -110,8 +110,8 @@ func (b breakdowns) observe(name, service, code string, value float64) {
 // EdgeExposition holds the labelled families between a scrape and an export.
 //
 // It is the seam between the two: internal/scaling writes it and internal/api
-// reads it, and neither imports the other. The alternative — handing the API
-// server a *EdgeScraper — would make the exporter's availability depend on the
+// reads it, and neither imports the other. The alternative (handing the API
+// server a *EdgeScraper) would make the exporter's availability depend on the
 // scrape loop having been started, which is a startup-ordering bug waiting to
 // be written.
 type EdgeExposition struct {
@@ -131,7 +131,7 @@ func NewEdgeExposition() *EdgeExposition {
 //
 // Replaces, never merges. A service that stopped being exposed produces no
 // samples in the next scrape, and merging would leave its last totals visible
-// for the life of the process — the same leak edge.Metrics.Retain exists to
+// for the life of the process: the same leak edge.Metrics.Retain exists to
 // prevent on the other side of the wire.
 func (e *EdgeExposition) Set(body string, at time.Time, byService breakdowns) {
 	if e == nil {
@@ -198,7 +198,7 @@ func (e *EdgeExposition) Truncated() bool {
 
 // keepInPassthrough reports whether an exposition line belongs in the retained
 // body. Both comments and samples: HELP and TYPE travel with their family
-// because Prometheus uses them — a counter exported without its TYPE is read as
+// because Prometheus uses them; a counter exported without its TYPE is read as
 // untyped, and rate() will not compute over an untyped series.
 func keepInPassthrough(line string) bool {
 	if line == "" {

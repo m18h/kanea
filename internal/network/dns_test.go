@@ -167,7 +167,7 @@ func TestDNSIsCaseInsensitive(t *testing.T) {
 
 // NXDOMAIN means "this name does not exist". Returning it for AAAA on a name
 // that does exist is a lie about the name, and a dual-stack client that
-// believes it may never try the A query at all — so the answer is NODATA:
+// believes it may never try the A query at all, so the answer is NODATA:
 // NOERROR with an empty answer section.
 func TestDNSAnswersNodataForAAAA(t *testing.T) {
 	d := testDNS(t)
@@ -201,7 +201,7 @@ func TestDNSAnswersNXDomainForUnknownInternalName(t *testing.T) {
 }
 
 // With no upstream configured, an external name is refused rather than left to
-// time out — a workload gets a definite answer immediately.
+// time out: a workload gets a definite answer immediately.
 func TestDNSRefusesExternalNamesWithoutUpstreams(t *testing.T) {
 	d := testDNS(t)
 
@@ -400,7 +400,7 @@ func TestDNSServeAndQueryOverUDP(t *testing.T) {
 	<-done
 }
 
-// dualStackDNS is testDNS with v6 twins on the service and one backend —
+// dualStackDNS is testDNS with v6 twins on the service and one backend:
 // the other backend is a pre-v1.41 attachment with no v6 half.
 func dualStackDNS(t *testing.T) *DNS {
 	t.Helper()
@@ -421,7 +421,7 @@ func dualStackDNS(t *testing.T) *DNS {
 	return d
 }
 
-// The per-type answer matrix (v1.41): A sees v4, AAAA sees v6, ANY both —
+// The per-type answer matrix (v1.41): A sees v4, AAAA sees v6, ANY both;
 // and the deliberate NODATA survives for the halves a name does not have.
 func TestDNSAnswersPerQueryType(t *testing.T) {
 	d := dualStackDNS(t)
@@ -449,7 +449,7 @@ func TestDNSAnswersPerQueryType(t *testing.T) {
 	})
 	t.Run("AAAA on a v6-less name stays NODATA", func(t *testing.T) {
 		// shop-web-1 predates dual-stack: its alloc name has no v6 address,
-		// and the deliberate NODATA is still the answer — never NXDOMAIN, and
+		// and the deliberate NODATA is still the answer, never NXDOMAIN, and
 		// never someone else's address.
 		r := parseReply(t, d.respond(t.Context(),
 			buildQuery(t, 4, "alloc-shop-web-1.web.shop.kanea", typeAAAA, true)))

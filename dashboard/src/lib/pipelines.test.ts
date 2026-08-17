@@ -47,7 +47,7 @@ describe('runDuration', () => {
   })
 
   it('reports a dash rather than NaN for an unparseable time', () => {
-    expect(runDuration(run({ started_at: 'not a time' }))).toBe('—')
+    expect(runDuration(run({ started_at: 'not a time' }))).toBe('-')
   })
 })
 
@@ -65,6 +65,6 @@ describe('short forms', () => {
     expect(shortID('01JABCDEFGHIJK')).toBe('01JABCDE')
     expect(shortID('short')).toBe('short')
     expect(shortSHA('abc123def456789')).toBe('abc123d')
-    expect(shortSHA(undefined)).toBe('—')
+    expect(shortSHA(undefined)).toBe('-')
   })
 })

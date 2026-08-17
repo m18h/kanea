@@ -17,7 +17,7 @@ import (
 //
 // The reader takes what is already on the node rather than adding a protocol:
 // amdgpu publishes VRAM as plain sysfs files, and NVIDIA's only cgo-free
-// surface is the nvidia-smi binary — NVML is a C library, which the single
+// surface is the nvidia-smi binary; NVML is a C library, which the single
 // static binary rules out. Like the procfs reader, nothing here fails: a node
 // without a GPU, an unreadable sysfs and a missing nvidia-smi all report
 // nothing, and a missing reading is an absence, never a zero (§9.2).
@@ -101,7 +101,7 @@ func (r *GPUReader) Read() []GPUStats {
 var cardDir = regexp.MustCompile(`^card\d+$`)
 
 // amdgpu walks /sys/class/drm for cards whose driver publishes VRAM files.
-// An NVIDIA card also appears here but carries no mem_info_vram_* — it is
+// An NVIDIA card also appears here but carries no mem_info_vram_*: it is
 // skipped and counted once, by nvidia-smi.
 func (r *GPUReader) amdgpu() []GPUStats {
 	cards, err := filepath.Glob(r.sysRoot + "/class/drm/card*")
@@ -141,7 +141,7 @@ func (r *GPUReader) amdgpu() []GPUStats {
 
 // readSysUint reads one integer sysfs file. Garbage is an absence, not a zero.
 func readSysUint(path string) (uint64, bool) {
-	body, err := os.ReadFile(path) // #nosec G304 — sysfs, or a test fixture
+	body, err := os.ReadFile(path) // #nosec G304: sysfs, or a test fixture
 	if err != nil {
 		return 0, false
 	}
@@ -154,7 +154,7 @@ func readSysUint(path string) (uint64, bool) {
 
 // sysDriver reads the DRIVER= line of a device's uevent.
 func sysDriver(device string) string {
-	body, err := os.ReadFile(device + "/uevent") // #nosec G304 — sysfs, or a test fixture
+	body, err := os.ReadFile(device + "/uevent") // #nosec G304: sysfs, or a test fixture
 	if err != nil {
 		return ""
 	}

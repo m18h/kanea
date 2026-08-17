@@ -1,8 +1,8 @@
 // Package acme obtains and renews the TLS certificates kanea-edge serves
 // (PRD §7.3).
 //
-// It runs in kanead, never in the edge. Issuance means writing — an account
-// key, a certificate, a renewal timestamp — and not writing is the whole
+// It runs in kanead, never in the edge. Issuance means writing (an account
+// key, a certificate, a renewal timestamp) and not writing is the whole
 // property that lets the edge run unprivileged with no Store handle (§5.2.6).
 // The edge's part is to present what it is handed: this package publishes the
 // HTTP-01 response through the same projection the certificates travel in, and
@@ -54,7 +54,7 @@ const RenewalFraction = certsource.RenewalFraction
 // Certificate is one issued certificate as Kanea stores it.
 //
 // The type lives in internal/certsource because expiry, coverage and renewal
-// are properties of a certificate rather than of ACME — a self-signed leaf has
+// are properties of a certificate rather than of ACME: a self-signed leaf has
 // all three and never speaks to a CA. It is aliased here because this package
 // stores and returns them, and because an ACME certificate is still a
 // certificate.
@@ -71,8 +71,8 @@ type Request struct {
 
 // Solver publishes an HTTP-01 response and confirms it is being served.
 //
-// The confirmation is the important half. Publishing is asynchronous — the edge
-// polls a file — so telling the CA to validate immediately after writing is a
+// The confirmation is the important half. Publishing is asynchronous (the edge
+// polls a file) so telling the CA to validate immediately after writing is a
 // race, and losing it costs a failed-validation slot that takes an hour to
 // clear (PRD §7.3).
 type Solver interface {
@@ -169,8 +169,8 @@ const certKeyPrefix = "cert/"
 // Sync makes the stored certificates match the requests: issues what is
 // missing, renews what is due, and returns everything currently valid.
 //
-// One request failing does not stop the others. A single misconfigured domain —
-// DNS not pointed at this node yet is the common one — must not block renewal
+// One request failing does not stop the others. A single misconfigured domain
+// (DNS not pointed at this node yet is the common one) must not block renewal
 // of every certificate that is working.
 func (m *Manager) Sync(ctx context.Context, requests []Request) ([]Certificate, error) {
 	existing, err := m.load(ctx)
@@ -278,7 +278,7 @@ func (m *Manager) SupportsWildcards() bool { return m.dnsSolver != nil }
 // installSolver picks the challenge for a request.
 //
 // A wildcard forces DNS-01: there is no host for HTTP-01 to reach, because the
-// name matches hosts that do not exist yet. Everything else prefers HTTP-01 —
+// name matches hosts that do not exist yet. Everything else prefers HTTP-01:
 // it needs no credential, it validates in seconds rather than waiting on DNS
 // propagation, and it fails in ways an operator can see from the edge's logs.
 // Only one provider is installed per issuance, so which challenge was used is a

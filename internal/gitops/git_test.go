@@ -18,8 +18,8 @@ import (
 // repo builds a real git repository on disk and returns its path.
 //
 // A real repository rather than a mocked transport: the interesting behaviour
-// is what go-git does with a tree — which files it finds, what a shallow clone
-// of a branch yields — and a fake would only assert this code against itself.
+// is what go-git does with a tree (which files it finds, what a shallow clone
+// of a branch yields) and a fake would only assert this code against itself.
 func repo(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -267,7 +267,7 @@ func TestFetchResolvesCredentialsPerSync(t *testing.T) {
 		}
 	}
 	// A rotated deploy key takes effect on the next poll, and a revoked one
-	// stops working then too — which is only true if it is not cached.
+	// stops working then too, which is only true if it is not cached.
 	if secrets.asked != 3 {
 		t.Fatalf("resolved the credential %d times across 3 syncs; it is being cached", secrets.asked)
 	}

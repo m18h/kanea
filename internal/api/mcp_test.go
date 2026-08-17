@@ -16,7 +16,7 @@ import (
 
 // The MCP transport is mounted on this server and its tools call back into it.
 // These tests are about that loop: the same auth, the same authorization, the
-// same audit trail — §16.3's "no side channels" is a claim about this file.
+// same audit trail; §16.3's "no side channels" is a claim about this file.
 
 // withMCP mounts the transport, with its backend pointed at the harness's own
 // handler once that exists.
@@ -106,7 +106,7 @@ func TestMCPToolCallIsAuthorizedByTheAPI(t *testing.T) {
 
 func TestMCPToolCallIsAudited(t *testing.T) {
 	// §16.3: every tool call is audit-logged with the token identity. It is not
-	// audited by the MCP server — it is audited because the call goes through
+	// audited by the MCP server: it is audited because the call goes through
 	// the same route wrapper the CLI does, under the same identity.
 	h := newMCPHarness(t)
 	admin := h.token(t, auth.RoleAdmin)

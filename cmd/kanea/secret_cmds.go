@@ -18,7 +18,7 @@ import (
 // runSecret is `kanea secret <put|ls|rm>`.
 //
 // There is no `get`. Secrets are write-only over the API (PRD §13.3), so the
-// CLI cannot offer a read even to a local operator — the daemon has no route
+// CLI cannot offer a read even to a local operator: the daemon has no route
 // that would answer it.
 func runSecret(args []string) error {
 	if len(args) == 0 {
@@ -41,7 +41,7 @@ func runSecret(args []string) error {
 // runSecretPut writes a secret read from stdin or a file.
 //
 // Never from a command-line argument. Everything in argv is world-readable
-// through /proc/<pid>/cmdline and lands in the operator's shell history — the
+// through /proc/<pid>/cmdline and lands in the operator's shell history: the
 // same reasoning that keeps mount credentials out of argv (M2).
 func runSecretPut(args []string) error {
 	fs := flag.NewFlagSet("secret put", flag.ContinueOnError)
@@ -78,7 +78,7 @@ func runSecretPut(args []string) error {
 // newline is a file whose bytes matter.
 func readSecretValue(fromFile string) ([]byte, error) {
 	if fromFile != "" {
-		body, err := os.ReadFile(fromFile) // #nosec G304 — an operator-named file
+		body, err := os.ReadFile(fromFile) // #nosec G304; an operator-named file
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", fromFile, err)
 		}

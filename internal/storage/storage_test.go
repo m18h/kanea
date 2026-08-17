@@ -68,7 +68,7 @@ func testManager(t *testing.T, runner Runner, secrets SecretResolver) *Manager {
 		CheckTimeout:  200 * time.Millisecond,
 		// Nothing is mounted unless a test says so. Tests run on hosts with no
 		// /proc/mounts, and the real reader would answer "no" for everything
-		// anyway — being explicit keeps that from looking like a passing test.
+		// anyway: being explicit keeps that from looking like a passing test.
 		MountTable: func(string) (bool, error) { return false, nil },
 	})
 }
@@ -270,7 +270,7 @@ func TestMountRefusesWhenCredentialsCannotBeResolved(t *testing.T) {
 	}
 }
 
-// Anonymous access is legitimate — a public bucket, an unauthenticated export.
+// Anonymous access is legitimate: a public bucket, an unauthenticated export.
 func TestMountWithoutAnAuthRefIsAllowed(t *testing.T) {
 	runner := newFakeRunner()
 	m := testManager(t, runner, nil)
@@ -327,7 +327,7 @@ func TestLocalStorageNeedsNoMount(t *testing.T) {
 
 // A plain umount of a wedged FUSE mount blocks exactly like any other access to
 // it. Without the lazy fallback, a control plane cannot let go of a dead object
-// store — and stops converging.
+// store, and stops converging.
 func TestUnmountFallsBackToLazy(t *testing.T) {
 	runner := newFakeRunner()
 	m := testManager(t, runner, nil)
@@ -383,7 +383,7 @@ func TestCheckAbandonsAWedgedProbe(t *testing.T) {
 
 // A mount point is an ordinary directory when nothing is mounted on it, so
 // stat succeeds either way. Probing with stat alone would report a completely
-// failed mount as healthy — the silently-empty-volume failure PRD §8 exists to
+// failed mount as healthy: the silently-empty-volume failure PRD §8 exists to
 // prevent. The directory here exists and is *not* in the mount table.
 func TestCheckRejectsAnEmptyMountPoint(t *testing.T) {
 	m := testManager(t, newFakeRunner(), nil)
@@ -602,7 +602,7 @@ func TestCheckAcceptsARealMount(t *testing.T) {
 	}
 }
 
-// A probe result must never clear the reason a mount is backing off — otherwise
+// A probe result must never clear the reason a mount is backing off; otherwise
 // the operator-facing error degrades to "backing off after 1 failures: <nil>".
 func TestProbeDoesNotEraseTheMountFailure(t *testing.T) {
 	runner := newFakeRunner()
@@ -655,7 +655,7 @@ func TestOwnershipReachesTheMountCommand(t *testing.T) {
 			name:     "cifs takes uid, gid and both modes",
 			resource: Resource{Name: "s", Type: TypeSMB, Server: "10.0.0.9", Share: "media"},
 			binary:   "mount",
-			// cifs has no umask, so the two modes go separately — and a data
+			// cifs has no umask, so the two modes go separately, and a data
 			// file is not executable just because its directory has to be
 			// traversable.
 			want: []string{"uid=999", "gid=998", "dir_mode=0750", "file_mode=0640"},
@@ -710,7 +710,7 @@ func TestOwnershipReachesTheMountCommand(t *testing.T) {
 }
 
 // jobspec refuses these at `plan`, which is where an operator should meet
-// them. This is the backstop for a record that reached the Store another way —
+// them. This is the backstop for a record that reached the Store another way:
 // GitOps and the API both write desired state, and a mount that silently
 // ignored the ownership it was handed is the outcome R24 exists to prevent.
 func TestMountRefusesOwnershipItCannotEnforce(t *testing.T) {

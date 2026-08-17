@@ -28,7 +28,7 @@ import (
 // most GitOps tools pick one or the other. The deciding property here is that
 // a deploy key never touches the filesystem and never enters a child process's
 // environment: `git` would need either an askpass script, a key file for
-// `GIT_SSH_COMMAND -i`, or a token in the environment — and /proc/<pid>/environ
+// `GIT_SSH_COMMAND -i`, or a token in the environment, and /proc/<pid>/environ
 // is readable by the same user. Every other credential in Kanea is either
 // in-memory or materialised to 0600 only because a separate process forced it
 // (§6.2 R3, the mount helpers). A clone does not force it, so it does not
@@ -128,7 +128,7 @@ var (
 	// where the convention says to look. It is a configuration mistake, not a
 	// transport failure, and the two need different messages.
 	ErrNoSpecs = errors.New("gitops: no job specs found in the repository")
-	// ErrAuthRequired means the remote refused the credentials — or the lack
+	// ErrAuthRequired means the remote refused the credentials, or the lack
 	// of them.
 	ErrAuthRequired = errors.New("gitops: the repository requires credentials")
 )
@@ -209,7 +209,7 @@ func (s *Syncer) Fetch(ctx context.Context, src Source) (Checkout, error) {
 //
 // This is the one case that needs a working tree: a build context is the repo's
 // files, and BuildKit reads them from disk. `.git` is removed before the
-// directory is handed on — §10.2's build hygiene rule, and not a fussy one. A
+// directory is handed on: §10.2's build hygiene rule, and not a fussy one. A
 // `COPY .` in a Containerfile would otherwise put the repository's entire
 // history, including any credential ever committed and later removed, inside
 // the published image.
@@ -284,7 +284,7 @@ func (s *Syncer) auth(ctx context.Context, src Source) (transport.AuthMethod, er
 
 	if isSSHURL(src.URL) {
 		// An SSH remote wants a private key. go-git parses it in memory, so
-		// the key never lands on disk — the property that chose this library.
+		// the key never lands on disk: the property that chose this library.
 		user := sshUser(src.URL)
 		keys, err := gitssh.NewPublicKeys(user, value, "")
 		if err != nil {
@@ -354,7 +354,7 @@ func collectSpecs(tree *object.Tree, specPath string) (map[string][]byte, error)
 // collectDir reads every .hcl file directly inside a directory.
 //
 // Not recursive: a deploy repository's `.kanea/` is a flat set of job specs,
-// and walking into subdirectories would sweep up whatever else lives there —
+// and walking into subdirectories would sweep up whatever else lives there;
 // a `.kanea/examples/` of broken specs would break every sync.
 func collectDir(tree *object.Tree, dir string, into map[string][]byte) error {
 	entries, err := tree.Tree(dir)

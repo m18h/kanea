@@ -31,7 +31,7 @@ import (
 type Proxy struct {
 	table atomic.Pointer[Table]
 	// auth is the compiled R27 verifier table, swapped whole when the
-	// restricted bundle reloads — the route table's discipline, applied to
+	// restricted bundle reloads: the route table's discipline, applied to
 	// the material that arrives on the other file.
 	auth atomic.Pointer[authTable]
 	rp   *httputil.ReverseProxy
@@ -39,7 +39,7 @@ type Proxy struct {
 
 	// limits outlives the table on purpose. Buckets keyed by route name survive
 	// a reload, so deploying a service does not hand every client that was
-	// being throttled a fresh allowance — which would make the rate limit
+	// being throttled a fresh allowance, which would make the rate limit
 	// trivially evadable by anyone who can trigger a redeploy.
 	limits *ratelimit.Limiter
 	// metrics is the L7 signal §9.1 makes primary for exposed services.
@@ -92,8 +92,8 @@ const (
 	idleConnTimeout = 60 * time.Second
 
 	// h2cReadIdleTimeout and h2cPingTimeout are the h2c path's liveness (R28).
-	// There is no response-header timeout on that path — x/net exposes one only
-	// through the wrapped h1 transport — so a dead upstream is detected by the
+	// There is no response-header timeout on that path (x/net exposes one only
+	// through the wrapped h1 transport) so a dead upstream is detected by the
 	// HTTP/2 ping instead, and the PRD states the limit rather than hiding it.
 	h2cReadIdleTimeout = 30 * time.Second
 	h2cPingTimeout     = 15 * time.Second
@@ -153,7 +153,7 @@ func NewProxy(cfg ProxyConfig) *Proxy {
 
 	// The h2c transport for grpc-marked routes (R28): plaintext HTTP/2 to the
 	// VIP. AllowHTTP with a TLS dialer that returns a plain connection is
-	// x/net's documented h2c spelling — no TLS is negotiated, and the "http"
+	// x/net's documented h2c spelling: no TLS is negotiated, and the "http"
 	// scheme the rewrite sets is accepted.
 	h2c := &http2.Transport{
 		AllowHTTP: true,
@@ -208,7 +208,7 @@ func (p *Proxy) Table() *Table { return p.table.Load() }
 // transportSwitch picks the upstream transport by the matched route (R28).
 //
 // The outbound request is cloned from the inbound context, so the route
-// ServeHTTP stored there is visible here — which is what lets one
+// ServeHTTP stored there is visible here, which is what lets one
 // ReverseProxy carry two transports without a second pool per route.
 type transportSwitch struct {
 	h1, h2c http.RoundTripper
@@ -222,8 +222,8 @@ func (t *transportSwitch) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // isGRPCRequest reports whether the request is gRPC on the wire: negotiated
-// HTTP/2 and the gRPC content type. Both are connection facts — the protocol
-// version comes from ALPN, not the request line — and together they bound the
+// HTTP/2 and the gRPC content type. Both are connection facts (the protocol
+// version comes from ALPN, not the request line) and together they bound the
 // places a grpc-specific response or label can appear (§9.1.1).
 func isGRPCRequest(r *http.Request) bool {
 	return r.ProtoMajor == 2 &&
@@ -257,7 +257,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The chain, in the order PRD §7.2.1 specifies: Host match → IP restriction
-	// → rate limit → header transforms → upstream. The order is not arbitrary —
+	// → rate limit → header transforms → upstream. The order is not arbitrary:
 	// rate limiting a request that IP restriction would have refused wastes a
 	// token on a client that is not allowed to spend one.
 	route, ok := p.table.Load().lookup(host)
@@ -280,7 +280,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Derived from the connection rather than plumbed through: :80 and :443 share
 // one Proxy and one ServeHTTP, and whether the request was terminated with TLS
 // is exactly the distinction between the two entrypoints. A published port does
-// not come through here — its entrypoint is fixed at bind time.
+// not come through here: its entrypoint is fixed at bind time.
 func entrypointFor(r *http.Request) string {
 	if r.TLS != nil {
 		return EntrypointWebSecure
@@ -369,8 +369,8 @@ func (p *Proxy) SetAuth(entries []AuthEntry) {
 // authorize enforces a marked route. It writes the refusal itself so the
 // response and the reason stay in one place; the caller counts the metric.
 //
-// Fail closed, both ways: a marked route with no material — the bundle has
-// not arrived, the entry failed to compile, the reference stopped resolving —
+// Fail closed, both ways: a marked route with no material; the bundle has
+// not arrived, the entry failed to compile, the reference stopped resolving;
 // answers 503, never open. That is the same rule a missing certificate gets,
 // and it is the difference between "misconfigured, fix me" and a spec that
 // claims a control nothing applies (R16).
@@ -402,7 +402,7 @@ func (p *Proxy) authorize(w http.ResponseWriter, r *http.Request, route compiled
 //
 // Derived, never read from r.Proto: the request line is the client's to write,
 // and a label taken from it is a label the client chooses. A hijacked
-// connection is a successful upgrade — the only way the edge learns that a
+// connection is a successful upgrade: the only way the edge learns that a
 // request became a websocket, since a hijacked response never calls
 // WriteHeader and would otherwise be recorded as a plain 200.
 //
@@ -466,7 +466,7 @@ type statusRecorder struct {
 	// bytes counts the response body written. Atomic because a streaming
 	// handler may write from a goroutine other than the one that observes.
 	bytes atomic.Int64
-	// hijacked records that the connection was taken over — a websocket
+	// hijacked records that the connection was taken over: a websocket
 	// upgrade, which never reaches WriteHeader and would otherwise be counted
 	// as an ordinary 200.
 	hijacked bool
@@ -528,7 +528,7 @@ func (p *Proxy) withinRateLimit(w http.ResponseWriter, r *http.Request, route co
 
 	// The scope is inserted only when there is one, so every host-routed
 	// bucket key stays byte-identical to what it was before published ports
-	// existed — a rename here would reset every live limiter on upgrade.
+	// existed: a rename here would reset every live limiter on upgrade.
 	bucket := route.Name() + "\x00" + key
 	if scope != "" {
 		bucket = route.Name() + "\x00" + scope + "\x00" + key
@@ -573,7 +573,7 @@ func peerAddr(r *http.Request) netip.Addr {
 // This is per-request rather than a server-wide ReadTimeout, which is what the
 // hardening list literally asks for but cannot be used here. A blanket
 // ReadTimeout also fires on the background read Go's server issues to detect a
-// disconnected client, and that error cancels the request context — so a
+// disconnected client, and that error cancels the request context, so a
 // server-side-events response or any long-lived stream dies at the timeout
 // regardless of how healthy it is. Bounding only the body keeps the slow-body
 // defense and leaves streaming alone.
@@ -584,7 +584,7 @@ func peerAddr(r *http.Request) netip.Addr {
 //
 // gRPC on a marked route is exempt too (v1.41): a client- or bidi-stream is a
 // request body held open for as long as the call lives, and the slow-body
-// bound would kill it mid-call at the timeout — isUpgrade's reasoning, applied
+// bound would kill it mid-call at the timeout; isUpgrade's reasoning, applied
 // to HTTP/2 streams.
 func (p *Proxy) applyDeadline(w http.ResponseWriter, r *http.Request, route compiled) {
 	rc := http.NewResponseController(w)
@@ -597,7 +597,7 @@ func (p *Proxy) applyDeadline(w http.ResponseWriter, r *http.Request, route comp
 		deadline = time.Time{}
 	}
 	if err := rc.SetReadDeadline(deadline); err != nil {
-		// Not fatal — some ResponseWriters do not support it — but worth
+		// Not fatal (some ResponseWriters do not support it) but worth
 		// knowing, because it means the slow-body bound is not in force.
 		p.log.Debug("cannot set read deadline", "error", err)
 	}
@@ -622,7 +622,7 @@ func (p *Proxy) rewrite(pr *httputil.ProxyRequest) {
 
 	// Then the edge's own statement, from the connection rather than from
 	// anything the client sent. SetXForwarded overwrites X-Forwarded-For with
-	// the peer address and sets X-Forwarded-Host and X-Forwarded-Proto — the
+	// the peer address and sets X-Forwarded-Host and X-Forwarded-Proto: the
 	// last from whether *this* request arrived over TLS, which is why one proxy
 	// can serve both listeners.
 	pr.SetXForwarded()
@@ -669,8 +669,8 @@ func (p *Proxy) applySecurityHeaders(h http.Header, overTLS bool) {
 			h.Set(name, value)
 		}
 	}
-	// HSTS only over TLS. Sending it on a plaintext response is meaningless —
-	// a client that can be intercepted can have it stripped — and promising it
+	// HSTS only over TLS. Sending it on a plaintext response is meaningless
+	// (a client that can be intercepted can have it stripped) and promising it
 	// before certificates exist would lock users out of an HTTP-only node.
 	if overTLS && h.Get("Strict-Transport-Security") == "" {
 		h.Set("Strict-Transport-Security", defaultHSTS)
@@ -734,7 +734,7 @@ func (p *Proxy) upstreamError(w http.ResponseWriter, r *http.Request, err error)
 	// A request that is gRPC on the wire gets the trailers-only refusal:
 	// HTTP 200 with grpc-status UNAVAILABLE in the header frame, which is the
 	// one shape a gRPC client renders as an error instead of as garbage. The
-	// same no-detail discipline as the 502 — status 14 and a generic message,
+	// same no-detail discipline as the 502: status 14 and a generic message,
 	// nothing about the address or the reason.
 	if route.Protocol == RouteProtocolGRPC && isGRPCRequest(r) {
 		h := w.Header()
@@ -747,7 +747,7 @@ func (p *Proxy) upstreamError(w http.ResponseWriter, r *http.Request, err error)
 	http.Error(w, "bad gateway", http.StatusBadGateway)
 }
 
-// isUpgrade reports whether the request asks to leave HTTP behind — a WebSocket
+// isUpgrade reports whether the request asks to leave HTTP behind: a WebSocket
 // handshake being the case that matters.
 func isUpgrade(r *http.Request) bool {
 	if !headerContainsToken(r.Header, "Connection", "upgrade") {

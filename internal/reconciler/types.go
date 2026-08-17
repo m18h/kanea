@@ -3,7 +3,7 @@
 // It is a control loop, not a one-shot placer (PRD §4.3): every pass compares
 // what the Store says should exist against what containerd reports does exist,
 // and emits the actions that close the gap. That shape is what makes crash
-// recovery, drift correction and scaling the same code path — a crashed alloc
+// recovery, drift correction and scaling the same code path: a crashed alloc
 // and a hand-deleted container are both just "desired but absent".
 //
 // The planner is a pure function (plan.go). Everything that talks to the world
@@ -29,7 +29,7 @@ type Desired struct {
 	// Image is the resolved (ideally digest-pinned) image reference.
 	Image string
 	// PinnedImage is what actually runs when auto-update is following Image's
-	// tag (R19) — a complete digest-pinned reference, not a bare digest, so
+	// tag (R19): a complete digest-pinned reference, not a bare digest, so
 	// nothing downstream has to reassemble one. It sits beside Image rather
 	// than replacing it because the tag is what the next poll re-resolves:
 	// pinning over it would destroy the thing the feature reads. Empty means
@@ -57,17 +57,17 @@ type Desired struct {
 	RegistryAuthRef string `json:"registry_auth_ref,omitempty"`
 	// Command overrides the image entrypoint when non-empty.
 	Command []string
-	// Capabilities is the validated *declared* list (jobspec R13) — grants on
+	// Capabilities is the validated *declared* list (jobspec R13): grants on
 	// top of the baseline, or CapabilityNone to start from nothing. The
 	// baseline itself is never written here: it is applied at projection time
 	// (effectiveCapabilities), because this field is SpecHash material and a
-	// default that entered the record would re-hash — and roll — every
+	// default that entered the record would re-hash (and roll) every
 	// capability-less service at upgrade (the R23 lesson).
 	Capabilities []string
 	// Env is the fully resolved environment for each alloc.
 	Env map[string]string
 	// User is the numeric identity the workload runs as (jobspec R23). Nil
-	// means the image's own USER stands — the pre-R23 meaning of every record
+	// means the image's own USER stands: the pre-R23 meaning of every record
 	// already in a Store, which is why it is a pointer and why SpecHash omits
 	// it when unset.
 	User *runtime.User `json:"user,omitempty"`
@@ -106,8 +106,8 @@ type Desired struct {
 	// no domain and no certificate is the case the feature exists for.
 	//
 	// Deliberately *not* in SpecHash's material, like Expose. Nothing about a
-	// node port is baked into a container at creation — the container ports
-	// already are — so hashing it would roll every alloc of a service to fix a
+	// node port is baked into a container at creation (the container ports
+	// already are) so hashing it would roll every alloc of a service to fix a
 	// typo in a CIDR.
 	Publish []PublishedPort
 	// DependsOn names the services that must be healthy before this one starts
@@ -138,8 +138,8 @@ type Desired struct {
 	//
 	// It is part of the spec hash, which means a restart is not a second code
 	// path: it is a spec change, it rolls through the same update policy, and it
-	// converges the same way. The alternative — a route that reaches in and
-	// kills containers — would be a second scheduler, which is the thing §9.2
+	// converges the same way. The alternative (a route that reaches in and
+	// kills containers) would be a second scheduler, which is the thing §9.2
 	// says the autoscaler must not be either.
 	//
 	// It belongs to the running service rather than to the declared spec, so an
@@ -148,14 +148,14 @@ type Desired struct {
 	// restart.
 	Generation int `json:"generation,omitempty"`
 	// Runtime selects the containerd runtime (PRD v1.39, §6.2 R25). Empty
-	// means the runc default — the meaning of every record already in a
+	// means the runc default; the meaning of every record already in a
 	// Store, which is why it is omitempty here AND in the SpecHash material:
 	// a field that serialised for existing services would change every hash
 	// on the node, and upgrading kanead would roll every container on it
 	// (the R23 lesson).
 	Runtime string `json:"runtime,omitempty"`
 	// Function marks a desired record lowered from a `function` block and
-	// carries its triggers (R25/R26). Nil for every ordinary service — it is
+	// carries its triggers (R25/R26). Nil for every ordinary service: it is
 	// the marker `GET /v1/functions` filters on and the Services list filters
 	// out.
 	//
@@ -205,7 +205,7 @@ type JWTAuthPolicy struct {
 // EventTrigger fires a POST to the function when a matching event occurs.
 type EventTrigger struct {
 	// On are glob patterns over the notification vocabulary (R26). Never
-	// matches function.* — refused at parse and skipped at match time.
+	// matches function.*: refused at parse and skipped at match time.
 	On []string `json:"on"`
 	// Path is the request path, normalized absolute; empty means "/".
 	Path string `json:"path,omitempty"`
@@ -251,8 +251,8 @@ const (
 	// StrategyRolling replaces allocs a few at a time, health-gated.
 	StrategyRolling = "rolling"
 	// StrategyReplace takes them all down and brings them all back. It exists
-	// for workloads that cannot run two versions at once — a singleton holding
-	// an exclusive lock, a schema migration — and it is an outage by design.
+	// for workloads that cannot run two versions at once (a singleton holding
+	// an exclusive lock, a schema migration) and it is an outage by design.
 	StrategyReplace = "replace"
 )
 
@@ -365,7 +365,7 @@ type Expose struct {
 	// LetsEncrypt is the pre-v1.33 spelling, read but never written.
 	//
 	// It is kept so records written by an older CLI keep meaning what they
-	// meant — an empty TLSMode with this set resolves to "acme" — which is why
+	// meant (an empty TLSMode with this set resolves to "acme") which is why
 	// this change needs no schema migration (§15.4).
 	//
 	// Deprecated: use TLSMode.
@@ -385,13 +385,13 @@ type Expose struct {
 	Headers       *edge.Headers
 	// Protocol is R28's upstream-transport marker (v1.41): "" for HTTP/1.1,
 	// "grpc" for h2c. Like everything else on Expose it is NOT SpecHash
-	// material — nothing about the upstream dial is baked into a container,
+	// material: nothing about the upstream dial is baked into a container,
 	// so changing it republishes routes and never rolls an alloc.
 	Protocol string `json:"protocol,omitempty"`
 }
 
 // AllExposes returns every route of the service in order, the first block
-// first — nil for an unexposed service. The one way to read routes (v1.50):
+// first: nil for an unexposed service. The one way to read routes (v1.50):
 // reading Expose alone silently drops the extras.
 func (d *Desired) AllExposes() []*Expose {
 	if d.Expose == nil {
@@ -406,7 +406,7 @@ func (d *Desired) AllExposes() []*Expose {
 }
 
 // Port is a named container port. The service frontend listens on the same
-// number, so `port "http" { container = 8080 }` is reachable at <vip>:8080 —
+// number, so `port "http" { container = 8080 }` is reachable at <vip>:8080:
 // one number to reason about instead of two.
 type Port struct {
 	Name      string
@@ -414,7 +414,7 @@ type Port struct {
 	// Protocol is "" (TCP, the default) or "udp" (v1.42). A declared "tcp"
 	// normalizes to "" before it is stored. The tag's omitempty is
 	// load-bearing exactly as Desired.User's is: Ports are SpecHash material,
-	// and every pre-v1.42 record must hash with the field absent — a hash
+	// and every pre-v1.42 record must hash with the field absent; a hash
 	// that moved on upgrade would roll every service on the node. Flipping a
 	// port's protocol *does* roll the alloc, which is right: what the process
 	// binds inside the container is baked into it.
@@ -422,7 +422,7 @@ type Port struct {
 }
 
 // PortProtocolUDP marks a datagram port (v1.42). A udp port never enters the
-// VIP's port set — it is reachable only through a published udp listener.
+// VIP's port set: it is reachable only through a published udp listener.
 const PortProtocolUDP = "udp"
 
 // IsUDP reports whether this is a datagram port.
@@ -443,7 +443,7 @@ type PublishedPort struct {
 	MaxConns int
 
 	IPRestriction *edge.IPRestriction
-	// RateLimit and Headers are http only — a tcp listener refuses what it
+	// RateLimit and Headers are http only: a tcp listener refuses what it
 	// cannot enforce rather than dropping it.
 	RateLimit *edge.RateLimit
 	Headers   *edge.Headers
@@ -531,7 +531,7 @@ type ScalingMetric struct {
 //
 // M1 implements local storage only, and gives each alloc its own directory.
 // Sharing one directory between allocs is what PRD §8 calls the "shared" mode;
-// it needs a spec field to opt into, and per-alloc is the safe default — two
+// it needs a spec field to opt into, and per-alloc is the safe default: two
 // database allocs writing the same data directory would corrupt it.
 type Volume struct {
 	// Name is the volume's name within the service.
@@ -551,7 +551,7 @@ type Volume struct {
 	//
 	// The json tags matter and the pointers matter. Volume is hashed whole by
 	// SpecHash, the fields above it carry no tags and marshal under their Go
-	// names, and these three are omitted entirely when nil — so a record that
+	// names, and these three are omitted entirely when nil, so a record that
 	// predates this feature hashes exactly as it did before, and upgrading
 	// kanead does not roll every alloc on the node.
 	UID  *uint32 `json:"uid,omitempty"`
@@ -632,7 +632,7 @@ const (
 	AllocStopped AllocState = "stopped"
 )
 
-// ExitReason classifies why an alloc stopped — or why it never started (PRD
+// ExitReason classifies why an alloc stopped, or why it never started (PRD
 // v1.68, §17).
 //
 // The exit code alone cannot answer this. 137 is an OOM kill, a `kanea stop`
@@ -644,7 +644,7 @@ type ExitReason string
 
 // Termination reasons. The first four describe an alloc that ran; the rest name
 // the point on the create path where one that did not got stuck. They are split
-// that finely because the fix differs at every one of them — a missing image is
+// that finely because the fix differs at every one of them: a missing image is
 // somebody's typo, a failed mount is the node's storage, a refused grant is
 // policy (R17).
 const (
@@ -666,14 +666,14 @@ const (
 	// ExitVolumeFailed means a declared volume could not be prepared (§8).
 	ExitVolumeFailed ExitReason = "volume_failed"
 	// ExitPassthroughFailed means a device or socket grant did not resolve
-	// (R17/R18) — the alloc is failed rather than started without it.
+	// (R17/R18): the alloc is failed rather than started without it.
 	ExitPassthroughFailed ExitReason = "passthrough_failed"
 	// ExitNetworkFailed means the datapath attachment failed (§5.2.5).
 	ExitNetworkFailed ExitReason = "network_failed"
 	// ExitCreateFailed means containerd refused to create the container.
 	ExitCreateFailed ExitReason = "create_failed"
 	// ExitStartFailed means the container was created and the task would not
-	// start — most often a command that is not executable in the image.
+	// start: most often a command that is not executable in the image.
 	ExitStartFailed ExitReason = "start_failed"
 )
 
@@ -694,7 +694,7 @@ type AllocRecord struct {
 	// that is current from one that is stale.
 	//
 	// Empty means "written before this field existed". It is adopted rather
-	// than treated as a mismatch — an upgrade of kanead must not roll every
+	// than treated as a mismatch: an upgrade of kanead must not roll every
 	// alloc on the node (Observe).
 	SpecHash string `json:"spec_hash,omitempty"`
 	// Restarts counts crash-restarts so far.
@@ -708,8 +708,8 @@ type AllocRecord struct {
 	// Both this and LastExitMessage carry `omitempty` for the R23 reason: the
 	// record is CDC-replicated, and a record written before the fields existed
 	// has to serialise byte-identically or every alloc on the node ships a
-	// change at upgrade. AllocRecord is not SpecHash material, so nothing rolls
-	// — but it *is* the API's wire format directly (there is no allocView), so
+	// change at upgrade. AllocRecord is not SpecHash material, so nothing rolls,
+	// but it *is* the API's wire format directly (there is no allocView), so
 	// these names are public the moment they land.
 	LastExitReason ExitReason `json:"last_exit_reason,omitempty"`
 	// LastExitMessage explains the reason in one line, for `kanea describe`.
@@ -721,7 +721,7 @@ type AllocRecord struct {
 	// Healthy reports the last health-check verdict.
 	//
 	// It is only ever written by a probe, so an alloc of a service that declares
-	// no check has it false for its whole life. That is not "unhealthy" — it is
+	// no check has it false for its whole life. That is not "unhealthy": it is
 	// "nobody asked". Read it through Probed(), or with the same
 	// `Check.configured()` guard the planner uses; testing the field on its own
 	// reports every check-free service as broken.
@@ -754,7 +754,7 @@ type ActionKind string
 // Actions the planner can emit.
 const (
 	// ActionWait records that an alloc cannot be created yet because a
-	// dependency is not healthy. It has no side effect — it exists so that
+	// dependency is not healthy. It has no side effect: it exists so that
 	// waiting is visible in `kanea plan` and in the log, rather than an alloc
 	// silently never appearing.
 	ActionWait ActionKind = "wait"
@@ -769,7 +769,7 @@ const (
 	//
 	// A separate kind rather than a restart with a different Reason, because the
 	// two differ in what they do to the alloc's history. A crash-restart spends
-	// the restart budget — that budget exists to stop a crash loop. A deploy
+	// the restart budget: that budget exists to stop a crash loop. A deploy
 	// does not: the operator changed something, and the new spec deserves its
 	// own five attempts rather than inheriting the exhausted budget of the image
 	// it replaced. Folding them together would mean a service that crash-looped
@@ -798,7 +798,7 @@ func AllocKey(project, service string, index int) string {
 
 // AllocID builds the containerd container id and netns name for an alloc.
 // Project and service are DNS-1123 labels (jobspec R1), so the result is safe
-// for both — and always longer than the CNI plugin's 5-character floor.
+// for both, and always longer than the CNI plugin's 5-character floor.
 func AllocID(project, service string, index int) string {
 	return project + "-" + service + "-" + strconv.Itoa(index)
 }

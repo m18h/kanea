@@ -193,6 +193,6 @@ func TestNodeWithoutGPUsReportsAbsence(t *testing.T) {
 		t.Errorf("gpus = %+v, want absent", stats.GPUs)
 	}
 	if stats.GPUVRAMPercent != nil {
-		t.Errorf("aggregate = %v, want absent — a GPU-less node is not a 0%% GPU", *stats.GPUVRAMPercent)
+		t.Errorf("aggregate = %v, want absent: a GPU-less node is not a 0%% GPU", *stats.GPUVRAMPercent)
 	}
 }

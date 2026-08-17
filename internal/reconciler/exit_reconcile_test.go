@@ -46,7 +46,7 @@ func TestAnOOMKillIsRecordedAsOne(t *testing.T) {
 }
 
 // The same exit code, without the cgroup evidence, must not be reported as a
-// memory problem — this is `kanea stop` against a service that ignored its
+// memory problem: this is `kanea stop` against a service that ignored its
 // SIGTERM, and telling the operator to resize it would be wrong.
 func TestAPlainKillIsNotRecordedAsAnOOM(t *testing.T) {
 	h := newHarness(t)
@@ -96,7 +96,7 @@ func TestAnAllocThatCannotStartRecordsWhy(t *testing.T) {
 
 // The retry is unchanged by all this: the reason is recorded, and the next pass
 // tries again exactly as it did before. R29's restart budget is for a workload
-// that ran and crashed — spending it on a registry outage would fail a service
+// that ran and crashed: spending it on a registry outage would fail a service
 // permanently for something on the node's side of the line.
 func TestAStartFailureDoesNotSpendTheRestartBudget(t *testing.T) {
 	h := newHarness(t)
@@ -113,7 +113,7 @@ func TestAStartFailureDoesNotSpendTheRestartBudget(t *testing.T) {
 
 	rec := h.allocRecord(t, 0)
 	if rec.Restarts != 0 {
-		t.Errorf("restarts = %d, want 0 — a start failure is not a crash", rec.Restarts)
+		t.Errorf("restarts = %d, want 0; a start failure is not a crash", rec.Restarts)
 	}
 	if rec.State == reconciler.AllocFailed {
 		t.Error("state = failed: a start failure must stay retryable")
@@ -131,7 +131,7 @@ func TestAStartFailureDoesNotSpendTheRestartBudget(t *testing.T) {
 
 // A create that fails fails again every pass. Rewriting an identical record
 // each time would turn one typo into a steady stream of Store writes, CDC
-// changes and S3 uploads — the v1.44 "an unchanged value is never rewritten"
+// changes and S3 uploads: the v1.44 "an unchanged value is never rewritten"
 // rule, which this path has to follow because it runs on a timer.
 func TestARepeatedStartFailureIsWrittenOnce(t *testing.T) {
 	h := newHarness(t)

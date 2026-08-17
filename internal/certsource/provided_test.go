@@ -176,7 +176,7 @@ func TestProvidedNarrowsToTheNamedGrant(t *testing.T) {
 		t.Error("a name selected some other grant")
 	}
 
-	// With no name, both are candidates and the tie breaks by grant name — the
+	// With no name, both are candidates and the tie breaks by grant name: the
 	// same choice on every node and every restart.
 	unnamed, err := ensureOne(t, p, Request{
 		Domains: []string{"shop.example.com"}, Project: "shop", Service: "shop/web",
@@ -249,7 +249,7 @@ func TestProvidedNeverFallsBack(t *testing.T) {
 	}
 }
 
-// Renewal happens behind Kanea's back — certbot writes and renames — so the
+// Renewal happens behind Kanea's back (certbot writes and renames) so the
 // poll has to notice new bytes at the same path, and has to stay quiet when
 // nothing moved.
 func TestProvidedChangedTracksTheFiles(t *testing.T) {

@@ -18,7 +18,7 @@ type HTTPSource struct {
 
 // maxRedirects bounds the redirect chain. GitHub serves release downloads as a
 // redirect to objects.githubusercontent.com, so redirects cannot simply be
-// refused — but each hop is re-checked for HTTPS, because a chain that ends in
+// refused, but each hop is re-checked for HTTPS, because a chain that ends in
 // plaintext is a chain that leaks which version of which runtime this node is
 // about to install.
 const maxRedirects = 10
@@ -38,7 +38,7 @@ func NewHTTPSource() *HTTPSource {
 					return fmt.Errorf("stopped after %d redirects", maxRedirects)
 				}
 				if req.URL.Scheme != "https" {
-					return fmt.Errorf("refusing a redirect to %s://%s — artefact downloads stay on https",
+					return fmt.Errorf("refusing a redirect to %s://%s; artefact downloads stay on https",
 						req.URL.Scheme, req.URL.Host)
 				}
 				return nil
@@ -85,7 +85,7 @@ func (s *HTTPSource) Open(ctx context.Context, c *Component, arch string) (io.Re
 // checked, and only then does anything else look at the file. A partially
 // written or mismatched `containerd` must never exist at a path something
 // might execute, and "verify after install" is not a smaller version of that
-// rule — it is the absence of it.
+// rule: it is the absence of it.
 //
 // The caller closes and removes the returned file.
 func Stage(ctx context.Context, src Source, c *Component, arch, tmpDir string) (*os.File, error) {
@@ -116,7 +116,7 @@ func Stage(ctx context.Context, src Source, c *Component, arch, tmpDir string) (
 		}
 		return nil, fmt.Errorf("download %s from %s: %w", c.Display(), src.Describe(), err)
 	}
-	// io.Copy stops at EOF, which is where the reader verifies — but a body
+	// io.Copy stops at EOF, which is where the reader verifies, but a body
 	// that ends without EOF (a Source backed by an exact-length reader) would
 	// slip through, so it is asked again. Verify is idempotent.
 	if err := verified.Verify(); err != nil {
@@ -139,7 +139,7 @@ func Stage(ctx context.Context, src Source, c *Component, arch, tmpDir string) (
 // brief window where a root binary is world-writable is still a window.
 func writeFileAtomic(path string, r io.Reader, mode os.FileMode) error {
 	dir := filepath.Dir(path)
-	// #nosec G301 — 0755 is required, not lax. These directories hold the
+	// #nosec G301: 0755 is required, not lax. These directories hold the
 	// component executables, and `buildkitd` runs as the unprivileged
 	// kanea-buildkit user (§5.2.11) which has to traverse them to exec
 	// buildctl and rootlesskit. 0750 would break the one component whose

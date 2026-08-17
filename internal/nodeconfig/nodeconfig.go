@@ -3,7 +3,7 @@
 //
 // The file is the §14 A05 boundary in file form: what it grants, no API, MCP
 // tool or job spec can grant. That shapes every decision here. It is read
-// once, at startup — a probe is one stat, never a poll, and there is no
+// once, at startup; a probe is one stat, never a poll, and there is no
 // reload: a grant is a decision, so the keep-last-good discipline of the
 // reload-family configs (certsource, secretsource) deliberately does not
 // apply. Absent means off; present-but-malformed is fatal; and because the
@@ -12,7 +12,7 @@
 //
 // This version reads the storage stanza, the bind stanza's API listener half
 // (v1.61) and the variables stanza (v1.63). The device/socket grant blocks in
-// the same file are decoded by internal/passthrough over the same bytes —
+// the same file are decoded by internal/passthrough over the same bytes:
 // two decoders, each owning its blocks. Stanzas neither reads are collected
 // into Config.Ignored for a startup warning naming them: not silently
 // swallowed (a typo that vanishes is the trap), not refused (PRD §15.1
@@ -57,7 +57,7 @@ type Config struct {
 	Bind *BindConfig
 	// Variables is the variables stanza (R30, v1.63): node-wide spec-variable
 	// defaults, the lowest-precedence R2 source. Values are primitives carried
-	// as strings, never secrets — the map is served to any authenticated
+	// as strings, never secrets: the map is served to any authenticated
 	// caller over GET /v1/vars. nil when the file or the stanza is absent.
 	Variables map[string]string
 	// DNSUpstreams is the dns stanza's upstream list (v1.66): the resolvers
@@ -68,7 +68,7 @@ type Config struct {
 	// Ignored names the top-level blocks and attributes the file carries
 	// and no decoder reads, for the startup warning.
 	Ignored []string
-	// HasGrants reports whether the file carries device or socket blocks —
+	// HasGrants reports whether the file carries device or socket blocks:
 	// internal/passthrough owns their parsing; this only lets the caller say
 	// when an explicit --passthrough-config is overriding them.
 	HasGrants bool
@@ -76,7 +76,7 @@ type Config struct {
 	Path string
 }
 
-// The api_tls modes (PRD §15.1, v1.61) — R20's vocabulary applied to the
+// The api_tls modes (PRD §15.1, v1.61): R20's vocabulary applied to the
 // node's own listener. An empty mode resolves at the daemon: a declared pair
 // means provided, a loopback address means plaintext, anything else refuses.
 const (
@@ -89,8 +89,8 @@ const (
 // BindConfig is what the bind stanza supplies for kanead's API/dashboard
 // listener (PRD §15.1, v1.61). The half is atomic: whichever source supplies
 // the address supplies its TLS story, so these travel together. Parse refuses
-// every contradiction it can see — a cert without a key, plaintext beside a
-// pair, acme without a domain — but whether an *unset* mode on a non-loopback
+// every contradiction it can see (a cert without a key, plaintext beside a
+// pair, acme without a domain) but whether an *unset* mode on a non-loopback
 // address may stand is deliberately not decided here: that refusal lives
 // where the equivalent flags are refused, at the daemon's listener
 // construction, so the file cannot express what the flags cannot.
@@ -101,7 +101,7 @@ type BindConfig struct {
 	APITLS string
 	// APIDomain names the certificate for the acme and self-signed modes.
 	// Required for acme, and for self-signed when APIAddr binds every
-	// interface — a certificate needs a name, and "every interface" is not
+	// interface: a certificate needs a name, and "every interface" is not
 	// one.
 	APIDomain string
 	APICert   string
@@ -133,7 +133,7 @@ type hclVariables struct {
 // validateDNSUpstreams applies the daemon's own rule (network.DNS's
 // normalizeUpstream) at parse time, where the diagnostic carries a file name:
 // an entry is an address, or a host:port pair. An empty list is refused by
-// name — it configures nothing, and a stanza that meant "no upstreams" would
+// name: it configures nothing, and a stanza that meant "no upstreams" would
 // silently turn external resolution into SERVFAIL.
 func validateDNSUpstreams(raw []string) ([]string, error) {
 	out := make([]string, 0, len(raw))
@@ -152,14 +152,14 @@ func validateDNSUpstreams(raw []string) ([]string, error) {
 		out = append(out, entry)
 	}
 	if len(out) == 0 {
-		return nil, errors.New("dns: an empty upstreams list configures nothing — " +
+		return nil, errors.New("dns: an empty upstreams list configures nothing; " +
 			"name at least one resolver, or remove the stanza to use the host's resolv.conf")
 	}
 	return out, nil
 }
 
 // hclStorage has no remain body on purpose: an unknown attribute inside a
-// stanza this version reads is an error, not a warning — the operator is
+// stanza this version reads is an error, not a warning; the operator is
 // configuring the real feature, and a typo there must not half-apply.
 type hclStorage struct {
 	AllowedHostPaths []string `hcl:"allowed_host_paths,optional"`
@@ -179,7 +179,7 @@ type hclBind struct {
 	EdgeHTTPS string `hcl:"edge_https,optional"`
 }
 
-// Probe loads path if it exists. A missing file is the feature being off —
+// Probe loads path if it exists. A missing file is the feature being off:
 // an empty Config and no error. Any other stat failure is an error: an
 // unreadable policy file is ambiguity, and ambiguity on a grant surface
 // resolves loud.
@@ -202,7 +202,7 @@ func Load(path string) (*Config, error) {
 	if err := CheckTrusted(path); err != nil {
 		return nil, err
 	}
-	src, err := os.ReadFile(path) // #nosec G304 — operator-supplied config path
+	src, err := os.ReadFile(path) // #nosec G304; operator-supplied config path
 	if err != nil {
 		return nil, fmt.Errorf("nodeconfig: read %s: %w", path, err)
 	}
@@ -261,7 +261,7 @@ func Parse(filename string, src []byte) (*Config, error) {
 		}
 		cfg.Bind = bind
 		// The sketch halves: accepted (the document's own example must not
-		// error) and named (never silently swallowed) — the v1.51 rule split
+		// error) and named (never silently swallowed); the v1.51 rule split
 		// down the middle of one stanza.
 		if strings.TrimSpace(root.Bind.EdgeHTTP) != "" {
 			cfg.Ignored = append(cfg.Ignored, "bind.edge_http")
@@ -292,7 +292,7 @@ var reservedVarNames = map[string]bool{
 	"KANEA_PROJECT": true, "service": true,
 }
 
-// decodeVariables reads the variables stanza. Values are literals — a node
+// decodeVariables reads the variables stanza. Values are literals: a node
 // default has no context to reference, so an expression that needs one is the
 // unknown-variable error HCL already gives it. Primitives only, carried as
 // strings; a list or object is refused by name, like a reserved name
@@ -329,7 +329,7 @@ func decodeVariables(body hcl.Body) (map[string]string, error) {
 
 // validateBind refuses every bind contradiction parse can see (PRD §15.1,
 // v1.61). What it deliberately does not decide: whether an unset mode on a
-// non-loopback address may stand — that resolution needs the daemon's
+// non-loopback address may stand; that resolution needs the daemon's
 // context and lives at its listener construction.
 func validateBind(b *BindConfig) error {
 	hasPair := b.APICert != "" || b.APIKey != ""
@@ -353,7 +353,7 @@ func validateBind(b *BindConfig) error {
 		}
 	case TLSPlaintext:
 		if hasPair {
-			// A pair beside plaintext is a control that cannot act, carried —
+			// A pair beside plaintext is a control that cannot act, carried;
 			// R21's rule: refused, never silently dropped.
 			return errors.New("bind.api_tls \"plaintext\" beside a TLS pair drops the pair; remove one")
 		}
@@ -362,7 +362,7 @@ func validateBind(b *BindConfig) error {
 			return errors.New("bind.api_tls \"acme\" issues its own certificate; remove the api_cert/api_key pair")
 		}
 		if b.APIDomain == "" {
-			return errors.New("bind.api_tls \"acme\" needs bind.api_domain — an IP cannot hold an ACME certificate")
+			return errors.New("bind.api_tls \"acme\" needs bind.api_domain; an IP cannot hold an ACME certificate")
 		}
 	case TLSSelfSigned:
 		if hasPair {
@@ -380,7 +380,7 @@ func validateBind(b *BindConfig) error {
 
 // unspecifiedHost reports whether addr binds every interface: an empty host
 // (":8600") or the unspecified address of either family. An address that does
-// not even split is not this function's finding — the daemon's listener will
+// not even split is not this function's finding: the daemon's listener will
 // name that problem.
 func unspecifiedHost(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
@@ -426,7 +426,7 @@ func walkTopLevel(body hcl.Body) (ignored []string, hasGrants bool) {
 }
 
 // CheckTrusted refuses a policy file someone other than the node's owner
-// could have written: it must be a regular file (not a symlink — this check
+// could have written: it must be a regular file (not a symlink; this check
 // cannot vouch for a target it did not stat), owned by root or the daemon's
 // own uid, and neither group- nor world-writable. World-readable is fine;
 // this is policy, not a secret.

@@ -119,7 +119,7 @@ func TestOfflineSkipsTheOnlyNetworkCheck(t *testing.T) {
 }
 
 // A node where Kanea installed nothing should say so plainly rather than
-// listing six failures — the operator has one action to take, not six.
+// listing six failures: the operator has one action to take, not six.
 func TestVersionMatrixOnAnEmptyPrefix(t *testing.T) {
 	got := checkVersionMatrix(scratchLayout(t))
 	if !got.OK || !got.Warn {

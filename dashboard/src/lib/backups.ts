@@ -4,7 +4,7 @@ import type { Backup } from './api'
  * Presentation helpers for the archive list.
  *
  * In lib rather than beside the page because they are pure, they are tested,
- * and a component file that also exports functions breaks fast refresh — the
+ * and a component file that also exports functions breaks fast refresh: the
  * page reloads instead of updating, which makes the dashboard tedious to work
  * on for no benefit.
  */
@@ -24,7 +24,7 @@ export function describeArchive(archive: Backup): string {
   const parts = ['services', 'allocs', 'secrets', 'certs', 'projects']
     .filter((key) => counts[key] !== undefined)
     .map((key) => `${counts[key]} ${key}`)
-  return parts.length > 0 ? parts.join(', ') : '—'
+  return parts.length > 0 ? parts.join(', ') : '-'
 }
 
 /**
@@ -49,7 +49,7 @@ export function when(iso: string | undefined): string {
 
 /**
  * replicationLag renders how far behind the sink is, derived from the last
- * shipped segment — there is no lag field on the wire, and pretending to
+ * shipped segment: there is no lag field on the wire, and pretending to
  * sub-second precision would be inventing a number. Segments ship about once
  * a minute, so a healthy node reads in seconds-to-minutes.
  */

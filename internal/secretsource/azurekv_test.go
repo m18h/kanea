@@ -91,7 +91,7 @@ func TestAzureKVFetchAndTokenCache(t *testing.T) {
 		t.Fatalf("Values = %+v, Failures = %+v", res.Values, res.Failures)
 	}
 
-	// A second pass on the same instance reuses the token — the reason
+	// A second pass on the same instance reuses the token: the reason
 	// Providers.Current keeps instances stable across unchanged passes.
 	res = f.provider.Fetch(context.Background())
 	if len(res.Failures) != 0 {

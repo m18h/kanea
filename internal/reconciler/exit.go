@@ -20,7 +20,7 @@ import (
 const signalExitBase = 128
 
 // signalNames covers the signals a container realistically dies from. Anything
-// outside it is reported by number — an unnamed signal is still a signal, and
+// outside it is reported by number: an unnamed signal is still a signal, and
 // guessing a name for a number we do not know would be worse than the number.
 var signalNames = map[uint32]string{
 	1: "SIGHUP", 2: "SIGINT", 3: "SIGQUIT", 4: "SIGILL", 6: "SIGABRT",
@@ -54,10 +54,10 @@ func classifyExit(status runtime.Status) (ExitReason, string) {
 // oomMessage names the ceiling that was actually hit. The distinction is the
 // whole point of carrying MemoryLimit: since v1.58 an omitted `resources` block
 // means unbounded (R11), so the common OOM is now the *collective* ceiling
-// (§5.2.11) — and "raise this service's limit" is the wrong advice for it.
+// (§5.2.11), and "raise this service's limit" is the wrong advice for it.
 func oomMessage(status runtime.Status) string {
 	if status.MemoryLimit == 0 {
-		return "out of memory under the node's workload ceiling — no limit declared"
+		return "out of memory under the node's workload ceiling (no limit declared)"
 	}
 	return fmt.Sprintf("exceeded its %s memory limit", mebibytes(status.MemoryLimit))
 }
@@ -80,7 +80,7 @@ func mebibytes(n uint64) string {
 }
 
 // crashMessage renders a crash for the notification body. It falls back to the
-// bare exit code for a record written before v1.68 carried a reason — those
+// bare exit code for a record written before v1.68 carried a reason: those
 // keep meaning exactly what they meant.
 func crashMessage(record AllocRecord) string {
 	if record.LastExitMessage == "" {

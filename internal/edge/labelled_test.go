@@ -66,7 +66,7 @@ func TestPerServiceCardinalityCapFoldsAndCounts(t *testing.T) {
 	m := NewMetrics()
 
 	// Far past the ceiling. Codes are upstream-chosen, so "ordinary operation
-	// stays under the cap" is not a guarantee — a service answering a distinct
+	// stays under the cap" is not a guarantee: a service answering a distinct
 	// status per request is what this exists to survive.
 	for code := 200; code < 200+maxSeriesPerService*3; code++ {
 		m.Observe(Observation{
@@ -98,7 +98,7 @@ func TestPerServiceCardinalityCapFoldsAndCounts(t *testing.T) {
 	// The aggregate family is unaffected by the cap: it has one series per
 	// service and counts every request regardless of how it was labelled.
 	if got := sample(t, body, `kanea_edge_requests_total{service="shop/web"}`); got != "120" {
-		t.Errorf("aggregate requests = %s, want 120 — the cap must not lose a request", got)
+		t.Errorf("aggregate requests = %s, want 120: the cap must not lose a request", got)
 	}
 }
 
@@ -294,8 +294,8 @@ func TestLabelValuesAreEscaped(t *testing.T) {
 }
 
 func TestUTF8LabelValuesTravelAsThemselves(t *testing.T) {
-	// %q would render these as \u escapes, which Prometheus does not unescape
-	// — the label would come back as literal backslash-u text.
+	// %q would render these as \u escapes, which Prometheus does not unescape:
+	// the label would come back as literal backslash-u text.
 	m := NewMetrics()
 	m.SetCertificates([]CertExpiry{{
 		CommonName: "möbel.example.com", Source: "acme", NotAfter: time.Unix(1, 0),
@@ -309,8 +309,8 @@ func TestUTF8LabelValuesTravelAsThemselves(t *testing.T) {
 // TestLabelledFootprintAtTargetScale bounds what the collector costs at §21's
 // service count with every per-service ceiling saturated.
 //
-// The cap is the only thing that makes this bounded — codes come from
-// upstreams and methods from clients — so it needs a measurement of its own,
+// The cap is the only thing that makes this bounded (codes come from
+// upstreams and methods from clients) so it needs a measurement of its own,
 // the way scaling.Metrics has TestFootprintAtTargetScale.
 func TestLabelledFootprintAtTargetScale(t *testing.T) {
 	if testing.Short() {
@@ -359,7 +359,7 @@ func TestLabelledFootprintAtTargetScale(t *testing.T) {
 // It is hand-written for the reason the collector is: pulling
 // prometheus/common in to parse our own output would put a dependency tail
 // behind `make security` for a check that is a dozen lines. What it catches is
-// the class that actually bites — a family whose samples disagree about their
+// the class that actually bites: a family whose samples disagree about their
 // label keys, which is how one metric name at two cardinalities double-counts,
 // and a sample with no TYPE, which Prometheus reads as untyped and will not
 // rate().
@@ -403,11 +403,11 @@ func TestExpositionIsWellFormed(t *testing.T) {
 			}
 		}
 		if !typed[base] {
-			t.Errorf("sample %q has no TYPE — Prometheus reads it as untyped and rate() will not work", name)
+			t.Errorf("sample %q has no TYPE: Prometheus reads it as untyped and rate() will not work", name)
 			continue
 		}
 		if seen, ok := labelKeys[base]; ok && seen != keys {
-			t.Errorf("family %s has two label sets, %q and %q — one name at two "+
+			t.Errorf("family %s has two label sets, %q and %q; one name at two "+
 				"cardinalities double-counts under sum()", base, seen, keys)
 			continue
 		}

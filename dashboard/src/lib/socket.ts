@@ -224,7 +224,7 @@ export class LiveSocket {
   // A frame sent while the socket is not OPEN is dropped, deliberately. For
   // subscribes that is safe because `active` replays on open; for
   // unsubscribes it is safe because server-side subscription state is
-  // per-connection — whatever the unsubscribe would have cleared either died
+  // per-connection: whatever the unsubscribe would have cleared either died
   // with the old connection or was never sent to the new one.
   private send(frame: Record<string, unknown>): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return

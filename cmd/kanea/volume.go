@@ -60,7 +60,7 @@ func runVolume(args []string) error {
 	}
 	o.endTable()
 	if unmeasured(resp) {
-		o.println("\nUSED is blank where nothing has been measured yet — a volume is " +
+		o.println("\nUSED is blank where nothing has been measured yet: a volume is " +
 			"sampled in the background, and s3 volumes are never walked.")
 	}
 	return o.Err()
@@ -79,10 +79,10 @@ func branch(i, n int) string {
 //
 // A gap, never a zero: an unmeasured volume and an empty one are different
 // facts, and "0 B" says the second (§9.2). Likewise a volume with no declared
-// budget has no size to show — it is not a budget of nothing.
+// budget has no size to show: it is not a budget of nothing.
 func bytesOrGap(n *int64) string {
 	if n == nil {
-		return "—"
+		return "-"
 	}
 	return storage.HumanBytes(*n)
 }

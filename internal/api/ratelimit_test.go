@@ -48,7 +48,7 @@ func TestPublicRoutesAreRateLimited(t *testing.T) {
 func TestLoginIsBoundedBeforeItCostsAnything(t *testing.T) {
 	h := newAuthHarness(t, tightLimits(2, 100))
 
-	// Login is the expensive public route — bcrypt by design — so the limiter
+	// Login is the expensive public route (bcrypt by design) so the limiter
 	// has to refuse it before the password is ever checked (§14, A07).
 	for range 2 {
 		h.do(t, h.request(t, http.MethodPost, api.PathLogin,
@@ -104,7 +104,7 @@ func TestAuthenticatedRequestsAreRateLimitedToo(t *testing.T) {
 
 func TestSocketCallersAreNotRateLimited(t *testing.T) {
 	// The CLI is the local root of §13.1, and every socket caller shares one
-	// meaningless source address — a limit there would throttle `kanea ps` in a
+	// meaningless source address: a limit there would throttle `kanea ps` in a
 	// loop against nothing.
 	h := newHarness(t, tightLimits(1, 1))
 	for i := range 20 {

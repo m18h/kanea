@@ -1,4 +1,4 @@
-# Kanea — developer tasks. See AGENTS.md for conventions and binding constraints.
+# Kanea: developer tasks. See AGENTS.md for conventions and binding constraints.
 
 GO      ?= go
 BINARY  ?= kanea
@@ -41,7 +41,7 @@ security: ## Security gates: gosec + govulncheck + gitleaks (AGENTS.md constrain
 
 # The BPF toolchain: cilium/ebpf's own builder image (Go + clang/LLVM, the
 # same one its CI uses), pinned BY DIGEST so `make bpf` output is a function
-# of the committed sources — tag 1777990914, the toolchain cilium/ebpf
+# of the committed sources: tag 1777990914, the toolchain cilium/ebpf
 # v0.22.0 builds with. The generated artifacts are committed; `bpf-verify`
 # regenerates and diffs, so a hand-edited artifact or a drifted toolchain is
 # a CI failure, not a code path (AGENTS.md, PRD v1.36).
@@ -57,7 +57,7 @@ bpf: ## Regenerate the committed BPF artifacts (requires docker)
 			-cflags '-O2 -g -Wall -Werror' kanea kanea.c
 
 .PHONY: bpf-verify
-bpf-verify: ## Regenerate BPF artifacts and diff — CI gate (requires docker)
+bpf-verify: ## Regenerate BPF artifacts and diff; CI gate (requires docker)
 	$(MAKE) bpf
 	git diff --exit-code internal/datapath/bpf/
 
@@ -74,7 +74,7 @@ dashboard: ## Dashboard gates: lint, typecheck, test, build, audit
 	@if [ -f dashboard/package.json ]; then \
 		cd dashboard && npm ci && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm audit --audit-level=high; \
 	else \
-		echo "dashboard/ not scaffolded yet (milestone M4) — skipping"; \
+		echo "dashboard/ not scaffolded yet (milestone M4); skipping"; \
 	fi
 
 .PHONY: tools
@@ -84,7 +84,7 @@ tools: ## Install dev tools (gitleaks via package manager: brew install gitleaks
 	$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
 
 .PHONY: check
-check: vet test lint security dashboard bpf-verify ## Run all gates (CI parity) — must pass before merge
+check: vet test lint security dashboard bpf-verify ## Run all gates (CI parity); must pass before merge
 
 .PHONY: clean
 clean: ## Remove build artifacts

@@ -7,7 +7,7 @@ import (
 
 // TestEncodedSizesMatchTheCSizeof pins every Marshal to the sizeof of the
 // C struct it mirrors in kanea.c. A drift here is a map the kernel will
-// refuse to write — or worse, one it writes at the wrong offsets.
+// refuse to write, or worse, one it writes at the wrong offsets.
 func TestEncodedSizesMatchTheCSizeof(t *testing.T) {
 	cases := []struct {
 		name string
@@ -48,7 +48,7 @@ func TestEndiannessPins(t *testing.T) {
 		want []byte
 	}{
 		{
-			// 10.0.0.1:443/TCP — the IP as wire bytes, 443 = 0x01BB
+			// 10.0.0.1:443/TCP: the IP as wire bytes, 443 = 0x01BB
 			// big-endian, proto 6, one pad byte.
 			"svc_key",
 			SvcKey{VIP: [4]byte{10, 0, 0, 1}, Port: 443, Proto: 6}.Marshal(),
@@ -66,7 +66,7 @@ func TestEndiannessPins(t *testing.T) {
 			[]byte{7, 0, 2, 0, 9, 0, 0, 0},
 		},
 		{
-			// 192.168.1.10:8080 — 8080 = 0x1F90 big-endian, two pad bytes.
+			// 192.168.1.10:8080; 8080 = 0x1F90 big-endian, two pad bytes.
 			"backend_val",
 			BackendVal{IP: [4]byte{192, 168, 1, 10}, Port: 8080}.Marshal(),
 			[]byte{192, 168, 1, 10, 0x1F, 0x90, 0, 0},
@@ -117,7 +117,7 @@ func TestEndiannessPins(t *testing.T) {
 			[]byte{0x02, 0x01},
 		},
 		{
-			// [fd10:245::7]:443/TCP — the address as wire bytes, 443 =
+			// [fd10:245::7]:443/TCP; the address as wire bytes, 443 =
 			// 0x01BB big-endian, proto 6, one pad byte.
 			"svc_key6",
 			SvcKey6{
@@ -134,7 +134,7 @@ func TestEndiannessPins(t *testing.T) {
 			},
 		},
 		{
-			// [fd10:244::a]:8080 — 8080 = 0x1F90 big-endian, two pad bytes.
+			// [fd10:244::a]:8080; 8080 = 0x1F90 big-endian, two pad bytes.
 			"backend_val6",
 			BackendVal6{
 				IP: [16]byte{
@@ -150,7 +150,7 @@ func TestEndiannessPins(t *testing.T) {
 			},
 		},
 		{
-			// fd00:ec2::254 — the IMDS ULA — reason METADATA, three pad bytes.
+			// fd00:ec2::254 (the IMDS ULA) reason METADATA, three pad bytes.
 			"drop_key6",
 			DropKey6{
 				DstIP: [16]byte{

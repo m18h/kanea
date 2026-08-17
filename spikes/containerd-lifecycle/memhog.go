@@ -59,7 +59,7 @@ func runMemhog(args []string) error {
 	}
 	fmt.Printf("memhog pid=%d anon=%s file=%s: allocated, sleeping\n", os.Getpid(), *anon, *file)
 	runtime.KeepAlive(buf)
-	for { // NOT select{} — the Go deadlock detector would kill us
+	for { // NOT select{}; the Go deadlock detector would kill us
 		time.Sleep(time.Hour)
 	}
 }

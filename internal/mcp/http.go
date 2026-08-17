@@ -11,7 +11,7 @@ import (
 //
 // Stateless: a POST carries one JSON-RPC message and the response carries its
 // reply. There is no session id, no SSE stream and no server-initiated message,
-// because nothing this server does needs one — every tool call is a request and
+// because nothing this server does needs one: every tool call is a request and
 // a response, and the live case has a websocket (§12.1). The specification
 // permits exactly this shape, and a session table would be state to expire, to
 // bound, and to get wrong.
@@ -28,7 +28,7 @@ const maxMessageBytes = 2 << 20
 //
 // Authentication is *not* done here. This handler is mounted behind the API's
 // route wrapper, so a request that reaches it has already been authenticated,
-// rate-limited and — for the routes its tools go on to call — authorized and
+// rate-limited and (for the routes its tools go on to call) authorized and
 // audited. Doing any of that again here would be a second implementation of the
 // thing §16.3 exists to avoid having two of.
 func (s *Server) HTTPHandler(origins []string) http.Handler {
@@ -37,7 +37,7 @@ func (s *Server) HTTPHandler(origins []string) http.Handler {
 		// names it: a page on any origin can POST to http://localhost:8600/mcp,
 		// and without an Origin check a browser someone left open becomes a
 		// client of their control plane. A request with no Origin header is not
-		// a browser at all — that is every real MCP client — and is allowed
+		// a browser at all (that is every real MCP client) and is allowed
 		// through to the credential check that follows.
 		if origin := r.Header.Get("Origin"); origin != "" {
 			if !originAllowed(origin, r.Host, origins) {
@@ -104,7 +104,7 @@ func (s *Server) serveMessage(w http.ResponseWriter, r *http.Request) {
 	// onto status codes would make a client's HTTP layer swallow replies its
 	// JSON-RPC layer needs to see.
 	w.WriteHeader(http.StatusOK)
-	// #nosec G705 — the reply does reflect request data: JSON-RPC requires the
+	// #nosec G705; the reply does reflect request data: JSON-RPC requires the
 	// response to echo the request's id verbatim, and that is where the taint
 	// comes from. It is safe here and only here because the id was decoded into
 	// a json.RawMessage, so it is syntactically valid JSON by the time it is
@@ -124,7 +124,7 @@ func isJSON(contentType string) bool {
 
 // originAllowed applies the same rule the websocket uses (api.checkOrigin):
 // same-origin needs no configuration, an allowlisted origin passes, and
-// everything else — including every origin when no allowlist is configured — is
+// everything else (including every origin when no allowlist is configured) is
 // refused.
 func originAllowed(origin, host string, allowed []string) bool {
 	parsed, err := url.Parse(origin)

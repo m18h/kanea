@@ -32,7 +32,7 @@ type HealthCheck struct {
 	Path string
 	// Port is the container port to probe, already resolved from its name.
 	Port int
-	// Command is the argument array for an exec check — never a shell string,
+	// Command is the argument array for an exec check, never a shell string,
 	// which would make a health check a command-injection vector (§14, A03).
 	Command []string
 	// Interval is how often to probe.
@@ -80,7 +80,7 @@ type ProbeTarget struct {
 	IPv4 string
 }
 
-// Execer runs a command inside an alloc — the runtime capability an exec check
+// Execer runs a command inside an alloc: the runtime capability an exec check
 // needs. It is declared here rather than added to Driver so that a Prober can
 // be built and tested without a containerd connection.
 type Execer interface {
@@ -90,8 +90,8 @@ type Execer interface {
 // netProber is the default Prober.
 //
 // http and tcp checks dial the alloc's address directly from the host. That
-// works because the project isolation policy admits the host entity — the same
-// allowance kanea-edge relies on (PRD §7.1) — so a check does not need a policy
+// works because the project isolation policy admits the host entity (the same
+// allowance kanea-edge relies on (PRD §7.1)) so a check does not need a policy
 // exception of its own.
 type netProber struct {
 	exec   Execer
@@ -154,8 +154,8 @@ func (p *netProber) probeHTTP(ctx context.Context, target ProbeTarget, check Hea
 	}
 	defer func() { err = errors.Join(err, resp.Body.Close()) }()
 
-	// 2xx only. A 3xx is not "healthy" — it is the service telling us to look
-	// somewhere else — and 4xx/5xx are plainly not.
+	// 2xx only. A 3xx is not "healthy" (it is the service telling us to look
+	// somewhere else) and 4xx/5xx are plainly not.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("health check returned %s", resp.Status)
 	}

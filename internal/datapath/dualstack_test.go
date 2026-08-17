@@ -112,7 +112,7 @@ func TestDualStackInit(t *testing.T) {
 		t.Errorf("config6 = %+v, want %+v", f.maps.cfg6, wantCfg)
 	}
 	// The v6 cluster map carries the real prefix on a dual-stack node
-	// (v1.65) — its zero value would deny LAN v6 return traffic an operator
+	// (v1.65); its zero value would deny LAN v6 return traffic an operator
 	// routed.
 	wantCluster6 := dpmap.CIDR6{
 		Net:  netip.MustParseAddr("fd10:244::").As16(),
@@ -123,7 +123,7 @@ func TestDualStackInit(t *testing.T) {
 	}
 }
 
-// A v4-only node writes the all-zero config6 — the disabled switch — so a
+// A v4-only node writes the all-zero config6 (the disabled switch) so a
 // pinned map left by an earlier dual-stack process cannot keep meaning "on".
 func TestV4OnlyInitDisablesConfig6(t *testing.T) {
 	f := newFixture(t)
@@ -170,7 +170,7 @@ func TestDualStackAttachOrdering(t *testing.T) {
 }
 
 // The upgrade matrix (v1.41): a v4-only alias with its identity present is a
-// COMPLETE pre-dual-stack attachment. Enabling v6 must adopt it — never
+// COMPLETE pre-dual-stack attachment. Enabling v6 must adopt it, never
 // re-plumb, because that yanks the veth under a running workload. The alloc
 // gains v6 at its next replacement.
 func TestV4OnlyAttachmentIsAdoptedNotReplumbed(t *testing.T) {
@@ -203,7 +203,7 @@ func TestV4OnlyAttachmentIsAdoptedNotReplumbed(t *testing.T) {
 		t.Errorf("v4 reservation = %v (ok=%v), want adopted 10.200.0.2", got, ok)
 	}
 	if got, ok := f.d.ipam6.Lookup(testSpec.ID); ok {
-		t.Errorf("v6 reservation = %v, want none — the alloc gains v6 at its next replacement", got)
+		t.Errorf("v6 reservation = %v, want none; the alloc gains v6 at its next replacement", got)
 	}
 }
 
@@ -267,7 +267,7 @@ func TestIPAMOverAV6Prefix(t *testing.T) {
 }
 
 // SyncServices programs a v6 frontend beside the v4 one when the service has
-// a VIP6 twin — same frontend id, family-split backend sets. (The network
+// a VIP6 twin: same frontend id, family-split backend sets. (The network
 // vocabulary gains VIP6 in the next commit; this pins the map layer's half:
 // a v6 SvcAddr flips into the fake and coexists with the v4 entry.)
 func TestAppliedCacheKeepsFamiliesApart(t *testing.T) {
@@ -298,7 +298,7 @@ func TestAppliedCacheKeepsFamiliesApart(t *testing.T) {
 }
 
 // SyncServices with a VIP6 twin programs both families: same frontend id,
-// family-split backend sets — and a backend with no v6 half (a pre-v1.41
+// family-split backend sets, and a backend with no v6 half (a pre-v1.41
 // attachment) is omitted from the v6 set instead of failing the service.
 func TestSyncServicesProgramsBothFamilies(t *testing.T) {
 	f := newDualStackFixture(t)

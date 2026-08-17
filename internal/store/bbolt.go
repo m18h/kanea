@@ -23,7 +23,7 @@ import (
 //
 // A var rather than a const so a test can stand a future schema up against the
 // migration machinery, which otherwise could not be exercised until the first
-// real migration existed — which is the worst moment to find out it is wrong.
+// real migration existed, which is the worst moment to find out it is wrong.
 // It is package-private and nothing writes to it outside a test.
 var schemaVersion uint64 = 1
 
@@ -134,15 +134,15 @@ func (s *boltStore) init() error {
 		if have > schemaVersion {
 			// The one version mismatch that is always fatal. A newer database
 			// opened by an older binary is a downgrade, and a downgrade that
-			// silently writes is unrecoverable — the fields the newer version
+			// silently writes is unrecoverable: the fields the newer version
 			// added are dropped by the older one's encoder on the first update.
-			return fmt.Errorf("%w: on-disk schema v%d is newer than this binary's v%d — upgrade kanea",
+			return fmt.Errorf("%w: on-disk schema v%d is newer than this binary's v%d; upgrade kanea",
 				ErrInvalid, have, schemaVersion)
 		}
 		if have < schemaVersion {
 			// Not migrated here (PRD §15.4). Opening and migrating in one step
 			// would leave nowhere to put the copy that makes a bad migration
-			// survivable — and taking that copy needs the database open. So Open
+			// survivable, and taking that copy needs the database open. So Open
 			// checks that a path exists and the caller runs it: see
 			// PendingMigration and Migrate.
 			if _, err := planMigration(have); err != nil {
@@ -221,7 +221,7 @@ func (s *boltStore) List(ctx context.Context, kind Kind, opts ListOptions) (Page
 		switch {
 		case opts.After != "" && opts.Reverse:
 			// Seek lands on or after After, so one step back is the first key
-			// strictly below it — After stays exclusive. A Seek that falls off
+			// strictly below it; After stays exclusive. A Seek that falls off
 			// the end means After is above every key, and the scan starts at the
 			// last one.
 			if k, _ = cur.Seek([]byte(opts.After)); k == nil {
@@ -431,7 +431,7 @@ func (s *boltStore) PruneChanges(ctx context.Context, upto uint64) (int, error) 
 }
 
 // Compact rewrites the database into dst. bbolt never shrinks in place, so
-// without this the file — and every backup derived from it — grows forever
+// without this the file (and every backup derived from it) grows forever
 // (PRD §5.2.3). The caller swaps the file in; this only produces it.
 func Compact(ctx context.Context, s Store, dst string) error {
 	if err := ctx.Err(); err != nil {
@@ -461,7 +461,7 @@ func Compact(ctx context.Context, s Store, dst string) error {
 
 // prefixEnd returns the first key that sorts after every key with this prefix,
 // which is where a reverse scan of the prefix range begins. It is nil when the
-// prefix is all 0xff bytes and therefore has no successor — the caller then
+// prefix is all 0xff bytes and therefore has no successor: the caller then
 // starts at the last key in the bucket, which is inside the range anyway.
 func prefixEnd(prefix []byte) []byte {
 	end := make([]byte, len(prefix))

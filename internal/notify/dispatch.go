@@ -21,7 +21,7 @@ import (
 // notification subsystem into an outage amplifier.
 //
 // So Publish is a non-blocking send onto a bounded queue with a drop counter,
-// and everything expensive — coalescing, rate limiting, retrying — happens
+// and everything expensive (coalescing, rate limiting, retrying) happens
 // behind it on the dispatcher's own goroutine.
 
 // Defaults for the dispatcher.
@@ -49,7 +49,7 @@ const (
 )
 
 // Sink receives every event that survives its channel's filter, in addition to
-// the channels themselves — the dashboard feed §11 requires all channels be
+// the channels themselves: the dashboard feed §11 requires all channels be
 // mirrored into.
 //
 // Called on the dispatcher's goroutine and expected not to block; the one
@@ -62,7 +62,7 @@ type Sink interface {
 type Route struct {
 	Channel Channel
 	Filter  Filter
-	// Project scopes the route. Empty means node-wide — a server-level default
+	// Project scopes the route. Empty means node-wide: a server-level default
 	// that sees every project's events. A project-level route sees only its
 	// own, which is the boundary that stops one project's chat receiving
 	// another's failures.
@@ -125,7 +125,7 @@ type Dispatcher struct {
 	delivered atomic.Int64
 	failed    atomic.Int64
 
-	// warnOnce keeps a full queue from writing a log line per dropped event —
+	// warnOnce keeps a full queue from writing a log line per dropped event:
 	// which would turn a notification storm into a logging storm.
 	warnOnce sync.Once
 }
@@ -233,7 +233,7 @@ func (d *Dispatcher) SetRoutes(routes []Route) {
 // The signature has no error on purpose. Every caller is a control-plane path
 // that has something more important to do than handle a notification failure,
 // and an error return would only invite someone to write `if err != nil { return
-// err }` in a reconcile loop — turning an undeliverable Slack message into a
+// err }` in a reconcile loop: turning an undeliverable Slack message into a
 // failed deploy.
 func (d *Dispatcher) Publish(e Event) {
 	select {
@@ -279,15 +279,15 @@ func (d *Dispatcher) Run(ctx context.Context) {
 // Pending digests are force-flushed first, whole set: a digest two seconds
 // from sending when the operator reconfigured channels must not be silently
 // discarded, and delivering it through the outgoing route is the only honest
-// option. Rate windows reset with the routes — reloads are rare, and a
+// option. Rate windows reset with the routes: reloads are rare, and a
 // carried-over window would need identity matching for a property nobody
 // observes.
 func (d *Dispatcher) applyRoutes(ctx context.Context, routes []Route) {
 	d.flushAll(ctx, true)
 	states, err := buildRouteStates(routes, d.log)
 	if err != nil {
-		// Unreachable from the wired path — the builders never hand a nil
-		// channel — but a bad set must not tear down the good one.
+		// Unreachable from the wired path (the builders never hand a nil
+		// channel) but a bad set must not tear down the good one.
 		d.log.Error("refusing a broken route set; keeping the current channels", "error", err)
 		return
 	}
@@ -306,7 +306,7 @@ func (d *Dispatcher) route(ctx context.Context, e Event) {
 	now := d.now()
 	for _, r := range *d.routes.Load() {
 		// A project-level route sees only its own project's events. Without
-		// this, one project's chat receives another's failures — the same
+		// this, one project's chat receives another's failures: the same
 		// boundary R5 draws for secrets.
 		if r.Project != "" && r.Project != e.Project {
 			continue
@@ -344,7 +344,7 @@ func (d *Dispatcher) flushAll(ctx context.Context, force bool) {
 //
 // final bypasses the rate limit. It is set only on the shutdown path: holding a
 // batch back is correct while the daemon is running and about to try again, and
-// wrong when it is going away — the events would be re-pended into a struct
+// wrong when it is going away; the events would be re-pended into a struct
 // nobody will look at, which is a silent loss dressed as backpressure.
 func (d *Dispatcher) flush(ctx context.Context, r *routeState, now time.Time, final bool) {
 	batch := r.pending
@@ -360,8 +360,8 @@ func (d *Dispatcher) flush(ctx context.Context, r *routeState, now time.Time, fi
 		// next message may say. They go back to pending and merge into it.
 		//
 		// Bounded, because a channel that stays limited would otherwise grow
-		// this without end. The newest are kept — during a storm the recent
-		// state is the useful one — and whatever falls off is counted so the
+		// this without end. The newest are kept (during a storm the recent
+		// state is the useful one) and whatever falls off is counted so the
 		// loss is visible rather than silent.
 		d.suppressed.Add(1)
 		if overflow := len(batch) - d.maxBatch; overflow > 0 {
@@ -556,7 +556,7 @@ func (d *Dispatcher) Test(project, channel string) []TestResult {
 	return results
 }
 
-// TestNodeChannels tests only the node-wide routes (v1.46) — the ones Test's
+// TestNodeChannels tests only the node-wide routes (v1.46): the ones Test's
 // project filter can never name, because their scope is the empty string.
 func (d *Dispatcher) TestNodeChannels(channel string) []TestResult {
 	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
@@ -579,7 +579,7 @@ func (d *Dispatcher) TestNodeChannels(channel string) []TestResult {
 // testRoute sends one test message through one route.
 func (d *Dispatcher) testRoute(ctx context.Context, r *routeState) TestResult {
 	event := NewEvent(EventTest, r.Project, "",
-		"test message from Kanea — this channel is configured correctly", d.now())
+		"test message from Kanea; this channel is configured correctly", d.now())
 	result := TestResult{Channel: r.Channel.Name(), Project: r.Project, OK: true}
 	if err := d.deliver(ctx, r.Channel, []Event{event}); err != nil {
 		result.OK, result.Error = false, err.Error()

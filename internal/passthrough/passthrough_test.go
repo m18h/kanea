@@ -357,7 +357,7 @@ func TestAGrantWhoseTargetIsTheWrongKindIsRefused(t *testing.T) {
 }
 
 // A device that is unplugged must fail the alloc that wants it, and only that
-// alloc — it must not have stopped the daemon from loading its config.
+// alloc: it must not have stopped the daemon from loading its config.
 func TestAMissingNodeIsALoadTimeSuccessAndAResolveTimeRefusal(t *testing.T) {
 	absent := filepath.Join(shortDir(t), "renderD128")
 
@@ -376,7 +376,7 @@ func TestAMissingNodeIsALoadTimeSuccessAndAResolveTimeRefusal(t *testing.T) {
 }
 
 // A symlinked grant resolves to what it points at now, and the resolved path is
-// what gets mounted — never the spelling.
+// what gets mounted, never the spelling.
 func TestSymlinksAreResolvedAtUse(t *testing.T) {
 	link := filepath.Join(shortDir(t), "dri")
 	if err := os.Symlink("/dev/null", link); err != nil {

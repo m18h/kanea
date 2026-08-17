@@ -23,7 +23,7 @@ import (
 // `buildkitd` runs as an unprivileged non-root host user under rootlesskit,
 // and this drives it over its unix socket with `buildctl`. Nothing in the build
 // path is a privileged container, so §14's workload hardening defaults are
-// untouched — that property is what decided the driver.
+// untouched: that property is what decided the driver.
 //
 // Everything here that looks fiddly comes from the spike's findings:
 //
@@ -37,7 +37,7 @@ import (
 //     progress output would be parsing a UI.
 
 // DefaultBuildkitSocket is where the provisioned daemon listens: in its own
-// home under the data directory, *not* under `/run` — rootlesskit copy-ups
+// home under the data directory, *not* under `/run`; rootlesskit copy-ups
 // `/run` into a namespace-private tmpfs, so a socket there is invisible to
 // every client outside the namespace (M0 spike ④). Root-reachable only, by
 // the unit's 0750 home.
@@ -51,8 +51,8 @@ const DefaultBuildkitSocket = "unix:///var/lib/kanea/buildkit/run/buildkitd.sock
 // Build timeouts.
 const (
 	// DefaultBuildTimeout bounds one build. Long, because a cold build of a
-	// large image legitimately takes minutes — the spike measured 22.8 s cold
-	// and 546 ms warm for a small one — and short enough that a wedged build
+	// large image legitimately takes minutes (the spike measured 22.8 s cold
+	// and 546 ms warm for a small one) and short enough that a wedged build
 	// does not hold the queue forever.
 	DefaultBuildTimeout = 30 * time.Minute
 	// probeTimeout bounds the startup check.
@@ -108,8 +108,8 @@ type BuilderConfig struct {
 	Socket string
 	// Binary is the buildctl executable. Empty means "buildctl" on PATH.
 	Binary string
-	// WorkDir is where per-build scratch — the metadata file, the registry
-	// credentials — is written. Each build gets a subdirectory, removed after.
+	// WorkDir is where per-build scratch (the metadata file, the registry
+	// credentials) is written. Each build gets a subdirectory, removed after.
 	WorkDir string
 	// Timeout bounds one build.
 	Timeout time.Duration
@@ -119,8 +119,8 @@ type BuilderConfig struct {
 
 // Builder runs builds against the rootless buildkitd.
 //
-// One build at a time. §10.2 makes isolation collective rather than per build —
-// the daemon carries one systemd cap and `--oci-max-parallelism` — so a second
+// One build at a time. §10.2 makes isolation collective rather than per build
+// (the daemon carries one systemd cap and `--oci-max-parallelism`) so a second
 // concurrent build would not get its own budget, it would share the first's and
 // make both slower and less predictable.
 type Builder struct {
@@ -182,7 +182,7 @@ func (b *Builder) Probe(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, b.binary, "--addr", b.socket, "debug", "workers") // #nosec G204 — operator-configured binary and socket
+	cmd := exec.CommandContext(ctx, b.binary, "--addr", b.socket, "debug", "workers") // #nosec G204; operator-configured binary and socket
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w at %s: %w (%s)",
@@ -239,7 +239,7 @@ func (b *Builder) Build(ctx context.Context, req BuildRequest, logs io.Writer) (
 	defer cancel()
 
 	started := b.now()
-	cmd := exec.CommandContext(ctx, b.binary, append([]string{"--addr", b.socket}, args...)...) // #nosec G204 — operator-configured binary; every argument is built here, never interpolated from a spec string
+	cmd := exec.CommandContext(ctx, b.binary, append([]string{"--addr", b.socket}, args...)...) // #nosec G204: operator-configured binary; every argument is built here, never interpolated from a spec string
 	cmd.Env = env
 	// Progress goes to stderr and the frontend's own output to stdout; a build
 	// log that dropped either would be missing exactly the part someone is
@@ -323,8 +323,8 @@ func buildArgs(req BuildRequest, recipe, metadataFile string) []string {
 
 // DetectRecipe picks the build recipe (§10.2).
 //
-// Containerfile wins when both are present — the Podman/buildah convention the
-// PRD adopts — and an explicit override may name either. The result is passed
+// Containerfile wins when both are present (the Podman/buildah convention the
+// PRD adopts) and an explicit override may name either. The result is passed
 // to `--opt filename=` because BuildKit would otherwise assume `Dockerfile`.
 func DetectRecipe(contextDir, override string) (string, error) {
 	if override != "" {
@@ -352,7 +352,7 @@ type buildMetadata struct {
 // From the file rather than from the progress output: the output is a UI, and
 // a digest scraped from it would break the first time BuildKit changed a line.
 func readDigest(path string) (string, error) {
-	body, err := os.ReadFile(path) // #nosec G304 — a path this process just created
+	body, err := os.ReadFile(path) // #nosec G304; a path this process just created
 	if err != nil {
 		return "", fmt.Errorf("gitops: read build metadata: %w", err)
 	}

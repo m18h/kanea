@@ -6,7 +6,7 @@ import path from 'node:path'
 import { mockApi } from './mock/api'
 
 // MOCK_API=1 (npm run dev:mock) serves the whole /v1 surface from the
-// in-process mock daemon instead of proxying to a real kanead — dashboard
+// in-process mock daemon instead of proxying to a real kanead: dashboard
 // development with no Linux node in sight.
 const useMock = process.env.MOCK_API === '1'
 

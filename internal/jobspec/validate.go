@@ -21,7 +21,7 @@ const MaxDescription = 512
 
 // dns1123Label is the hard naming rule (R1, PRD §4.2): lowercase alphanumeric
 // and '-', starting and ending alphanumeric, at most 63 characters. Names are
-// composed into DNS, so this is correctness, not style — and it doubles as an
+// composed into DNS, so this is correctness, not style, and it doubles as an
 // injection defense (PRD §14, A03).
 var dns1123Label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
@@ -175,7 +175,7 @@ func validateGit(p *Project) hcl.Diagnostics {
 //
 // Every check here exists to fail at `kanea plan` rather than at 3am. A channel
 // with a bad filter is silent, and a silent notification channel looks exactly
-// like a system with nothing to report — so a pattern matching no known event
+// like a system with nothing to report, so a pattern matching no known event
 // is a spec error, not a warning.
 func validateNotifications(p *Project) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -503,7 +503,7 @@ func validateTask(svc *Service) hcl.Diagnostics {
 
 	diags = append(diags, validateName("Task", task.Name, task.DefRange)...)
 
-	// R8 — the minimal service is image-only, but something must produce an
+	// R8; the minimal service is image-only, but something must produce an
 	// image: `task.image`, a `build` block, or both (build wins at deploy).
 	// The rule applies to functions verbatim (R25); only the field names in
 	// the message change, because a function's spec has no task block to point
@@ -527,7 +527,7 @@ func validateTask(svc *Service) hcl.Diagnostics {
 		})
 	}
 
-	// R11 (v1.58) — zero means unbounded (an omitted limit is the node's
+	// R11 (v1.58): zero means unbounded (an omitted limit is the node's
 	// capacity), so only a negative value is an error.
 	if task.Resources.CPU < 0 {
 		diags = append(diags, &hcl.Diagnostic{
@@ -647,8 +647,8 @@ func validatePorts(svc *Service) hcl.Diagnostics {
 			})
 		}
 		// A udp port has no VIP frontend (§5.2.5), so publishing is the only
-		// way anything reaches it. Unpublished it is legal — a spec staged
-		// before its publish block — but worth a warning, not silence.
+		// way anything reaches it. Unpublished it is legal (a spec staged
+		// before its publish block) but worth a warning, not silence.
 		if p.IsUDP() && !isPublished(svc, p.Name) {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagWarning,
@@ -683,7 +683,7 @@ func isPublished(svc *Service, portName string) bool {
 	return false
 }
 
-// validateHealthChecks enforces R7. `exec` takes an argument array — a shell
+// validateHealthChecks enforces R7. `exec` takes an argument array: a shell
 // string would be an injection vector (PRD §14, A03).
 func validateHealthChecks(svc *Service) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -702,7 +702,7 @@ func validateHealthChecks(svc *Service) hcl.Diagnostics {
 		case HealthExec:
 			if len(hc.Command) == 0 {
 				diags = append(diags, healthDiag(svc, hc,
-					"An exec health check needs command = [\"prog\", \"arg\"] — an argument array, never a shell string."))
+					"An exec health check needs command = [\"prog\", \"arg\"]; an argument array, never a shell string."))
 			}
 
 		case "":
@@ -865,14 +865,14 @@ func validateScaling(svc *Service) hcl.Diagnostics {
 			})
 		}
 		// R11 (v1.58): cpu/memory scaling targets are percent-of-limit, and
-		// the scrapers record nothing for an alloc with no limit — a rule
+		// the scrapers record nothing for an alloc with no limit; a rule
 		// that could never fire is refused, not carried (R21's rule).
 		if m.Name == "cpu" && svc.Task != nil && svc.Task.Resources.CPU == 0 {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Scaling metric needs a limit",
 				Detail: fmt.Sprintf("Service %q scales on %q, a percent of the CPU limit, but declares "+
-					"no resources.cpu — the metric would never be recorded. Declare a CPU limit or "+
+					"no resources.cpu; the metric would never be recorded. Declare a CPU limit or "+
 					"scale on a different metric.", svc.Name, m.Name),
 				Subject: svc.DefRange.Ptr(),
 			})
@@ -882,7 +882,7 @@ func validateScaling(svc *Service) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  "Scaling metric needs a limit",
 				Detail: fmt.Sprintf("Service %q scales on %q, a percent of the memory limit, but declares "+
-					"no resources.memory — the metric would never be recorded. Declare a memory limit or "+
+					"no resources.memory; the metric would never be recorded. Declare a memory limit or "+
 					"scale on a different metric.", svc.Name, m.Name),
 				Subject: svc.DefRange.Ptr(),
 			})
@@ -897,7 +897,7 @@ func validateScaling(svc *Service) hcl.Diagnostics {
 // The strategy is checked against a closed set rather than passed through,
 // because an unrecognised value has to mean *something* at deploy time, and
 // silently falling back to rolling would let `strategy = "canary"` parse, plan,
-// apply, and then do something other than what it says — on the one operation
+// apply, and then do something other than what it says: on the one operation
 // where being surprised is most expensive.
 func validateUpdate(svc *Service) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -937,7 +937,7 @@ func validateUpdate(svc *Service) hcl.Diagnostics {
 // validateRestart enforces R29's parse-time half: the crash-restart policy is
 // checked where the operator wrote it. Before this rule the block parsed and
 // went no further, so a mistyped backoff schedule surfaced as a conversion
-// error with no file or line — the same gap the update block had before v1.25.
+// error with no file or line: the same gap the update block had before v1.25.
 func validateRestart(svc *Service) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	re := svc.Restart
@@ -970,7 +970,7 @@ func validateRestart(svc *Service) hcl.Diagnostics {
 
 // validateAutoUpdate enforces R19's parse-time half.
 //
-// What is checked here is whether the request makes sense at all — not whether
+// What is checked here is whether the request makes sense at all, not whether
 // the registry can be reached, which is a node question and a runtime one.
 func validateAutoUpdate(svc *Service) hcl.Diagnostics {
 	up := svc.Update
@@ -1000,12 +1000,12 @@ func validateAutoUpdate(svc *Service) hcl.Diagnostics {
 			"update.auto re-resolves task.image, and this service does not declare one.")
 	}
 	// A digest does not move, so following one is a contradiction rather than a
-	// no-op — and reading it as a no-op would leave someone believing their
+	// no-op, and reading it as a no-op would leave someone believing their
 	// service updates when nothing ever will.
 	if strings.Contains(svc.Task.Image, "@") {
 		return reject("Auto-update needs a tag, not a digest",
 			fmt.Sprintf("task.image is %q, which is pinned to a digest. A digest never moves, "+
-				"so there is nothing for update.auto to follow — declare a tag instead.",
+				"so there is nothing for update.auto to follow: declare a tag instead.",
 				svc.Task.Image))
 	}
 
@@ -1198,7 +1198,7 @@ func validateDuration(field, value string, rng hcl.Range) hcl.Diagnostics {
 // validateNetworkPolicy enforces R14: the per-service ingress allowlist.
 //
 // Every entry is checked here rather than when the policy is generated,
-// because by then the diagnostic would have no file or line to point at — and
+// because by then the diagnostic would have no file or line to point at, and
 // a network rule that silently fails to match is the exact failure mode this
 // whole area is prone to (M0 spike ①).
 func validateNetworkPolicy(svc *Service) hcl.Diagnostics {
@@ -1217,7 +1217,7 @@ func validateNetworkPolicy(svc *Service) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  "Invalid policy peer",
 				Detail: fmt.Sprintf("Service %q: %s. Each allow_from entry names one peer as "+
-					"\"<project>/<service>\" — for example \"analytics/collector\".", svc.Name, err),
+					"\"<project>/<service>\"; for example \"analytics/collector\".", svc.Name, err),
 				Subject: policy.DefRange.Ptr(),
 			})
 			continue
@@ -1253,7 +1253,7 @@ func validateNetworkPolicy(svc *Service) hcl.Diagnostics {
 //
 // Only the *shape* of the path is decided here. Whether it may actually be
 // mounted is a server-config question (§15.1) that a job spec has no business
-// answering and this package has no way to answer — it does not know the
+// answering and this package has no way to answer: it does not know the
 // operator's allowlist, and a spec author naming their own permitted paths
 // would defeat the point of having one.
 func validateHostPath(st *Storage) hcl.Diagnostics {
@@ -1299,7 +1299,7 @@ var systemMountPaths = []string{"/dev", "/proc", "/sys"}
 // *grant name*, not a path, so there is no host path here to validate. Whether
 // the node has that grant, and whether this project may claim it, is a
 // server-config question (§15.1) this package cannot answer and should not try
-// to — a spec that named its own permitted devices would be the escape hatch
+// to: a spec that named its own permitted devices would be the escape hatch
 // the grant model exists to avoid.
 func validatePassthrough(svc *Service) hcl.Diagnostics {
 	task := svc.Task
@@ -1424,7 +1424,7 @@ func systemPathFor(p string) string {
 // checkSecretRef enforces R3 (referenced, never inlined) and R5 (project-scoped)
 // on one reference.
 //
-// `where` names the field in a way that reads in a diagnostic — the operator
+// `where` names the field in a way that reads in a diagnostic: the operator
 // needs to know which of several references in a spec is the wrong one.
 func checkSecretRef(ref, project, where string, rng hcl.Range) hcl.Diagnostics {
 	var diags hcl.Diagnostics

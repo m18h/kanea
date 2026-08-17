@@ -12,7 +12,7 @@ import (
 // Cilium 1.18 also removed the writable policy API (PUT/DELETE /v1/policy; even
 // GET is deprecated). The supported non-k8s replacement is --static-cnp-path: a
 // watched directory of CiliumNetworkPolicy YAML files. A file with an empty
-// metadata.namespace is treated as clusterwide, which is what Kanea wants —
+// metadata.namespace is treated as clusterwide, which is what Kanea wants:
 // its endpoints have no k8s namespace labels for a namespaced CNP to match.
 const (
 	policyDir      = "/var/run/cilium/policies"
@@ -22,7 +22,7 @@ const (
 )
 
 // projectIsolationPolicy is PRD §7.1's default: the project is an isolation
-// boundary — ingress only from the same project.
+// boundary; ingress only from the same project.
 const projectIsolationPolicy = `apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata:

@@ -21,7 +21,7 @@ const wordClass: Record<StatusTone, string> = {
 export interface StatusDotProps {
   tone: StatusTone
   /** label rides beside the dot in the same tone. The dot never stands alone
-   * where the state matters — colour is a highlight, the word is the fact. */
+   * where the state matters: colour is a highlight, the word is the fact. */
   label?: string | undefined
   className?: string | undefined
 }

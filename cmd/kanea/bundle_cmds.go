@@ -16,7 +16,7 @@ import (
 	"github.com/m18h/kanea/internal/provision"
 )
 
-// `kanea bundle create` — author an offline bundle (PRD §5.2.12).
+// `kanea bundle create`: author an offline bundle (PRD §5.2.12).
 //
 // The bundle exists so an air-gapped node is a supported installation rather
 // than a documented workaround. It is built here, on a machine with a network,
@@ -70,7 +70,7 @@ func runBundleCreate(args []string) error {
 	}
 
 	o := newOut()
-	o.printf("kanea bundle create — %s (%s)\n\n", version, *arch)
+	o.printf("kanea bundle create: %s (%s)\n\n", version, *arch)
 
 	// Image components need a containerd to export from. Said plainly up
 	// front, because the alternative is discovering it after ~200 MB of
@@ -91,7 +91,7 @@ func runBundleCreate(args []string) error {
 
 	// A staging directory, tarred at the end. Building into the final path
 	// would leave a half-written bundle looking like a whole one if this is
-	// interrupted — and the whole point of a bundle is that somebody carries
+	// interrupted, and the whole point of a bundle is that somebody carries
 	// it somewhere and trusts it.
 	staging := dest
 	if !*dirOnly {
@@ -131,7 +131,7 @@ func runBundleCreate(args []string) error {
 	o.printf("  sudo kanea install --bundle %s\n", filepath.Base(dest))
 	o.println()
 	o.println("Its contents are verified against the hashes compiled into that node's kanea")
-	o.println("binary, so the bundle needs no signature of its own — but it does need the")
+	o.println("binary, so the bundle needs no signature of its own, but it does need the")
 	o.printf("same version: this one was built by kanea %s.\n", version)
 	return o.Err()
 }
@@ -143,7 +143,7 @@ func runBundleCreate(args []string) error {
 // time-of-check/time-of-use gap: a symlink swapped in between the two would
 // have this read a file outside the staging directory and pack it into a
 // bundle somebody then carries to another machine. The staging directory is
-// ours and short-lived, so the window is small — but "small window" is the
+// ours and short-lived, so the window is small, but "small window" is the
 // description of every TOCTOU bug, and the root-scoped API closes it outright.
 func tarGzDir(srcDir, dest string) error {
 	root, err := os.OpenRoot(srcDir)
@@ -151,7 +151,7 @@ func tarGzDir(srcDir, dest string) error {
 		return fmt.Errorf("open %s: %w", srcDir, err)
 	}
 	defer func() { _ = root.Close() }() //nolint:errcheck // cleanup path
-	f, err := os.Create(dest)           // #nosec G304 — an operator-chosen output path
+	f, err := os.Create(dest)           // #nosec G304; an operator-chosen output path
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dest, err)
 	}

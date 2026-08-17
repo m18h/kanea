@@ -56,7 +56,7 @@ describe('matchGlob', () => {
     expect(matchGlob('*billing*', 'shop/billing')).toBe(true)
   })
 
-  // Regex metacharacters in a pattern are text, not syntax — a filter that
+  // Regex metacharacters in a pattern are text, not syntax: a filter that
   // throws on "(" is a filter nobody can type into.
   it('treats regex metacharacters as literals', () => {
     expect(matchGlob('shop/web(1)', 'shop/web(1)')).toBe(true)

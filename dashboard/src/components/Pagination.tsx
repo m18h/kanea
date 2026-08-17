@@ -26,7 +26,7 @@ export function PaginationControls<T>({
   return (
     <div className={cn('flex flex-wrap items-center justify-between gap-3 pt-3', className)}>
       <span className="text-xs tabular-nums text-muted-foreground">
-        {from}–{to} of {state.total}
+        {from}: {to} of {state.total}
       </span>
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">

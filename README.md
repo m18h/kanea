@@ -30,8 +30,8 @@ The installer fetches the binary, verifies it, and stops. Checksum verification 
 mandatory and there is no flag to skip it; the Sigstore signature is verified too
 when `cosign` is on `PATH`. It generates no keys and starts nothing.
 
-`kanea init` then installs the runtime — containerd, `runc` and rootless
-`buildkitd` — at versions pinned by SHA-256 in the binary (PRD §5.2.12). The
+`kanea init` then installs the runtime (containerd, `runc` and rootless
+`buildkitd`) at versions pinned by SHA-256 in the binary (PRD §5.2.12). The
 network layer needs no component: the eBPF datapath is compiled into `kanea`
 itself (§5.2.5). It installs under its own prefix on its own socket, so a node that
 ran Docker yesterday runs it tomorrow.
@@ -40,8 +40,8 @@ Prefer to do it by hand? Every release publishes
 `kanea_<version>_linux_<arch>.tar.gz`, an **SPDX SBOM** beside each archive
 (plus `kanea_<version>_source.spdx.json` for the build's own graph, which is
 where the embedded dashboard's npm dependencies are listed), `checksums.txt`,
-and a **keyless cosign** signature over the checksums — the SBOMs are in the
-checksums, so the one signature covers them too:
+and a **keyless cosign** signature over the checksums. The SBOMs are listed in
+the checksums, so that one signature covers them too:
 
 ```bash
 VERSION=v0.20.0; ARCH=amd64
@@ -75,13 +75,13 @@ brew install kanea
 ```
 
 Homebrew ships the CLI, not the node (PRD §5.2.12): on macOS you get the
-authoring half — `kanea plan` validates job specs with file-and-line
-diagnostics, no daemon needed — while the platform itself runs on Linux. On a
+authoring half, where `kanea plan` validates job specs with file-and-line
+diagnostics and needs no daemon, while the platform itself runs on Linux. On a
 Linux machine the formula installs the same full binary, but a *node* belongs
 to the script above: root-owned at `/usr/local/bin`, where `kanea upgrade`
 owns the swap. A brew-owned binary upgrades with `brew upgrade kanea`, then
 `sudo kanea upgrade --no-fetch` for the restart-and-migrate half. The formula
-lives in its own tap repository — [m18h/homebrew-kanea](https://github.com/m18h/homebrew-kanea) —
+lives in its own tap repository, [m18h/homebrew-kanea](https://github.com/m18h/homebrew-kanea),
 and is regenerated from each release's `checksums.txt` by a workflow there;
 the macOS install works from the first release that ships darwin archives.
 
@@ -89,10 +89,10 @@ the macOS install works from the first release that ships darwin archives.
 
 ```bash
 # 1. Check the node, install the runtime, run the master-key ceremony,
-#    write the units, start kanead, and create your admin account — init
+#    write the units, start kanead, and create your admin account. Init
 #    asks for a dashboard address (loopback by default) and a username,
-#    then prints where everything is. The master key is shown once — have
-#    somewhere to record it before you start.
+#    then prints where everything is. The master key is shown once, so
+#    have somewhere to record it before you start.
 sudo kanea init
 
 # 2. Deploy something.
@@ -101,7 +101,7 @@ kanea ui
 ```
 
 The CLI talks to `kanead` over a root-owned socket. To use it without sudo, join
-the `kanea` group init created and log in again — membership is root-equivalent,
+the `kanea` group init created and log in again. Membership is root-equivalent,
 exactly like docker's group:
 
 ```bash
@@ -124,19 +124,19 @@ bind {
   api_addr   = "192.168.1.10:8600"
   api_tls    = "self-signed"       # or: acme (with api_domain), provided, plaintext
   # api_domain = "kanea.home.example"  # acme needs it; names a self-signed cert
-  # api_cert   = "/etc/kanea/api.pem"  # provided only — always with api_key
+  # api_cert   = "/etc/kanea/api.pem"  # provided only, always with api_key
   # api_key    = "/etc/kanea/api.key"
 }
 ```
 
-`self-signed` issues the listener's certificate from the node's own CA — the
-one `kanea ca show` installs on your devices — with a real IP SAN, renewed
+`self-signed` issues the listener's certificate from the node's own CA (the
+one `kanea ca show` installs on your devices) with a real IP SAN, renewed
 automatically; `acme` gets a Let's Encrypt certificate for `api_domain`
 through the same account and renewal loop your services use; `provided` is
 your own `api_cert`/`api_key` pair; `plaintext` is explicit HTTP, allowed
 beyond loopback because you typed it and logged loudly. Init then skips the
-listen question and renders no listen flags — moving the API and dashboard later is
-an edit to the file plus `systemctl restart kanead`, never a re-init. An
+listen question and renders no listen flags. Moving the API and dashboard later
+is an edit to the file plus `systemctl restart kanead`, never a re-init. An
 explicit `--listen` always wins, and `--listen none` keeps the node
 socket-only regardless.
 
@@ -154,7 +154,7 @@ kanea ca show > kanea-ca.crt      # install on your phone, laptop, TV
 Every service then answers at `<service>.<project>.home.lan` over HTTPS, with no
 CA to reach and no rate limit to spend. `--tls-default` also takes `acme`,
 `provided` (certificates you put on the node, granted per project through
-`--tls-certs-config`) and `plaintext` — and a spec can override the node with
+`--tls-certs-config`) and `plaintext`. A spec can override the node with
 `expose { tls { mode = "…" } }`. A mode names a source, never a path.
 
 Prefer a port to a name? Publish one, with or without a domain:
@@ -178,13 +178,13 @@ push to must not be able to take :22.
 ### Granting what specs may use
 
 Host directories and device/GPU passthrough are off until the node's owner says
-otherwise — a spec *names* what it wants, and the node decides what is allowed.
+otherwise: a spec *names* what it wants, and the node decides what is allowed.
 Both grants live in one file, `/etc/kanea/kanea.hcl`, read once at daemon start
 (`kanea init` already created the directory; no unit editing, and re-running
 init never touches it):
 
 ```hcl
-# /etc/kanea/kanea.hcl — the node's, never the repository's
+# /etc/kanea/kanea.hcl: the node's, never the repository's
 storage {
   allowed_host_paths = ["/srv/kanea", "/dev/shm"]  # parents `host` volumes may use
 }
@@ -199,13 +199,13 @@ device "gpu" {
 sudo systemctl restart kanead                      # read once, at startup
 ```
 
-Keep it root-owned and `0644` — kanead refuses a policy file anyone else could
-have written. A spec then mounts with `storage "x" { type = "host" path = … }`
+Keep it root-owned and `0644`, because kanead refuses a policy file anyone else
+could have written. A spec then mounts with `storage "x" { type = "host" path = … }`
 and claims the GPU with `device "dri" { grant = "gpu" }`; a grant the node does
 not hold fails the alloc rather than starting without it.
 
 A host path must already exist, so a typo cannot become a silently empty volume.
-Add `create = true` to the storage block when you would rather Kanea made it —
+Add `create = true` to the storage block when you would rather Kanea made it,
 still only inside a prefix you allowed above.
 
 ### Volumes
@@ -214,14 +214,14 @@ still only inside a prefix you allowed above.
 measured usage and mount state. A `volume` block may declare `size = "10GiB"`,
 which is a **budget rather than a quota**: Kanea measures the volume against it
 and emits `volume.over_budget` (and `volume.under_budget` when it recovers), but
-nothing enforces it — no quota mechanism exists on the node, and `nfs`, `smb`
+nothing enforces it: no quota mechanism exists on the node, and `nfs`, `smb`
 and `s3` could not carry one anyway. Mounts notify too: `volume.mount_failed`
 when one will not establish or stops answering, `volume.mount_recovered` when
 the supervisor gets it back.
 
 ### Shared variables
 
-Declare a value once and reference it anywhere in a spec as `${name}` — or as a
+Declare a value once and reference it anywhere in a spec as `${name}`, or as a
 bare identifier where HCL takes an expression:
 
 ```hcl
@@ -240,17 +240,17 @@ service "web" {
 The same `kanea.hcl` above may carry a `variables` stanza of node-wide defaults
 (a LAN domain, a registry host); the spec's own block wins on a collision, and
 pipeline-supplied values like `${GIT_SHA_SHORT}` sit above both. Variables are
-never secrets — the node's stanza is readable by any signed-in caller over
+never secrets. The node's stanza is readable by any signed-in caller over
 `GET /v1/vars`, so credentials stay `secret:` references.
 
 It may also carry a `dns` stanza pinning the resolvers the internal DNS
-forwards external names to — `dns { upstreams = ["1.1.1.1"] }` — for a node
+forwards external names to (`dns { upstreams = ["1.1.1.1"] }`), for a node
 whose `/etc/resolv.conf` is DHCP's to rewrite. An explicit `--dns-upstream`
 flag wins; with neither, the daemon uses the host's own resolvers.
 
 ### Functions
 
-A wasm module can run as a service — a **function** (PRD §6.2 R25): always-on,
+A wasm module can run as a service, a **function** (PRD §6.2 R25): always-on,
 serving [wasi-http](https://github.com/WebAssembly/wasi-http), on the wasmtime
 shim `kanea init` installs beside the rest of the runtime. It deploys, rolls
 and scales like any service; what makes it a function is its triggers:
@@ -260,7 +260,7 @@ function "resize-avatar" {
   project = "shop"
   module  = "registry.example.com/shop/resize-avatar:v3"  # FROM scratch + module
 
-  trigger "http" {}                                # its FQDN — or, with no base
+  trigger "http" {}                                # its FQDN, or with no base
                                                    # domain, the edge's functions
                                                    # port: /<project>/<function>/
   trigger "event" { on = ["deploy.failed"] }       # POSTed matching events
@@ -270,13 +270,13 @@ function "resize-avatar" {
 }
 ```
 
-No volumes, devices, sockets, capabilities or `user` block — the sandbox
+No volumes, devices, sockets, capabilities or `user` block: the sandbox
 cannot honour them, so the spec cannot declare them. `kanea functions list`
 and the dashboard's Functions page show triggers, invocation rate (from the
 datapath's own counters, so service-to-function calls count too) and status.
 
-**Authenticating requests.** An `expose` block — or a function's `trigger
-"http"` — can require a credential, and the invoker can sign what it sends:
+**Authenticating requests.** An `expose` block, or a function's `trigger
+"http"`, can require a credential, and the invoker can sign what it sends:
 
 ```hcl
 expose {
@@ -293,18 +293,18 @@ expose {
 ```
 
 `auth` takes `basic_ref` (bcrypt htpasswd), `bearer_ref` (tokens), or a `jwt`
-block (HS256/RS256/ES256). Every field is a `secret:` reference — the edge is
+block (HS256/RS256/ES256). Every field is a `secret:` reference. The edge is
 handed hashes and public keys, never the tokens or passwords, and it fetches
 no JWKS: keys are static and the algorithm is configured, not read from the
 token. A `function` may also name a `signing_ref`, and every event/cron POST
 then carries an HMAC (`X-Kanea-Signature`) the function verifies, exactly as
-it would a Kanea webhook — so a function can trust that an invocation really
+it would a Kanea webhook, so a function can trust that an invocation really
 came from Kanea.
 
 ### Signing in with your directory
 
 Local accounts (`kanea user add`) and OIDC have been there since M5; LDAP joins
-them. Point `kanead` at the directory and map groups to roles — deny-by-default,
+them. Point `kanead` at the directory and map groups to roles. It is deny-by-default,
 so a bind that maps to no group is refused:
 
 ```bash
@@ -319,7 +319,7 @@ sudo kanead … \
 ```
 
 The same login form serves it. TLS is mandatory (`ldaps://`, or `ldap://` gets
-StartTLS forced — there is no insecure flag), a local account with the same name
+StartTLS forced; there is no insecure flag), a local account with the same name
 always wins, and the rate limiter runs before any bind, so Kanea cannot be used
 to brute-force the directory. Directory identities are ephemeral: no account
 record, just a session.
@@ -327,20 +327,33 @@ record, just a session.
 ### The dashboard
 
 A service page charts CPU, memory, request rate and p95 on a real time axis,
-streams logs live (filterable, with copy, download and a full-screen view), shows every restart or
-deploy as **rollout progress** — the planner's own spec-hash rule, on the
-wire — and opens a **shell into any running alloc** from the browser, over the
-same exec websocket the CLI uses.
+streams logs live (filterable, with copy, download and a full-screen view), and
+shows every restart or deploy as **rollout progress**, which is the planner's
+own spec-hash rule on the wire. It also opens a **shell into any running alloc**
+from the browser, over the same exec websocket the CLI uses.
+
+The **Projects** page lists each namespace with its services, how many allocs
+are actually running, where its spec comes from and when it last synced, with
+a **Sync now** button for a git-backed project. That button does what the poll
+loop does rather than deploying from the click. There is no "new project" button on
+purpose: a project is the namespace a service declares itself into, so
+deploying a service into a new name is how one comes to exist.
+
+The **Storage** page shows every storage resource with the volumes mounted
+against it: driver, target, host path, and measured usage against the `size`
+budget a volume declared. A budget is measured, never enforced: nothing stops
+a volume growing past it, and the number is the reason to go and look. Usage
+that has not been measured shows a dash rather than a zero, which for an `s3`
+volume is permanent: walking one costs a LIST per directory, so Kanea does not.
 
 The **Settings** page shows the node's configuration and lets an
 admin change what changes at runtime: the **backup destination** (directory or
-S3 — a new destination is probed with a test write before anything commits, so
-a typo cannot silently stop working replication) and **notification channels**
+S3, and a new destination is probed with a test write before anything commits,
+so a typo cannot silently stop working replication) and **notification channels**
 (node-wide defaults plus per-project overrides, each with a test button).
 Accounts, API tokens and the audit log live there too, one tab each. What
-stays read-only is
-what belongs to the unit — listen address, subnets, DNS, the published-port
-policy — shown with a note saying so.
+stays read-only is what belongs to the unit: listen address, subnets, DNS and
+the published-port policy, each shown with a note saying so.
 
 If your LAN already uses `10.244.0.0/16`, move Kanea's:
 
@@ -357,19 +370,19 @@ sudo kanea init --node-cidr6 fd10:244::/64 --cluster-cidr6 fd10:244::/56 \
   --service-cidr6 fd10:245::/64
 ```
 
-It is internal only — allocs get no v6 default route, so external IPv6 fails
+It is internal only: allocs get no v6 default route, so external IPv6 fails
 fast and clients fall back to v4. A gRPC service is exposed by marking its
 `expose` block with `protocol = "grpc"`; the edge then speaks HTTP/2 to it
 end-to-end (TLS on :443 in front, h2c behind). WebSockets need nothing at all.
 
-`kanea doctor` verifies the node at any time — components, versions against the
+`kanea doctor` verifies the node at any time: components, versions against the
 pinned matrix, bpffs, disk and clock. `kanea install --list` prints what is
 pinned; `--dry-run` downloads and verifies every artefact without writing.
 
 ### Air-gapped nodes
 
 A node with no egress is a supported installation, not a workaround. Build a
-bundle where there is a network, carry it across, install from it — the same
+bundle where there is a network, carry it across, install from it. The same
 hashes govern both paths:
 
 ```bash
@@ -378,7 +391,7 @@ sudo kanea init --bundle kanea-bundle.tar.gz              # air-gapped node
 ```
 
 The bundle carries no hashes of its own. Its contents are verified against the
-ones compiled into the installing node's binary — a bundle that supplied its own
+ones compiled into the installing node's binary. A bundle that supplied its own
 would be a bundle that authenticates itself. Releases publish one per
 architecture, covered by the same signed `checksums.txt`.
 
@@ -395,25 +408,25 @@ registry the node can reach.
 | Clock | NTP-synchronised |
 
 That is the whole list. containerd, `runc`, rootless `buildkitd` and the
-wasmtime shim are installed by `kanea init` at pinned versions — Kanea
+wasmtime shim are installed by `kanea init` at pinned versions. Kanea
 supplies them, not you.
 Already have a containerd you want to keep using? `kanea init --containerd
 external` adopts it instead.
 
 ## Status
 
-**M0–M10 complete.** The milestone table, what shipped in each, and the decisions a
-change is most likely to trip over live in [`AGENTS.md`](./AGENTS.md) — one table,
-one place to update.
+**M0 through M10 are complete.** The milestone table, what shipped in each, and
+the decisions a change is most likely to trip over live in
+[`AGENTS.md`](./AGENTS.md), in one table, in one place to update.
 
 ## Documentation
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document — the **north star** (v1.70) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.71) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
-| [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery — read it before you need it |
+| [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |
 | [`docs/VALIDATION.md`](./docs/VALIDATION.md) | What has been exercised on real hardware, with dates |
 | [`SECURITY.md`](./SECURITY.md) | How to report a vulnerability |
 
@@ -423,13 +436,13 @@ one place to update.
 make help       # list targets
 make build      # build ./bin/kanea
 make test       # tests with -race
-make check      # all gates (vet, test, lint, security, dashboard) — CI parity
+make check      # all gates (vet, test, lint, security, dashboard), CI parity
 make tools      # install dev tools (golangci-lint, gosec, govulncheck)
 ```
 
 Requires Go (version in `go.mod`) and Node (`.nvmrc`) for the dashboard. `make
 check` is what CI runs and what the release workflow runs before it builds
-anything — a failure there is a failed release later, not a failed lint.
+anything. A failure there is a failed release later, not a failed lint.
 
 Contributions follow conventional commits, one logical change per PR, and the
 binding constraints in [`AGENTS.md`](./AGENTS.md#binding-constraints-never-violate-these).

@@ -14,7 +14,7 @@ import (
 //
 // The live version of this is the websocket's stats topic, which is what the
 // dashboard uses. This route exists for callers that want one sample and have
-// nowhere to put a long-lived connection — the CLI, and the MCP server, whose
+// nowhere to put a long-lived connection: the CLI, and the MCP server, whose
 // tools are single request/response by construction.
 const PathStats = "/v1/stats"
 
@@ -41,7 +41,7 @@ type NodeStats struct {
 	// EventsDropped counts notification events the dispatcher could not queue.
 	EventsDropped int64 `json:"events_dropped,omitempty"`
 	// Node is the machine's own CPU, memory and load. Absent when procfs cannot
-	// be read — which is a different fact from an idle node, and the pointer
+	// be read, which is a different fact from an idle node, and the pointer
 	// fields inside it say so individually.
 	Node *scaling.NodeStats `json:"node,omitempty"`
 	At   time.Time          `json:"at"`
@@ -136,7 +136,7 @@ func (s *Server) nodeStats(r *http.Request) (NodeStats, error) {
 // NodeSource reads the machine's own statistics.
 //
 // An interface for one method, so the API depends on "hand me a reading" rather
-// than on procfs — which is what lets a non-Linux build, and every test, omit
+// than on procfs, which is what lets a non-Linux build, and every test, omit
 // it entirely rather than fake a filesystem.
 type NodeSource interface {
 	Read() scaling.NodeStats

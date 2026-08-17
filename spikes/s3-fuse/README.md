@@ -1,17 +1,17 @@
-# Spike ③ — S3 FUSE driver choice
+# Spike ③: S3 FUSE driver choice
 
 Throwaway M0 validation code (PRD §20). **Nothing here ships.** M2 implements the
 chosen driver behind the `storage "s3"` volume type (PRD §8).
 
 ## Questions this spike answers
 
-1. **Semantics** — what can a workload actually do on the mount? (append, write at
-   offset, rename, truncate, symlink, chmod — the drivers differ a lot)
-2. **Performance** — sequential throughput and metadata cost, and **when a write
+1. **Semantics**: what can a workload actually do on the mount? (append, write at
+   offset, rename, truncate, symlink, chmod: the drivers differ a lot)
+2. **Performance**: sequential throughput and metadata cost, and **when a write
    actually becomes durable** in the bucket
-3. **Container volume** — can the mount be handed to a containerd alloc, and does the
+3. **Container volume**: can the mount be handed to a containerd alloc, and does the
    alloc see writes that happen after it starts?
-4. **Reliability** — when the object store disappears, does the mount fail or hang,
+4. **Reliability**: when the object store disappears, does the mount fail or hang,
    and does it recover?
 
 Verdict and the driver recommendation: **[`REPORT.md`](./REPORT.md)**.
@@ -23,11 +23,11 @@ Verdict and the driver recommendation: **[`REPORT.md`](./REPORT.md)**.
 | s3fs | 1.93 (apt) | the FUSE veteran, most POSIX-complete |
 | rclone mount | 1.74.4 (upstream .deb) | VFS cache modes, defers uploads |
 | mountpoint-s3 | 1.23.0 (AWS .deb) | **substituted for goofys** |
-| ~~goofys~~ | — | **not tested:** last release v0.24.0 (Apr 2020), amd64-only asset — cannot run on Kanea's arm64 target |
+| ~~goofys~~ |-| **not tested:** last release v0.24.0 (Apr 2020), amd64-only asset: cannot run on Kanea's arm64 target |
 
 The S3 endpoint is a **local MinIO** (`127.0.0.1:9000`), so no cloud credentials are
 needed and the results are reproducible offline. Loopback has no round-trip cost, so
-the `perf` phase can add one with `tc netem` — see below.
+the `perf` phase can add one with `tc netem`: see below.
 
 ## How to run (on the `kanea-spike` OrbStack VM, Ubuntu 24.04 arm64)
 

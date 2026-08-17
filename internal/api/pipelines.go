@@ -229,7 +229,7 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 // carry it. It is not unauthenticated: every delivery is verified against a
 // per-project shared secret before anything happens, replays are rejected, and
 // an unsigned request is refused. But the mechanism is different, so it is
-// declared `public` in the route table and does its own authentication here —
+// declared `public` in the route table and does its own authentication here:
 // visible rather than buried in a middleware exception.
 //
 // The body is read to a bound before it is used, because the sender chooses

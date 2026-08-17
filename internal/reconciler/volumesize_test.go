@@ -12,7 +12,7 @@ import (
 //
 // Half one is the upgrade: `Volume` is hashed *whole* by SpecHash, so a new
 // field without `omitempty` changes the hash of every service that has a
-// volume — and upgrading kanead would roll every one of them on the node.
+// volume, and upgrading kanead would roll every one of them on the node.
 //
 // Half two is the edit: a budget is measured out of band and a `create` flag
 // has already been acted on by the time a container exists, so neither is
@@ -55,7 +55,7 @@ func TestAVolumeBudgetIsNotSpecHashMaterial(t *testing.T) {
 
 // The projection must not corrupt the caller's desired state. It runs on every
 // planning pass, and a SpecHash that quietly zeroed a budget would leave the
-// usage sampler with nothing to compare against — a feature that silently
+// usage sampler with nothing to compare against: a feature that silently
 // stopped working, with the hash function to blame.
 func TestHashingAVolumeDoesNotMutateIt(t *testing.T) {
 	d := desired(1)
@@ -105,7 +105,7 @@ func TestVolumeChangesThatAreContainerStateStillRoll(t *testing.T) {
 	}
 }
 
-// A local volume exists once per alloc, so each is measured — and judged —
+// A local volume exists once per alloc, so each is measured, and judged:
 // separately. Summing them would hide the case a budget is for: one alloc
 // filling its disk while two healthy siblings average the number down.
 func TestVolumeTargetsCoverEveryLocalAlloc(t *testing.T) {
@@ -134,7 +134,7 @@ func TestVolumeTargetsCoverEveryLocalAlloc(t *testing.T) {
 
 // A mounted volume is one mount per service by design, and a host volume is
 // the operator's single directory. Both are one target however many allocs
-// there are — measuring N times would be N walks of the same bytes.
+// there are: measuring N times would be N walks of the same bytes.
 func TestSharedVolumesAreMeasuredOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

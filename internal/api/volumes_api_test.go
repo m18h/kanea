@@ -45,7 +45,7 @@ func TestVolumesNestMountsUnderTheirStorage(t *testing.T) {
 		t.Fatalf("volumes: %v", err)
 	}
 	if len(resp.Storages) != 1 {
-		t.Fatalf("storages = %d, want 1 — both services mount the same resource", len(resp.Storages))
+		t.Fatalf("storages = %d, want 1; both services mount the same resource", len(resp.Storages))
 	}
 	st := resp.Storages[0]
 	if st.Name != "nas" || st.Type != storage.TypeNFS {
@@ -140,8 +140,8 @@ func TestAVolumeWithNoBudgetIsNeverOver(t *testing.T) {
 	}
 }
 
-// A local volume exists once per alloc, so a 3-alloc service has three of them
-// — each with its own contents, and each worth seeing separately.
+// A local volume exists once per alloc, so a 3-alloc service has three of them:
+// each with its own contents, and each worth seeing separately.
 func TestALocalVolumeIsListedPerAlloc(t *testing.T) {
 	h := newHarness(t, func(cfg *api.ServerConfig) { cfg.VolumeDir = "/vol" })
 	h.putDesired(t, withVolumes("shop", "web", 3,
@@ -159,7 +159,7 @@ func TestALocalVolumeIsListedPerAlloc(t *testing.T) {
 	}
 }
 
-// A host volume is the operator's own directory, shared by every alloc — one
+// A host volume is the operator's own directory, shared by every alloc: one
 // row, at the path they named.
 func TestAHostVolumeIsListedOnceAtItsOwnPath(t *testing.T) {
 	h := newHarness(t, func(cfg *api.ServerConfig) { cfg.VolumeDir = "/vol" })

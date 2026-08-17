@@ -23,7 +23,7 @@ type Role = 'admin' | 'viewer'
 /**
  * AccountsSection manages users and bearer tokens (PRD §13.2, §13.3).
  *
- * A token's secret exists exactly once, in the creation response — the store
+ * A token's secret exists exactly once, in the creation response: the store
  * keeps only a hash, so the banner under the create form is the only place it
  * will ever be readable. The password field is controlled state only for as
  * long as the form is open, and is cleared the moment the PUT succeeds.
@@ -353,7 +353,7 @@ export function AccountsSection({
                 <p className="text-sm">
                   Token <span className="font-mono">{minted.token.name}</span> (
                   <span className="font-mono">{minted.token.id}</span>) minted. This secret is
-                  shown once and is not recoverable — copy it now.
+                  shown once and is not recoverable: copy it now.
                 </p>
                 <div className="flex items-center gap-2">
                   <Input

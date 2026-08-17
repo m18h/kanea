@@ -1,4 +1,4 @@
-# GitHub Pages — the landing page and the hosted installer (PRD §20 M10).
+# GitHub Pages: the landing page and the hosted installer (PRD §20 M10).
 #
 # The installer this publishes is `scripts/install.sh`, copied into the artefact
 # at build time rather than committed twice. A second checked-in copy would

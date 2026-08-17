@@ -22,7 +22,7 @@ function cssVar(name: string): string {
 }
 
 /**
- * chartColors resolves the app's chart palette at call time — the CSS vars
+ * chartColors resolves the app's chart palette at call time: the CSS vars
  * flip with the `dark` class, so the caller re-reads on a theme change rather
  * than caching across one.
  */
@@ -46,7 +46,7 @@ export function chartColors(): ChartTheme {
 /**
  * smoothValues is a centered moving average for display: raw 5s samples of an
  * instantaneous reading are honest but unreadable at two pixels per point.
- * Null-aware — a gap stays a gap and never borrows neighbours across it, so
+ * Null-aware: a gap stays a gap and never borrows neighbours across it, so
  * "absent is never zero" survives the smoothing (§9.2). The readout beside
  * the chart still shows the raw latest sample.
  */
@@ -86,14 +86,14 @@ export function smoothValues(values: (number | null)[], window: number): (number
   })
 }
 
-/** timeLabel renders a tick as HH:MM — one line, unlike uPlot's stacked
+/** timeLabel renders a tick as HH:MM: one line, unlike uPlot's stacked
  * time-over-date default, which clips inside a compact panel. */
 export function timeLabel(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-/** percentRange pins a 0–100 metric so a flat 2% and a flat 90% line differ. */
+/** percentRange pins a 0-100 metric so a flat 2% and a flat 90% line differ. */
 export function percentRange(): [number, number] {
   return [0, 100]
 }
@@ -116,7 +116,7 @@ export interface ChartOptions {
   theme: ChartTheme
   /** formatValue renders the y value in the axis and cursor readout. */
   formatValue: (v: number) => string
-  /** paths draws the series — the caller passes uPlot.paths.spline() so the
+  /** paths draws the series; the caller passes uPlot.paths.spline() so the
    * 5s samples read as a curve rather than a jag per sample. Injected rather
    * than imported here, keeping this module value-free of uPlot (testable
    * without a canvas). */
@@ -170,7 +170,7 @@ export function buildOptions(opts: ChartOptions): uPlot.Options {
         stroke: theme.stroke[tone],
         fill: theme.fill[tone],
         width: 1.5,
-        // A gap in the data is a gap on screen — absent is never zero, and
+        // A gap in the data is a gap on screen; absent is never zero, and
         // never a line drawn through time nobody measured (PRD §9.2).
         spanGaps: false,
         points: { show: false },

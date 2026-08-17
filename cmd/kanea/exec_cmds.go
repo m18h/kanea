@@ -16,7 +16,7 @@ import (
 // runExec is `kanea exec` (PRD §16.2): a debug shell inside a running alloc.
 //
 // Admin-only and audited, and both of those are the daemon's doing rather than
-// this command's — the route is marked mutating, so the same wrapper that
+// this command's: the route is marked mutating, so the same wrapper that
 // guards every other mutation guards this one, and the audit entry records the
 // command that was asked for whether or not the session established.
 func runExec(args []string) error {
@@ -42,7 +42,7 @@ func runExec(args []string) error {
 
 	// The service resolves like every other service-targeting command
 	// (v1.56). Before this, a bare name with no --project scanned allocs
-	// across every project and then met the server's 400 — the resolver
+	// across every project and then met the server's 400: the resolver
 	// answers with the right project, or with the ambiguity, up front.
 	services, err := client.Services(ctx)
 	if err != nil {
@@ -80,8 +80,8 @@ func runExec(args []string) error {
 
 // splitExecArgs separates the service from the command after `--`.
 //
-// The separator is required. Without it, `kanea exec web ls -la` is ambiguous —
-// `-la` could be a flag of kanea's — and guessing produces the failure where a
+// The separator is required. Without it, `kanea exec web ls -la` is ambiguous
+// (`-la` could be a flag of kanea's) and guessing produces the failure where a
 // flag meant for the remote command is silently eaten here.
 func splitExecArgs(args []string) (service string, command []string, err error) {
 	if len(args) == 0 {
@@ -107,7 +107,7 @@ func splitExecArgs(args []string) (service string, command []string, err error) 
 
 // pickAlloc chooses a running alloc of a service.
 //
-// Deterministic — the lowest index that is running — rather than arbitrary. An
+// Deterministic (the lowest index that is running) rather than arbitrary. An
 // operator who runs the same command twice and lands in two different
 // containers has been given a debugging tool that lies about what it is
 // showing them.
@@ -132,7 +132,7 @@ func pickAlloc(ctx context.Context, client *api.Client, project, service string)
 		if len(allocs) == 0 {
 			return "", fmt.Errorf("no allocs for %s/%s; is it running?", project, service)
 		}
-		return "", fmt.Errorf("no running alloc for %s/%s (%d exist but none are running) — "+
+		return "", fmt.Errorf("no running alloc for %s/%s (%d exist but none are running): "+
 			"`kanea ps` shows why", project, service, len(allocs))
 	}
 	return best.ID, nil

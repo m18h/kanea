@@ -135,7 +135,7 @@ func TestRateLimitRefusesWithRetryAfter(t *testing.T) {
 		t.Fatalf("status = %d, want 429", resp.StatusCode)
 	}
 	// Without Retry-After a client can only guess, and guessing means retrying
-	// immediately — which is the behaviour the limit exists to stop.
+	// immediately, which is the behaviour the limit exists to stop.
 	retry := resp.Header.Get("Retry-After")
 	seconds, err := strconv.Atoi(retry)
 	if err != nil || seconds < 1 {
@@ -193,7 +193,7 @@ func TestRateLimitPerHeader(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	// Same key, same bucket — even from a different address.
+	// Same key, same bucket: even from a different address.
 	again := requestFrom(p, testHost, "10.0.0.2:1", first)
 	_ = again.Body.Close()
 	if again.StatusCode != http.StatusTooManyRequests {
@@ -237,7 +237,7 @@ func TestRateLimitSurvivesAReload(t *testing.T) {
 	resp := requestFrom(p, testHost, "10.0.0.1:1", nil)
 	_ = resp.Body.Close()
 
-	// Same route, republished — a scale event or an unrelated change.
+	// Same route, republished: a scale event or an unrelated change.
 	route, _ := p.Table().Lookup(testHost)
 	table, err := NewTable(Snapshot{Index: 99, Routes: []Route{route}})
 	if err != nil {
@@ -414,7 +414,7 @@ func TestRateLimitDefaultsToPerAddress(t *testing.T) {
 }
 
 // Burst is capacity above the sustained allowance, so a client that has been
-// quiet may spend more than one window at once — and no more.
+// quiet may spend more than one window at once, and no more.
 func TestRateLimitBurst(t *testing.T) {
 	clock := &testClock{now: time.Unix(1_700_000_000, 0)}
 	p := proxyWith(t, ProxyConfig{Now: clock.Now}, func(r *Route) {

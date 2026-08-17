@@ -17,8 +17,8 @@ import (
 // It holds no state about a conversation. MCP has an initialize handshake, but
 // nothing this server does depends on having seen it: every request carries its
 // own credential and every tool call is independent. That is what lets the
-// streamable-HTTP transport answer without sessions — there is nothing for a
-// session to hold — and it is why a client that reconnects mid-task loses
+// streamable-HTTP transport answer without sessions (there is nothing for a
+// session to hold) and it is why a client that reconnects mid-task loses
 // nothing.
 type Server struct {
 	backend Backend
@@ -28,7 +28,7 @@ type Server struct {
 	// rather than implemented here, for the same reason gitops takes an Applier:
 	// converting a parsed spec into desired state is wiring, and wiring lives in
 	// cmd/kanea. Nil leaves plan_spec and apply_spec reporting that they are
-	// unavailable, rather than absent — a tool that vanished would look like a
+	// unavailable, rather than absent: a tool that vanished would look like a
 	// version mismatch.
 	parse SpecParser
 	// tools is the fixed registry, sorted by name.
@@ -95,7 +95,7 @@ func (s *Server) Handle(ctx context.Context, sess *Session, body []byte) []byte 
 	result, rpcErr := s.dispatch(ctx, sess, req)
 	if req.isNotification() {
 		// Notifications get no reply, successful or otherwise. An error here is
-		// worth a log line and nothing more — there is nobody to tell.
+		// worth a log line and nothing more: there is nobody to tell.
 		if rpcErr != nil {
 			s.log.Debug("mcp notification failed", "method", req.Method, "error", rpcErr.Message)
 		}
@@ -114,7 +114,7 @@ func (s *Server) dispatch(ctx context.Context, sess *Session, req request) (any,
 		return s.initialize(req.Params)
 
 	case methodInitialized:
-		// A notification that the client is ready. Nothing to do — this server
+		// A notification that the client is ready. Nothing to do: this server
 		// holds no per-connection state to unblock.
 		return nil, nil
 
@@ -176,8 +176,8 @@ func (s *Server) initialize(raw json.RawMessage) (any, *rpcError) {
 // listTools reports the tools this caller may use.
 //
 // Filtered by role, which takes one extra request to find out who is asking.
-// The filter is a courtesy and not a control — the enforcement is the API, which
-// refuses the call whether or not it was advertised — but it is a courtesy worth
+// The filter is a courtesy and not a control (the enforcement is the API, which
+// refuses the call whether or not it was advertised) but it is a courtesy worth
 // the round trip: a model told it can deploy will try to deploy, and a refusal
 // it could not have predicted reads as a transient failure worth retrying.
 func (s *Server) listTools(ctx context.Context, sess *Session) listToolsResult {
@@ -234,7 +234,7 @@ func (s *Server) callTool(ctx context.Context, sess *Session, raw json.RawMessag
 	args := arguments(params.Arguments)
 
 	// The confirm gate (§16.3). Enforced here rather than by the API, because it
-	// is not an authorization rule — an admin is allowed to delete a project,
+	// is not an authorization rule: an admin is allowed to delete a project,
 	// and the API will let them. It is a rule about *agents*: a destructive
 	// action has to be asked for in a way that a model cannot arrive at by
 	// pattern-matching a tool name, and that a human reviewing the transcript
@@ -271,14 +271,14 @@ func (s *Session) source() string {
 
 // encode renders a response. A response that cannot be encoded is a bug in this
 // package rather than anything the caller did, and it still has to produce
-// valid JSON-RPC — an unparseable reply would hang a client waiting for one.
+// valid JSON-RPC: an unparseable reply would hang a client waiting for one.
 func encode(resp response) []byte {
 	body, err := json.Marshal(resp)
 	if err == nil {
 		return body
 	}
 	// The fallback carries no Result, so the only way it can fail to encode is
-	// an id that did not come from a decoded message — which cannot happen, the
+	// an id that did not come from a decoded message, which cannot happen, the
 	// id being raw JSON this package never constructs. Handled anyway, because
 	// returning nothing here hangs a client waiting for a reply.
 	fallback, ferr := json.Marshal(failTo(resp.ID,

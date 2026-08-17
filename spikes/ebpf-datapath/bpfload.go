@@ -79,7 +79,7 @@ func loadAndPin(e *env) error {
 // resulting link. On >= 5.7 this is a bpf_link (which is inherently
 // multi-program, the BPF_F_ALLOW_MULTI semantics); on older kernels
 // cilium/ebpf falls back to PROG_ATTACH with ALLOW_MULTI but the fallback
-// cannot be pinned — which the harness would surface as a failure here.
+// cannot be pinned, which the harness would surface as a failure here.
 func attachConnect4(prog *ebpf.Program) (link.Link, error) {
 	l, err := link.AttachCgroup(link.CgroupOptions{
 		Path:    cgroupRoot,

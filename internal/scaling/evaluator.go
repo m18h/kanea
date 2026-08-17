@@ -23,7 +23,7 @@ import (
 //     outage; scaling down early costs the same outage five minutes later when
 //     the traffic returns. So up is immediate and down waits for the whole
 //     window to agree.
-//   - **Step limits.** A metric spike — or a bad reading — must not take a
+//   - **Step limits.** A metric spike (or a bad reading) must not take a
 //     service from 2 replicas to 200. The step caps what one evaluation can do
 //     without capping what a sustained trend can do over several.
 //   - **Cooldown.** Even correct decisions need spacing: a rollout has to
@@ -35,7 +35,7 @@ import (
 // Policy is a service's scaling configuration, as the job spec declares it.
 type Policy struct {
 	// Min and Max bound the replica count. Max of zero means the service does
-	// not autoscale at all — the declared count stands.
+	// not autoscale at all: the declared count stands.
 	Min, Max int
 	Rules    []Rule
 	// Cooldown is the minimum time between changes for this service.
@@ -62,7 +62,7 @@ const (
 	// in tension with the one below it. Three samples is the cheapest defence
 	// against acting on a single anomalous scrape; three samples at 5 s take
 	// 15 s to accumulate. Add one evaluation tick and a sustained breach takes
-	// up to 20 s to produce a decision — which is why PRD v1.21 restates §21's
+	// up to 20 s to produce a decision, which is why PRD v1.21 restates §21's
 	// budget as 20 s rather than 15 s. Reacting faster than this means reacting
 	// to one or two samples, which is how an autoscaler chases noise instead of
 	// load.
@@ -137,12 +137,12 @@ type Evaluator struct {
 // serviceState is what the evaluator remembers between passes.
 type serviceState struct {
 	lastChange time.Time
-	// since is when the evaluator started tracking this service — this
+	// since is when the evaluator started tracking this service: this
 	// process, not this service's lifetime. A shrink is refused until a full
 	// stabilization window has been *observed* (v1.37): the window's promise
 	// is "stayed below current the whole time", and an empty history satisfies
 	// any predicate vacuously. Without this, the first evaluation after a
-	// daemon restart — or the first for a newly tracked service — could scale
+	// daemon restart (or the first for a newly tracked service) could scale
 	// down through a window it never saw.
 	since time.Time
 	// history is the recent raw desired counts, for the scale-down window. A
@@ -198,7 +198,7 @@ func NewEvaluator(cfg EvaluatorConfig) (*Evaluator, error) {
 // It does not apply anything: the reconciler owns convergence, and a scaler
 // that wrote counts directly would be a second thing deciding what runs. The
 // caller applies the decision and calls Applied, which is what starts the
-// cooldown — so a change the reconciler refused is retried next pass rather
+// cooldown, so a change the reconciler refused is retried next pass rather
 // than silently counted as done.
 func (e *Evaluator) Evaluate(service string, current int, policy Policy) Decision {
 	decision := Decision{Service: service, Current: current, Desired: current}
@@ -230,7 +230,7 @@ func (e *Evaluator) Evaluate(service string, current int, policy Policy) Decisio
 	case desired < current:
 		// Scaling up trusts the moment; scaling down has to trust the window,
 		// and a window the evaluator has not been watching for is not one it
-		// may trust (v1.37) — an empty history has no higher count in it for
+		// may trust (v1.37); an empty history has no higher count in it for
 		// the check below to find.
 		if now.Sub(state.since) < e.stabilize {
 			decision.Reason = fmt.Sprintf("holding %d: no full %s window observed yet",
@@ -335,7 +335,7 @@ func (e *Evaluator) rawDesired(service string, current int, policy Policy) (int,
 		}
 		want := int(math.Ceil(float64(current) * ratio))
 		if current == 0 {
-			// A stopped service cannot be scaled proportionally — anything
+			// A stopped service cannot be scaled proportionally: anything
 			// times zero is zero. One replica is the smallest step that lets
 			// the next evaluation have a ratio to work with.
 			want = 1

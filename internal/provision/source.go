@@ -15,15 +15,15 @@ import (
 //
 // The point of the interface is that there is exactly one install
 // implementation. [HTTPSource] fetches from upstream and [BundleSource] reads a
-// directory an operator carried in on a disk; everything downstream —
-// verification, extraction, placement, units — cannot tell which it got. An
+// directory an operator carried in on a disk; everything downstream
+// (verification, extraction, placement, units) cannot tell which it got. An
 // air-gapped install is therefore the same code path as an online one, tested
 // by the same tests, rather than a parallel one that rots between releases
 // (PRD §5.2.12).
 //
 // A Source is *not* trusted. Whatever it returns is hashed against the manifest
 // compiled into this binary before anything is written where it could be
-// executed — see [VerifiedReader]. That is deliberate for the bundle case in
+// executed: see [VerifiedReader]. That is deliberate for the bundle case in
 // particular: a bundle that carried its own hashes would be a bundle that
 // authenticates itself.
 type Source interface {
@@ -87,7 +87,7 @@ func (v *VerifiedReader) Read(p []byte) (int, error) {
 }
 
 // Verify reports whether what has been read so far matches. Callers that do
-// not read to EOF — an extractor that stops at the last member it wants — must
+// not read to EOF (an extractor that stops at the last member it wants) must
 // call this, or a truncated artefact passes.
 func (v *VerifiedReader) Verify() error { return v.verify() }
 

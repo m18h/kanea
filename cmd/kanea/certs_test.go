@@ -36,7 +36,7 @@ func TestResolveDirectory(t *testing.T) {
 
 // The API listener's certificate (bind.api_tls, PRD v1.61) rides the ordinary
 // §7.3 pass as a synthetic request: one sync must issue it, deliver it to the
-// listener's holder — IP SAN and all — and keep it out of the edge bundle,
+// listener's holder (IP SAN and all) and keep it out of the edge bundle,
 // which serves services and must not carry a private key no route names.
 func TestSyncCertificatesDeliversTheListenerCertificate(t *testing.T) {
 	st, err := store.Open(store.Options{Path: filepath.Join(t.TempDir(), "state.db")})

@@ -31,7 +31,7 @@ type netlinkOps struct {
 	serviceCIDR netip.Prefix
 	// serviceCIDR6 and clusterCIDR6 are the dual-stack halves (v1.41);
 	// invalid prefixes mean v4-only. clusterCIDR6 is what the alloc's one v6
-	// route covers — deliberately not a default route.
+	// route covers: deliberately not a default route.
 	serviceCIDR6  netip.Prefix
 	clusterCIDR6  netip.Prefix
 	toContainer   *ebpf.Program
@@ -96,7 +96,7 @@ func (n *netlinkOps) CreateVeth(host, peer, alias string) (string, string, error
 	// Wait for udev to finish processing the new veth before its MAC is read.
 	// systemd's default 99-default.link carries MACAddressPolicy=persistent,
 	// which for a virtual device generates a MAC and applies it on the "add"
-	// uevent — asynchronously, after LinkAdd returns. A MAC read before that
+	// uevent: asynchronously, after LinkAdd returns. A MAC read before that
 	// settles is the kernel's transient random one, stale by the time the
 	// interface carries traffic; the static neighbors ConfigurePeer and
 	// SetHostUp build from it would then point at an address nothing answers
@@ -177,7 +177,7 @@ func (n *netlinkOps) MovePeer(peer, netnsPath string) error {
 	if err != nil {
 		return fmt.Errorf("find %s: %w", peer, err)
 	}
-	nsFile, err := os.Open(netnsPath) // #nosec G304 — the path comes from runtime.NetnsPath, not a request
+	nsFile, err := os.Open(netnsPath) // #nosec G304; the path comes from runtime.NetnsPath, not a request
 	if err != nil {
 		return fmt.Errorf("open netns %s: %w", netnsPath, err)
 	}
@@ -208,7 +208,7 @@ func (n *netlinkOps) ConfigurePeer(netnsPath string, ip, gw, ip6, gw6 netip.Addr
 	if err != nil {
 		return fmt.Errorf("host mac %q: %w", hostMAC, err)
 	}
-	nsFile, err := os.Open(netnsPath) // #nosec G304 — the path comes from runtime.NetnsPath, not a request
+	nsFile, err := os.Open(netnsPath) // #nosec G304; the path comes from runtime.NetnsPath, not a request
 	if err != nil {
 		return fmt.Errorf("open netns %s: %w", netnsPath, err)
 	}
@@ -269,7 +269,7 @@ func (n *netlinkOps) ConfigurePeer(netnsPath string, ip, gw, ip6, gw6 netip.Addr
 		// The same trio for v6, except the last: a cluster-CIDR6 route
 		// instead of a default route. Internal-only means external v6 is
 		// ENETUNREACH immediately and Happy Eyeballs falls back to v4
-		// (PRD v1.41) — which is also why there is no NAT66.
+		// (PRD v1.41), which is also why there is no NAT66.
 		neigh6 := &netlink.Neigh{
 			LinkIndex:    idx,
 			Family:       unix.AF_INET6,
@@ -380,7 +380,7 @@ func (n *netlinkOps) List() ([]Link, error) {
 // settleUdev blocks until udev's event queue drains, so its MACAddressPolicy
 // has finished applying to a freshly created veth before the MAC is read
 // (see CreateVeth). Best-effort and bounded: on a host without a running
-// udevd it returns immediately, which is correct there — nothing will change
+// udevd it returns immediately, which is correct there; nothing will change
 // the MAC. systemd (hence udevadm) is a hard platform requirement (§21).
 func settleUdev() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -402,7 +402,7 @@ func prefixToIPNet(p netip.Prefix) *net.IPNet {
 
 // writeSysctl writes one /proc/sys value in the current netns.
 func writeSysctl(path, value string) error {
-	return os.WriteFile(path, []byte(value), 0o644) // #nosec G306 — /proc/sys modes are the kernel's
+	return os.WriteFile(path, []byte(value), 0o644) // #nosec G306: /proc/sys modes are the kernel's
 }
 
 // writePeerSysctls configures the alloc netns's v6 posture before eth0 comes

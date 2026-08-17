@@ -10,10 +10,10 @@ import (
 
 // PermittedCapabilities is the closed set a service may request (R13).
 //
-// Every runc alloc starts from the baseline set (PRD §14 A05, v1.56 —
+// Every runc alloc starts from the baseline set (PRD §14 A05, v1.56:
 // reconciler.BaselineCapabilities), and the declared list adds to it; the
 // CapabilityNone token starts from nothing instead. This set bounds what may
-// be *declared*: what stock images legitimately need beyond the baseline —
+// be *declared*: what stock images legitimately need beyond the baseline;
 // binding a raw socket, chrooting, dropping bounding-set entries. It is
 // deliberately the conservative half of Docker's default set.
 //
@@ -39,7 +39,7 @@ var PermittedCapabilities = map[string]string{
 
 // forbiddenCapabilities are refused with a specific explanation rather than the
 // generic "unknown capability", because these are the ones people actually
-// reach for — and each is effectively root on the host.
+// reach for, and each is effectively root on the host.
 var forbiddenCapabilities = map[string]string{
 	"CAP_SYS_ADMIN":       "it is equivalent to root: mount, namespace and cgroup control",
 	"CAP_SYS_MODULE":      "it can load kernel modules",
@@ -79,7 +79,7 @@ func validateCapabilities(svc *Service) hcl.Diagnostics {
 
 		// "none" opts out of the baseline: start from nothing, then grant
 		// only what the rest of the list names (R13, v1.56). Checked before
-		// the CAP_ prefix rule — it is a token, not a capability — but still
+		// the CAP_ prefix rule (it is a token, not a capability) but still
 		// through the duplicate map.
 		if name == capabilityNoneUpper {
 			if seen[CapabilityNone] {
@@ -125,7 +125,7 @@ func validateCapabilities(svc *Service) hcl.Diagnostics {
 // validateCommand enforces R12: an argument array, never a shell string.
 //
 // Only the program (element 0) must be non-empty. Later arguments may be empty
-// strings, because some programs use that meaningfully — `redis-server --save
+// strings, because some programs use that meaningfully: `redis-server --save
 // ""` is the documented way to disable snapshots, and rejecting it would make
 // the field unusable for exactly the images that need it.
 func validateCommand(svc *Service) hcl.Diagnostics {
@@ -137,8 +137,8 @@ func validateCommand(svc *Service) hcl.Diagnostics {
 			Severity: hcl.DiagError,
 			Summary:  "Invalid command",
 			Detail: fmt.Sprintf("Service %q: the first element of command is the program to run "+
-				"and cannot be empty. command is an argument array — "+
-				"[\"nginx\", \"-g\", \"daemon off;\"] — never a shell string.", svc.Name),
+				"and cannot be empty. command is an argument array; "+
+				"[\"nginx\", \"-g\", \"daemon off;\"], never a shell string.", svc.Name),
 			Subject: svc.Task.DefRange.Ptr(),
 		}}
 	}
@@ -156,7 +156,7 @@ func capDiag(svc *Service, detail string) *hcl.Diagnostic {
 
 // NormalizeCapabilities upper-cases and de-duplicates a validated list, so
 // every consumer sees canonical names. The one exception is the "none" token,
-// canonicalized to lowercase — it is a spec-level word, not a capability, and
+// canonicalized to lowercase: it is a spec-level word, not a capability, and
 // the case difference is what keeps it visually distinct from the CAP_ names
 // it stands beside. Sorting puts it after them, which is fine: position never
 // carries meaning (this function sorts, and spec-source regenerates from the

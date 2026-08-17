@@ -12,7 +12,7 @@ const pageSize = 25
 
 /**
  * AuditSection pages through the audit log, newest first, with the daemon's
- * own filters — actor, action and the `after` cursor are all server-side
+ * own filters: actor, action and the `after` cursor are all server-side
  * (internal/api handleAudit), so the browser never downloads the log to
  * search it.
  */
@@ -164,11 +164,11 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
       <TD className="whitespace-nowrap font-mono text-xs text-muted-foreground">
         {formatTime(entry.time)}
       </TD>
-      <TD className="font-mono text-xs">{entry.actor ?? '—'}</TD>
-      <TD className="font-mono text-xs text-muted-foreground">{entry.via ?? '—'}</TD>
+      <TD className="font-mono text-xs">{entry.actor ?? '-'}</TD>
+      <TD className="font-mono text-xs text-muted-foreground">{entry.via ?? '-'}</TD>
       <TD className="font-mono text-xs">{entry.action}</TD>
       <TD className="max-w-56 truncate font-mono text-xs text-muted-foreground" title={entry.target}>
-        {entry.target ?? '—'}
+        {entry.target ?? '-'}
       </TD>
       <TD>
         <Badge variant={resultVariant(entry.result)} className="font-mono text-[11px]">
@@ -176,9 +176,9 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
         </Badge>
       </TD>
       <TD className="font-mono text-xs tabular-nums text-muted-foreground">
-        {entry.status ?? '—'}
+        {entry.status ?? '-'}
       </TD>
-      <TD className="font-mono text-xs text-muted-foreground">{entry.source ?? '—'}</TD>
+      <TD className="font-mono text-xs text-muted-foreground">{entry.source ?? '-'}</TD>
     </TR>
   )
 }

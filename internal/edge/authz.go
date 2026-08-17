@@ -8,12 +8,12 @@ package edge
 // fail-closed `auth` marker per route, and the *verifier material* arrives in
 // the restricted bundle beside the certificates: bcrypt lines (verifier
 // material by construction), SHA-256 hashes of bearer tokens (the file cannot
-// authenticate anyone), and JWT keys — public for RS256/ES256, and only HS256
+// authenticate anyone), and JWT keys; public for RS256/ES256, and only HS256
 // crosses as a secret, because MAC verification cannot be done with less.
 //
 // A route marked auth whose entry is missing or invalid answers 503, never
 // open: middleware that fails open is R16's original sin. And a JWT's
-// algorithm is configured, never read from the token — the alg-confusion
+// algorithm is configured, never read from the token: the alg-confusion
 // class is retired by construction, not by a denylist.
 
 import (
@@ -78,7 +78,7 @@ type AuthEntry struct {
 
 // JWTConfig verifies tokens against a static key (R27: no JWKS, no fetch).
 type JWTConfig struct {
-	// Algorithm is AlgHS256, AlgRS256 or AlgES256 — configured, never read
+	// Algorithm is AlgHS256, AlgRS256 or AlgES256: configured, never read
 	// from the token.
 	Algorithm string `json:"algorithm"`
 	// SecretB64 is the HS256 key, base64. The one genuinely secret field in
@@ -105,7 +105,7 @@ type authTable struct {
 type compiledAuth struct {
 	mode string
 	// invalid records an entry that failed to compile. Kept rather than
-	// dropped: the route stays marked, and marked-without-material is 503 —
+	// dropped: the route stays marked, and marked-without-material is 503;
 	// the difference between "misconfigured, fix me" and "open".
 	invalid string
 
@@ -121,7 +121,7 @@ type compiledAuth struct {
 
 	// okCache bounds bcrypt's per-request cost: a hash of credentials that
 	// verified once verifies by lookup until the table is swapped. Success
-	// only — a failure must always pay full price, or the cache becomes a
+	// only: a failure must always pay full price, or the cache becomes a
 	// fast oracle for guessing.
 	mu      sync.Mutex
 	okCache map[[32]byte]bool
@@ -132,7 +132,7 @@ type compiledAuth struct {
 const okCacheCap = 256
 
 // newAuthTable compiles the bundle's entries. Compilation failures are kept
-// as invalid entries, never dropped — see compiledAuth.invalid.
+// as invalid entries, never dropped: see compiledAuth.invalid.
 func newAuthTable(entries []AuthEntry) *authTable {
 	t := &authTable{entries: make(map[string]*compiledAuth, len(entries))}
 	for _, e := range entries {
@@ -316,7 +316,7 @@ func bearerToken(r *http.Request) (string, bool) {
 
 // verifyJWT is a deliberately small verifier: three segments, the configured
 // algorithm, exp mandatory, nbf/iss/aud honoured. Hand-written on the S3/MCP
-// precedent — the surface Kanea needs is bounded, stdlib crypto does the
+// precedent; the surface Kanea needs is bounded, stdlib crypto does the
 // actual verification, and "alg: none" cannot exist here because the
 // algorithm never comes from the token.
 func (c *compiledAuth) verifyJWT(token string, now time.Time) bool {

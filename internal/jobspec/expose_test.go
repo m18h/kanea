@@ -128,7 +128,7 @@ func TestExposeSelectsAnExplicitPort(t *testing.T) {
 }
 
 // A spec that says which port it means is never second-guessed by a naming
-// heuristic — R28's grpc-name preference included.
+// heuristic: R28's grpc-name preference included.
 func TestExposeExplicitPortBeatsTheGrpcPreference(t *testing.T) {
 	multi := `network {
     port "grpc" { container = 50051 }
@@ -146,7 +146,7 @@ func TestExposeExplicitPortBeatsTheGrpcPreference(t *testing.T) {
 }
 
 // An explicit port naming nothing declared is its own refusal, listing what is
-// declared — not the ambiguity error, whose remedy is not this spec's problem.
+// declared, not the ambiguity error, whose remedy is not this spec's problem.
 func TestExposeRejectsAnUnknownExplicitPort(t *testing.T) {
 	got := parseErr(t, exposeSpec(httpPort, `
     domains = ["shop.example.com"]
@@ -510,8 +510,8 @@ func TestExposeWithoutATLSBlockSaysNothing(t *testing.T) {
 	}
 }
 
-// The old spelling still parses — a spec written against v1.32 must not become
-// an error — and warns, with `letsencrypt = false` warning about the meaning
+// The old spelling still parses (a spec written against v1.32 must not become
+// an error) and warns, with `letsencrypt = false` warning about the meaning
 // that changed underneath it rather than about the field's age.
 func TestExposeWarnsOnTheDeprecatedTLSSpelling(t *testing.T) {
 	tests := []struct{ name, body, want string }{
@@ -559,7 +559,7 @@ func TestExposeProtocolRefusesAnUnknownValue(t *testing.T) {
 }
 
 // gRPC needs TLS+HTTP/2; the declared-plaintext path is HTTP/1.1 cleartext.
-// A declared contradiction is a plan error — the node-default case is the
+// A declared contradiction is a plan error: the node-default case is the
 // agent's warning, because R20 resolves the mode node-side.
 func TestExposeProtocolGRPCRefusesDeclaredPlaintext(t *testing.T) {
 	msg := parseErr(t, exposeSpec(httpPort, `
@@ -572,7 +572,7 @@ func TestExposeProtocolGRPCRefusesDeclaredPlaintext(t *testing.T) {
 }
 
 // Publishing the gRPC port in http mode would stand up an HTTP/1.1 listener
-// for a service the spec says speaks gRPC — R21's silently dropped control.
+// for a service the spec says speaks gRPC: R21's silently dropped control.
 // The default mode is http, so the defaulted spelling is refused too.
 func TestExposeProtocolGRPCRefusesAnHTTPModePublish(t *testing.T) {
 	for name, publish := range map[string]string{
@@ -614,7 +614,7 @@ func TestExposeProtocolGRPCPrefersThePortNamedGRPC(t *testing.T) {
 		t.Fatalf("EdgePort = %+v, want the grpc port", port)
 	}
 
-	// Without the marker, the same two ports select "http" — the preference
+	// Without the marker, the same two ports select "http": the preference
 	// belongs to the protocol, not to the name.
 	spec = parse(t, exposeSpec(`network {
     port "grpc" { container = 50051 }

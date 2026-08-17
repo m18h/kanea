@@ -24,8 +24,8 @@ import (
 
 // Provided serves certificates an operator put on this node (PRD §7.3, R20).
 //
-// It is the passthrough model applied to TLS. A spec names a *grant* —
-// `tls { mode = "provided", name = "shop" }` — and the mapping from that name
+// It is the passthrough model applied to TLS. A spec names a *grant*
+// (`tls { mode = "provided", name = "shop" }`) and the mapping from that name
 // to a pair of files lives in the node's own config, never in the spec. The
 // reason is R17's: GitOps deploys a spec automatically, so anything a spec can
 // name, anyone who can push to a synced repository can name, and a spec that
@@ -59,7 +59,7 @@ type Provided struct {
 // certGrant is one configured certificate: two files and who may claim them.
 //
 // There is no domain list. The names come from the certificate's own SANs,
-// read on every pass — a declared list is a second copy that can disagree with
+// read on every pass: a declared list is a second copy that can disagree with
 // the certificate, and a configuration that lies about what it serves is worse
 // than one that says nothing.
 type certGrant struct {
@@ -121,7 +121,7 @@ func (p *Provided) Configured() bool { return p.path != "" }
 //
 // It hashes the config source and every certificate and key it names, rather
 // than stat-ing them. A renewal tool that writes the same size at the same
-// second is not hypothetical — certbot writes then renames, and the mtime it
+// second is not hypothetical: certbot writes then renames, and the mtime it
 // leaves is whatever the temporary file had.
 //
 // It is deliberately a poll and not fsnotify: write-then-rename replaces the
@@ -153,7 +153,7 @@ func (p *Provided) fingerprint() [sha256.Size]byte {
 		h.Write([]byte(line))
 	}
 
-	src, err := os.ReadFile(p.path) // #nosec G304 — operator-supplied config path
+	src, err := os.ReadFile(p.path) // #nosec G304: operator-supplied config path
 	if err != nil {
 		write("config-error:%v\n", err)
 		return sum(h)
@@ -170,7 +170,7 @@ func (p *Provided) fingerprint() [sha256.Size]byte {
 	for _, name := range policy.order {
 		g := policy.grants[name]
 		for _, f := range []string{g.certPath, g.keyPath} {
-			body, err := os.ReadFile(f) // #nosec G304 — operator-supplied path
+			body, err := os.ReadFile(f) // #nosec G304: operator-supplied path
 			if err != nil {
 				write("%s:error:%v\n", f, err)
 				continue
@@ -215,7 +215,7 @@ func (p *Provided) reload() *certPolicy {
 	if p.path == "" {
 		return &certPolicy{}
 	}
-	src, err := os.ReadFile(p.path) // #nosec G304 — operator-supplied config path
+	src, err := os.ReadFile(p.path) // #nosec G304; operator-supplied config path
 	if err == nil {
 		var policy *certPolicy
 		if policy, err = parseCertPolicy(p.path, src); err == nil {
@@ -288,7 +288,7 @@ func (p *Provided) resolve(policy *certPolicy, req Request) (Certificate, error)
 		return matched[0], nil
 	default:
 		// Sorted candidate order makes this the same choice every time, which
-		// matters more than which one wins — but an operator whose two
+		// matters more than which one wins, but an operator whose two
 		// wildcards both cover a service should be told rather than left to
 		// wonder which is being served.
 		p.log.Warn("several configured certificates cover this service; using the first by name",
@@ -335,11 +335,11 @@ func (p *Provided) warnIfExpired(cert Certificate, name string, req Request) {
 // handshake failure with no useful client-side message, and it has to be named
 // as itself.
 func loadGrant(g certGrant) (Certificate, error) {
-	certPEM, err := os.ReadFile(g.certPath) // #nosec G304 — operator-supplied path
+	certPEM, err := os.ReadFile(g.certPath) // #nosec G304; operator-supplied path
 	if err != nil {
 		return Certificate{}, fmt.Errorf("certificate %q: read cert: %w", g.name, err)
 	}
-	keyPEM, err := os.ReadFile(g.keyPath) // #nosec G304 — operator-supplied path
+	keyPEM, err := os.ReadFile(g.keyPath) // #nosec G304; operator-supplied path
 	if err != nil {
 		return Certificate{}, fmt.Errorf("certificate %q: read key: %w", g.name, err)
 	}
@@ -381,7 +381,7 @@ func loadGrant(g certGrant) (Certificate, error) {
 // coversAll reports whether a certificate naming these domains covers every
 // name the service needs. It is CoversHost's rule applied to a set, so a
 // wildcard certificate satisfies a service without either side knowing a
-// filename convention — and it is the edge's own matcher, so a certificate
+// filename convention, and it is the edge's own matcher, so a certificate
 // this accepts is one the edge will actually select on SNI.
 func coversAll(certDomains, want []string) bool {
 	if len(want) == 0 {
@@ -429,7 +429,7 @@ func parseCertPolicy(filename string, src []byte) (*certPolicy, error) {
 			}
 		}
 		// A grant naming no project is a config error, not a permissive
-		// default — the rule the passthrough grants follow, for the reason
+		// default; the rule the passthrough grants follow, for the reason
 		// R5 gives: cross-project reach is something an operator states.
 		if len(c.Allow) == 0 {
 			return nil, fmt.Errorf(

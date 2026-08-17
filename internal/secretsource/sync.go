@@ -12,7 +12,7 @@ import (
 )
 
 // The pass (§5.2.13). Per value: resolve the current local record, compare in
-// memory, and write only on a difference — an unchanged value producing a
+// memory, and write only on a difference; an unchanged value producing a
 // Store write per poll would be CDC/S3 write amplification, which is the one
 // way this feature could violate the spirit of constraint #2. A stored
 // plaintext hash was rejected for the comparison: beside the ciphertext it is
@@ -30,7 +30,7 @@ type Target interface {
 	Describe(ctx context.Context, ref string) (secrets.Info, error)
 }
 
-// ProviderSet hands out the current providers — *Providers in the daemon,
+// ProviderSet hands out the current providers: *Providers in the daemon,
 // a fixture in tests.
 type ProviderSet interface {
 	Current() []Provider
@@ -108,7 +108,7 @@ func (r PassResult) Failed() bool {
 	return false
 }
 
-// MappingStatus is one mapping's last known state — metadata only, the API's
+// MappingStatus is one mapping's last known state: metadata only, the API's
 // view.
 type MappingStatus struct {
 	To         string    `json:"to"`
@@ -128,7 +128,7 @@ type ProviderStatus struct {
 }
 
 // SyncOnce runs one pass over every provider. A provider failing entirely
-// records its failures and the loop moves to the next — one broken endpoint
+// records its failures and the loop moves to the next: one broken endpoint
 // must not stop the others (the certificate sources' isolation rule).
 func (s *Syncer) SyncOnce(ctx context.Context) PassResult {
 	var result PassResult
@@ -192,7 +192,7 @@ func (s *Syncer) apply(ctx context.Context, v Value, source string) (changed boo
 	return true, nil
 }
 
-// warnIfReasserting logs — once per path — when the sync overwrites a value
+// warnIfReasserting logs (once per path) when the sync overwrites a value
 // an operator put by hand. The mapping is declarative intent and always wins;
 // what the operator needs is to be told which knob actually controls the path.
 func (s *Syncer) warnIfReasserting(ctx context.Context, path, source string) {
@@ -219,8 +219,8 @@ func (s *Syncer) clearReasserted(path string) {
 }
 
 // record folds one provider's pass into the status the API serves. Entries
-// are rebuilt from the pass — a mapping removed from the config disappears
-// from status (the local secret does not, §5.2.13) — and a failing mapping
+// are rebuilt from the pass: a mapping removed from the config disappears
+// from status (the local secret does not, §5.2.13), and a failing mapping
 // keeps its previous last-synced time, because "when did this last work" is
 // the question the status answers.
 func (s *Syncer) record(prov Provider, pass ProviderPass) {
@@ -263,7 +263,7 @@ func (s *Syncer) record(prov Provider, pass ProviderPass) {
 }
 
 // Status is the metadata-only view the API serves: paths, refs, timestamps
-// and error strings — never values, structurally (nothing here holds one).
+// and error strings, never values, structurally (nothing here holds one).
 func (s *Syncer) Status() []ProviderStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()

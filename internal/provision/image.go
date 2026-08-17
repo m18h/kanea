@@ -23,13 +23,13 @@ import (
 // OCI image components (PRD §5.2.12): buildkit.
 //
 // BuildKit's binaries are self-contained, so `buildkitd`, `buildctl` and
-// `rootlesskit` are extracted onto the host and run there — §23.2 specified it
+// `rootlesskit` are extracted onto the host and run there: §23.2 specified it
 // that way.
 //
 // Files are pulled out by reading the image's layers rather than by mounting a
 // snapshot. That buys three things: no mount syscall and no root requirement
 // beyond writing the prefix, no dependency on the snapshotter having unpacked,
-// and — the one that matters — the identical code path serves an OCI archive
+// and (the one that matters) the identical code path serves an OCI archive
 // carried in on a disk, which is what makes image components work air-gapped.
 
 // SystemNamespace holds the platform's own images, apart from the per-project
@@ -111,13 +111,13 @@ func (c *ImageClient) Unpack(ctx context.Context, ref string, files []File, dest
 // because the artefacts are, and carrying both platforms of an image to a node
 // that can use one would add roughly the size of everything else in it.
 // Authoring a bundle for an architecture other than the authoring machine's is
-// ordinary — a pull is not run, it is fetched.
+// ordinary: a pull is not run, it is fetched.
 func (c *ImageClient) Export(ctx context.Context, ref, arch, destPath string) error {
 	ctx = c.scope(ctx)
 	// OnlyStrict, not Only: Only's documented ARM handling makes an arm64
 	// matcher also accept 32-bit linux/arm entries. The pull takes the single
 	// best match and fetches arm64 alone, but the exporter applies the matcher
-	// to every index entry — and an entry that matches without having been
+	// to every index entry, and an entry that matches without having been
 	// fetched is "content digest not found". The bundle serves exactly one
 	// architecture, so exact is what was meant all along.
 	platform := platforms.OnlyStrict(ocispec.Platform{OS: "linux", Architecture: arch})
@@ -126,7 +126,7 @@ func (c *ImageClient) Export(ctx context.Context, ref, arch, destPath string) er
 		return fmt.Errorf("pull %s for %s: %w", ref, arch, err)
 	}
 
-	f, err := os.Create(destPath) // #nosec G304 — an operator-chosen bundle path
+	f, err := os.Create(destPath) // #nosec G304; an operator-chosen bundle path
 	if err != nil {
 		return fmt.Errorf("create %s: %w", destPath, err)
 	}
@@ -147,7 +147,7 @@ func (c *ImageClient) Export(ctx context.Context, ref, arch, destPath string) er
 // one the manifest names. A bundle is not trusted more than a registry.
 func (c *ImageClient) Import(ctx context.Context, archivePath string) error {
 	ctx = c.scope(ctx)
-	f, err := os.Open(archivePath) // #nosec G304 — a path inside the opened bundle
+	f, err := os.Open(archivePath) // #nosec G304; a path inside the opened bundle
 	if err != nil {
 		return fmt.Errorf("open %s: %w", archivePath, err)
 	}
@@ -182,7 +182,7 @@ func (r *readerAtCloser) Close() error { return r.closer.Close() }
 // layer: the first occurrence found scanning downwards is the one that would
 // win anyway, and stopping as soon as everything is found means a 600 MiB
 // image is usually read for a fraction of its size. Whiteouts are honoured for
-// the same reason — a file deleted by a later layer is not present, and taking
+// the same reason: a file deleted by a later layer is not present, and taking
 // the copy from an earlier one would install something the image does not have.
 func extractFromLayers(ctx context.Context, layers layerReader, descs []ocispec.Descriptor, files []File, dest string) error {
 	wanted := make(map[string]File, len(files))
@@ -236,7 +236,7 @@ func scanLayer(ctx context.Context, layers layerReader, desc ocispec.Descriptor,
 	defer func() { _ = blob.Close() }() //nolint:errcheck // cleanup path
 
 	// DecompressStream handles gzip and zstd, and passes an uncompressed layer
-	// through — the media type is not consulted because a mismatched one is a
+	// through: the media type is not consulted because a mismatched one is a
 	// thing that happens.
 	dec, err := compression.DecompressStream(blob)
 	if err != nil {

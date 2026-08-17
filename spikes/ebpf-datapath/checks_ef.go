@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// check5 — SYN-gated stateless policy.
+// check5: SYN-gated stateless policy.
 //
 // p1 (projA, svcClientA) and p4 (projB, svcOtherB) are the actors. p4 runs a
 // server on backendPort (started for the fleet); p1 dials it directly (no
@@ -30,7 +30,7 @@ func check5(e *env) error {
 		check("5a same-project connect allowed", ok, "connect ok="+boolText(ok)+" err="+errText)
 	}
 
-	// 5b: cross project (p1 projA -> p4 projB) is denied — the SYN is dropped.
+	// 5b: cross project (p1 projA -> p4 projB) is denied; the SYN is dropped.
 	before, _ := readDrops(e, dropPolicy)
 	ok, _, elapsed, errText, err := podConnect(e, "p1", p4Addr, 2*time.Second, false)
 	after, _ := readDrops(e, dropPolicy)
@@ -43,7 +43,7 @@ func check5(e *env) error {
 	}
 
 	// 5c: allow_v4 edge permits the cross-project connect and the reply flows
-	// (the server responds — a full request/response, not just a SYN).
+	// (the server responds; a full request/response, not just a SYN).
 	if err := allowEdge(e, svcOtherB, svcClientA); err != nil {
 		check("5c allow edge permits cross-project + reply flows", false, "allow: "+err.Error())
 	} else {
@@ -57,7 +57,7 @@ func check5(e *env) error {
 		_ = denyEdge(e, svcOtherB, svcClientA)
 	}
 
-	// 5d: ICMP within and across projects — recorded, not gated. The policy
+	// 5d: ICMP within and across projects; recorded, not gated. The policy
 	// is SYN-gated, so ICMP (no TCP flags) is passed by P2 for a programmed
 	// destination regardless of project. We record what actually happens.
 	okSame, _ := podPing(e, "p1", e.pods["p2"].ip.String())
@@ -68,11 +68,11 @@ func check5(e *env) error {
 	// that the stateless SYN gate does not police ICMP, which the design must
 	// account for (a separate ICMP decision, or accept it).
 	check("5d ICMP behavior recorded (see INFO lines)", true,
-		fmt.Sprintf("same=%v cross=%v — SYN gate does not police ICMP", okSame, okCross))
+		fmt.Sprintf("same=%v cross=%v: SYN gate does not police ICMP", okSame, okCross))
 	return nil
 }
 
-// check6 — netfilter interplay. Install a FORWARD-drop table (docker/ufw
+// check6: netfilter interplay. Install a FORWARD-drop table (docker/ufw
 // stand-in), see whether routed pod<->pod and pod->uplink break, whether our
 // own accept chain rescues them, and restore state.
 func check6(e *env) error {

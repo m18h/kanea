@@ -86,7 +86,7 @@ describe('useLiveTopic', () => {
 
     act(() => ws.close())
     // Stale beats blank: the page keeps rendering what it has, but nothing may
-    // treat it as a current answer — that is what un-set connected means.
+    // treat it as a current answer; that is what un-set connected means.
     expect(result.current.up).toBe(false)
     expect(result.current.connected).toBe(false)
     expect(result.current.data).toEqual({ value: 3 })

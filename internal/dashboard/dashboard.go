@@ -26,7 +26,7 @@ var dist embed.FS
 
 // placeholderName is the committed stand-in that makes this package compile
 // before the dashboard has ever been built. `go:embed` fails at compile time on
-// an empty directory, so something has to be in there — and a file that
+// an empty directory, so something has to be in there, and a file that
 // explains itself beats an empty .gitkeep.
 const placeholderName = "placeholder.html"
 
@@ -76,7 +76,7 @@ func Handler(prefix string, wsOrigins []string) http.Handler {
 	allowed := websocketSources(wsOrigins)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Every answer carries these — the 200s, the 404s and the 405 alike —
+		// Every answer carries these: the 200s, the 404s and the 405 alike;
 		// because the headers protect the origin, not one page on it.
 		setSecurityHeaders(w, r, allowed)
 
@@ -153,28 +153,28 @@ func looksLikeAsset(name string) bool {
 	return path.Ext(name) != ""
 }
 
-// cspCommon is every directive that does not depend on the request — the depth
+// cspCommon is every directive that does not depend on the request: the depth
 // layer under the app's own discipline. connect-src is the one that does, and
 // it is built per request just below.
 //
-// The dashboard renders attacker-influenced strings — log lines, service
-// names, event messages — and React escapes all of them; the ESLint ban on
+// The dashboard renders attacker-influenced strings (log lines, service
+// names, event messages) and React escapes all of them; the ESLint ban on
 // dangerouslySetInnerHTML keeps it that way. This policy is what stops a
 // future slip from becoming an exploit: no inline script exists in the build
 // (Vite emits files, and only files) and script-src stays without an inline
 // exception. style-src carries 'unsafe-inline' because the exception is not
 // in the build but at runtime: xterm.js sets style attributes on its cursor
 // and selection elements, and shadcn's primitives position dialogs the same
-// way — a strict style-src blocks them and the terminal renders broken.
+// way; a strict style-src blocks them and the terminal renders broken.
 // The one data: URI is the favicon, which is why img-src carries the scheme
-// and font-src does not — the build ships no @font-face at all. base-uri is
+// and font-src does not; the build ships no @font-face at all. base-uri is
 // 'none' rather than 'self': the page has no <base> element, and an injected
 // one would repoint every relative URL on it. frame-ancestors is the
 // clickjacking guard: an admin console with stop, restart and restore buttons
 // is exactly what an invisible overlay wants.
 //
 // This is the ONLY place the dashboard's CSP is set. A second header on the
-// same response is not redundancy — browsers intersect multiple policies, so
+// same response is not redundancy: browsers intersect multiple policies, so
 // a stricter duplicate silently wins.
 const cspCommon = "default-src 'self'; " +
 	"script-src 'self'; style-src 'self' 'unsafe-inline'; " +
@@ -188,21 +188,21 @@ const cspCommon = "default-src 'self'; " +
 // The app connects to its own origin and nowhere else: REST over fetch, and
 // the live and exec sockets. `'self'` covers the fetches, but whether it also
 // covers ws:/wss: to the same host is exactly the thing browsers have
-// disagreed about — so the sockets are named. Naming them as the bare schemes
+// disagreed about, so the sockets are named. Naming them as the bare schemes
 // (`connect-src 'self' ws: wss:`) is what this used to do, and it matches any
-// host on the internet: it left connect-src — the directive whose whole job is
-// to bound where a compromised page can send what it has read — with no bound
+// host on the internet: it left connect-src; the directive whose whole job is
+// to bound where a compromised page can send what it has read, with no bound
 // at all on the one transport that is bidirectional. So the schemes are pinned
 // to the host the request came in on, which is by construction the origin the
 // page is running on, plus the daemon's configured extras.
 //
 // A Host that is not a plausible host[:port] gets neither: it cannot be the
 // origin of a real page, and letting one compose into the header would put a
-// `;` — a directive separator — under the client's control. Note that this is
+// `;` (a directive separator) under the client's control. Note that this is
 // r.Host and deliberately not X-Forwarded-Host: a forwarded header is a claim,
 // not evidence (the rule the edge is built on), and trusting one here would let
 // a request name the host its own page may talk to. A reverse proxy that
-// rewrites Host therefore needs `--dashboard-origins` — the same requirement
+// rewrites Host therefore needs `--dashboard-origins`: the same requirement
 // checkOrigin already imposes on it, for the same socket.
 func contentSecurityPolicy(host string, allowed []string) string {
 	connect := "; connect-src 'self'"
@@ -220,7 +220,7 @@ func contentSecurityPolicy(host string, allowed []string) string {
 // The scheme is carried over rather than doubled: a page served over https can
 // only open wss (mixed content stops the other), so emitting both would widen
 // the policy past anything that could be used. Anything unparsable is dropped
-// silently here — it is not a source, and checkOrigin will refuse it too, so
+// silently here: it is not a source, and checkOrigin will refuse it too, so
 // the failure an operator sees is the one about the handshake rather than a
 // second one about a header.
 func websocketSources(origins []string) []string {
@@ -240,7 +240,7 @@ func websocketSources(origins []string) []string {
 	return out
 }
 
-// isPlainHost reports whether host is a bare host[:port] — a DNS name, an IPv4
+// isPlainHost reports whether host is a bare host[:port]: a DNS name, an IPv4
 // address or a bracketed IPv6 literal, and nothing that could be read as CSP
 // syntax. Deliberately a byte allowlist rather than a parse: the question is
 // not "is this a resolvable name" but "is every byte of this safe to
@@ -275,7 +275,7 @@ func setSecurityHeaders(w http.ResponseWriter, r *http.Request, allowed []string
 	// would leak a session's path to whatever is embedded or linked.
 	h.Set("Referrer-Policy", "no-referrer")
 	// Browsers ignore it over plain HTTP, and a homelab node behind its own
-	// proxy may legitimately serve HTTP — so it is only claimed under TLS.
+	// proxy may legitimately serve HTTP, so it is only claimed under TLS.
 	if r.TLS != nil {
 		h.Set("Strict-Transport-Security", "max-age=31536000")
 	}

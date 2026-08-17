@@ -28,7 +28,7 @@ import {
  * NotificationsSection edits the node-level default channels (the record
  * routes without a project scope are built from) and each project's override.
  *
- * A test sends a real message and deliberately bypasses the filters — a
+ * A test sends a real message and deliberately bypasses the filters: a
  * channel configured for deploy.* would otherwise discard the test and leave
  * the operator no better informed (internal/notify's own rule).
  */
@@ -296,7 +296,7 @@ function ProjectEditor({
       {view.git_managed ? (
         <p className="rounded-md border border-status-warn/40 bg-status-warn/10 px-3 py-2 text-sm">
           {view.warning ??
-            'This project is synced from git — the next sync wins. Make the change in the ' +
+            'This project is synced from git: the next sync wins. Make the change in the ' +
               'repository, or it will be overwritten.'}
         </p>
       ) : null}

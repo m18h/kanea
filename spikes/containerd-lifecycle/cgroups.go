@@ -227,7 +227,7 @@ func runCgroups(ctx context.Context) error {
 		CgroupPath: "/kanea-workloads.slice/alloc-cg-t2", BinMount: exe,
 	}
 
-	// T2a — hard memory limit: memhog as pid 1 breaches it, alloc OOMs (137).
+	// T2a; hard memory limit: memhog as pid 1 breaches it, alloc OOMs (137).
 	aMem := base
 	aMem.Cmd = []string{"/spike", "memhog", "-anon", "300M"}
 	task, err := startAlloc(ctx, client, img, aMem)
@@ -253,7 +253,7 @@ func runCgroups(ctx context.Context) error {
 	check("alloc cgroup oom_kill incremented", cgEvent(cg, "memory.events", "oom_kill") > oomBefore, "")
 	removeAlloc(ctx, client, "cg-t2")
 
-	// T2b — CPU quota: restart as sleeper, run a hog, expect throttling.
+	// T2b; CPU quota: restart as sleeper, run a hog, expect throttling.
 	aCPU := base
 	aCPU.Cmd = []string{"sleep", "infinity"}
 	task, err = startAlloc(ctx, client, img, aCPU)
@@ -271,7 +271,7 @@ func runCgroups(ctx context.Context) error {
 	throttled := cgCPUStat(cg, "nr_throttled") - throttledBefore
 	check("cpu hog throttled at 0.5 core", throttled > 0, fmt.Sprintf("nr_throttled +%d in 3s", throttled))
 
-	// T2c — pids.max: fork bomb is contained (LAST: leaves the cgroup full).
+	// T2c; pids.max: fork bomb is contained (LAST: leaves the cgroup full).
 	pidsBefore := cgEvent(cg, "pids.events", "max")
 	fb, err := execDetached(ctx, task, "pids", "sh", "-c", ":(){ :|:& };:")
 	if err == nil {
@@ -323,7 +323,7 @@ func runCgroups(ctx context.Context) error {
 	}
 	defer os.Remove(pgFile)
 	// Page cache is charged to its FIRST instantiator: dd already owns these
-	// pages. Drop them (sync first — dirty pages are not dropped) so the cp
+	// pages. Drop them (sync first: dirty pages are not dropped) so the cp
 	// hog re-instantiates (and is charged for) them on read.
 	_ = exec.Command("sync").Run()
 	if err := cgWrite("/proc/sys/vm/drop_caches", "3"); err != nil {
@@ -342,7 +342,7 @@ func runCgroups(ctx context.Context) error {
 	preCache := cgFileCache(sliceCP)
 	fmt.Printf("  baseline: kanea.slice anon=%d MiB file-cache=%d MiB (min=%d MiB)\n", preAnon>>20, preCache>>20, reserveM)
 
-	// Phase A — MODERATE pressure (no OOM): the floor's page cache must be
+	// Phase A; MODERATE pressure (no OOM): the floor's page cache must be
 	// (best-effort) protected by memory.min.
 	modSize := fmt.Sprintf("%dM", total-2600) // fits with room: reclaim pressure, no last-resort
 	mod, err := startHog("t4-mod", wlHogs, "-anon", modSize)
@@ -358,7 +358,7 @@ func runCgroups(ctx context.Context) error {
 		fmt.Sprintf("%d MiB -> %d MiB with %s hog (allocated=%v)", preCache>>20, midCache>>20, modSize, modDone))
 	check("moderate pressure: floor process alive", cp.alive(), "")
 
-	// Phase B — EXTREME pressure (global OOM): kernel MAY reclaim the protected
+	// Phase B; EXTREME pressure (global OOM): kernel MAY reclaim the protected
 	// cache as last resort (documented, best-effort), but the floor's anon
 	// memory is unreclaimable (swap.max=0) and the OOM killer must pick the hog.
 	preAnon2 := cgAnon(sliceCP)

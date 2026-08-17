@@ -21,7 +21,7 @@ import (
 //
 // Every channel is the same shape: take a batch of events, produce one message,
 // deliver it, say whether it worked. The batch rather than the single event is
-// what makes coalescing possible without every channel knowing about it — a
+// what makes coalescing possible without every channel knowing about it: a
 // digest is just a batch with more than one event in it.
 
 // Resolver reads a secret by reference. Channel credentials are `secret:`
@@ -94,7 +94,7 @@ const SignatureHeader = "X-Kanea-Signature"
 //
 // Signing the timestamp is what makes a captured delivery unusable later: the
 // receiver checks that it is recent, and it cannot be changed without breaking
-// the signature — the same construction Kanea requires of *its* callers on the
+// the signature; the same construction Kanea requires of *its* callers on the
 // git webhook route.
 const TimestampHeader = "X-Kanea-Timestamp"
 
@@ -194,7 +194,7 @@ func (c *WebhookChannel) Send(ctx context.Context, batch []Event) error {
 //
 // The timestamp is inside the MAC, joined with a byte that cannot appear in a
 // decimal timestamp. Concatenating them without a separator would let a
-// different (timestamp, body) split produce the same input — the classic length
+// different (timestamp, body) split produce the same input: the classic length
 // extension of a naive concatenation.
 func Sign(secret []byte, timestamp string, body []byte) string {
 	mac := hmac.New(sha256.New, secret)
@@ -265,7 +265,7 @@ func (c *TelegramChannel) Name() string { return c.name }
 // Send posts one message for the batch.
 //
 // Form-encoded rather than JSON, and the token goes in the path because that is
-// the API Telegram exposes — which is also why the URL must never be logged:
+// the API Telegram exposes, which is also why the URL must never be logged:
 // it *is* the credential.
 func (c *TelegramChannel) Send(ctx context.Context, batch []Event) error {
 	form := url.Values{}
@@ -306,7 +306,7 @@ type SlackChannel struct {
 type SlackConfig struct {
 	Name string
 	// URLRef names the incoming-webhook URL. It is a `secret:` reference
-	// because a Slack webhook URL is a credential in path form — anyone
+	// because a Slack webhook URL is a credential in path form: anyone
 	// holding it can post as the app.
 	URLRef  string
 	Egress  EgressPolicy
@@ -410,7 +410,7 @@ func (c *NtfyChannel) Name() string { return c.name }
 // Send publishes the batch.
 //
 // The severity becomes ntfy's priority, so a phone can be configured to make a
-// noise for an error and stay quiet for a scale event — which is most of the
+// noise for an error and stay quiet for a scale event, which is most of the
 // reason to use ntfy rather than a webhook.
 func (c *NtfyChannel) Send(ctx context.Context, batch []Event) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url,
@@ -431,15 +431,15 @@ func (c *NtfyChannel) Send(ctx context.Context, batch []Event) error {
 	return finish(resp, classify(resp, c.name))
 }
 
-// ntfyPriority maps a severity onto ntfy's 1–5 scale.
+// ntfyPriority maps a severity onto ntfy's 1-5 scale.
 func ntfyPriority(s Severity) string {
 	switch s {
 	case SeverityError:
-		return "4" // high — makes a phone notify
+		return "4" // high; makes a phone notify
 	case SeverityWarning:
 		return "3" // default
 	default:
-		return "2" // low — no sound
+		return "2" // low; no sound
 	}
 }
 
@@ -501,7 +501,7 @@ func span(batch []Event) time.Duration {
 	return last.Sub(first)
 }
 
-// worstOf is the highest severity in a batch — what a digest is filed under.
+// worstOf is the highest severity in a batch: what a digest is filed under.
 func worstOf(batch []Event) Severity {
 	worst := SeverityInfo
 	for _, e := range batch {

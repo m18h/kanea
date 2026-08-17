@@ -56,7 +56,7 @@ func TestIDsAreStableAcrossRestarts(t *testing.T) {
 		t.Fatalf("shop/web = %d after restart, want the original %d", gotA, serviceA)
 	}
 
-	// A new name gets a new id above everything ever minted — never a reuse,
+	// A new name gets a new id above everything ever minted, never a reuse,
 	// even of ids whose owners are long gone (a reused id would make a pinned
 	// map lie).
 	fresh, err := second.ServiceID(ctx, "shop", "cache")
@@ -125,6 +125,6 @@ func TestFrontendIDRefusesThe16BitOverflow(t *testing.T) {
 	a := newIDAllocator(st)
 
 	if _, err := a.FrontendID(t.Context(), "shop", "web", "http"); err == nil {
-		t.Fatal("FrontendID = nil beyond 65535, want a refusal — a wrapped id would collide in svc_backends")
+		t.Fatal("FrontendID = nil beyond 65535, want a refusal: a wrapped id would collide in svc_backends")
 	}
 }

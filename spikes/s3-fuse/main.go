@@ -6,7 +6,7 @@
 // against a local MinIO endpoint, on the four axes that decide which one Kanea
 // ships as its `storage "s3"` volume driver (PRD §8):
 //
-//  1. POSIX semantics — what a workload can actually do on the mount
+//  1. POSIX semantics: what a workload can actually do on the mount
 //  2. throughput and metadata cost
 //  3. usability as a container volume (bind into a containerd task)
 //  4. behaviour when the object store goes away, and recovery
@@ -35,7 +35,7 @@ const (
 	s3Endpoint = "http://127.0.0.1:9000"
 	minioUnit  = "kanea-spike-minio"
 	accessKey  = "kaneaspike"       // spike-only; provision-vm.sh writes the same pair
-	secretKey  = "kaneaspikesecret" // #nosec G101 — local MinIO, throwaway
+	secretKey  = "kaneaspikesecret" // #nosec G101: local MinIO, throwaway
 )
 
 func main() {
@@ -57,7 +57,7 @@ func main() {
 				os.Exit(1)
 			}
 			defer clearNetem()
-			fmt.Printf("loopback shaped: +%s one-way (%s RTT) — emulating a same-region S3\n\n",
+			fmt.Printf("loopback shaped: +%s one-way (%s RTT); emulating a same-region S3\n\n",
 				os.Args[2], os.Args[2])
 		}
 		err = withDrivers(ctx, runPerf)
@@ -202,7 +202,7 @@ func summary() error {
 // for the duration of the run.
 func setNetem(delay string) error {
 	clearNetem()
-	out, err := exec.Command("tc", "qdisc", "add", "dev", "lo", "root", "netem", "delay", delay).CombinedOutput() // #nosec G204 — spike
+	out, err := exec.Command("tc", "qdisc", "add", "dev", "lo", "root", "netem", "delay", delay).CombinedOutput() // #nosec G204; spike
 	if err != nil {
 		return fmt.Errorf("tc qdisc add: %w (%s)", err, bytes.TrimSpace(out))
 	}

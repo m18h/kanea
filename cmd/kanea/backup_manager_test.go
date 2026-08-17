@@ -19,12 +19,12 @@ import (
 
 // The backup manager's one non-negotiable property (PRD v1.46): a bad new
 // destination can never stop a working old one. These tests exercise the swap
-// in both directions — refusal leaves the old pipeline untouched, success
+// in both directions: refusal leaves the old pipeline untouched, success
 // ships the old destination's final segment before the new one starts.
 
 // writeMasterKey puts a usable master key under dataDir, the way `kanea init`
 // would have. assembleReplication goes through secrets.LoadKey, which refuses
-// to create one — a restore-on-a-fresh-node safety — so the tests provide it.
+// to create one (a restore-on-a-fresh-node safety) so the tests provide it.
 func writeMasterKey(t *testing.T, dataDir string) {
 	t.Helper()
 	key := make([]byte, 32)
@@ -59,7 +59,7 @@ func newDirBackupService(t *testing.T, st store.Store, dataDir, dir string) *bac
 	return svc
 }
 
-// failingSink is a destination whose writes always fail — the shape of a
+// failingSink is a destination whose writes always fail: the shape of a
 // bucket with revoked credentials or a typo'd endpoint. Probe fails on its
 // first Put, which is exactly what the swap must survive.
 type failingSink struct{}
@@ -76,7 +76,7 @@ func (failingSink) List(context.Context, string) ([]backup.Object, error) {
 func (failingSink) Delete(context.Context, string) error { return nil }
 func (failingSink) Describe() string                     { return "failing://sink" }
 
-// newFailingBackupService builds a pipeline over the failing sink directly —
+// newFailingBackupService builds a pipeline over the failing sink directly:
 // assembleReplication only builds real sinks, and the point here is a
 // destination that accepts construction and refuses traffic.
 func newFailingBackupService(t *testing.T, st store.Store) *backupService {
@@ -149,7 +149,7 @@ func globCount(t *testing.T, pattern string) int {
 func TestManagerAnswersNotConfigured(t *testing.T) {
 	// The manager is always non-nil (a node can go unconfigured → configured at
 	// runtime), so "nothing behind it" must be ErrNotConfigured from every
-	// method rather than a nil-interface panic — the API maps it to the 503 an
+	// method rather than a nil-interface panic: the API maps it to the 503 an
 	// absent backup subsystem always answered with.
 	ctx := context.Background()
 	m := newBackupManager(slog.New(slog.DiscardHandler))
@@ -178,7 +178,7 @@ func TestManagerAnswersNotConfigured(t *testing.T) {
 }
 
 func TestSwapToAFailingDestinationLeavesTheOldReplicationRunning(t *testing.T) {
-	// The swap's order — probe, commit, stop, start — exists for this test's
+	// The swap's order (probe, commit, stop, start) exists for this test's
 	// property: a refused destination costs the operator nothing but the
 	// retype. The old replicator never stops and the record is never written.
 	ctx := context.Background()
@@ -212,7 +212,7 @@ func TestSwapToAFailingDestinationLeavesTheOldReplicationRunning(t *testing.T) {
 	if got := m.Source(); got != sourceFlags {
 		t.Errorf("Source = %q after a refused swap, want %q unchanged", got, sourceFlags)
 	}
-	// And the old pipeline still answers — through the manager, the way the
+	// And the old pipeline still answers: through the manager, the way the
 	// API reaches it.
 	if _, err := m.List(ctx); err != nil {
 		t.Errorf("the old destination stopped serving after a refused swap: %v", err)
@@ -221,7 +221,7 @@ func TestSwapToAFailingDestinationLeavesTheOldReplicationRunning(t *testing.T) {
 
 func TestSwapShipsTheFinalSegmentToTheOldDestination(t *testing.T) {
 	// stopLocked waits for the outgoing replicator's final ship, which lands in
-	// the *old* destination — a change written just before the swap must not
+	// the *old* destination: a change written just before the swap must not
 	// fall into the gap between two pipelines.
 	ctx := context.Background()
 	st := openScalingStore(t)
@@ -233,7 +233,7 @@ func TestSwapShipsTheFinalSegmentToTheOldDestination(t *testing.T) {
 	startManager(t, m, newDirBackupService(t, st, dataDir, oldDir), sourceFlags)
 
 	// Wait out the old pipeline's startup snapshot first, so the change below
-	// is provably *after* it — the final ship is then the only thing that can
+	// is provably *after* it: the final ship is then the only thing that can
 	// carry it to oldDir.
 	pollUntil(t, "the old destination's startup snapshot", func() bool {
 		return globCount(t, filepath.Join(oldDir, "manifests", "*.json")) > 0
@@ -258,7 +258,7 @@ func TestSwapShipsTheFinalSegmentToTheOldDestination(t *testing.T) {
 	}
 
 	// swap returns only after the old replicator's shutdown ship completed, so
-	// the segment covering the change is already on disk — no polling here, and
+	// the segment covering the change is already on disk; no polling here, and
 	// none would be honest: after the swap nothing writes to oldDir again.
 	if got := globCount(t, filepath.Join(oldDir, "segments", "*.seg")); got == 0 {
 		t.Error("the old destination holds no segment; the pre-swap change was lost to the swap")
@@ -273,7 +273,7 @@ func TestSwapShipsTheFinalSegmentToTheOldDestination(t *testing.T) {
 
 func TestSwapToNilStopsReplication(t *testing.T) {
 	// A nil svc is the deliberate transition to unconfigured (ResetBackup on a
-	// node whose unit never named a destination) — not an error, and not a
+	// node whose unit never named a destination), not an error, and not a
 	// leak: the old pipeline is stopped and waited for.
 	ctx := context.Background()
 	st := openScalingStore(t)

@@ -222,10 +222,10 @@ func TestIntegrationStopKillsAnUncooperativeWorkload(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 	if elapsed < 2*time.Second {
-		t.Errorf("stop returned in %v — it did not wait out the grace period", elapsed)
+		t.Errorf("stop returned in %v; it did not wait out the grace period", elapsed)
 	}
 	if elapsed > 30*time.Second {
-		t.Errorf("stop took %v — SIGKILL escalation looks broken", elapsed)
+		t.Errorf("stop took %v; SIGKILL escalation looks broken", elapsed)
 	}
 
 	status, err := d.Status(ctx, spec.Project, spec.ID)
@@ -358,7 +358,7 @@ func TestIntegrationNetnsJoinedByTheTask(t *testing.T) {
 		t.Fatalf("wait: %v", err)
 	}
 
-	// lo is up because CreateNetns brought it up — CNI plugins do not.
+	// lo is up because CreateNetns brought it up: CNI plugins do not.
 	out := readLog(t, spec.LogPath)
 	if !strings.Contains(out, "lo:") || !strings.Contains(out, "UP") {
 		t.Errorf("loopback is not up inside the joined netns:\n%s", out)

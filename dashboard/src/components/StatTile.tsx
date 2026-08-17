@@ -6,7 +6,7 @@ export interface StatTileProps {
   value: React.ReactNode
   sub?: React.ReactNode | undefined
   /** tone colours the big number: 'primary' for "a slot is in use", 'ok' for
-   * "replication is healthy". Never the only signal — the sub line says why. */
+   * "replication is healthy". Never the only signal: the sub line says why. */
   tone?: 'default' | 'primary' | 'ok' | 'error' | undefined
   className?: string | undefined
 }

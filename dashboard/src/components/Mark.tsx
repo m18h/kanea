@@ -10,7 +10,7 @@ export interface MarkProps {
  * Mark is the Kanea logo, inlined as SVG.
  *
  * The arc and the two dots take `currentColor`, so one component serves the
- * light and dark themes without a second asset and without a theme lookup —
+ * light and dark themes without a second asset and without a theme lookup:
  * the dashboard toggles `.dark` on <html>, and an <img> would not follow it.
  * Only the amber is fixed; it is the one part of the mark that is the same
  * colour on every surface. The source files live in `logo/` at the repo root.

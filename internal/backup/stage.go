@@ -62,7 +62,7 @@ func WriteRequest(dir string, req Request) error {
 // ReadRequest returns the staged restore, or nil when there is none.
 func ReadRequest(dir string) (*Request, error) {
 	path := filepath.Join(dir, RequestFileName)
-	body, err := os.ReadFile(path) // #nosec G304 — the daemon's own data directory
+	body, err := os.ReadFile(path) // #nosec G304; the daemon's own data directory
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

@@ -57,7 +57,7 @@ func TestVaultGroupsMappingsByPath(t *testing.T) {
 	if len(res.Values) != 3 {
 		t.Fatalf("Values = %+v", res.Values)
 	}
-	// Two fields out of one path is one read — the grouping is what keeps a
+	// Two fields out of one path is one read: the grouping is what keeps a
 	// pass from hammering Vault once per field.
 	if got := requests.Load(); got != 2 {
 		t.Errorf("made %d requests, want 2", got)

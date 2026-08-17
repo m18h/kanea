@@ -1,4 +1,4 @@
-# shop.hcl — everything for one project
+# shop.hcl: everything for one project
 spec_version = 1
 
 project "shop" {
@@ -17,7 +17,7 @@ project "shop" {
       chat_id   = "-1001234567890"
       token_ref = "secret:shop/telegram-bot"
     }
-    # A Slack/Discord incoming-webhook URL is a credential in path form —
+    # A Slack/Discord incoming-webhook URL is a credential in path form:
     # referenced, never inlined (R3, R5).
     slack { url_ref = "secret:shop/slack-webhook" }
     on       = ["deploy.failed", "service.unhealthy", "scale.*"]
@@ -73,7 +73,7 @@ service "web" {
     port "http" { container = 3000 }
 
     # Also reachable at <node address>:8080, with or without a domain (R21,
-    # §7.2.2). The label names the port above — there is no field here for a
+    # §7.2.2). The label names the port above: there is no field here for a
     # container port number, so this cannot forward somewhere undeclared.
     publish "http" {
       host = 8080
@@ -90,18 +90,18 @@ service "web" {
 
   # North-south exposure: edge proxy + TLS + middleware
   expose {
-    # domains optional — defaults to web.shop.<base_domain>
+    # domains optional; defaults to web.shop.<base_domain>
     domains = ["shop.example.com", "www.shop.example.com"]
     # Where the certificate comes from (R20, §7.3). Omit the block entirely and
     # the node's --tls-default decides; there is no field here for a path.
     tls { mode = "acme" }                        # acme | self-signed | provided | plaintext
 
     # Upstream protocol (R28, v1.41). Omit for HTTP/1.1 upstreams. "grpc" makes
-    # the edge dial this service over plaintext HTTP/2 (h2c) — gRPC needs h2
+    # the edge dial this service over plaintext HTTP/2 (h2c): gRPC needs h2
     # end-to-end. Declaring it beside tls { mode = "plaintext" } is a plan error.
     # protocol = "grpc"
 
-    # Edge middleware (§7.2) — evaluated in order: IP restriction → rate limit → headers
+    # Edge middleware (§7.2); evaluated in order: IP restriction → rate limit → headers
     ip_restriction {
       allow = ["10.0.0.0/8", "203.0.113.0/24"]   # CIDRs; empty allow = world
       deny  = ["198.51.100.7/32"]                # deny wins over allow
@@ -116,7 +116,7 @@ service "web" {
 
     headers {
       # X-Forwarded-* is the edge's to set, and R16 rejects a spec that
-      # touches it — those headers are the client identity everything else
+      # touches it: those headers are the client identity everything else
       # is keyed on.
       request_set     = { X-Kanea-Tenant = "shop" }
       request_remove  = ["X-Internal-Debug"]
@@ -161,7 +161,7 @@ service "api" {
   count       = 2
 
   task "api" {
-    image = "registry.example.com/shop/api:0.9.1"   # image-only deploy — no git needed
+    image = "registry.example.com/shop/api:0.9.1"   # image-only deploy: no git needed
 
     env = {
       # Service references (§7.1.1): interpolated to internal DNS names at
@@ -208,7 +208,7 @@ service "postgres" {
     # Numeric only (R23): a username would be read from the image's own
     # /etc/passwd, and it would mean a different uid after a rebuild.
     #
-    # The user block states up front what a stock image does at startup —
+    # The user block states up front what a stock image does at startup:
     # chown a root-owned data directory, drop to its own user. With nothing
     # left to do at startup, "none" opts out of R13's baseline set too:
     # this container runs with no capabilities at all.
@@ -224,7 +224,7 @@ service "postgres" {
     }
   }
 
-  # internal only — no expose block
+  # internal only: no expose block
   network {
     port "pg" {
       container = 5432
@@ -234,7 +234,7 @@ service "postgres" {
   volume "data" {
     storage    = "local-ssd"                  # named storage resource (§8)
     mount_path = "/var/lib/postgresql/data"
-    # uid/gid inherit task.user, and the mode defaults to 0700 (R24) — which is
+    # uid/gid inherit task.user, and the mode defaults to 0700 (R24), which is
     # also the only mode postgres will start on. Declare `uid`, `gid` or `mode`
     # here to override; `uid = 0` is how you ask for root explicitly.
   }
@@ -248,7 +248,7 @@ service "assets" {
     # Argument array, never a shell string (R12).
     command = ["nginx", "-g", "daemon off;"]
     # No `capabilities` line: R13's baseline already covers what nginx does at
-    # startup — chown its temp dirs, drop to the nginx user, bind :80.
+    # startup; chown its temp dirs, drop to the nginx user, bind :80.
   }
   volume "media" {
     storage    = "s3-media"                   # S3 bucket mounted via FUSE

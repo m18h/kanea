@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Packages testdata/hello.wasm as the scratch OCI image the functions feature
 # ships modules in (PRD v1.39: FROM scratch + module + ENTRYPOINT), and
-# imports it into containerd via ctr — the exact layout EnsureImage pulls.
+# imports it into containerd via ctr: the exact layout EnsureImage pulls.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -35,7 +35,7 @@ cat > "$work/config.json" <<EOF
 EOF
 # NOTE: runwasi also accepts linux/<arch> scratch images, which is what Kanea
 # ships. If the wasip2 platform is refused by the import, flip architecture/os
-# to your host's ("amd64"/"linux") and record the finding in REPORT.md —
+# to your host's ("amd64"/"linux") and record the finding in REPORT.md:
 # that IS one of the spike's questions (OCI wasm artifact vs scratch image).
 config_sha=$(sha256sum "$work/config.json" | cut -d' ' -f1)
 

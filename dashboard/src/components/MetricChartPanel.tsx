@@ -49,7 +49,7 @@ export function MetricChartPanel({
           className={cn('font-mono font-semibold tabular-nums', big ? 'text-2xl' : 'text-sm')}
         >
           {/* A gap is a dash: "measured nothing" is not "measured zero". */}
-          {valueText ?? (current === undefined ? '—' : formatMetric(current, unit))}
+          {valueText ?? (current === undefined ? '-' : formatMetric(current, unit))}
         </span>
       </div>
       {series.times.length === 0 ? (

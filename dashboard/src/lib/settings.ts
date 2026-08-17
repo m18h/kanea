@@ -115,7 +115,7 @@ export function splitPatterns(text: string): string[] {
 
 /**
  * channelFormsToWire builds the PUT body, or explains what is missing. The
- * daemon validates too — this only saves a round trip for the two refusals
+ * daemon validates too; this only saves a round trip for the two refusals
  * every first attempt hits: no channel, and no `on` filter (a channel nobody
  * has told what to send is silent, PRD §11).
  */
@@ -150,14 +150,14 @@ export function channelFormsToWire(
   }
   const on = splitPatterns(f.on)
   if (on.length === 0) {
-    return { error: 'Channels need an `on` filter — patterns like deploy.* or *.failed.' }
+    return { error: 'Channels need an `on` filter; patterns like deploy.* or *.failed.' }
   }
   channels.On = on
   if (f.severity !== '') channels.Severity = f.severity
   return { channels }
 }
 
-/** enabledChannelKinds lists the kinds a wire record configures — the test
+/** enabledChannelKinds lists the kinds a wire record configures: the test
  * buttons and the per-project chips both read from this. */
 export function enabledChannelKinds(n: WireNotifications | null | undefined): string[] {
   if (!n) return []
@@ -229,7 +229,7 @@ export function backupFormFromRecord(
 
 /**
  * backupFormToRecord builds the PUT body, or explains what is missing. Shape
- * checks only — the daemon owns validation and the probe, and its 400 message
+ * checks only: the daemon owns validation and the probe, and its 400 message
  * is surfaced verbatim.
  */
 export function backupFormToRecord(
@@ -251,7 +251,7 @@ export function backupFormToRecord(
     if (secretKeyRef !== '' && !secretKeyRef.startsWith('secret:')) {
       return {
         error:
-          'secret_key_ref must be a secret: reference, e.g. secret:shared/backup-s3 — never the key itself.',
+          'secret_key_ref must be a secret: reference, e.g. secret:shared/backup-s3, never the key itself.',
       }
     }
     record.s3 = { url, endpoint, path_style: f.pathStyle }

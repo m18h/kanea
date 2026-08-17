@@ -10,7 +10,7 @@ import (
 )
 
 // vaultProvider reads KV v2 secrets over token auth. Mappings are grouped by
-// path — one GET per distinct path serves every field mapped out of it — and
+// path (one GET per distinct path serves every field mapped out of it) and
 // a 404 fails only that path's mappings.
 //
 // Token-file auth only, deliberately (§5.2.13): AppRole and other dynamic

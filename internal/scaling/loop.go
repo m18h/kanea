@@ -38,7 +38,7 @@ type Recorder interface {
 // Breaker reports whether scale actions are currently permitted.
 //
 // The global circuit breaker of §4.3. It is an interface here so the loop does
-// not have to know what trips it — node-wide failure rates are the reconciler's
+// not have to know what trips it: node-wide failure rates are the reconciler's
 // business, not the autoscaler's.
 type Breaker interface {
 	// Allow reports whether a scale action may proceed, and why not.
@@ -132,7 +132,7 @@ func (l *Loop) Once(ctx context.Context) (changed int, err error) {
 
 		// The breaker is checked here rather than before evaluating, so a
 		// tripped breaker still produces a decision to record and a reason an
-		// operator can read — "we would have scaled, and why we did not".
+		// operator can read: "we would have scaled, and why we did not".
 		if l.breaker != nil {
 			if allowed, why := l.breaker.Allow(); !allowed {
 				l.log.Warn("scale action suppressed by the circuit breaker",

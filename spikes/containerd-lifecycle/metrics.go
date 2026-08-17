@@ -14,7 +14,7 @@ import (
 )
 
 // runMetrics answers spike question ③: does ONE scrape of containerd's
-// /v1/metrics expose cpu+memory cgroup metrics for every alloc — including an
+// /v1/metrics expose cpu+memory cgroup metrics for every alloc; including an
 // alloc we placed under our own kanea-workloads.slice hierarchy (§5.2.11)?
 func runMetrics(ctx context.Context) error {
 	client, ctx, err := dial(ctx)

@@ -1,6 +1,6 @@
-# Check H — functions end to end on a kanead node
+# Check H: functions end to end on a kanead node
 
-Checks A–G ran at the containerd level and went 7/7 GO (`../REPORT.md`,
+Checks A-G ran at the containerd level and went 7/7 GO (`../REPORT.md`,
 2026-08-10). They validated everything *below* the datapath. H is the rest, and
 it is the §20 M11 exit criterion:
 
@@ -8,8 +8,8 @@ it is the §20 M11 exit criterion:
 > functions-port modes), fires on a matching event and a cron tick; invocation
 > rate visible from an east-west call; pre-v1.39 Store upgrade rolls zero allocs
 
-It needs a real node — a running `kanead` with the eBPF datapath, `kanea-edge`,
-and the wasmtime shim — which is exactly what a containerd-level harness cannot
+It needs a real node (a running `kanead` with the eBPF datapath, `kanea-edge`,
+and the wasmtime shim) which is exactly what a containerd-level harness cannot
 stand in for.
 
 ## Files
@@ -18,7 +18,7 @@ stand in for.
 |---|---|
 | `check-h.hcl` | the spec: the function, an east-west caller, and a service deployed to emit `deploy.succeeded` |
 | `mkimage.sh` | packages a `.wasm` as a host-platform scratch image and imports it into kanead's own containerd namespace |
-| `check-h.sh` | the driver — one check per clause, `PASS`/`FAIL` per line, non-zero exit on any failure |
+| `check-h.sh` | the driver: one check per clause, `PASS`/`FAIL` per line, non-zero exit on any failure |
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ A node where `kanea init` has run, with the edge up and a functions port. The
 shim is installed by default (`kanea install` with no `--only`), so a node
 initialised with a current release already has it; `kanea doctor` reports it.
 
-The module is **not committed** — `../.gitignore` excludes `/testdata/`, and a
+The module is **not committed**: `../.gitignore` excludes `/testdata/`, and a
 `.wasm` blob in git is a binary nobody can review. Build it from the committed
 Rust source:
 
@@ -55,12 +55,12 @@ every other spike report follows.
 **The image ref never resolves against a registry.** `mkimage.sh` imports into
 `kanea-<project>`, the namespace `runtime.Namespace(project)` computes, and
 `EnsureImage` returns early whenever the image is already present locally. So
-`registry.local/checkh/hello-http:1` is a name, not an address — which is what
+`registry.local/checkh/hello-http:1` is a name, not an address, which is what
 makes this runnable on a node with no registry.
 
 **The image is `linux/<arch>`, not `wasm/wasip2`.** That is REPORT.md finding 2:
-containerd's default platform matcher — which `EnsureImage` uses, with no
-special case — will not unpack a wasm-platform image. `mkimage.sh` defaults to
+containerd's default platform matcher (which `EnsureImage` uses, with no
+special case) will not unpack a wasm-platform image. `mkimage.sh` defaults to
 the node's own architecture for that reason.
 
 ## The clause this does not script

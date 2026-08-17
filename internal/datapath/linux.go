@@ -53,7 +53,7 @@ func New(cfg Config) (*Datapath, error) {
 // openObjects loads the embedded collection with every map pinned by name
 // under dir, re-opening pins that already exist. A pinned map whose shape no
 // longer matches the compiled object is a schema mismatch: the pin directory
-// is deleted and recreated — safe because established flows bypass the maps
+// is deleted and recreated; safe because established flows bypass the maps
 // (PRD v1.36), and the first reconcile pass repopulates everything (the state
 // is derived; nothing under the pin root is ever backed up).
 func openObjects(dir string, v6 bool) (*ebpf.Collection, error) {
@@ -140,7 +140,7 @@ func loadPinned(dir string) (*ebpf.Collection, error) {
 	// The memlock limit is the kernel floor's problem, not a tuning knob
 	// (§21: ≥ 5.10). Kernel 5.11 moved BPF memory accounting to the cgroup
 	// memory controller; *below* it, every map and program is charged against
-	// RLIMIT_MEMLOCK instead — and kanead.service deliberately sets no
+	// RLIMIT_MEMLOCK instead, and kanead.service deliberately sets no
 	// LimitMEMLOCK, so it inherits systemd's 8 MiB default. Five of the
 	// datapath's maps are PERCPU_HASH (the stats twins), costing ~360 KiB per
 	// CPU, so a node with enough cores exceeds that default and map creation
@@ -150,11 +150,11 @@ func loadPinned(dir string) (*ebpf.Collection, error) {
 	// Measured on 6.x/7.x: the collection loads with RLIMIT_MEMLOCK squeezed to
 	// 64 KiB, confirming the limit is not consulted there and that this call
 	// costs nothing above the floor. The failure below it is reasoned from the
-	// accounting change, not yet observed — confirming it is a checkpoint of
+	// accounting change, not yet observed: confirming it is a checkpoint of
 	// the 5.10 floor run (spikes/ebpf-datapath).
 	//
 	// It belongs here rather than in the unit because every load path goes
-	// through this function — systemd, a dev run, the spike harness — and a
+	// through this function (systemd, a dev run, the spike harness) and a
 	// unit directive would cover only the first.
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, fmt.Errorf("datapath: raise RLIMIT_MEMLOCK: %w", err)

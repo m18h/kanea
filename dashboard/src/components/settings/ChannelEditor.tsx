@@ -6,7 +6,7 @@ import type { ChannelForms } from '@/lib/settings'
 
 /**
  * ChannelEditor is the one channel form, used for the node defaults and for
- * each project override — same fields, same rules, so the two cannot drift.
+ * each project override: same fields, same rules, so the two cannot drift.
  *
  * Every credential field takes a `secret:` reference, never a value: the
  * record is readable back over the API, and a reference is safe to read back
@@ -271,7 +271,7 @@ function Field({
       {children}
       {refHint ? (
         <p className="text-xs text-muted-foreground">
-          A <code className="font-mono">secret:</code> reference — never the value itself.
+          A <code className="font-mono">secret:</code> reference, never the value itself.
         </p>
       ) : null}
     </div>

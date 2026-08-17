@@ -38,13 +38,13 @@ var (
 // Config is a project's stored configuration.
 //
 // It lives under store.KindProject, keyed by project name, and is written by
-// the same apply that writes the services — the git block, the build blocks and
+// the same apply that writes the services: the git block, the build blocks and
 // the notifications block come from the same file, and splitting them across
 // round-trips would let a service exist with a build block whose source Kanea
 // does not know.
 //
 // It carries notifications as well as pipelines because it is *the* project
-// record, not a pipelines record. The type living in this package is history —
+// record, not a pipelines record. The type living in this package is history:
 // pipelines needed it first. If a third concern lands on it, move the type
 // somewhere neutral rather than growing a third package's field here.
 type Config struct {
@@ -114,7 +114,7 @@ type Service struct {
 	webhooks *Webhooks
 	applier  Applier
 	// specOptions carries what a spec needs to validate that is not in the
-	// file — the base domain an `expose` block is checked against, chiefly.
+	// file: the base domain an `expose` block is checked against, chiefly.
 	// Without it a synced spec would validate differently from the same file
 	// deployed with `kanea deploy`.
 	specOptions jobspec.Options
@@ -360,7 +360,7 @@ func (s *Service) Sync(ctx context.Context, project, by string) (SyncResult, err
 //
 // It does not sync inline. The provider is waiting on this response with a ten
 // second timeout, and a clone plus a parse plus an apply is not reliably inside
-// it — so the delivery is verified, recorded, and handed to the sync loop.
+// it, so the delivery is verified, recorded, and handed to the sync loop.
 func (s *Service) Deliver(
 	ctx context.Context, project string, header http.Header, body []byte,
 ) (Delivery, error) {
@@ -401,7 +401,7 @@ func (s *Service) Deliver(
 //
 // A repository speaks for its own project and no other. Without this check, a
 // project whose git source anyone can write becomes a way to redefine every
-// other project on the node — the same cross-project escalation R5 blocks for
+// other project on the node: the same cross-project escalation R5 blocks for
 // secrets, arriving through a different door.
 func parseCheckout(project string, checkout Checkout, opts jobspec.Options) (*jobspec.Spec, error) {
 	if len(checkout.Specs) == 0 {

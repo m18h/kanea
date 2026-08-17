@@ -1,10 +1,10 @@
 // Package passthrough decides which host devices and unix sockets a job spec
-// may be given (PRD §6.2 R17–R18).
+// may be given (PRD §6.2 R17-R18).
 //
 // The model is R15's, with one addition. R15 splits *shape* from *permission*:
 // a job spec says what it wants, the server config says what is allowed, and
 // the default allows nothing. This package is the permission half for devices
-// and sockets — but unlike `storage.allowed_host_paths`, a spec here never
+// and sockets, but unlike `storage.allowed_host_paths`, a spec here never
 // names a path at all. It names a *grant*, an operator defines that grant on
 // the node, and the node resolves the name locally. No host path reaches the
 // Store, the API or a git repository (§18 rule 5).
@@ -64,7 +64,7 @@ const DefaultDeviceMode = "rw"
 // copy that can disagree with the device.
 type Device struct {
 	// Path is the resolved host path. It is also where the device appears
-	// inside the container — v1 does not remap.
+	// inside the container: v1 does not remap.
 	Path string
 	// Perms is the cgroup device permission string ("rw", "rwm").
 	Perms string
@@ -112,13 +112,13 @@ type hclSocket struct {
 
 // Load reads a passthrough config from disk.
 //
-// An empty path is not an error and yields a policy that permits nothing —
+// An empty path is not an error and yields a policy that permits nothing:
 // that is the default, and the daemon runs without the file.
 func Load(path string) (*Policy, error) {
 	if strings.TrimSpace(path) == "" {
 		return &Policy{}, nil
 	}
-	src, err := os.ReadFile(path) // #nosec G304 — operator-supplied config path
+	src, err := os.ReadFile(path) // #nosec G304; operator-supplied config path
 	if err != nil {
 		return nil, fmt.Errorf("passthrough: read %s: %w", path, err)
 	}

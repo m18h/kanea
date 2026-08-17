@@ -12,14 +12,14 @@ import (
 //
 // This is hand-written rather than imported: it sits in the path of every
 // service call a workload makes, and
-// the subset actually needed is small — parse one question, build an A answer,
+// the subset actually needed is small; parse one question, build an A answer,
 // or relay the query verbatim to an upstream. Forwarded responses are never
 // parsed at all, they are passed back as bytes, so the parsing surface exposed
 // to workload-controlled input is one question name.
 //
 // That surface is where the care goes. Everything below is bounds-checked
 // against the buffer, label and name lengths are capped, and compression
-// pointers are rejected outright in the question section — a question name is
+// pointers are rejected outright in the question section: a question name is
 // the first thing after the header, so there is nothing legitimate for it to
 // point back at, and accepting one is how a parser ends up chasing a loop.
 
@@ -301,7 +301,7 @@ func encodeName(name string) ([]byte, error) {
 		if length == 0 || length > maxDNSLabel {
 			return nil, fmt.Errorf("dns: invalid label in %q", name)
 		}
-		// #nosec G115 — length is bounded by maxDNSLabel (63) immediately above.
+		// #nosec G115; length is bounded by maxDNSLabel (63) immediately above.
 		out = append(out, byte(length))
 		out = append(out, label...)
 	}
