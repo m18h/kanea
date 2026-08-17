@@ -160,14 +160,16 @@ type Attachment struct {
 
 // validateLabelValue rejects values that would corrupt an identity. Project
 // and service names are DNS-1123 labels by the time they reach here (jobspec
-// R1), so this is a last-line assertion rather than the real gate, but the
-// consequence of a bad value is an identity that matches no policy, which fails
-// silently and denies traffic. Cheap to check, expensive to debug.
+// R1 at parse, the apply seam's validateDesired for records that never saw
+// the parser), so this is a last-line assertion rather than the real gate.
+// The "/" refusal is load-bearing beyond identity text: the same names
+// compose into filesystem paths (resolv.conf, volume directories, log files)
+// that kanead writes as root.
 func validateLabelValue(kind, value string) error {
 	switch {
 	case value == "":
 		return fmt.Errorf("network: empty %s name", kind)
-	case strings.ContainsAny(value, "=:;, \t\n"):
+	case strings.ContainsAny(value, "/=:;, \t\n"):
 		return fmt.Errorf("network: %s name %q contains a character that is not valid in a label", kind, value)
 	}
 	return nil

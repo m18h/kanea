@@ -257,20 +257,55 @@ func TestDNSInternalNamesAreUnaffectedByDeadUpstream(t *testing.T) {
 // Queueing would turn one slow upstream into a stalled node.
 func TestDNSSheddsWhenForwardBudgetIsExhausted(t *testing.T) {
 	d := testDNS(t, "203.0.113.1:53")
-	// Occupy every slot.
+	// Occupy every slot, as the read loop would under a flood.
 	for range cap(d.forwardSlots) {
 		d.forwardSlots <- struct{}{}
 	}
 
-	start := time.Now()
-	q := buildQuery(t, 1, "example.com", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	// The discipline lives in the read loop now (K-26): the query goes over
+	// the socket, and the refusal must come back immediately, not after the
+	// upstream timeout.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = d.Serve(ctx) }()
+	var addr string
+	for range 100 {
+		if addr = d.Addr(); addr != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if addr == "" {
+		t.Fatal("server never bound")
+	}
 
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("deadline: %v", err)
+	}
+
+	start := time.Now()
+	if _, err := conn.Write(buildQuery(t, 1, "example.com", typeA, true)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, 512)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	r := parseReply(t, buf[:n])
 	if r.RCode != rcodeServFail {
 		t.Errorf("rcode = %d, want SERVFAIL", r.RCode)
 	}
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
 		t.Errorf("shedding took %v; it must not wait for a slot", elapsed)
+	}
+	if d.forwardDrops.Load() == 0 {
+		t.Error("the drop was not counted")
 	}
 }
 
@@ -464,4 +499,59 @@ func TestDNSAnswersPerQueryType(t *testing.T) {
 			t.Fatalf("answers = %v, want fd10:244::5", r.Answers)
 		}
 	})
+}
+
+// K-27: a public listen address is an open resolver and a service inventory
+// on the internet; loopback, private and link-local are the bind choices.
+func TestNewDNSRefusesAPublicBind(t *testing.T) {
+	for _, listen := range []string{"8.8.8.8:53", "203.0.113.10:53", "[2606:4700:4700::1111]:53"} {
+		if _, err := NewDNS(DNSConfig{Listen: listen}); err == nil {
+			t.Errorf("NewDNS(%q) = nil, want a refusal", listen)
+		} else if !strings.Contains(err.Error(), "open resolver") {
+			t.Errorf("NewDNS(%q) = %v, want the reason explained", listen, err)
+		}
+	}
+	// And the legitimate binds still pass: loopback, RFC1918, ULA, link-local.
+	for _, listen := range []string{"127.0.0.1:53", "10.200.0.1:53", "[fd00::1]:53", "[fe80::1]:53"} {
+		if _, err := NewDNS(DNSConfig{Listen: listen}); err != nil {
+			t.Errorf("NewDNS(%q) = %v, want it allowed", listen, err)
+		}
+	}
+}
+
+// K-28: an upstream reply that does not fit the read buffer is answered as
+// truncated (TC set, header+question only), never relayed clipped with its
+// answer count intact - a resolver that sees TC retries over TCP; one that
+// sees a clipped body has a parse error.
+func TestDNSRelayTruncatesAnOversizedUpstreamReply(t *testing.T) {
+	// An upstream that answers with more than the read buffer holds.
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	go func() {
+		buf := make([]byte, maxForwardPayload)
+		for {
+			n, client, err := conn.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			reply := make([]byte, maxForwardPayload+512)
+			copy(reply, buf[:n]) // echo the header so the transaction id matches
+			_, _ = conn.WriteToUDP(reply, client)
+		}
+	}()
+	upstream := conn.LocalAddr().String()
+
+	d := testDNS(t, upstream)
+	q := buildQuery(t, 9, "example.com", typeA, true)
+	reply := d.respond(t.Context(), q)
+	r := parseReply(t, reply)
+	if !r.TC {
+		t.Error("an oversized upstream reply was not marked truncated")
+	}
+	if len(r.Answers) != 0 {
+		t.Errorf("answers = %d, want header+question only", len(r.Answers))
+	}
 }

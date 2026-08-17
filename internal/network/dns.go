@@ -84,8 +84,12 @@ type DNS struct {
 	// across anything but a map read.
 	zone atomic.Pointer[zone]
 
-	// forwardSlots is a counting semaphore over in-flight upstream queries.
+	// forwardSlots is a counting semaphore over in-flight upstream queries,
+	// taken in the read loop before the goroutine is born (K-26).
 	forwardSlots chan struct{}
+	// forwardDrops counts queries refused because every slot was taken: a cap
+	// nobody can see reads as packet loss (the v1.42 rule).
+	forwardDrops atomic.Uint64
 
 	conn atomic.Pointer[net.UDPConn]
 	wg   sync.WaitGroup
@@ -139,11 +143,14 @@ func NewDNS(cfg DNSConfig) (*DNS, error) {
 	return d, nil
 }
 
-// validateNodeLocal refuses a wildcard bind.
+// validateNodeLocal refuses a wildcard or public bind.
 //
 // An open resolver on a public interface is a DNS amplification source and an
 // inventory of everything running on the node. This is cheap to get wrong in a
-// config file and expensive to notice, so it is refused at construction.
+// config file and expensive to notice, so it is refused at construction:
+// loopback, private and link-local addresses only (K-27). The cluster CIDRs
+// are private by construction (ULA for v6), so a node-local resolver address
+// always qualifies.
 func validateNodeLocal(listen string) error {
 	host, _, err := net.SplitHostPort(listen)
 	if err != nil {
@@ -156,6 +163,10 @@ func validateNodeLocal(listen string) error {
 	if addr.IsUnspecified() {
 		return fmt.Errorf("dns: refusing to listen on %s; bind a node-local address, "+
 			"a wildcard bind publishes an open resolver on every interface", host)
+	}
+	if !addr.IsLoopback() && !addr.IsPrivate() && !addr.IsLinkLocalUnicast() {
+		return fmt.Errorf("dns: refusing to listen on %s; a public address publishes an "+
+			"open resolver and the node's service inventory", host)
 	}
 	return nil
 }
@@ -260,9 +271,45 @@ func (d *DNS) Serve(ctx context.Context) error {
 		request := make([]byte, n)
 		copy(request, buf[:n])
 
+		// K-26: an answer from the zone is a memory lookup, so it is served
+		// inline from the read loop - a flood of internal queries costs a
+		// memcpy, never a goroutine. A forward is a network wait, so it gets a
+		// goroutine, but only after winning a slot: a flood of external
+		// queries then drops on full rather than spawning without bound (the
+		// same discipline as forwardSlots, moved to where the goroutine is
+		// born). A parse failure is the cheap error-response path and stays
+		// inline too.
+		var q query
+		needsForward := false
+		if parsed, err := parseQuery(request); err == nil {
+			q = parsed
+			needsForward = q.opcode() == 0 &&
+				(q.Class == classIN || q.Class == typeANY) &&
+				!isInternalName(q.Name)
+		}
+		if !needsForward {
+			d.handle(ctx, conn, client, request)
+			continue
+		}
+
+		select {
+		case d.forwardSlots <- struct{}{}:
+		default:
+			// Full: fail the query, count the drop, never queue. A queue is
+			// the failure mode this design exists to avoid.
+			d.forwardDrops.Add(1)
+			if response := newResponse(request, q, rcodeServFail, false).finish(); len(response) > 0 {
+				if _, err := conn.WriteToUDP(response, client); err != nil && ctx.Err() == nil {
+					d.log.Debug("dns drop-answer write failed", "error", err)
+				}
+			}
+			continue
+		}
+
 		d.wg.Add(1)
 		go func() {
 			defer d.wg.Done()
+			defer func() { <-d.forwardSlots }()
 			d.handle(ctx, conn, client, request)
 		}()
 	}
@@ -381,18 +428,17 @@ func (d *DNS) forward(ctx context.Context, request []byte, q query) []byte {
 		return newResponse(request, q, rcodeRefused, false).finish()
 	}
 
-	// Take a slot or give up immediately. Blocking here is the failure mode
-	// this whole design exists to avoid: the caller is a workload waiting to
-	// make a request, and a queue turns one slow upstream into a stalled node.
-	select {
-	case d.forwardSlots <- struct{}{}:
-		defer func() { <-d.forwardSlots }()
-	default:
-		return newResponse(request, q, rcodeServFail, false).finish()
-	}
+	// The caller (the read loop) already holds a forward slot (K-26): it is
+	// taken before the goroutine is born, so a flood drops on full rather than
+	// spawning without bound.
 
 	for _, upstream := range d.upstreams {
 		reply, err := d.queryUpstream(ctx, upstream, request)
+		if errors.Is(err, errUpstreamTruncated) {
+			// The reply did not fit the read buffer: header+question with TC,
+			// so the resolver retries over TCP (K-28).
+			return newResponse(request, q, 0, false).truncatedAnswers()
+		}
 		if err == nil {
 			return reply
 		}
@@ -425,10 +471,17 @@ func (d *DNS) queryUpstream(ctx context.Context, upstream string, request []byte
 		return nil, err
 	}
 
-	buf := make([]byte, maxUDPPayload*2)
+	buf := make([]byte, maxForwardPayload)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, err
+	}
+	if n == len(buf) {
+		// A reply that fills the buffer may be clipped mid-record (K-28):
+		// relaying it with ANCOUNT intact hands the client a parse error.
+		// Signal truncation; forward() answers header+question with TC so the
+		// resolver retries over TCP.
+		return nil, errUpstreamTruncated
 	}
 	if n < dnsHeaderLen {
 		return nil, fmt.Errorf("dns: upstream %s returned %d bytes", upstream, n)
