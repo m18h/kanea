@@ -93,6 +93,11 @@ func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: bad LDAP URL %q: %w", cfg.URL, err)
 	}
+	// I-5, recorded: userinfo in the URL is not refused, and the URL is
+	// written to audit entries and daemon logs on directory logins - an
+	// operator who embeds credentials in it has put them in both. The bind
+	// credential travels in --ldap-bind-password (a secret: reference), never
+	// here; the URL is treated as configuration, not as a credential carrier.
 	switch parsed.Scheme {
 	case "ldaps", "ldap":
 		// ldap:// gets StartTLS unconditionally in Verify. The wire carries

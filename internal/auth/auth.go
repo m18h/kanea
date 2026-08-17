@@ -103,8 +103,12 @@ type Token struct {
 	Created time.Time `json:"created"`
 	// Expires bounds the token. Zero means no expiry, which is discouraged and
 	// visible in listings for exactly that reason.
-	Expires  time.Time `json:"expires,omitempty"`
-	LastUsed time.Time `json:"last_used,omitempty"`
+	Expires time.Time `json:"expires,omitempty"`
+	// There is deliberately no LastUsed: writing it would be a Store write per
+	// authenticated request (v1.37's rule forbids that), and a column that is
+	// never written reads as "never used" for every token - a false statement
+	// in an audit surface (K-38). Token use is visible in the audit log,
+	// keyed by token id.
 }
 
 // Expired reports whether the token may no longer be used.
