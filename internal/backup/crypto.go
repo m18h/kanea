@@ -30,6 +30,13 @@ var ErrCorrupt = errors.New("backup: archive is corrupt or truncated")
 type Keys struct {
 	// stream encrypts archive parts.
 	stream []byte
+	// mac authenticates manifests. The snapshot's hash is recorded *in* the
+	// manifest, so without this a bucket-write attacker could swap in an older
+	// (manifest, snapshot) pair - both genuine, both key-produced - and a
+	// restore would roll the node back past revocations. A keyed MAC is not a
+	// signature: it attributes nothing, and it needs nothing but the key the
+	// archive already requires.
+	mac []byte
 	// ID is a non-secret fingerprint of the master key, written into every
 	// manifest.
 	//
@@ -56,13 +63,17 @@ func DeriveKeys(master []byte) (Keys, error) {
 	if err != nil {
 		return Keys{}, err
 	}
+	mac, err := derive(master, "kanea backup manifest mac v1", 32)
+	if err != nil {
+		return Keys{}, err
+	}
 	// The id is derived rather than hashed straight off the master key, so that
 	// publishing it in a manifest leaks nothing usable about the key itself.
 	id, err := derive(master, "kanea backup key id v1", 8)
 	if err != nil {
 		return Keys{}, err
 	}
-	return Keys{stream: stream, ID: hex.EncodeToString(id)}, nil
+	return Keys{stream: stream, mac: mac, ID: hex.EncodeToString(id)}, nil
 }
 
 func derive(master []byte, info string, size int) ([]byte, error) {

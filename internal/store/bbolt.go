@@ -93,6 +93,17 @@ func Open(opts Options) (Store, error) {
 		return nil, fmt.Errorf("store dir: %w", err)
 	}
 
+	// The file holds the secrets and certs buckets; 0600 is set at creation,
+	// but an existing file keeps whatever an operator (or a backup tool)
+	// left on it. Warned, not refused (K-52): an upgraded daemon must not
+	// refuse to boot over permissions it can only report, and the finding is
+	// also a `kanea doctor` check.
+	if info, err := os.Lstat(opts.Path); err == nil && info.Mode().Perm()&0o077 != 0 {
+		opts.Logger.Warn("state database is readable by group or other",
+			"path", opts.Path, "mode", fmt.Sprintf("%04o", info.Mode().Perm()),
+			"detail", "it holds encrypted secrets and certificates; chmod 0600")
+	}
+
 	// 0600: the secrets and certs buckets live in this file.
 	db, err := bolt.Open(opts.Path, 0o600, &bolt.Options{
 		Timeout:  opts.Timeout,
