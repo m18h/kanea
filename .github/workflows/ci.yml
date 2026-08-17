@@ -20,8 +20,8 @@ jobs:
     name: "Go: build, vet, test"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -43,8 +43,8 @@ jobs:
     name: "S3 interop: MinIO"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -117,8 +117,8 @@ jobs:
     name: "Component manifest: upstream hashes"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -149,8 +149,8 @@ jobs:
     name: "BPF artifacts: regenerate and diff"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -180,8 +180,8 @@ jobs:
     name: "Install smoke: real node"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -217,6 +217,54 @@ jobs:
             slice=$(systemctl show -p Slice --value "$unit.service")
             [ "$slice" = "kanea.slice" ] || { echo "$unit is in $slice"; exit 1; }
           done
+      # Presence-by-name is not verification: containerd names imported image
+      # records from the archive's own annotation, so a crafted bundle can
+      # claim the pinned name while targeting other content. Fetch's digest
+      # comparison is the authority check, and this forges the exact bundle
+      # that defeats a name lookup.
+      - name: A bundle whose image claims the pinned name is refused
+        run: |
+          set -euo pipefail
+          sudo ./bin/kanea bundle create --arch amd64 -o bundle-full.tar.gz
+          mkdir -p forged && tar -C forged -xzf bundle-full.tar.gz
+          ref="$(jq -r '.components[] | select(.name=="buildkit") | .image + "@" + .digest' internal/provision/components.json)"
+          REF="$ref" python3 - <<'PY'
+          import hashlib, io, json, os, tarfile
+          def blob(data): return hashlib.sha256(data).hexdigest(), data
+          config = json.dumps({"architecture":"amd64","os":"linux","config":{}}).encode()
+          cd, cdata = blob(config)
+          buf = io.BytesIO()
+          with tarfile.open(fileobj=buf, mode="w") as t:
+              payload = b"not the pinned buildkit\n"
+              ti = tarfile.TarInfo("usr/bin/buildkitd"); ti.size = len(payload); ti.mode = 0o755
+              t.addfile(ti, io.BytesIO(payload))
+          ld, ldata = blob(buf.getvalue())
+          manifest = json.dumps({"schemaVersion":2,
+              "mediaType":"application/vnd.oci.image.manifest.v1+json",
+              "config":{"mediaType":"application/vnd.oci.image.config.v1+json",
+                        "digest":"sha256:"+cd,"size":len(cdata)},
+              "layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar",
+                         "digest":"sha256:"+ld,"size":len(ldata)}]}).encode()
+          md, mdata = blob(manifest)
+          index = json.dumps({"schemaVersion":2,
+              "mediaType":"application/vnd.oci.image.index.v1+json",
+              "manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json",
+                            "digest":"sha256:"+md,"size":len(mdata),
+                            "annotations":{"org.opencontainers.image.ref.name":os.environ["REF"]}}]}).encode()
+          with tarfile.open("forged/images/buildkit.oci.tar","w") as t:
+              def add(name, data):
+                  ti = tarfile.TarInfo(name); ti.size = len(data); ti.mode = 0o644
+                  t.addfile(ti, io.BytesIO(data))
+              add("oci-layout", json.dumps({"imageLayoutVersion":"1.0.0"}).encode())
+              add("index.json", index)
+              add("blobs/sha256/"+cd, cdata)
+              add("blobs/sha256/"+ld, ldata)
+              add("blobs/sha256/"+md, mdata)
+          PY
+          if sudo ./bin/kanea install --bundle forged --only buildkit; then
+            echo "a forged bundle installed without complaint"; exit 1
+          fi
+          echo "refused: the name matched, the digest did not"
       - name: Journal on failure
         if: failure()
         run: sudo journalctl -u kanea-containerd --no-pager -n 200
@@ -230,8 +278,8 @@ jobs:
     name: "Install smoke: air-gapped"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
@@ -274,12 +322,12 @@ jobs:
     name: "Lint: golangci-lint"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           version: latest
 
@@ -287,23 +335,23 @@ jobs:
     name: "Security gates: gosec, govulncheck, gitleaks"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0 # gitleaks needs full history
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
       - name: gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@2eb4727ebc7504944ddbcdd2f7157db492026c3f # master
         with:
           args: -quiet ./...
       - name: govulncheck
-        uses: golang/govulncheck-action@v1
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1
         with:
           go-package: ./...
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v3
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITLEAKS_CONFIG: .gitleaks.toml
           # The action requires the token on pull_request events to resolve
@@ -317,8 +365,8 @@ jobs:
       run:
         working-directory: dashboard
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .nvmrc
           cache: npm

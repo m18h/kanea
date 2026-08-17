@@ -17,8 +17,44 @@ permissions:
   contents: read
 
 jobs:
+  gates:
+    name: Gates
+    runs-on: ubuntu-latest
+    # No contents/id-token permission: this job installs and runs third-party
+    # tool code, and it must not run beside the step that signs every node's
+    # binary (K-42). The signing job re-checks out and builds from scratch.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gate tools
+        run: |
+          make tools
+          # Not in `make tools` (locally it comes from a package manager), but
+          # it is a Go module and the runner has the toolchain already. The
+          # module still declares the pre-org-move path, hence zricethezav.
+          # Pinned like the rest (K-42): a gate tool at @latest is unreviewed
+          # code in the release pipeline.
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+      - name: Gates
+        run: make check
+
   build:
     name: Build and publish
+    needs: gates
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -26,39 +62,27 @@ jobs:
       # what makes the signature attributable without a key to look after.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Tags and full history: the version stamp is derived from them, and a
           # shallow clone would produce a binary that reports the wrong one.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
 
-      # The gates are release gates (AGENTS.md #7), so they run here too rather
-      # than being assumed from the commit's CI. A tag can be pushed at any
-      # commit, including one CI never saw.
-      # `make check` includes the dashboard build, which is what go:embed picks
-      # up, so it has to run before the binaries are built, not merely before
-      # they are published.
-      - name: Install gate tools
-        run: |
-          make tools
-          # Not in `make tools` (locally it comes from a package manager), but
-          # it is a Go module and the runner has the toolchain already. The
-          # module still declares the pre-org-move path, hence zricethezav.
-          go install github.com/zricethezav/gitleaks/v8@latest
-          echo "$HOME/go/bin" >> "$GITHUB_PATH"
-      - name: Gates
-        run: make check
+      # The dashboard build runs here too: go:embed picks it up into the
+      # binaries. The gates job already proved the tree; this job signs it.
+      - name: Dashboard
+        run: make dashboard
 
       - name: Build release binaries
         env:
@@ -113,7 +137,7 @@ jobs:
       # one cosign signature over it extends to them too: the same reasoning
       # that puts the bundles under it. An SBOM nobody can authenticate
       # describes software nobody can authenticate.
-      - uses: anchore/sbom-action/download-syft@v0
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           syft-version: v1.51.0
 
@@ -139,7 +163,7 @@ jobs:
           sha256sum kanea_*.tar.gz kanea_*.spdx.json > checksums.txt
           cat checksums.txt
 
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       # Only checksums.txt is signed, and every archive is covered by it. One
       # signature over a manifest of hashes is the same guarantee as a signature
