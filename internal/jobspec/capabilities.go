@@ -1,6 +1,7 @@
 package jobspec
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -30,11 +31,13 @@ var PermittedCapabilities = map[string]string{
 	"CAP_MKNOD":            "create device nodes",
 	"CAP_NET_BIND_SERVICE": "bind ports below 1024",
 	"CAP_NET_RAW":          "raw and packet sockets (ping, traceroute)",
-	"CAP_SETFCAP":          "set file capabilities",
-	"CAP_SETGID":           "change group id, e.g. dropping to a service account",
-	"CAP_SETPCAP":          "drop capabilities from its own bounding set",
-	"CAP_SETUID":           "change user id, e.g. dropping to a service account",
-	"CAP_SYS_CHROOT":       "chroot",
+	"CAP_SETFCAP": "set file capabilities (K-48: on an rw host volume the " +
+		"file capabilities persist on the host for whoever executes the file later - " +
+		"no-new-privileges contains the capability inside the container, not the file)",
+	"CAP_SETGID":     "change group id, e.g. dropping to a service account",
+	"CAP_SETPCAP":    "drop capabilities from its own bounding set",
+	"CAP_SETUID":     "change user id, e.g. dropping to a service account",
+	"CAP_SYS_CHROOT": "chroot",
 }
 
 // forbiddenCapabilities are refused with a specific explanation rather than the
@@ -75,51 +78,70 @@ func validateCapabilities(svc *Service) hcl.Diagnostics {
 
 	seen := make(map[string]bool, len(svc.Task.Capabilities))
 	for _, capability := range svc.Task.Capabilities {
-		name := strings.ToUpper(strings.TrimSpace(capability))
-
-		// "none" opts out of the baseline: start from nothing, then grant
-		// only what the rest of the list names (R13, v1.56). Checked before
-		// the CAP_ prefix rule (it is a token, not a capability) but still
-		// through the duplicate map.
-		if name == capabilityNoneUpper {
-			if seen[CapabilityNone] {
-				diags = append(diags, capDiag(svc, fmt.Sprintf("%q is listed twice", CapabilityNone)))
-				continue
-			}
-			seen[CapabilityNone] = true
-			continue
-		}
-
-		switch {
-		case name == "":
-			diags = append(diags, capDiag(svc, "an empty capability name"))
-			continue
-
-		case !strings.HasPrefix(name, "CAP_"):
-			diags = append(diags, capDiag(svc, fmt.Sprintf(
-				"capability %q must be written with its CAP_ prefix, e.g. %q",
-				capability, "CAP_"+name)))
-			continue
-
-		case seen[name]:
-			diags = append(diags, capDiag(svc, fmt.Sprintf("capability %q is listed twice", name)))
-			continue
-		}
-		seen[name] = true
-
-		if reason, forbidden := forbiddenCapabilities[name]; forbidden {
-			diags = append(diags, capDiag(svc, fmt.Sprintf(
-				"capability %s cannot be granted: %s. v1 has no privileged escape hatch, "+
-					"and this allowlist is not one", name, reason)))
-			continue
-		}
-		if _, ok := PermittedCapabilities[name]; !ok {
-			diags = append(diags, capDiag(svc, fmt.Sprintf(
-				"unknown or unsupported capability %s. Permitted: %s",
-				name, strings.Join(sortedPermitted(), ", "))))
+		if err := checkCapability(capability, seen); err != nil {
+			diags = append(diags, capDiag(svc, err.Error()))
 		}
 	}
 	return diags
+}
+
+// CheckCapabilities validates a declared list against R13 and returns the
+// first problem, or nil. It is the apply-seam half of validateCapabilities:
+// one error rather than diagnostics, for callers (the API's apply path) that
+// validate stored records rather than HCL. Both are the same per-entry core,
+// so the two paths cannot drift.
+func CheckCapabilities(list []string) error {
+	seen := make(map[string]bool, len(list))
+	for _, capability := range list {
+		if err := checkCapability(capability, seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkCapability validates one declared entry. seen tracks duplicates across
+// the list and is mutated as entries validate.
+func checkCapability(capability string, seen map[string]bool) error {
+	name := strings.ToUpper(strings.TrimSpace(capability))
+
+	// "none" opts out of the baseline: start from nothing, then grant
+	// only what the rest of the list names (R13, v1.56). Checked before
+	// the CAP_ prefix rule (it is a token, not a capability) but still
+	// through the duplicate map.
+	if name == capabilityNoneUpper {
+		if seen[CapabilityNone] {
+			return fmt.Errorf("%q is listed twice", CapabilityNone)
+		}
+		seen[CapabilityNone] = true
+		return nil
+	}
+
+	switch {
+	case name == "":
+		return errors.New("an empty capability name")
+
+	case !strings.HasPrefix(name, "CAP_"):
+		return fmt.Errorf(
+			"capability %q must be written with its CAP_ prefix, e.g. %q",
+			capability, "CAP_"+name)
+
+	case seen[name]:
+		return fmt.Errorf("capability %q is listed twice", name)
+	}
+	seen[name] = true
+
+	if reason, forbidden := forbiddenCapabilities[name]; forbidden {
+		return fmt.Errorf(
+			"capability %s cannot be granted: %s. v1 has no privileged escape hatch, "+
+				"and this allowlist is not one", name, reason)
+	}
+	if _, ok := PermittedCapabilities[name]; !ok {
+		return fmt.Errorf(
+			"unknown or unsupported capability %s. Permitted: %s",
+			name, strings.Join(sortedPermitted(), ", "))
+	}
+	return nil
 }
 
 // validateCommand enforces R12: an argument array, never a shell string.

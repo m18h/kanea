@@ -125,6 +125,57 @@ service "web" {
 	}
 }
 
+func TestBuildPathValidation(t *testing.T) {
+	// build.context and build.dockerfile name paths *inside the checkout*;
+	// absolute and ".." forms name the node's filesystem and are refused at
+	// plan rather than cleaned (the runner refuses symlinks for the records
+	// that never pass through here).
+	build := func(context, dockerfile string) string {
+		svc := `
+service "web" {
+  project = "shop"
+  task "app" {}
+  build {
+    context = "` + context + `"
+    target  = "registry.example.com/shop/web"
+  }
+}
+`
+		if dockerfile != "" {
+			svc = strings.Replace(svc, "context = ", "dockerfile = \""+dockerfile+"\"\n    context = ", 1)
+		}
+		return `
+spec_version = 1
+
+project "shop" {}
+` + svc
+	}
+
+	for _, tc := range []struct {
+		name     string
+		src      string
+		wantText string
+	}{
+		{"absolute context", build("/etc", ""), "absolute"},
+		{"dotdot context", build("../../etc", ""), "\"..\""},
+		{"nested dotdot context", build("app/../../etc", ""), "\"..\""},
+		{"absolute dockerfile", build("app", "/etc/shadow"), "absolute"},
+		{"dotdot dockerfile", build("app", "../secrets/Dockerfile"), "\"..\""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseErr(t, tc.src); !strings.Contains(got, tc.wantText) {
+				t.Fatalf("diagnostics =\n%s\nwant something about %s", got, tc.wantText)
+			}
+		})
+	}
+
+	// Relative forms are legitimate.
+	parse(t, build(".", ""))
+	parse(t, build("app", ""))
+	parse(t, build("./app", "Dockerfile"))
+	parse(t, build("app", "docker/Containerfile"))
+}
+
 func TestNameValidation(t *testing.T) {
 	// R1 / PRD §4.2: names become DNS labels, so this is correctness.
 	tests := []struct {
@@ -393,6 +444,29 @@ func TestHealthCheckRules(t *testing.T) {
 			name:    "http without path",
 			block:   "health_check \"http\" {\n type = \"http\"\n port = \"http\"\n}",
 			wantErr: "needs path",
+		},
+		// K-10: a path that does not start with "/" rewrites the probe URL's
+		// authority (Go parses the alloc address as userinfo and dials the
+		// attacker's host: blind SSRF from kanead). Refused at plan.
+		{
+			name:    "path without leading slash",
+			block:   "health_check \"http\" {\n type = \"http\"\n path = \"@169.254.169.254/latest/meta-data\"\n port = \"http\"\n}",
+			wantErr: "must start with",
+		},
+		{
+			name:    "path with userinfo marker",
+			block:   "health_check \"http\" {\n type = \"http\"\n path = \"/x@y\"\n port = \"http\"\n}",
+			wantErr: "userinfo, query, fragment or whitespace",
+		},
+		{
+			name:    "path with a query",
+			block:   "health_check \"http\" {\n type = \"http\"\n path = \"/x?a=b\"\n port = \"http\"\n}",
+			wantErr: "userinfo, query, fragment or whitespace",
+		},
+		{
+			name:    "path with a space",
+			block:   "health_check \"http\" {\n type = \"http\"\n path = \"/x y\"\n port = \"http\"\n}",
+			wantErr: "userinfo, query, fragment or whitespace",
 		},
 		{
 			name:    "http without port",
@@ -814,6 +888,77 @@ service "web" {
 	}
 }
 
+func TestStorageCredentialsAreProjectScoped(t *testing.T) {
+	// A storage block is top-level, so its auth_ref is checked against every
+	// service that mounts it (v1.72): mounting is reading.
+	specWith := func(project, authRef string) string {
+		return `
+spec_version = 1
+project "shop" {}
+project "bank" {}
+storage "assets" {
+  type     = "s3"
+  bucket   = "media"
+  auth_ref = "` + authRef + `"
+}
+service "web" {
+  project = "` + project + `"
+  task "app" { image = "nginx" }
+  volume "media" {
+    storage    = "assets"
+    mount_path = "/data"
+  }
+}
+`
+	}
+
+	// Own project and the shared scope are fine.
+	parse(t, specWith("shop", "secret:shop/s3"))
+	parse(t, specWith("shop", "secret:shared/s3"))
+
+	// Another project's secret is not, whoever mounts it.
+	if out := parseErr(t, specWith("shop", "secret:bank/aws")); !strings.Contains(out, "another project") {
+		t.Errorf("diagnostics = %q, want the cross-project refusal", out)
+	}
+	if out := parseErr(t, specWith("bank", "secret:shop/s3")); !strings.Contains(out, "another project") {
+		t.Errorf("diagnostics = %q, want the cross-project refusal", out)
+	}
+	// A literal credential is refused by shape, not silently resolved.
+	if out := parseErr(t, specWith("shop", "AKIAEXAMPLE")); !strings.Contains(out, "not a secret reference") {
+		t.Errorf("diagnostics = %q, want the shape refusal", out)
+	}
+}
+
+func TestStorageEndpointMustBeHTTPS(t *testing.T) {
+	// The mount helper sends the resolved credential to the endpoint on every
+	// request; over cleartext that is the credential.
+	specWith := func(endpoint string) string {
+		return `
+spec_version = 1
+project "shop" {}
+storage "assets" {
+  type     = "s3"
+  bucket   = "media"
+  endpoint = "` + endpoint + `"
+}
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+}
+`
+	}
+
+	parse(t, specWith("https://s3.eu-west-1.amazonaws.com"))
+	parse(t, specWith("https://minio.lan:9443"))
+
+	if out := parseErr(t, specWith("http://minio.lan:9000")); !strings.Contains(out, "not https") {
+		t.Errorf("diagnostics = %q, want the https refusal", out)
+	}
+	if out := parseErr(t, specWith("minio.lan")); !strings.Contains(out, "not https") {
+		t.Errorf("diagnostics = %q, want the https refusal", out)
+	}
+}
+
 func TestVolumeValidation(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -839,6 +984,17 @@ func TestVolumeValidation(t *testing.T) {
 			"conflicting mount path",
 			"volume \"one\" {\n storage = \"a\"\n mount_path = \"/data\"\n}\nvolume \"two\" {\n storage = \"b\"\n mount_path = \"/data\"\n}",
 			"Conflicting mount path",
+		},
+		{
+			// K-47: the socket rules apply to volumes.
+			"mount over /proc",
+			"volume \"data\" {\n storage = \"local-ssd\"\n mount_path = \"/proc\"\n}",
+			"system tree",
+		},
+		{
+			"mount over resolv.conf",
+			"volume \"data\" {\n storage = \"local-ssd\"\n mount_path = \"/etc/resolv.conf\"\n}",
+			"resolv.conf",
 		},
 	}
 	for _, tc := range tests {
@@ -1853,6 +2009,84 @@ project "shop" {
 	}
 }
 
+func TestGitURLShapeValidation(t *testing.T) {
+	// The URL's shape decides how the credential travels: http sends it in
+	// cleartext, git:// authenticates nothing, and userinfo in the URL would
+	// land in build logs any viewer can read.
+	gitURL := func(raw string) string {
+		return `
+spec_version = 1
+
+project "shop" {
+  git {
+    url = "` + raw + `"
+    auth_ref = "secret:shop/deploy-key"
+  }
+}
+`
+	}
+
+	for _, tc := range []struct{ name, raw, want string }{
+		{"cleartext http", "http://git.lan/team/repo.git", "not https"},
+		{"unauthenticated git protocol", "git://git.lan/team/repo.git", "not authenticated"},
+		{"embedded credentials", "https://oauth2:glpat-secret@gitlab.example.com/team/repo.git", "embeds credentials"},
+		{"ssh with a password", "ssh://git:secret@git.lan/team/repo.git", "embeds credentials"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseErr(t, gitURL(tc.raw)); !strings.Contains(got, tc.want) {
+				t.Fatalf("diagnostics = %s\nwant something about %q", got, tc.want)
+			}
+		})
+	}
+
+	// The authenticated and network-free forms stay valid.
+	parse(t, gitURL("https://github.com/example/deploy.git"))
+	parse(t, gitURL("ssh://git@github.com/example/deploy.git"))
+	parse(t, gitURL("git@github.com:example/deploy.git"))
+	parse(t, gitURL("/srv/mirrors/deploy.git"))
+}
+
+func TestBuildOptionValidation(t *testing.T) {
+	// buildctl parses --output/--export-cache/--import-cache as
+	// comma-separated key=value lists: a comma, an '=' or whitespace in one
+	// of these fields is option injection, not a name.
+	build := func(kv string) string {
+		return `
+spec_version = 1
+
+project "shop" {}
+
+service "web" {
+  project = "shop"
+  task "app" {}
+  build {
+    context = "."
+    ` + kv + `
+  }
+}
+`
+	}
+
+	for _, tc := range []struct{ name, kv, want string }{
+		{"tag with a comma", `target = "registry.example.com/shop/web"` + "\n    " + `tag = "x,registry.insecure=true"`, "build.tag"},
+		{"tag with an equals", `target = "registry.example.com/shop/web"` + "\n    " + `tag = "x=1"`, "build.tag"},
+		{"tag with a space", `target = "registry.example.com/shop/web"` + "\n    " + `tag = "my tag"`, "build.tag"},
+		{"target that is not a reference", `target = "not a ref"`, "not an image reference"},
+		{"cache_repo with option injection", `target = "registry.example.com/shop/web"` + "\n    " + `cache_repo = "registry.example.com/shop/cache,mode=max"`, "not an image reference"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseErr(t, build(tc.kv)); !strings.Contains(got, tc.want) {
+				t.Fatalf("diagnostics = %s\nwant something about %q", got, tc.want)
+			}
+		})
+	}
+
+	// Variables in the tag are the documented shape (R2), and a registry
+	// port is a legitimate part of a reference.
+	parse(t, build(`target = "registry.example.com/shop/web"`+"\n    "+`tag = "${GIT_SHA_SHORT}"`))
+	parse(t, build(`target = "registry.example.com:5000/shop/web"`+"\n    "+`cache_repo = "registry.example.com:5000/shop/web-cache"`))
+}
+
 func TestUpdateStrategyMustBeKnown(t *testing.T) {
 	// A strategy nobody implements has to be rejected at parse time. Accepting
 	// it and quietly rolling instead would mean the spec says one thing and the
@@ -2291,4 +2525,59 @@ func deref(p *int) any {
 		return nil
 	}
 	return *p
+}
+
+// K-46: a mount helper's positional argument is not a flag, and a spec's
+// `options` string may not carry the keys Kanea sets itself.
+func TestStorageMountsRefuseInjectionShapes(t *testing.T) {
+	specWith := func(extra string) string {
+		return `
+spec_version = 1
+project "shop" {}
+storage "assets" {
+  type = "s3"
+  bucket = "media"
+` + extra + `
+}
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+  volume "media" {
+    storage    = "assets"
+    mount_path = "/data"
+  }
+}
+`
+	}
+
+	// A bucket named like a flag is option injection at the helper's argv.
+	if out := parseErr(t, `
+spec_version = 1
+project "shop" {}
+storage "assets" {
+  type = "s3"
+  bucket = "-o"
+}
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+  volume "media" {
+    storage    = "assets"
+    mount_path = "/data"
+  }
+}
+`); !strings.Contains(out, "option injection") {
+		t.Errorf("bucket \"-o\" diagnostics = %q, want the injection refusal", out)
+	}
+
+	// options carrying a Kanea-set key would silently override declared
+	// behaviour (rw against read_only; uid=0 against R24 ownership).
+	if out := parseErr(t, specWith(`  options = "rw"`)); !strings.Contains(out, "overrides") {
+		t.Errorf("options rw diagnostics = %q, want the override refusal", out)
+	}
+	if out := parseErr(t, specWith(`  options = "uid=0,iocharset=utf8"`)); !strings.Contains(out, "overrides") {
+		t.Errorf("options uid=0 diagnostics = %q, want the override refusal", out)
+	}
+	// A free-form option that is nobody else's passes.
+	parse(t, specWith(`  options = "iocharset=utf8"`))
 }
