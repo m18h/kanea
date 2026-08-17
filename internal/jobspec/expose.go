@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/m18h/kanea/internal/certsource"
+	"github.com/m18h/kanea/internal/edge/headown"
 )
 
 // EdgePortName is the port a route uses when a service declares several
@@ -621,15 +622,10 @@ var hopByHopHeaders = map[string]bool{
 
 // edgeOwnedHeaders carry the edge's statement about who the client is. A spec
 // that could set them would be forging the identity that ip_restriction, rate
-// limiting and every access log downstream are keyed on (PRD §14, A01).
-var edgeOwnedHeaders = map[string]bool{
-	"forwarded":         true,
-	"x-forwarded-for":   true,
-	"x-forwarded-host":  true,
-	"x-forwarded-port":  true,
-	"x-forwarded-proto": true,
-	"x-real-ip":         true,
-}
+// limiting and every access log downstream are keyed on (PRD §14, A01). The
+// list is shared with the edge's own discard list (K-22): one source of truth
+// in internal/edge/headown, so plan and publish can never disagree.
+var edgeOwnedHeaders = headown.Set()
 
 func validateExposeHeaders(where string, h *Headers) hcl.Diagnostics {
 	if h == nil {

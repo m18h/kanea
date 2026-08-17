@@ -1,16 +1,20 @@
 package jobspec
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/distribution/reference"
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/secrets"
 )
 
 // SpecVersion is the schema revision this binary speaks (R6, PRD §15.4).
@@ -123,6 +127,53 @@ func validateGit(p *Project) hcl.Diagnostics {
 			Detail:   fmt.Sprintf("Project %q declares a git block with no url.", p.Name),
 			Subject:  p.DefRange.Ptr(),
 		})
+	}
+
+	// The URL's shape decides how the credential travels. https carries the
+	// resolved token as a BasicAuth password, so http is refused outright: it
+	// would send the deploy credential in cleartext. git:// is refused the
+	// same way: unauthenticated plaintext, so anyone on the path could serve
+	// the content the sync then builds and deploys. ssh://, scp-form and
+	// local paths are the authenticated or network-free forms.
+	switch {
+	case strings.HasPrefix(p.Git.URL, "http://"):
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Git url is not https",
+			Detail: fmt.Sprintf("Project %q sets git.url = %q. The deploy credential is sent as "+
+				"a password on every fetch; over cleartext that is the credential. Use https, "+
+				"ssh, or a local path.", p.Name, p.Git.URL),
+			Subject: p.DefRange.Ptr(),
+		})
+	case strings.HasPrefix(p.Git.URL, "git://"):
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Git url is not authenticated",
+			Detail: fmt.Sprintf("Project %q sets git.url = %q. The git protocol is unauthenticated "+
+				"cleartext: anyone on the path could serve what this project builds and deploys. "+
+				"Use https or ssh.", p.Name, p.Git.URL),
+			Subject: p.DefRange.Ptr(),
+		})
+	}
+	// Credentials never live in the URL: the URL is echoed into build logs
+	// and sync errors, which is exactly the escape auth_ref exists to prevent.
+	// ssh is the exception that proves the rule: its userinfo is the login
+	// name (ssh://git@host/…), never a credential - but a *password* there is
+	// one, and is refused like any other.
+	if strings.Contains(p.Git.URL, "://") {
+		if u, err := url.Parse(p.Git.URL); err == nil && u.User != nil {
+			_, hasPassword := u.User.Password()
+			if hasPassword || !strings.HasPrefix(p.Git.URL, "ssh://") {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Git url embeds credentials",
+					Detail: fmt.Sprintf("Project %q sets git.url with a credential in the userinfo "+
+						"part. Credentials are referenced, never inlined (R3): use "+
+						"git.auth_ref = \"secret:%s/<name>\".", p.Name, p.Name),
+					Subject: p.DefRange.Ptr(),
+				})
+			}
+		}
 	}
 
 	for field, ref := range map[string]string{
@@ -349,6 +400,7 @@ func validateStorages(spec *Spec) hcl.Diagnostics {
 		}
 		seen[st.Name] = st.DefRange
 		diags = append(diags, validateStorageCreate(st)...)
+		diags = append(diags, validateStorageOptions(st)...)
 
 		missing := func(field string) *hcl.Diagnostic {
 			return &hcl.Diagnostic{
@@ -371,12 +423,28 @@ func validateStorages(spec *Spec) hcl.Diagnostics {
 			if st.Bucket == "" {
 				diags = append(diags, missing("bucket"))
 			}
+			diags = append(diags, validateMountArg(st, "bucket", st.Bucket)...)
 			if st.Mode != "" && st.Mode != "ro" && st.Mode != "rw" {
 				diags = append(diags, &hcl.Diagnostic{
 					Severity: hcl.DiagError,
 					Summary:  "Invalid storage mode",
 					Detail: fmt.Sprintf("Storage %q has mode %q; expected \"ro\" (mountpoint-s3, "+
 						"the default) or \"rw\" (s3fs).", st.Name, st.Mode),
+					Subject: st.DefRange.Ptr(),
+				})
+			}
+			// The mount helper sends the resolved credential to this endpoint:
+			// SigV4 signs requests, and the access key travels in the
+			// Authorization header. Over plain http that is the credential,
+			// readable by anything on the path - the same rule notification
+			// targets already live under.
+			if st.Endpoint != "" && !strings.HasPrefix(st.Endpoint, "https://") {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  "Storage endpoint is not https",
+					Detail: fmt.Sprintf("Storage %q sets endpoint = %q. Endpoints must use https: "+
+						"the bucket credential is sent to this address on every request.",
+						st.Name, st.Endpoint),
 					Subject: st.DefRange.Ptr(),
 				})
 			}
@@ -388,6 +456,8 @@ func validateStorages(spec *Spec) hcl.Diagnostics {
 			if st.Export == "" {
 				diags = append(diags, missing("export"))
 			}
+			diags = append(diags, validateMountArg(st, "server", st.Server)...)
+			diags = append(diags, validateMountArg(st, "export", st.Export)...)
 
 		case StorageSMB:
 			if st.Server == "" {
@@ -396,6 +466,8 @@ func validateStorages(spec *Spec) hcl.Diagnostics {
 			if st.Share == "" {
 				diags = append(diags, missing("share"))
 			}
+			diags = append(diags, validateMountArg(st, "server", st.Server)...)
+			diags = append(diags, validateMountArg(st, "share", st.Share)...)
 
 		case "":
 			diags = append(diags, &hcl.Diagnostic{
@@ -470,6 +542,7 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		}
 
 		diags = append(diags, validateTask(svc)...)
+		diags = append(diags, validateBuild(svc)...)
 		diags = append(diags, validatePorts(svc)...)
 		diags = append(diags, validateHealthChecks(svc)...)
 		diags = append(diags, validateVolumes(spec, svc)...)
@@ -489,6 +562,87 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		}
 		if svc.Function != nil {
 			diags = append(diags, validateFunction(svc)...)
+		}
+	}
+	return diags
+}
+
+// validateBuild checks the path shape of a build block's context and recipe
+// (PRD §10.2).
+//
+// Both are directories/files *within the checked-out repository*, so an
+// absolute path or a ".." segment is never a mistake worth cleaning up: it is
+// a spec naming the node's filesystem, refused here in front of whoever wrote
+// it. The runner refuses again (and refuses symlinks) for records that never
+// pass through this parser - the same plan-time/apply-time split every other
+// boundary rule has.
+func validateBuild(svc *Service) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	b := svc.Build
+	if b == nil {
+		return diags
+	}
+
+	relative := func(field, value string) hcl.Diagnostics {
+		switch {
+		case value == "":
+			return nil
+		case strings.HasPrefix(value, "/"):
+			return hcl.Diagnostics{{
+				Severity: hcl.DiagError,
+				Summary:  "Build path is absolute",
+				Detail: fmt.Sprintf("Service %q sets build.%s = %q. It is a path inside the "+
+					"repository, not on the node: write it relative, e.g. \".\" or \"app\".",
+					svc.Name, field, value),
+				Subject: b.DefRange.Ptr(),
+			}}
+		}
+		for _, part := range strings.Split(value, "/") {
+			if part == ".." {
+				return hcl.Diagnostics{{
+					Severity: hcl.DiagError,
+					Summary:  "Build path walks out of the repository",
+					Detail: fmt.Sprintf("Service %q sets build.%s = %q; \"..\" segments are refused "+
+						"rather than cleaned away: the build context must stay inside the checkout.",
+						svc.Name, field, value),
+					Subject: b.DefRange.Ptr(),
+				}}
+			}
+		}
+		return nil
+	}
+
+	diags = append(diags, relative("context", b.Context)...)
+	diags = append(diags, relative("dockerfile", b.Dockerfile)...)
+
+	// buildctl parses --output, --export-cache and --import-cache as
+	// comma-separated key=value lists, so a comma, an '=' or whitespace in
+	// any of these is option injection, not a name (a `,registry.insecure=true`
+	// in a tag would silently downgrade the push to cleartext). The runner
+	// refuses again for records that never see this parser.
+	if strings.ContainsAny(b.Tag, ",= \t\n\r") {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid build tag",
+			Detail: fmt.Sprintf("Service %q sets build.tag = %q; a tag may not contain a comma, "+
+				"an '=' or whitespace.", svc.Name, b.Tag),
+			Subject: b.DefRange.Ptr(),
+		})
+	}
+	for _, field := range []struct{ name, value string }{
+		{"target", b.Target}, {"cache_repo", b.CacheRepo},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if _, err := reference.ParseDockerRef(field.value); err != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid image reference",
+				Detail: fmt.Sprintf("Service %q sets build.%s = %q, which is not an image "+
+					"reference: %v.", svc.Name, field.name, field.value, err),
+				Subject: b.DefRange.Ptr(),
+			})
 		}
 	}
 	return diags
@@ -586,11 +740,13 @@ func validateSecretRefs(svc *Service) hcl.Diagnostics {
 	}
 
 	for key, value := range svc.Task.Env {
-		if !strings.HasPrefix(value, SecretPrefix) {
+		// Both the file form (secret:) and the inline form (secret-env:,
+		// v1.76's weaker option) scope identically; the difference is delivery.
+		ref, _, ok := secrets.ParseEnvRef(value)
+		if !ok {
 			continue
 		}
-		ref := strings.TrimPrefix(value, SecretPrefix)
-		scope, rest, found := strings.Cut(ref, "/")
+		scope, rest, found := strings.Cut(strings.TrimPrefix(ref, SecretPrefix), "/")
 		if !found || scope == "" || rest == "" {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
@@ -694,6 +850,7 @@ func validateHealthChecks(svc *Service) hcl.Diagnostics {
 			if hc.Path == "" {
 				diags = append(diags, healthDiag(svc, hc, "An http health check needs path."))
 			}
+			diags = append(diags, validateHealthPath(svc, hc)...)
 			diags = append(diags, requirePort(svc, hc)...)
 
 		case HealthTCP:
@@ -723,6 +880,37 @@ func validateHealthChecks(svc *Service) hcl.Diagnostics {
 		diags = append(diags, validateDuration("timeout", hc.Timeout, hc.DefRange)...)
 	}
 	return diags
+}
+
+// validateHealthPath keeps a health-check path a path. The prober builds the
+// probe URL by concatenating it after host:port, and a value without a leading
+// "/" rewrites the authority: "@169.254.169.254/..." parses the alloc's
+// address as userinfo and dials the attacker's host - a blind SSRF from
+// kanead (audit K-10). "@", "?" and "#" are refused even after a slash:
+// within the path they are legal, and refusing them keeps the concatenation
+// provably host-preserving rather than argued so.
+func validateHealthPath(svc *Service, hc *HealthCheck) hcl.Diagnostics {
+	p := hc.Path
+	if p == "" {
+		return nil
+	}
+	if !strings.HasPrefix(p, "/") {
+		return hcl.Diagnostics{healthDiag(svc, hc,
+			fmt.Sprintf("path %q must start with \"/\"; anything else can rewrite the probe's "+
+				"destination (the prober concatenates it after host:port).", p))}
+	}
+	if i := strings.IndexAny(p, "@?# \t\r\n"); i >= 0 {
+		return hcl.Diagnostics{healthDiag(svc, hc,
+			fmt.Sprintf("path %q contains %q; a health-check path is a plain path, with no "+
+				"userinfo, query, fragment or whitespace.", p, string(p[i])))}
+	}
+	for i := 0; i < len(p); i++ {
+		if p[i] < 0x20 || p[i] == 0x7f {
+			return hcl.Diagnostics{healthDiag(svc, hc,
+				fmt.Sprintf("path %q contains a control character.", p))}
+		}
+	}
+	return nil
 }
 
 func requirePort(svc *Service, hc *HealthCheck) hcl.Diagnostics {
@@ -773,6 +961,27 @@ func validateVolumes(spec *Spec, svc *Service) hcl.Diagnostics {
 					v.Name, svc.Name, v.MountPath),
 				Subject: v.DefRange.Ptr(),
 			})
+		} else if sys := systemPathFor(v.MountPath); sys != "" {
+			// The socket rules apply to volumes too (K-47): a volume bound
+			// over /proc or /sys undoes the hardening defaults from inside
+			// the spec, and the two refusals must not drift.
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Mount path is a system tree",
+				Detail: fmt.Sprintf("Volume %q of service %q mounts at %q: nothing may be mounted over %s.",
+					v.Name, svc.Name, v.MountPath, sys),
+				Subject: v.DefRange.Ptr(),
+			})
+		} else if v.MountPath == "/etc/resolv.conf" {
+			// The internal-DNS bind lives there; shadowing it takes the alloc
+			// off the internal zone (K-47).
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Mount path shadows resolv.conf",
+				Detail: fmt.Sprintf("Volume %q of service %q mounts at /etc/resolv.conf, which Kanea "+
+					"binds itself. Mount a directory instead.", v.Name, svc.Name),
+				Subject: v.DefRange.Ptr(),
+			})
 		}
 		switch {
 		case v.Storage == "":
@@ -792,6 +1001,16 @@ func validateVolumes(spec *Spec, svc *Service) hcl.Diagnostics {
 					"declared in this set.", v.Name, svc.Name, v.Storage),
 				Subject: v.DefRange.Ptr(),
 			})
+		default:
+			// A storage credential is an R5 reference like every other (v1.72):
+			// the block is top-level, so the scope rule is that *every service
+			// mounting the storage* may read the ref. Resolution at mount time
+			// knows no project, so this check is the whole boundary.
+			if st := spec.StorageByName(v.Storage); st.AuthRef != "" {
+				diags = append(diags, checkSecretRef(st.AuthRef, svc.Project,
+					fmt.Sprintf("Storage %q's auth_ref (mounted by service %q)", st.Name, svc.Name),
+					st.DefRange)...)
+			}
 		}
 		if first, dup := seenName[v.Name]; dup {
 			diags = append(diags, &hcl.Diagnostic{
@@ -1256,6 +1475,60 @@ func validateNetworkPolicy(svc *Service) hcl.Diagnostics {
 // answering and this package has no way to answer: it does not know the
 // operator's allowlist, and a spec author naming their own permitted paths
 // would defeat the point of having one.
+// validateMountArg keeps a value that becomes a mount helper's positional
+// argument from being taken for a flag (K-46): helpers place bucket/server/
+// export/share in argv, and a value that starts with '-' or carries option
+// syntax (',', '=', whitespace) is option injection, not a name.
+func validateMountArg(st *Storage, field, value string) hcl.Diagnostics {
+	if value == "" {
+		return nil // the missing-field diagnostic covers it
+	}
+	bad := value[0] == '-' || strings.ContainsAny(value, ",= \t\r\n")
+	if !bad {
+		return nil
+	}
+	return hcl.Diagnostics{{
+		Severity: hcl.DiagError,
+		Summary:  "Unsafe mount argument",
+		Detail: fmt.Sprintf("Storage %q: %s = %q reaches a mount helper's argv; a leading '-' "+
+			"or a ',', '=' or whitespace character is option injection, not a name.",
+			st.Name, field, value),
+		Subject: st.DefRange.Ptr(),
+	}}
+}
+
+// mountOptionKeysOwned are the -o/flag keys Kanea sets itself (K-46): a spec's
+// `options` string appending one would silently override declared behaviour -
+// `options = "rw"` against read_only, `uid=0` against the R24 ownership.
+// Refused by name at plan.
+var mountOptionKeysOwned = map[string]bool{
+	"ro": true, "rw": true, "uid": true, "gid": true,
+	"dir_mode": true, "file_mode": true, "umask": true,
+	"credentials": true, "passwd_file": true, "url": true,
+}
+
+// validateStorageOptions screens a storage block's free-form options against
+// the keys Kanea sets (K-46).
+func validateStorageOptions(st *Storage) hcl.Diagnostics {
+	if st.Options == "" {
+		return nil
+	}
+	for _, opt := range strings.Split(st.Options, ",") {
+		key := strings.SplitN(strings.TrimSpace(opt), "=", 2)[0]
+		if mountOptionKeysOwned[key] {
+			return hcl.Diagnostics{{
+				Severity: hcl.DiagError,
+				Summary:  "Storage option overrides Kanea's own",
+				Detail: fmt.Sprintf("Storage %q: options sets %q, which Kanea sets from declared "+
+					"fields (read_only, ownership, credentials). An override would silently win.",
+					st.Name, key),
+				Subject: st.DefRange.Ptr(),
+			}}
+		}
+	}
+	return nil
+}
+
 func validateHostPath(st *Storage) hcl.Diagnostics {
 	reject := func(detail string) hcl.Diagnostics {
 		return hcl.Diagnostics{{
@@ -1427,36 +1700,66 @@ func systemPathFor(p string) string {
 // `where` names the field in a way that reads in a diagnostic: the operator
 // needs to know which of several references in a spec is the wrong one.
 func checkSecretRef(ref, project, where string, rng hcl.Range) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-	if !strings.HasPrefix(ref, SecretPrefix) {
-		return append(diags, &hcl.Diagnostic{
+	if err := CheckSecretRefScope(ref, project, where); err != nil {
+		return hcl.Diagnostics{{
 			Severity: hcl.DiagError,
-			Summary:  "Credential is not a secret reference",
-			Detail: fmt.Sprintf("%s is %q. Credentials are referenced, never inlined (R3): "+
+			Summary:  secretRefSummary(err),
+			Detail:   err.Error(),
+			Subject:  rng.Ptr(),
+		}}
+	}
+	return nil
+}
+
+// secretRefError carries the summary alongside the detail so the diagnostic
+// keeps its shape when the error crosses packages.
+type secretRefError struct {
+	summary string
+	detail  string
+}
+
+func (e *secretRefError) Error() string { return e.detail }
+
+func secretRefSummary(err error) string {
+	var sre *secretRefError
+	if errors.As(err, &sre) {
+		return sre.summary
+	}
+	return "Invalid secret reference"
+}
+
+// CheckSecretRefScope validates one reference's shape and project scope
+// (R3/R5) and returns the problem, or nil. It is the apply-seam half of
+// checkSecretRef: one error rather than a diagnostic, for callers (the API's
+// apply path) that validate stored records rather than HCL. Both are the same
+// core, so the two paths cannot drift.
+//
+// `where` names the field in a way that reads in a diagnostic: the operator
+// needs to know which of several references in a spec is the wrong one.
+func CheckSecretRefScope(ref, project, where string) error {
+	if !strings.HasPrefix(ref, SecretPrefix) {
+		return &secretRefError{
+			summary: "Credential is not a secret reference",
+			detail: fmt.Sprintf("%s is %q. Credentials are referenced, never inlined (R3): "+
 				"use secret:%s/<name> or secret:%s/<name>.",
 				where, ref, project, SharedSecretScope),
-			Subject: rng.Ptr(),
-		})
+		}
 	}
 	scope, rest, found := strings.Cut(strings.TrimPrefix(ref, SecretPrefix), "/")
 	if !found || scope == "" || rest == "" {
-		return append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  "Malformed secret reference",
-			Detail: fmt.Sprintf("%s is %q; references look like secret:<project>/<name>.",
+		return &secretRefError{
+			summary: "Malformed secret reference",
+			detail: fmt.Sprintf("%s is %q; references look like secret:<project>/<name>.",
 				where, ref),
-			Subject: rng.Ptr(),
-		})
+		}
 	}
 	if scope != project && scope != SharedSecretScope {
-		return append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  "Cross-project secret reference",
-			Detail: fmt.Sprintf("%s references %q, which belongs to another project. "+
+		return &secretRefError{
+			summary: "Cross-project secret reference",
+			detail: fmt.Sprintf("%s references %q, which belongs to another project. "+
 				"Only secret:%s/… or secret:%s/… may be read here (R5).",
 				where, ref, project, SharedSecretScope),
-			Subject: rng.Ptr(),
-		})
+		}
 	}
-	return diags
+	return nil
 }
