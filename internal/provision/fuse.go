@@ -46,7 +46,7 @@ func SetupFUSE(ctx context.Context, log *slog.Logger) error {
 	if err := ensureFuseConf(log); err != nil {
 		return err
 	}
-	return ensureUser(ctx, S3HelperUser, log)
+	return EnsureUser(ctx, S3HelperUser, log)
 }
 
 // ensureFuseConf adds user_allow_other if it is not already effective.

@@ -65,13 +65,23 @@ func (c *ImageClient) scope(ctx context.Context) context.Context {
 // Fetch pulls an image by digest and unpacks it into the snapshotter.
 func (c *ImageClient) Fetch(ctx context.Context, ref string) error {
 	ctx = c.scope(ctx)
-	if !strings.Contains(ref, "@sha256:") {
-		// Belt and braces: the manifest validator already refuses a tag-only
-		// image, and this is the last place before a pull where that could
-		// still be wrong.
-		return fmt.Errorf("refusing to pull %q: images are pinned by digest, never by tag", ref)
+	want, err := pinnedDigest(ref)
+	if err != nil {
+		return err
 	}
-	if _, err := c.client.GetImage(ctx, ref); err == nil {
+	if img, err := c.client.GetImage(ctx, ref); err == nil {
+		// Presence by name is not verification: an image record's name is an
+		// annotation the import took verbatim from an archive, so a crafted
+		// bundle can claim the pinned name while its target descriptor points
+		// at other content. The digest is the only thing that authenticates
+		// the bytes; a mismatch means the image under this name is not the one
+		// the manifest pins, and installing from it would plant its binaries
+		// on the host.
+		if got := img.Target().Digest.String(); got != want {
+			return fmt.Errorf(
+				"image %s targets %s, not the pinned %s: refusing to install it",
+				ref, got, want)
+		}
 		c.log.Debug("image already present", "ref", ref)
 		return nil
 	}
@@ -80,6 +90,18 @@ func (c *ImageClient) Fetch(ctx context.Context, ref string) error {
 		return fmt.Errorf("pull %s: %w", ref, err)
 	}
 	return nil
+}
+
+// pinnedDigest extracts the digest a component reference is pinned to.
+// Anything tag-only is refused: the manifest validator refuses it long before
+// this point, and this is the last place before a pull where it could still
+// be wrong.
+func pinnedDigest(ref string) (string, error) {
+	_, digest, ok := strings.Cut(ref, "@sha256:")
+	if !ok || digest == "" {
+		return "", fmt.Errorf("refusing to pull %q: images are pinned by digest, never by tag", ref)
+	}
+	return "sha256:" + digest, nil
 }
 
 // Unpack copies the named files out of an image's layers into dest.
@@ -142,9 +164,12 @@ func (c *ImageClient) Export(ctx context.Context, ref, arch, destPath string) er
 
 // Import loads an OCI archive from a bundle into containerd.
 //
-// The digest is still the authority: an archive whose content does not produce
-// the pinned digest fails at [Fetch], because the image it imported is not the
-// one the manifest names. A bundle is not trusted more than a registry.
+// containerd names the imported image records from the archive's own
+// annotations, verbatim - so an Import alone cannot authenticate anything: a
+// crafted archive can claim the pinned name while its content differs. The
+// authority check is [Fetch]'s digest comparison against the manifest, which
+// is why every install path imports first and then Fetches through the
+// manifest's pins. A bundle is not trusted more than a registry.
 func (c *ImageClient) Import(ctx context.Context, archivePath string) error {
 	ctx = c.scope(ctx)
 	f, err := os.Open(archivePath) // #nosec G304; a path inside the opened bundle
