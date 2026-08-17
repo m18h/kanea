@@ -81,7 +81,6 @@ func (d *Datapath) Attach(ctx context.Context, spec runtime.AllocSpec) error {
 	}
 
 	if err := d.plumb(spec, host, ip, ip6, identity); err != nil {
-		d.teardownPartial(spec.ID, host, ip, ip6)
 		return err
 	}
 
@@ -91,12 +90,31 @@ func (d *Datapath) Attach(ctx context.Context, spec runtime.AllocSpec) error {
 	return nil
 }
 
+// ifKey renders a netlink ifindex as the veth_src map key. Ifindices are
+// small positive kernel counters; the conversion is checked for the linter's
+// sake, not because a negative one can occur.
+func ifKey(i int) uint32 {
+	if i < 0 {
+		return 0
+	}
+	return uint32(i) // #nosec G115: guarded above; an ifindex is far below 2^32
+}
+
 // plumb performs the attach steps in their load-bearing order. The v6 half
 // (a zero ip6 means v4-only) rides inside the same steps rather than adding
 // new ones: identities for both families land before the veth exists, the
 // peer's addresses and neighbors for both are configured before the link
 // comes up, and the host routes stay last.
-func (d *Datapath) plumb(spec runtime.AllocSpec, host string, ip, ip6 netip.Addr, identity dpmap.Identity) error {
+func (d *Datapath) plumb(spec runtime.AllocSpec, host string, ip, ip6 netip.Addr, identity dpmap.Identity) (err error) {
+	// Any failure unwinds through teardownPartial with the ifindex the veth
+	// got (0 until it exists), so a half-plumbed attach - source bindings
+	// included - never stands.
+	var hostIndex int
+	defer func() {
+		if err != nil {
+			d.teardownPartial(spec.ID, host, ifKey(hostIndex), ip, ip6)
+		}
+	}()
 	// Identity first: from the moment the veth exists, the tc program answers
 	// for it, and an identity miss is a drop.
 	if err := d.maps.PutIdentity(ip, identity); err != nil {
@@ -107,9 +125,21 @@ func (d *Datapath) plumb(spec runtime.AllocSpec, host string, ip, ip6 netip.Addr
 			return fmt.Errorf("datapath: v6 identity for %s: %w", spec.ID, err)
 		}
 	}
-	hostMAC, peerMAC, err := d.nl.CreateVeth(host, peerDevName(spec.ID), aliasFor(spec.ID, ip, ip6))
+	hostMAC, peerMAC, idx, err := d.nl.CreateVeth(host, peerDevName(spec.ID), aliasFor(spec.ID, ip, ip6))
 	if err != nil {
 		return fmt.Errorf("datapath: veth for %s: %w", spec.ID, err)
+	}
+	hostIndex = idx
+	// The source binding lands while the host side is still down (K-09,
+	// v1.77): from the first packet this veth can carry, its claimed source
+	// must be the address kanead assigned it, and a miss fails closed.
+	if err := d.maps.PutVethSrc(ifKey(hostIndex), ip); err != nil {
+		return fmt.Errorf("datapath: source binding for %s: %w", spec.ID, err)
+	}
+	if ip6.IsValid() {
+		if err := d.maps.PutVethSrc(ifKey(hostIndex), ip6); err != nil {
+			return fmt.Errorf("datapath: v6 source binding for %s: %w", spec.ID, err)
+		}
 	}
 	// Policy before the peer can emit a packet toward the host.
 	if err := d.nl.AttachPrograms(host); err != nil {
@@ -185,6 +215,16 @@ func (d *Datapath) RepairIdentity(ctx context.Context, spec runtime.AllocSpec) e
 				return fmt.Errorf("datapath: repair v6 identity for %s: %w", spec.ID, err)
 			}
 		}
+		// The source binding is the same shape of map-only state (v1.77):
+		// repaired here, never by re-plumbing the veth.
+		if err := d.maps.PutVethSrc(ifKey(links[i].Index), ip); err != nil {
+			return fmt.Errorf("datapath: repair source binding for %s: %w", spec.ID, err)
+		}
+		if ip6.IsValid() && d.v6Enabled() {
+			if err := d.maps.PutVethSrc(ifKey(links[i].Index), ip6); err != nil {
+				return fmt.Errorf("datapath: repair v6 source binding for %s: %w", spec.ID, err)
+			}
+		}
 		d.log.Info("alloc identity repaired", "alloc", spec.ID, "ip", ip)
 		return nil
 	}
@@ -230,6 +270,17 @@ func (d *Datapath) reuseExisting(allocID, host string, want dpmap.Identity) (boo
 			if ip6.IsValid() && d.ipam6 != nil {
 				d.ipam6.Adopt(allocID, ip6)
 			}
+			// The adopted attachment's source binding is (re)asserted
+			// idempotently (K-09, v1.77): a pre-v1.77 attach has none, and a
+			// recreated map collection lost them all.
+			if err := d.maps.PutVethSrc(ifKey(existing.Index), ip); err != nil {
+				return false, fmt.Errorf("datapath: source binding for %s: %w", allocID, err)
+			}
+			if ip6.IsValid() && d.v6Enabled() {
+				if err := d.maps.PutVethSrc(ifKey(existing.Index), ip6); err != nil {
+					return false, fmt.Errorf("datapath: v6 source binding for %s: %w", allocID, err)
+				}
+			}
 			return true, nil
 		}
 	}
@@ -247,8 +298,9 @@ func (d *Datapath) reuseExisting(allocID, host string, want dpmap.Identity) (boo
 
 // teardownPartial unwinds a failed attach, best effort: every step logs
 // instead of failing, because the attach error is the one worth reporting and
-// the reconciler will retry into an idempotent Attach anyway.
-func (d *Datapath) teardownPartial(allocID, host string, ip, ip6 netip.Addr) {
+// the reconciler will retry into an idempotent Attach anyway. A zero ifindex
+// means the veth never existed, so there is no source binding to remove.
+func (d *Datapath) teardownPartial(allocID, host string, ifindex uint32, ip, ip6 netip.Addr) {
 	if err := d.nl.DeleteVeth(host); err != nil {
 		d.log.Warn("partial teardown: delete veth", "alloc", allocID, "error", err)
 	}
@@ -258,6 +310,16 @@ func (d *Datapath) teardownPartial(allocID, host string, ip, ip6 netip.Addr) {
 	if ip6.IsValid() {
 		if err := d.maps.DeleteIdentity(ip6); err != nil {
 			d.log.Warn("partial teardown: delete v6 identity", "alloc", allocID, "error", err)
+		}
+	}
+	if ifindex != 0 {
+		if err := d.maps.DeleteVethSrc(ifindex, ip); err != nil {
+			d.log.Warn("partial teardown: delete source binding", "alloc", allocID, "error", err)
+		}
+		if ip6.IsValid() {
+			if err := d.maps.DeleteVethSrc(ifindex, ip6); err != nil {
+				d.log.Warn("partial teardown: delete v6 source binding", "alloc", allocID, "error", err)
+			}
 		}
 	}
 	d.ipam.Release(allocID)
@@ -290,27 +352,31 @@ func (d *Datapath) Detach(ctx context.Context, spec runtime.AllocSpec) error {
 	if d.ipam6 != nil {
 		ip6, _ = d.ipam6.Lookup(spec.ID)
 	}
-	if !known {
-		// A restart lost the in-memory reservation; the link's alias is the
-		// durable copy, and it carries both families, so a dual-stack
-		// attachment's v6 identity is deleted even when v6 has since been
-		// turned off (ipam6 nil). List failing is not fatal: the identity
-		// delete is then skipped, and an identity without an interface denies
-		// traffic rather than passing it.
-		if links, err := d.nl.List(); err == nil {
-			for _, l := range links {
-				if l.Name != host {
-					continue
-				}
-				if id, addr, addr6, ok := parseAlias(l.Alias); ok && id == spec.ID {
+	// The link list supplies what the in-memory state cannot: the durable
+	// alias (both families' addresses) and the ifindex the source-binding
+	// maps are keyed by. List failing is not fatal: the skipped deletes then
+	// leave entries that deny traffic rather than pass it, and a stale
+	// veth_src key is only ever consulted by our own programs on a veth the
+	// next attach overwrites the binding for.
+	var ifindex uint32
+	if links, err := d.nl.List(); err == nil {
+		for _, l := range links {
+			if l.Name != host {
+				continue
+			}
+			ifindex = ifKey(l.Index)
+			if id, addr, addr6, ok := parseAlias(l.Alias); ok && id == spec.ID {
+				if !known {
 					ip, known = addr, true
+				}
+				if !ip6.IsValid() {
 					ip6 = addr6
 				}
-				break
 			}
-		} else {
-			d.log.Warn("detach: list links", "alloc", spec.ID, "error", err)
+			break
 		}
+	} else {
+		d.log.Warn("detach: list links", "alloc", spec.ID, "error", err)
 	}
 
 	if err := d.nl.DeleteVeth(host); err != nil {
@@ -324,6 +390,30 @@ func (d *Datapath) Detach(ctx context.Context, spec runtime.AllocSpec) error {
 	if ip6.IsValid() {
 		if err := d.maps.DeleteIdentity(ip6); err != nil {
 			return fmt.Errorf("datapath: delete v6 identity for %s: %w", spec.ID, err)
+		}
+	}
+	// The per-endpoint counters die with the alloc (K-29): the map is capped
+	// and nothing else frees the slot.
+	if known {
+		if err := d.maps.DeleteEndpointStats(ip); err != nil {
+			d.log.Warn("detach: delete endpoint stats", "alloc", spec.ID, "error", err)
+		}
+	}
+	if ip6.IsValid() {
+		if err := d.maps.DeleteEndpointStats(ip6); err != nil {
+			d.log.Warn("detach: delete v6 endpoint stats", "alloc", spec.ID, "error", err)
+		}
+	}
+	if ifindex != 0 {
+		if ip.IsValid() {
+			if err := d.maps.DeleteVethSrc(ifindex, ip); err != nil {
+				return fmt.Errorf("datapath: delete source binding for %s: %w", spec.ID, err)
+			}
+		}
+		if ip6.IsValid() {
+			if err := d.maps.DeleteVethSrc(ifindex, ip6); err != nil {
+				return fmt.Errorf("datapath: delete v6 source binding for %s: %w", spec.ID, err)
+			}
 		}
 	}
 	d.ipam.Release(spec.ID)

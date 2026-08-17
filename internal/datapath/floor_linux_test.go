@@ -58,6 +58,7 @@ var everyMap = []string{
 	dpmap.MapSvcV6, dpmap.MapSvcBackends6, dpmap.MapIdentityV6,
 	dpmap.MapStatsEp6, dpmap.MapStatsDrops6, dpmap.MapConfig6,
 	dpmap.MapClusterV4, dpmap.MapClusterV6,
+	dpmap.MapVethSrc, dpmap.MapVethSrc6,
 }
 
 func TestFloorTheShippingObjectVerifies(t *testing.T) {

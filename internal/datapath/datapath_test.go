@@ -95,15 +95,19 @@ func (f *fakeNl) EnsureHost(hostIP, hostIP6 netip.Addr) error {
 	return f.failure("ensure-host")
 }
 
-func (f *fakeNl) CreateVeth(host, _, alias string) (string, string, error) {
+func (f *fakeNl) CreateVeth(host, _, alias string) (string, string, int, error) {
 	f.log.rec("create-veth %s", host)
 	if err := f.failure("create-veth"); err != nil {
-		return "", "", err
+		return "", "", 0, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.link[host] = Link{Name: host, Alias: alias}
-	return "aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02", nil
+	// Distinct, non-zero indices per link: the source-binding maps key on
+	// them, and a test that hands every link the same one would hide a
+	// wrong-key bug.
+	index := len(f.link) + 1
+	f.link[host] = Link{Name: host, Alias: alias, Index: index}
+	return "aa:bb:cc:00:00:01", "aa:bb:cc:00:00:02", index, nil
 }
 
 func (f *fakeNl) AttachPrograms(hostDev string) error {
@@ -187,6 +191,8 @@ type fakeMaps struct {
 	services map[dpmap.SvcAddr]dpmap.SvcVal
 	backends map[dpmap.BackendKey]dpmap.Backend
 	allows   map[dpmap.AllowKey]struct{}
+	vethSrc  map[uint32]netip.Addr // veth_src: host ifindex → assigned v4
+	vethSrc6 map[uint32]netip.Addr // veth_src6: the v6 twin
 	cfg      dpmap.Config
 	cfg6     dpmap.Config6
 	cluster  dpmap.CIDR
@@ -202,6 +208,8 @@ func newFakeMaps(log *oplog) *fakeMaps {
 		services: map[dpmap.SvcAddr]dpmap.SvcVal{},
 		backends: map[dpmap.BackendKey]dpmap.Backend{},
 		allows:   map[dpmap.AllowKey]struct{}{},
+		vethSrc:  map[uint32]netip.Addr{},
+		vethSrc6: map[uint32]netip.Addr{},
 		fail:     map[string]error{},
 	}
 }
@@ -233,6 +241,40 @@ func (f *fakeMaps) DeleteIdentity(ip netip.Addr) error {
 	delete(f.idents, ip)
 	return nil
 }
+
+func (f *fakeMaps) PutVethSrc(ifindex uint32, ip netip.Addr) error {
+	f.log.rec("put-veth-src %d %s", ifindex, ip)
+	if err := f.failure("put-veth-src"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ip.Is4() {
+		f.vethSrc[ifindex] = ip
+	} else {
+		f.vethSrc6[ifindex] = ip
+	}
+	return nil
+}
+
+func (f *fakeMaps) DeleteVethSrc(ifindex uint32, ip netip.Addr) error {
+	f.log.rec("delete-veth-src %d %s", ifindex, ip)
+	if err := f.failure("delete-veth-src"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if ip.Is4() {
+		delete(f.vethSrc, ifindex)
+	} else {
+		delete(f.vethSrc6, ifindex)
+	}
+	return nil
+}
+
+// DeleteEndpointStats is silent in the fake: nothing it records would be
+// asserted on, and the ordering tests' golden lists stay readable.
+func (f *fakeMaps) DeleteEndpointStats(netip.Addr) error { return nil }
 
 func (f *fakeMaps) ApplyFlip(key dpmap.SvcAddr, ops []dpmap.Op) error {
 	f.log.rec("apply-flip %s:%d", key.IP, key.Port)
@@ -661,8 +703,10 @@ func TestRepairIdentityIsMapOnly(t *testing.T) {
 	for _, s := range f.log.taken() {
 		switch {
 		case strings.HasPrefix(s, "put-identity"):
+		case strings.HasPrefix(s, "put-veth-src"):
+			// The source binding is the same shape of map-only state (v1.77).
 		default:
-			t.Fatalf("repair performed %q; only identity writes are allowed", s)
+			t.Fatalf("repair performed %q; only identity/binding writes are allowed", s)
 		}
 	}
 }

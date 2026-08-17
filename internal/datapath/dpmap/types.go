@@ -32,11 +32,16 @@ const (
 	// With NODAD, static neighbors and no autoconf nothing legitimate sends
 	// either; the counter keeps the kernel's own MLD chatter visible.
 	DropReasonLinkLocal uint8 = 5
-	// DropReasonSpoof (v1.65): an alloc emitted a packet whose source is
-	// not a cluster address. A forged external source would ride the
-	// return-traffic pass in to_container straight past policy, so the
-	// egress guard refuses it at the veth.
+	// DropReasonSpoof: an alloc emitted a packet whose source is not the
+	// address kanead assigned its veth (v1.77's exact binding; the v1.65
+	// prefix check it replaced was the same reason name).
 	DropReasonSpoof uint8 = 6
+	// DropReasonMulticast: 224.0.0.0/4 or the limited broadcast toward
+	// host-side listeners (LLMNR/mDNS) from an alloc (K-30).
+	DropReasonMulticast uint8 = 7
+	// DropReasonEtherType: a frame that is not IPv4, IPv6 or ARP (K-31) -
+	// a VLAN/QinQ frame past the gate would bypass every L3 check.
+	DropReasonEtherType uint8 = 8
 )
 
 // IdentityFlagHost marks an address as the host's, not an alloc's
@@ -71,6 +76,14 @@ const (
 	// programs treat as the pre-v1.65 deny.
 	MapClusterV4 = "cluster_v4"
 	MapClusterV6 = "cluster_v6"
+
+	// The source-binding maps (K-09, v1.77): host veth ifindex → the address
+	// kanead assigned it. from_container drops a packet whose claimed source
+	// is anything else, which is what makes the identity a destination's
+	// policy evaluates unforgeable from inside the alloc. Additive, like
+	// every map since the v1.41 ABI rule.
+	MapVethSrc  = "veth_src"
+	MapVethSrc6 = "veth_src6"
 )
 
 // PinRoot is where the datapath pins its maps, programs and links.

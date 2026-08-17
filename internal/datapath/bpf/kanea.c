@@ -44,6 +44,8 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define DROP_VIP_LEAK 4
 #define DROP_LINK_LOCAL 5
 #define DROP_SPOOF 6
+#define DROP_MULTICAST 7
+#define DROP_ETHERTYPE 8
 
 /* identity.flags bit 0: the address belongs to the host, not an alloc */
 #define IDENTITY_FLAG_HOST 1
@@ -170,6 +172,20 @@ struct {
 	__type(value, struct identity);
 } identity_v4 SEC(".maps");
 
+/* veth_src binds a host veth (by ifindex) to the one source address kanead
+ * assigned it (K-09, v1.77): from_container drops a packet whose claimed
+ * source is anything else, so the identity a destination's policy evaluates
+ * can never be forged from inside the alloc (IP_FREEBIND needs no
+ * capability, so dropping CAP_NET_RAW does not close forgery on its own).
+ * Additive beside the existing maps, per the v1.41 ABI rule; a missing
+ * entry fails closed, like an identity miss. */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 4096);
+	__type(key, __u32);    /* host veth ifindex */
+	__type(value, __be32); /* assigned pod ip */
+} veth_src SEC(".maps");
+
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 16384);
@@ -241,6 +257,16 @@ struct {
 	__type(value, struct identity);
 } identity_v6 SEC(".maps");
 
+/* The v6 twin of veth_src (v1.77). A veth with no entry (a v4-only
+ * attachment adopted across the v1.41 upgrade) has no v6 source at all:
+ * the miss drops, which is exactly right for it. */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, 4096);
+	__type(key, __u32);          /* host veth ifindex */
+	__type(value, struct in6_addr); /* assigned pod ipv6 */
+} veth_src6 SEC(".maps");
+
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_HASH);
 	__uint(max_entries, 4096);
@@ -291,7 +317,23 @@ static __always_inline void count_drop(__be32 dst_ip, __u8 reason)
 	} else {
 		__u64 one = 1;
 
-		bpf_map_update_elem(&stats_drops, &key, &one, BPF_ANY);
+		/* A full map folds into the overflow key (zero address, same
+		 * reason): the drop stays counted rather than vanishing, and the
+		 * fold itself is the count of it (K-29). The fold can only fail
+		 * when even the overflow key has no slot, which is the map saying
+		 * it is entirely full of drops. */
+		if (bpf_map_update_elem(&stats_drops, &key, &one, BPF_ANY) < 0) {
+			struct drop_key over = {
+				.dst_ip = 0, .reason = reason, .pad = { 0, 0, 0 },
+			};
+			__u64 *ov = bpf_map_lookup_elem(&stats_drops, &over);
+
+			if (ov)
+				(*ov)++;
+			else
+				bpf_map_update_elem(&stats_drops, &over, &one,
+						    BPF_ANY);
+		}
 	}
 }
 
@@ -355,7 +397,20 @@ static __always_inline void count_drop6(const struct in6_addr *dst, __u8 reason)
 	} else {
 		__u64 one = 1;
 
-		bpf_map_update_elem(&stats_drops6, &key, &one, BPF_ANY);
+		/* Full map: fold into the zero-address overflow key for the same
+		 * reason (K-29), as in count_drop. */
+		if (bpf_map_update_elem(&stats_drops6, &key, &one, BPF_ANY) < 0) {
+			struct drop_key6 over = {
+				.reason = reason, .pad = { 0, 0, 0 },
+			};
+			__u64 *ov = bpf_map_lookup_elem(&stats_drops6, &over);
+
+			if (ov)
+				(*ov)++;
+			else
+				bpf_map_update_elem(&stats_drops6, &over, &one,
+						    BPF_ANY);
+		}
 	}
 }
 
@@ -656,8 +711,18 @@ int kanea_to_container(struct __sk_buff *skb)
 		return TC_ACT_OK; /* not even an ethernet frame */
 	if (eth->h_proto == __bpf_htons(ETH_P_IPV6))
 		return to_container_v6(skb, data, data_end);
-	if (eth->h_proto != __bpf_htons(ETH_P_IP))
-		return TC_ACT_OK; /* non-IP (ARP) passes */
+	if (eth->h_proto == __bpf_htons(ETH_P_IP))
+		goto ipv4;
+	/* K-31: exactly IPv4, IPv6 and ARP cross a Kanea veth. Anything else -
+	 * a VLAN/QinQ frame is the case that matters - would bypass every L3
+	 * check below, so it is dropped and counted rather than passed. */
+	if (eth->h_proto == __bpf_htons(ETH_P_ARP))
+		return TC_ACT_OK;
+	count_drop(0, DROP_ETHERTYPE);
+	return TC_ACT_SHOT;
+
+ipv4:
+	; /* a label precedes no declaration (pre-C23) */
 
 	struct iphdr *ip = (void *)(eth + 1);
 
@@ -780,23 +845,32 @@ static __always_inline int from_container_v6(struct __sk_buff *skb, void *data,
 		return TC_ACT_SHOT;
 	}
 
-	/* Anti-spoof, the v4 rule's twin (v1.65). */
-	{
-		__u32 czero = 0;
-		struct dp_cidr6 *cluster =
-			bpf_map_lookup_elem(&cluster_v6, &czero);
+	/* NAT64-wrapped metadata (64:ff9b::/96, K-32): the embedded v4 address
+	 * gets the v4 rules, or the v6 egress would pass what the v4 one drops
+	 * - the same decode the notification egress guard does (§3.9). */
+	if (ip6->daddr.s6_addr32[0] == __bpf_htonl(0x0064FF9B) &&
+	    ip6->daddr.s6_addr32[1] == 0 && ip6->daddr.s6_addr32[2] == 0) {
+		__be32 v4 = ip6->daddr.s6_addr32[3];
 
-		if (cluster &&
-		    (cluster->mask[0] | cluster->mask[1] | cluster->mask[2] |
-		     cluster->mask[3]) &&
-		    ((ip6->saddr.s6_addr32[0] & cluster->mask[0]) !=
-			     cluster->net[0] ||
-		     (ip6->saddr.s6_addr32[1] & cluster->mask[1]) !=
-			     cluster->net[1] ||
-		     (ip6->saddr.s6_addr32[2] & cluster->mask[2]) !=
-			     cluster->net[2] ||
-		     (ip6->saddr.s6_addr32[3] & cluster->mask[3]) !=
-			     cluster->net[3])) {
+		if ((v4 & __bpf_htonl(0xFFFF0000)) == __bpf_htonl(0xA9FE0000) ||
+		    v4 == __bpf_htonl(0x646464C8)) {
+			count_drop6(&ip6->daddr, DROP_METADATA);
+			return TC_ACT_SHOT;
+		}
+	}
+
+	/* Anti-spoof, the v4 rule's twin (K-09, v1.77): exact source binding
+	 * per veth, fail-closed on a miss. */
+	{
+		__u32 ifindex = skb->ingress_ifindex;
+		struct in6_addr *assigned =
+			bpf_map_lookup_elem(&veth_src6, &ifindex);
+
+		if (!assigned ||
+		    assigned->s6_addr32[0] != ip6->saddr.s6_addr32[0] ||
+		    assigned->s6_addr32[1] != ip6->saddr.s6_addr32[1] ||
+		    assigned->s6_addr32[2] != ip6->saddr.s6_addr32[2] ||
+		    assigned->s6_addr32[3] != ip6->saddr.s6_addr32[3]) {
 			count_drop6(&ip6->daddr, DROP_SPOOF);
 			return TC_ACT_SHOT;
 		}
@@ -832,8 +906,18 @@ int kanea_from_container(struct __sk_buff *skb)
 		return TC_ACT_OK;
 	if (eth->h_proto == __bpf_htons(ETH_P_IPV6))
 		return from_container_v6(skb, data, data_end);
-	if (eth->h_proto != __bpf_htons(ETH_P_IP))
+	if (eth->h_proto == __bpf_htons(ETH_P_IP))
+		goto ipv4;
+	/* K-31: exactly IPv4, IPv6 and ARP cross a Kanea veth. Anything else -
+	 * a VLAN/QinQ frame is the case that matters - would bypass every L3
+	 * check below, so it is dropped and counted rather than passed. */
+	if (eth->h_proto == __bpf_htons(ETH_P_ARP))
 		return TC_ACT_OK;
+	count_drop(0, DROP_ETHERTYPE);
+	return TC_ACT_SHOT;
+
+ipv4:
+	; /* a label precedes no declaration (pre-C23) */
 
 	struct iphdr *ip = (void *)(eth + 1);
 
@@ -845,21 +929,34 @@ int kanea_from_container(struct __sk_buff *skb)
 		count_drop(ip->daddr, DROP_METADATA);
 		return TC_ACT_SHOT;
 	}
+	/* 100.100.100.200/32: Alibaba's metadata address, the same class
+	 * (K-32). */
+	if (ip->daddr == __bpf_htonl(0x646464C8)) {
+		count_drop(ip->daddr, DROP_METADATA);
+		return TC_ACT_SHOT;
+	}
 
-	/* Anti-spoof (v1.65): an alloc's packets carry its own cluster
-	 * address, and nothing else; a forged EXTERNAL source would ride the
-	 * return-traffic pass in to_container straight past policy
-	 * (IP_FREEBIND needs no capability, so dropping CAP_NET_RAW does not
-	 * close this). Inside-the-cluster spoofing is the SYN-gate-grade
-	 * weakening the threat model already states. Mask guard as ever: an
-	 * unconfigured map checks nothing. */
+	/* 224.0.0.0/4 multicast and the limited broadcast: host-side LLMNR/mDNS
+	 * listeners are not for allocs (K-30); the v6 program has always dropped
+	 * its equivalents. */
+	if ((ip->daddr & __bpf_htonl(0xF0000000)) == __bpf_htonl(0xE0000000) ||
+	    ip->daddr == __bpf_htonl(0xFFFFFFFF)) {
+		count_drop(ip->daddr, DROP_MULTICAST);
+		return TC_ACT_SHOT;
+	}
+
+	/* Anti-spoof (K-09, v1.77): the source must be exactly the address
+	 * kanead assigned this veth, so the identity a destination's policy
+	 * evaluates cannot be forged from inside the alloc. A missing entry
+	 * fails closed, like an identity miss; Init populates entries for
+	 * pre-upgrade veths before the programs reach them, and plumb writes
+	 * before link-up. The cluster-CIDR source check this replaces only
+	 * ever bounded the forgery to inside the cluster. */
 	{
-		__u32 czero = 0;
-		struct dp_cidr *cluster =
-			bpf_map_lookup_elem(&cluster_v4, &czero);
+		__u32 ifindex = skb->ingress_ifindex;
+		__be32 *assigned = bpf_map_lookup_elem(&veth_src, &ifindex);
 
-		if (cluster && cluster->mask &&
-		    (ip->saddr & cluster->mask) != cluster->net) {
+		if (!assigned || *assigned != ip->saddr) {
 			count_drop(ip->daddr, DROP_SPOOF);
 			return TC_ACT_SHOT;
 		}

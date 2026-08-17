@@ -54,6 +54,11 @@ type Config struct {
 	// frontend and the name that resolves to it should never disagree, so
 	// they are published from one call.
 	DNS *network.DNS
+	// BuildEgressUID is the build daemon's uid, or 0 when the node has none.
+	// Set, it keys the build-egress drop of 169.254.0.0/16 in the owned
+	// nftables table (v1.75): a Dockerfile RUN step is repo-controlled code
+	// with host networking, and the alloc-veth egress guard never sees it.
+	BuildEgressUID int
 	// Logger receives attach/detach events.
 	Logger *slog.Logger
 }
@@ -297,11 +302,25 @@ func (d *Datapath) Init(ctx context.Context) error {
 	// Re-attach the tc programs to every owned veth (v1.65): FilterReplace is
 	// atomic, so an upgraded kanead delivers its current programs to
 	// attachments the previous process made; without this, a datapath fix
-	// reaches only allocs created after the upgrade. Best effort per link: a
-	// veth mid-teardown must not fail Init.
+	// reaches only allocs created after the upgrade. The source-binding
+	// entries (v1.77) are written FIRST, per link: the v1.77 from_container
+	// fails closed on a veth_src miss, so a pre-upgrade veth whose programs
+	// were refreshed without its binding would drop everything it sends.
+	// Both steps are best effort per link: a veth mid-teardown must not fail
+	// Init.
 	for _, l := range links {
-		if _, _, _, ok := parseAlias(l.Alias); !ok {
+		id, ip, ip6, ok := parseAlias(l.Alias)
+		if !ok {
 			continue
+		}
+		if err := d.maps.PutVethSrc(ifKey(l.Index), ip); err != nil {
+			d.log.Warn("restore source binding", "alloc", id, "dev", l.Name, "error", err)
+			continue // without the binding the refreshed programs would fail it closed
+		}
+		if ip6.IsValid() && d.v6Enabled() {
+			if err := d.maps.PutVethSrc(ifKey(l.Index), ip6); err != nil {
+				d.log.Warn("restore v6 source binding", "alloc", id, "dev", l.Name, "error", err)
+			}
 		}
 		if err := d.nl.AttachPrograms(l.Name); err != nil {
 			d.log.Warn("refresh tc programs", "dev", l.Name, "error", err)

@@ -42,7 +42,7 @@ func New(cfg Config) (*Datapath, error) {
 		nl.serviceCIDR6 = cfg.ServiceCIDR6.Masked()
 		nl.clusterCIDR6 = cfg.ClusterCIDR6.Masked()
 	}
-	d, err := newDatapath(cfg, seams{nl: nl, maps: km, fw: nftFirewall{}, netns: hostNetns{}, counters: km})
+	d, err := newDatapath(cfg, seams{nl: nl, maps: km, fw: nftFirewall{buildUID: cfg.BuildEgressUID}, netns: hostNetns{}, counters: km})
 	if err != nil {
 		coll.Close()
 		return nil, err
@@ -109,7 +109,11 @@ func openObjects(dir string, v6 bool) (*ebpf.Collection, error) {
 		}
 	} else if err := removeStaleLink(filepath.Join(dir, "link_connect6")); err != nil {
 		// A node whose v6 was turned off must not keep rewriting AF_INET6
-		// dials against maps nothing repopulates.
+		// dials against maps nothing repopulates. (Audit I-1, the flip side:
+		// on a v4-only node there is no connect6 link at all, so an
+		// AF_INET6 v4-mapped dial to a v4 VIP fails closed - ENETUNREACH at
+		// the socket, not a rewrite. Availability note, not a vulnerability:
+		// the client should not have made that dial.)
 		coll.Close()
 		return nil, err
 	}

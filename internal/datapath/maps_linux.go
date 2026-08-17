@@ -3,6 +3,7 @@
 package datapath
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -52,6 +53,67 @@ func (k *kernelMaps) DeleteIdentity(ip netip.Addr) error {
 		return err
 	}
 	if err := m.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return err
+	}
+	return nil
+}
+
+// vethSrcMapFor picks the source-binding map by the address's family (K-09,
+// v1.77): veth_src for v4, veth_src6 for v6.
+func (k *kernelMaps) vethSrcMapFor(ip netip.Addr) (*ebpf.Map, []byte, error) {
+	if ip.Is4() {
+		m, err := k.mp(dpmap.MapVethSrc)
+		v := ip.As4()
+		return m, v[:], err
+	}
+	m, err := k.mp(dpmap.MapVethSrc6)
+	v := ip.As16()
+	return m, v[:], err
+}
+
+func (k *kernelMaps) PutVethSrc(ifindex uint32, ip netip.Addr) error {
+	m, val, err := k.vethSrcMapFor(ip)
+	if err != nil {
+		return err
+	}
+	var key [4]byte
+	binary.LittleEndian.PutUint32(key[:], ifindex)
+	return m.Update(key[:], val, ebpf.UpdateAny)
+}
+
+// DeleteEndpointStats removes an alloc's per-endpoint counters (K-29): the
+// map's key space is per-alloc-address and capped, and a dead alloc's entry
+// is a slot a live one cannot have.
+func (k *kernelMaps) DeleteEndpointStats(ip netip.Addr) error {
+	var m *ebpf.Map
+	var key []byte
+	var err error
+	if ip.Is4() {
+		m, err = k.mp(dpmap.MapStatsEp)
+		v := ip.As4()
+		key = v[:]
+	} else {
+		m, err = k.mp(dpmap.MapStatsEp6)
+		v := ip.As16()
+		key = v[:]
+	}
+	if err != nil {
+		return err
+	}
+	if err := m.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (k *kernelMaps) DeleteVethSrc(ifindex uint32, ip netip.Addr) error {
+	m, _, err := k.vethSrcMapFor(ip)
+	if err != nil {
+		return err
+	}
+	var key [4]byte
+	binary.LittleEndian.PutUint32(key[:], ifindex)
+	if err := m.Delete(key[:]); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 		return err
 	}
 	return nil
