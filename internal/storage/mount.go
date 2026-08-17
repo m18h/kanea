@@ -46,7 +46,7 @@ func (m *Manager) mountCommand(ctx context.Context, req Request) (name string, a
 // nfsCommand mounts an NFS export with the kernel client.
 func nfsCommand(req Request) (string, []string) {
 	source := req.Resource.Server + ":" + req.Resource.Export
-	return "mount", []string{"-t", "nfs", "-o", mountOptions(req), source, req.Target}
+	return "mount", []string{"-t", "nfs", "-o", mountOptions(req), "--", source, req.Target}
 }
 
 // mountOptions renders the option list shared by the kernel mounts.
@@ -100,7 +100,7 @@ func (m *Manager) smbCommand(ctx context.Context, req Request) (string, []string
 	if req.Resource.Options != "" {
 		opts = append(opts, req.Resource.Options)
 	}
-	return "mount", []string{"-t", "cifs", "-o", strings.Join(opts, ","), source, req.Target}, cleanup, nil
+	return "mount", []string{"-t", "cifs", "-o", strings.Join(opts, ","), "--", source, req.Target}, cleanup, nil
 }
 
 // s3Command mounts a bucket with the driver the mode selects (M0 spike ③).
@@ -147,6 +147,9 @@ func (m *Manager) s3Command(ctx context.Context, req Request) (string, []string,
 		// user_allow_other in /etc/fuse.conf, which `kanea install` sets up
 		// (internal/provision.SetupFUSE) and `kanea doctor` verifies.
 		opts = append(opts, "allow_other")
+		// No "--": s3fs does not document an options/positionals separator;
+		// the plan-time character validation (K-46) is what keeps the bucket
+		// name positional.
 		return "s3fs", []string{req.Resource.Bucket, req.Target, "-o", strings.Join(opts, ",")}, cleanup, nil
 	}
 
