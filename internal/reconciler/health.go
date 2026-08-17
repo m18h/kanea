@@ -148,6 +148,14 @@ func (p *netProber) probeHTTP(ctx context.Context, target ProbeTarget, check Hea
 	if err != nil {
 		return err
 	}
+	// The plan refuses path shapes that could rewrite the authority
+	// (validateHealthPath, audit K-10); this assert is the belt-and-braces
+	// half for a record that reached the Store without the parser, so the
+	// dial target is proven, not argued, to be the alloc.
+	if want := net.JoinHostPort(target.IPv4, strconv.Itoa(check.Port)); req.URL.Host != want {
+		return fmt.Errorf("health check path %q rewrote the probe destination (%s != %s); refusing to dial",
+			check.Path, req.URL.Host, want)
+	}
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return err

@@ -207,6 +207,17 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 		s.Linux.MaskedPaths = maskedPaths()
 		s.Linux.ReadonlyPaths = readonlyPaths()
 
+		// The default seccomp profile (PRD §14 A05), resolved for this alloc's
+		// effective capability set: SCMP_ACT_ERRNO for everything not named,
+		// and the capability-gated allowances (bpf, mount, ptrace and friends)
+		// present only where the R13 set actually grants the capability - for
+		// the baseline, none of them.
+		profile, err := defaultSeccomp(spec.Capabilities)
+		if err != nil {
+			return err
+		}
+		s.Linux.Seccomp = profile
+
 		// containerd's default spec leaves /sys/fs/cgroup unmounted, so a
 		// workload cannot read its own limits, and container-aware runtimes
 		// (JVM, Node, Go's GOMEMLIMIT tooling) size themselves from exactly
