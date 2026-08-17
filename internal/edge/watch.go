@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/m18h/kanea/internal/nodeconfig"
 )
 
 // DefaultPollInterval is how often the edge re-reads the snapshot.
@@ -46,6 +48,9 @@ type Watcher struct {
 	// missing tracks whether the absence of the file has already been
 	// reported, for the same reason.
 	missing bool
+	// untrusted is the same once-only latch for a file that fails the K-25
+	// trust check.
+	untrusted bool
 }
 
 // WatcherConfig configures the reloader.
@@ -119,6 +124,21 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 // reload reads the snapshot and applies it if it changed.
 func (w *Watcher) reload() {
+	// Trust before content (K-25): the projection authorizes public traffic,
+	// so it must be a file only the node's owner could have written - regular,
+	// root- or owner-owned, not group/world-writable, never a symlink. A
+	// refusal keeps the last good table, which is exactly the degraded-state
+	// contract this loop already runs on.
+	if err := nodeconfig.CheckTrusted(w.path); err != nil {
+		if !w.untrusted {
+			w.log.Error("projection failed the trust check; keeping the current one",
+				"projection", w.name, "path", w.path, "error", err)
+			w.untrusted = true
+		}
+		return
+	}
+	w.untrusted = false
+
 	body, err := os.ReadFile(w.path) // #nosec G304; the path is operator configuration
 	switch {
 	case errors.Is(err, os.ErrNotExist):

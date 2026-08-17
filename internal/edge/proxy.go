@@ -21,6 +21,7 @@ import (
 
 	"golang.org/x/net/http2"
 
+	"github.com/m18h/kanea/internal/edge/headown"
 	"github.com/m18h/kanea/internal/ratelimit"
 )
 
@@ -505,6 +506,10 @@ func (w *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		// label an error response as a websocket.
 		w.hijacked = true
 		w.status = http.StatusSwitchingProtocols
+		// The slow-body deadline is no longer exempted on the client's ask
+		// (K-11); it is cleared here instead, once the upgrade has actually
+		// happened, so it cannot kill the session the hijack just began.
+		_ = conn.SetReadDeadline(time.Time{}) //nolint:errcheck // best-effort clear on an upgraded conn
 	}
 	return conn, rw, err
 }
@@ -578,20 +583,22 @@ func peerAddr(r *http.Request) netip.Addr {
 // regardless of how healthy it is. Bounding only the body keeps the slow-body
 // defense and leaves streaming alone.
 //
-// Upgraded connections are exempt for the same reason, with feeling: after the
-// hijack the deadline stays on the raw connection, so a WebSocket would be
-// killed mid-session.
+// Upgraded connections clear the deadline when the hijack SUCCEEDS (in
+// statusRecorder.Hijack), not when the client merely asks: `isUpgrade` is
+// computed from client-sent headers, and exempting on ask made the slow-body
+// bound optional - `Connection: upgrade` plus a dribbled gigabyte body held
+// the connection forever (audit K-11). A real WebSocket handshake has no
+// body, so `ContentLength == 0` is what exempts it here.
 //
-// gRPC on a marked route is exempt too (v1.41): a client- or bidi-stream is a
+// gRPC on a marked route is exempt (v1.41): a client- or bidi-stream is a
 // request body held open for as long as the call lives, and the slow-body
-// bound would kill it mid-call at the timeout; isUpgrade's reasoning, applied
-// to HTTP/2 streams.
+// bound would kill it mid-call at the timeout.
 func (p *Proxy) applyDeadline(w http.ResponseWriter, r *http.Request, route compiled) {
 	rc := http.NewResponseController(w)
 
 	grpcStream := route.Protocol == RouteProtocolGRPC && isGRPCRequest(r)
 	deadline := time.Now().Add(p.bodyTimeout)
-	if isUpgrade(r) || grpcStream || r.ContentLength == 0 || p.bodyTimeout <= 0 {
+	if grpcStream || r.ContentLength == 0 || p.bodyTimeout <= 0 {
 		// The zero time clears it: whatever deadline the header read left
 		// behind must not leak into a long-lived connection.
 		deadline = time.Time{}
@@ -701,17 +708,9 @@ func schemePort(r *http.Request) int {
 
 // forwardedHeaders are the client-identity headers the edge owns. Anything a
 // client sends under these names is discarded before the edge sets its own.
-var forwardedHeaders = []string{
-	"Forwarded",
-	"X-Forwarded-For",
-	"X-Forwarded-Host",
-	"X-Forwarded-Port",
-	"X-Forwarded-Proto",
-	"X-Forwarded-Server",
-	"X-Forwarded-Ssl",
-	"X-Original-Forwarded-For",
-	"X-Real-Ip",
-}
+// The list is shared with the plan-time validator (K-22): one source of truth
+// in internal/edge/headown, so publish and plan can never disagree.
+var forwardedHeaders = headown.Headers
 
 // upstreamError answers when the upstream cannot be reached.
 //

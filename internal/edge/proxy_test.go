@@ -2,6 +2,7 @@ package edge
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -224,6 +225,66 @@ func TestProxyTableSwap(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "second" {
 		t.Errorf("body = %q, want the new route's upstream", body)
+	}
+}
+
+// K-11: client-sent Upgrade headers no longer exempt a request from the
+// slow-body bound. A real WebSocket handshake has no body (ContentLength == 0
+// exempts it); an "upgrade" carrying a gigabyte body that arrives a byte a
+// minute is the abuse case, and the deadline must still fire.
+func TestProxyDoesNotExemptAnUpgradeWithABody(t *testing.T) {
+	_, route := upstream(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	p := NewProxy(ProxyConfig{
+		Logger:      slog.New(slog.DiscardHandler),
+		BodyTimeout: 50 * time.Millisecond,
+	})
+	table, err := NewTable(Snapshot{Routes: []Route{route}})
+	if err != nil {
+		t.Fatalf("NewTable: %v", err)
+	}
+	p.SetTable(table)
+
+	edgeSrv := httptest.NewServer(p)
+	defer edgeSrv.Close()
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(edgeSrv.URL, "http://"))
+	if err != nil {
+		t.Fatalf("dial edge: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	head := "POST / HTTP/1.1\r\n" +
+		"Host: web.shop.example.com\r\n" +
+		"Connection: upgrade\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Content-Length: 1000000000\r\n\r\n"
+	if _, err := io.WriteString(conn, head); err != nil {
+		t.Fatalf("write headers: %v", err)
+	}
+	// One byte, then silence: the dribble the bound exists to stop.
+	if _, err := io.WriteString(conn, "x"); err != nil {
+		t.Fatalf("write first body byte: %v", err)
+	}
+
+	// Well past BodyTimeout: with the exemption in force this connection stays
+	// open indefinitely; without it the server-side deadline fires and the
+	// connection closes. The upstream's response may arrive first (it never
+	// read the body), so read until an error rather than at the first byte.
+	time.Sleep(150 * time.Millisecond)
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	br := bufio.NewReader(conn)
+	for {
+		var buf [256]byte
+		if _, err := br.Read(buf[:]); err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				t.Fatal("the dribbled connection outlived the deadline: the upgrade headers exempted it")
+			}
+			return // EOF or reset: the server-side deadline fired
+		}
 	}
 }
 

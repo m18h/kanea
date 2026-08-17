@@ -301,3 +301,94 @@ func TestPickBackendIsStableAndMinimallyDisruptive(t *testing.T) {
 		}
 	}
 }
+
+// K-12: a session that has not proven its client receives (a second datagram
+// from the same socket) gets at most udpUnverifiedByteCap toward it - enough
+// for a real handshake, far too little to amplify through. The proof lifts
+// the cap.
+func TestUDPRelayCapsRepliesUntilTheClientProvesItReceives(t *testing.T) {
+	// A backend that answers every datagram with a payload over the cap.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen backend: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+	go func() {
+		buf := make([]byte, udpBufferSize)
+		for {
+			_, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			_, _ = pc.WriteTo(make([]byte, udpUnverifiedByteCap+1000), addr)
+		}
+	}()
+	addr := pc.LocalAddr().(*net.UDPAddr)
+
+	metrics := NewMetrics()
+	_, front := udpFront(t, udpListenerFor(addr.IP.String(), addr.Port), metrics)
+
+	client, err := net.Dial("udp", front)
+	if err != nil {
+		t.Fatalf("dial front: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	// First datagram: the session opens, but the oversized reply is dropped.
+	if _, err := client.Write([]byte("one")); err != nil {
+		t.Fatalf("write one: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	buf := make([]byte, udpUnverifiedByteCap+2000)
+	if _, err := client.Read(buf); err == nil {
+		t.Fatal("an over-cap reply reached an unverified client")
+	}
+
+	// The second datagram is the proof: the next reply flows.
+	if _, err := client.Write([]byte("two")); err != nil {
+		t.Fatalf("write two: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := client.Read(buf)
+	if err != nil {
+		t.Fatalf("read after verification: %v", err)
+	}
+	if n != udpUnverifiedByteCap+1000 {
+		t.Errorf("reply = %d bytes, want the full payload after verification", n)
+	}
+	if loadCounter(&metrics.udpCounters("games/factorio", EntrypointForPort(34197)).mu,
+		metrics.udpCounters("games/factorio", EntrypointForPort(34197)).refused, ReasonUnverifiedCap) != 1 {
+		t.Error("the pre-proof drop was not counted")
+	}
+}
+
+// K-12: the listener's session cap is keyed on the full address, so a flood
+// that varies only the source port (a spoofed source's only knob) is bounded
+// by the per-IP cap first.
+func TestUDPRelayCapsSessionsPerSourceIP(t *testing.T) {
+	ip, port := udpBackend(t)
+	metrics := NewMetrics()
+	relay, _ := udpFront(t, udpListenerFor(ip, port), metrics)
+
+	for i := 0; i < DefaultMaxSessionsPerIP; i++ {
+		relay.handle([]byte("x"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 41000 + i})
+	}
+	if got := relay.liveCount(); got != DefaultMaxSessionsPerIP {
+		t.Fatalf("sessions = %d, want %d", got, DefaultMaxSessionsPerIP)
+	}
+	// One more socket from the same IP is over the per-source cap even though
+	// the listener's own cap (256) is nowhere near.
+	relay.handle([]byte("x"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 41999})
+	if got := relay.liveCount(); got != DefaultMaxSessionsPerIP {
+		t.Errorf("sessions = %d, want the per-source cap to hold at %d", got, DefaultMaxSessionsPerIP)
+	}
+	got := metrics.udpCounters("games/factorio", EntrypointForPort(34197))
+	if loadCounter(&got.mu, got.refused, ReasonSourceLimit) != 1 {
+		t.Error("the per-source refusal was not counted")
+	}
+	// And a different source IP is unaffected.
+	relay.handle([]byte("x"), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 2), Port: 41000})
+	if got := relay.liveCount(); got != DefaultMaxSessionsPerIP+1 {
+		t.Errorf("sessions = %d, want another source admitted", got)
+	}
+}

@@ -89,6 +89,14 @@ const (
 	// service is starting or scaled to zero, and UDP has no way to tell the
 	// client, so the operator's counter is the only witness.
 	ReasonNoBackends = "no_backends"
+	// ReasonSourceLimit is a udp session refused by the per-source-IP cap
+	// (K-12): a spoofed-source flood varies the port, so the listener cap
+	// alone is not the bound that bites.
+	ReasonSourceLimit = "source_limit"
+	// ReasonUnverifiedCap is a backend datagram dropped because its session
+	// had not yet proven the client receives (a second client datagram is the
+	// proof) and the pre-proof byte budget was spent (K-12).
+	ReasonUnverifiedCap = "unverified_cap"
 )
 
 // methodOther is where a method outside the RFC set folds.
