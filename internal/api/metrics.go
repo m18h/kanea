@@ -29,6 +29,14 @@ type MetricsSource interface {
 	// Range serves /v1/stats/history (v1.38): sparse points, oldest first;
 	// an unwritten slot is simply not in the slice, never a zero.
 	Range(key scaling.Key, from, to time.Time) []scaling.Point
+	// RangeInterval is the resolution Range will answer at. Asked rather than
+	// re-derived: this route advertises it as interval_seconds and the client
+	// rebuilds its slots against it, so a second implementation is a chart
+	// drawn at the wrong scale (v1.79).
+	RangeInterval(from, to time.Time) time.Duration
+	// Epoch moves when the set of series changes, so an answer derived from
+	// the key space can be cached against it (v1.79).
+	Epoch() uint64
 	Len() int
 	Dropped() int64
 }

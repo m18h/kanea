@@ -65,15 +65,21 @@ func (s *Server) handleStatsHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	window = min(max(window, minHistoryWindow), scaling.RollupWindow)
 
-	to := time.Now()
+	// Truncated to a raw slot rather than taken as "now" (v1.79). Two things
+	// depend on it. The ring's own slots are on this grid, so an untruncated
+	// range asks for a fraction of a slot at each end and no two responses are
+	// comparable; and the aggregate cache below can only key on a slot if the
+	// range is one. It is also half of the tier fix: the old code decided the
+	// interval from the window while Range decided from how long ago `from`
+	// was, and a window of exactly RawWindow missed the raw tier by however
+	// long the handler had taken.
+	to := s.now().Truncate(scaling.RawInterval)
 	from := to.Add(-window)
 
 	// Which tier Range will serve decides the slot width the client rebuilds
-	// gaps against: the same rule Range itself applies.
-	interval := scaling.RawInterval
-	if window > scaling.RawWindow {
-		interval = scaling.RollupInterval
-	}
+	// gaps against, so it is asked rather than re-derived: one function, two
+	// callers, and they cannot disagree.
+	interval := s.metrics.RangeInterval(from, to)
 
 	out := HistoryResponse{
 		From: from, To: to,

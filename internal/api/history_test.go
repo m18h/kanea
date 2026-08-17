@@ -176,3 +176,55 @@ func TestNodeRecorderRecordsOnlyWhatWasRead(t *testing.T) {
 		t.Errorf("memory points = %d, want 1", len(points))
 	}
 }
+
+func TestAnHourWindowDoesNotAdvertiseFiveSecondPoints(t *testing.T) {
+	// The v1.79 regression, and it needs a real clock: the handler captured
+	// `to` and Range then read the clock again, so a window of exactly
+	// RawWindow missed the raw tier by however long the handler had taken.
+	// The rollup answered at a minute while interval_seconds promised five,
+	// and the client placed every point in the wrong slot.
+	now := time.Now().Truncate(scaling.RawInterval)
+	h := newAuthHarness(t, withMetrics(func(m *scaling.Metrics) {
+		// Two hours of samples so both tiers hold something and the choice of
+		// tier is visible in the spacing rather than in an empty answer.
+		for at := now.Add(-2 * time.Hour); !at.After(now); at = at.Add(scaling.RawInterval) {
+			m.Record(scaling.Key{Subject: "shop/web", Metric: scaling.MetricCPU}, at, 50)
+		}
+	}))
+
+	status, out := getHistory(t, h, "?project=shop&service=web&window=1h")
+	if status != http.StatusOK {
+		t.Fatalf("history = %d", status)
+	}
+
+	points := out.Series["cpu"]
+	if len(points) < 2 {
+		t.Fatalf("cpu points = %d; too few to measure a spacing", len(points))
+	}
+	spacing := points[1].At.Sub(points[0].At)
+	if want := time.Duration(out.IntervalSeconds) * time.Second; spacing != want {
+		t.Fatalf("advertised interval_seconds=%d (%v) but the points are %v apart: "+
+			"a client rebuilding slots against the advertised interval draws the "+
+			"chart at the wrong scale", out.IntervalSeconds, want, spacing)
+	}
+}
+
+func TestTheHistoryRangeIsSlotAligned(t *testing.T) {
+	// Untruncated, every response covered a different fraction of a slot at
+	// each end, so no two were comparable and the aggregate cache could not be
+	// keyed on the range at all (v1.79).
+	h := newAuthHarness(t, withMetrics(func(m *scaling.Metrics) {
+		m.Record(scaling.Key{Subject: "shop/web", Metric: scaling.MetricCPU}, time.Now(), 1)
+	}))
+
+	status, out := getHistory(t, h, "?project=shop&service=web")
+	if status != http.StatusOK {
+		t.Fatalf("history = %d", status)
+	}
+	if !out.To.Equal(out.To.Truncate(scaling.RawInterval)) {
+		t.Errorf("to = %v is not on a raw slot boundary", out.To)
+	}
+	if !out.From.Equal(out.From.Truncate(scaling.RawInterval)) {
+		t.Errorf("from = %v is not on a raw slot boundary", out.From)
+	}
+}

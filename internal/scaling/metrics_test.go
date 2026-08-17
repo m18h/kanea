@@ -343,3 +343,97 @@ func TestFootprintAtTargetScale(t *testing.T) {
 	}
 	t.Logf("%d series cost %d MiB", series, grew>>20)
 }
+
+func TestRangeIntervalIsTheTierRangeServes(t *testing.T) {
+	// The property that matters is agreement, not either answer alone: what
+	// RangeInterval advertises has to be the spacing Range actually returns,
+	// because the client rebuilds its gap slots against the advertised number.
+	cases := []struct {
+		name   string
+		window time.Duration
+		ago    time.Duration // how long before now the range ends
+		want   time.Duration
+	}{
+		{"a short recent window is raw", 15 * time.Minute, 0, scaling.RawInterval},
+		{"just inside the raw window is raw", scaling.RawWindow - time.Second, 0, scaling.RawInterval},
+		{"exactly the raw window is raw", scaling.RawWindow, 0, scaling.RawInterval},
+		{"past the raw window is the rollup", scaling.RawWindow + time.Second, 0, scaling.RollupInterval},
+		{"a long window is the rollup", 6 * time.Hour, 0, scaling.RollupInterval},
+		// The second condition: a short window that ended long ago is no longer
+		// in the raw ring, so answering "raw" would promise points that were
+		// swept out from under it.
+		{"a short window from three hours ago is the rollup", 10 * time.Minute, 3 * time.Hour, scaling.RollupInterval},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, c := newMetrics(t)
+			to := c.at.Add(-tc.ago)
+			from := to.Add(-tc.window)
+
+			if got := m.RangeInterval(from, to); got != tc.want {
+				t.Fatalf("RangeInterval = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnHourWindowDoesNotAdvertiseFiveSecondPoints(t *testing.T) {
+	// The regression (v1.79). The route decided the interval from the window it
+	// was asked for while Range decided from how long ago `from` was, and since
+	// `to` was captured first, an exactly-one-hour window missed the raw tier by
+	// however long the handler took: the rollup answered at a minute while the
+	// response promised five seconds, and every point landed in the wrong slot.
+	m, c := newMetrics(t)
+	k := key("shop/web", "cpu")
+
+	// Two hours of samples, so both tiers hold something.
+	for range 2 * 60 * 12 {
+		m.Record(k, c.at, 50)
+		c.advance(scaling.RawInterval)
+	}
+
+	to := c.at
+	from := to.Add(-scaling.RawWindow)
+	advertised := m.RangeInterval(from, to)
+	points := m.Range(k, from, to)
+
+	if len(points) < 2 {
+		t.Fatalf("points = %d; the range is too short to measure a spacing", len(points))
+	}
+	spacing := points[1].At.Sub(points[0].At)
+	if spacing != advertised {
+		t.Fatalf("advertised %v but the points are %v apart: a client rebuilding "+
+			"slots against the advertised interval draws the chart at the wrong scale",
+			advertised, spacing)
+	}
+}
+
+func TestTheEpochMovesWithTheSeriesSetAndNotWithSamples(t *testing.T) {
+	m, c := newMetrics(t)
+	k := key("shop/web", "cpu")
+
+	start := m.Epoch()
+	m.Record(k, c.at, 1)
+	created := m.Epoch()
+	if created == start {
+		t.Fatal("creating a series did not move the epoch; a cache keyed on it would serve a stale subject set")
+	}
+
+	// The common case by orders of magnitude, and it cannot change which
+	// subjects carry which metric.
+	for range 10 {
+		c.advance(scaling.RawInterval)
+		m.Record(k, c.at, 2)
+	}
+	if m.Epoch() != created {
+		t.Fatal("an ordinary record moved the epoch; the cache it guards would rebuild every scrape")
+	}
+
+	if m.Forget("shop/web") == 0 {
+		t.Fatal("nothing was forgotten; the rest of this test proves nothing")
+	}
+	if m.Epoch() == created {
+		t.Fatal("forgetting a series did not move the epoch")
+	}
+}
