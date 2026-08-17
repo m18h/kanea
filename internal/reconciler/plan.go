@@ -446,6 +446,19 @@ func VolumeHostPath(volumeDir, project, service string, index int, volume string
 	return filepath.Join(volumeDir, project, service, strconv.Itoa(index), volume)
 }
 
+// withinBase reports whether path, once cleaned, still sits under base.
+//
+// Every name that composes into these paths is a DNS-1123 label by the time it
+// arrives (jobspec R1 at parse; the apply seam's validateDesired for records
+// that never saw the parser). This is the assertion at the point of use, not
+// the gate: the day a name reaches here by a third route, the mkdir/chown/bind
+// it feeds fails the alloc instead of operating on a directory outside
+// volumeDir as root.
+func withinBase(base, path string) bool {
+	rel, err := filepath.Rel(base, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // SharedVolumeHostPath is where a network-backed volume lives:
 // <volumeDir>/<project>/<service>/shared/<volume>.
 //

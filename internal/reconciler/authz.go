@@ -17,7 +17,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/m18h/kanea/internal/edge"
 )
@@ -99,8 +102,15 @@ func (r *Reconciler) resolveAuthEntry(ctx context.Context, d Desired, a *AuthPol
 			// bcrypt only (R27): a plaintext password in the "hash" secret is
 			// a credential pretending to be verifier material, and publishing
 			// it (even to a 0640 file) would make the mistake durable.
-			if _, hash, ok := strings.Cut(line, ":"); !ok || !strings.HasPrefix(hash, "$2") {
+			_, hash, ok := strings.Cut(line, ":")
+			if !ok || !strings.HasPrefix(hash, "$2") {
 				return entry, errAuthNotBcrypt
+			}
+			// The cost is bounded (K-23): it is operator-chosen work the edge
+			// performs per request against attacker-chosen request rates, and
+			// a $2$31$ line is a CPU-exhaustion primitive with a valid syntax.
+			if cost, err := bcrypt.Cost([]byte(hash)); err != nil || cost > MaxBcryptCost {
+				return entry, errAuthCost
 			}
 			entry.Users = append(entry.Users, line)
 		}
@@ -145,6 +155,15 @@ func (r *Reconciler) resolveAuthEntry(ctx context.Context, d Desired, a *AuthPol
 // errAuthNotBcrypt names the one validation this projection owns.
 var errAuthNotBcrypt = authError("basic_ref holds a line that is not user:<bcrypt-hash>; " +
 	"generate entries with `htpasswd -B`")
+
+// MaxBcryptCost bounds the work a basic_auth line may demand per request
+// (K-23): 14 is ~16x the default cost and already far past a sane choice;
+// beyond it the "hash" is a denial-of-service budget spent per login attempt.
+const MaxBcryptCost = 14
+
+// errAuthCost refuses the line that spends it.
+var errAuthCost = authError(fmt.Sprintf("basic_ref holds a bcrypt hash with a cost above %d; "+
+	"an operator-chosen cost meets an attacker-chosen request rate on the shared edge", MaxBcryptCost))
 
 type authError string
 

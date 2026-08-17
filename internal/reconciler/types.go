@@ -668,6 +668,10 @@ const (
 	// ExitPassthroughFailed means a device or socket grant did not resolve
 	// (R17/R18): the alloc is failed rather than started without it.
 	ExitPassthroughFailed ExitReason = "passthrough_failed"
+	// ExitSecretsFailed means an env secret reference did not resolve
+	// (PRD §6.2 R3): the alloc is failed rather than started on a literal
+	// "secret:…" string or a missing credential.
+	ExitSecretsFailed ExitReason = "secrets_failed"
 	// ExitNetworkFailed means the datapath attachment failed (§5.2.5).
 	ExitNetworkFailed ExitReason = "network_failed"
 	// ExitCreateFailed means containerd refused to create the container.
@@ -797,7 +801,9 @@ func AllocKey(project, service string, index int) string {
 }
 
 // AllocID builds the containerd container id and netns name for an alloc.
-// Project and service are DNS-1123 labels (jobspec R1), so the result is safe
+// Project and service are DNS-1123 labels (jobspec R1 at parse, and the apply
+// seam's validateDesired for records that never saw the parser), so the result
+// is safe
 // for both, and always longer than the CNI plugin's 5-character floor.
 func AllocID(project, service string, index int) string {
 	return project + "-" + service + "-" + strconv.Itoa(index)

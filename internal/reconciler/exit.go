@@ -106,6 +106,7 @@ var (
 	phaseImage       = applyPhase{ExitImageFailed, "image"}
 	phaseVolume      = applyPhase{ExitVolumeFailed, "volumes"}
 	phasePassthrough = applyPhase{ExitPassthroughFailed, "grants"}
+	phaseSecrets     = applyPhase{ExitSecretsFailed, "secrets"}
 	phaseNetwork     = applyPhase{ExitNetworkFailed, "network"}
 	phaseCreate      = applyPhase{ExitCreateFailed, "create"}
 	phaseStart       = applyPhase{ExitStartFailed, "start"}

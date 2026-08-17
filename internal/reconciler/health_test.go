@@ -64,6 +64,33 @@ func TestProbeHTTP(t *testing.T) {
 	}
 }
 
+// K-10: a record that reached the Store without the parser can carry a path
+// that rewrites the probe's authority ("@evil" parses the alloc address as
+// userinfo). The prober refuses before dialing: the dial target is proven,
+// not argued, to be the alloc.
+func TestProbeHTTPRefusesAnAuthorityRewrite(t *testing.T) {
+	dialed := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		dialed = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	host, port := hostPort(t, srv.URL)
+	err := newProber(nil).Probe(t.Context(),
+		ProbeTarget{AllocID: "shop-web-0", IPv4: host},
+		HealthCheck{Type: HealthHTTP, Path: "@169.254.169.254/latest/meta-data", Port: port})
+	if err == nil {
+		t.Fatal("Probe = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "rewrote the probe destination") {
+		t.Fatalf("Probe error = %v, want the refusal named", err)
+	}
+	if dialed {
+		t.Fatal("the rewritten probe was dialed")
+	}
+}
+
 // A check that hangs must fail on its own timeout rather than stalling the
 // reconcile pass it runs inside.
 func TestProbeHTTPHonoursTimeout(t *testing.T) {

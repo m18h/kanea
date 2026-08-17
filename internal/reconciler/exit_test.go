@@ -110,6 +110,7 @@ func TestStartFailureCarriesItsPhase(t *testing.T) {
 		{phaseImage, ExitImageFailed},
 		{phaseVolume, ExitVolumeFailed},
 		{phasePassthrough, ExitPassthroughFailed},
+		{phaseSecrets, ExitSecretsFailed},
 		{phaseNetwork, ExitNetworkFailed},
 		{phaseCreate, ExitCreateFailed},
 		{phaseStart, ExitStartFailed},

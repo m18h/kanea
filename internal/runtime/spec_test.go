@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -49,6 +50,76 @@ func validAlloc() AllocSpec {
 			CPUMillis:   500,
 			MemoryBytes: 512 << 20,
 		},
+	}
+}
+
+func TestTheDefaultSeccompProfileIsApplied(t *testing.T) {
+	s := buildSpec(t, validAlloc())
+
+	// PRD §14 A05's "default seccomp profile" is a real filter, not a doc
+	// claim: default-deny with the everyday set allowed.
+	if s.Linux.Seccomp == nil {
+		t.Fatal("no seccomp profile on the spec")
+	}
+	if s.Linux.Seccomp.DefaultAction != specs.ActErrno {
+		t.Errorf("default action = %q, want %q", s.Linux.Seccomp.DefaultAction, specs.ActErrno)
+	}
+
+	allowed := map[string]bool{}
+	for _, rule := range s.Linux.Seccomp.Syscalls {
+		if rule.Action != specs.ActAllow {
+			continue
+		}
+		for _, name := range rule.Names {
+			allowed[name] = true
+		}
+	}
+	// What a workload legitimately does every second.
+	for _, name := range []string{"read", "write", "openat", "execve", "mmap", "futex", "epoll_pwait"} {
+		if !allowed[name] {
+			t.Errorf("%s is not allowed by the default profile", name)
+		}
+	}
+	// amd64 needs this to start any Go program (thread-local storage setup).
+	if goruntime.GOARCH == "amd64" && !allowed["arch_prctl"] {
+		t.Error("arch_prctl is not allowed on amd64; a Go workload cannot start a thread")
+	}
+	// The baseline set grants none of these capabilities, so the gated
+	// allowances must be absent: the kernel's own capability check is not the
+	// layer this profile exists to be.
+	for _, name := range []string{"bpf", "mount", "umount2", "setns", "perf_event_open", "syslog"} {
+		if allowed[name] {
+			t.Errorf("%s is allowed with no matching capability granted", name)
+		}
+	}
+	// ptrace rides the unconditional rule (kernel floor > 4.8); it stays
+	// capability-blocked in the kernel, like Docker's default.
+	if !allowed["ptrace"] {
+		t.Error("ptrace lost its unconditional rule from the source profile")
+	}
+}
+
+func TestSeccompAllowancesFollowTheDeclaredCapabilities(t *testing.T) {
+	// The profile is resolved per alloc: a service declaring CAP_SYS_ADMIN
+	// (not declarable through jobspec, but the driver takes what it is given)
+	// gets the gated section, and nothing else changes.
+	alloc := validAlloc()
+	alloc.Capabilities = append(alloc.Capabilities, "CAP_SYS_ADMIN", "CAP_BPF")
+	s := buildSpec(t, alloc)
+
+	allowed := map[string]bool{}
+	for _, rule := range s.Linux.Seccomp.Syscalls {
+		if rule.Action != specs.ActAllow {
+			continue
+		}
+		for _, name := range rule.Names {
+			allowed[name] = true
+		}
+	}
+	for _, name := range []string{"bpf", "mount", "umount2", "setns", "unshare"} {
+		if !allowed[name] {
+			t.Errorf("%s is not allowed despite CAP_SYS_ADMIN/CAP_BPF being granted", name)
+		}
 	}
 }
 

@@ -106,6 +106,14 @@ type Mounter interface {
 	// create is the spec's opt-in to making a missing directory (v1.69). It
 	// permits, it never widens: the allowlist still decides where.
 	ResolveHost(path string, create bool) (string, error)
+	// StageHost pins a resolved host volume and returns the path the runtime
+	// may bind from: a staging bind under a root-owned tree, mounted from the
+	// checked object by fd, so the path an attacker could rename after the
+	// allowlist check is no longer the thing that gets mounted (K-20).
+	// UnstageHost releases them; both are per-alloc, and UnstageHost is the
+	// teardown half.
+	StageHost(allocID, volume, resolved string) (string, error)
+	UnstageHost(allocID string) error
 	// Prune releases every mount whose target is not in keep. Releasing is
 	// driven by a sweep rather than by teardown because a network volume is
 	// shared by every alloc of its service: "the last one stopped" is a fact
@@ -203,6 +211,9 @@ type Config struct {
 	// service that names one cannot start, which is the honest failure, since
 	// the alternative is pulling anonymously and reporting a confusing 401.
 	Secrets SecretResolver
+	// SecretsDir is where per-alloc env-secret tmpfs files live (PRD §6.2 R3).
+	// Empty means DefaultSecretsDir; tests override it with a temp directory.
+	SecretsDir string
 	// Auth receives the R27 verifier material for the restricted bundle
 	// (v1.40). Nil disables the projection; routes marked auth then answer
 	// 503, which is what fail-closed means for a daemon missing the wiring.
@@ -237,6 +248,7 @@ type Reconciler struct {
 	mounts      Mounter
 	passthrough Passthrough
 	secrets     SecretResolver
+	secretsDir  string
 
 	interval      time.Duration
 	stopGrace     time.Duration
@@ -267,6 +279,9 @@ func New(cfg Config) (*Reconciler, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.SecretsDir == "" {
+		cfg.SecretsDir = DefaultSecretsDir
+	}
 	vips, err := newVIPAllocator(cfg.Store, cfg.ServiceCIDR, cfg.ServiceCIDR6)
 	if err != nil {
 		return nil, err
@@ -278,6 +293,7 @@ func New(cfg Config) (*Reconciler, error) {
 		mounts:        cfg.Mounts,
 		passthrough:   cfg.Passthrough,
 		secrets:       cfg.Secrets,
+		secretsDir:    cfg.SecretsDir,
 		driver:        cfg.Driver,
 		network:       cfg.Network,
 		log:           cfg.Logger,
@@ -966,8 +982,24 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	if err := r.ensurePassthrough(desired); err != nil {
 		return failedAt(phasePassthrough, err)
 	}
+	// And env secrets resolve at exactly this point (PRD §6.2 R3): the record
+	// keeps the references, the alloc gets per-alloc tmpfs files and a mount
+	// presenting them, and the spec's env carries the file paths (or the
+	// inlined values, for the weaker secret-env: form). A reference that does
+	// not resolve fails the alloc honestly, like a missing image.
+	secretsEnv, secretsMount, err := r.ensureSecrets(ctx, desired,
+		AllocID(desired.Project, desired.Service, action.Index))
+	if err != nil {
+		return failedAt(phaseSecrets, err)
+	}
 
 	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
+	if secretsEnv != nil {
+		spec.Env = secretsEnv
+	}
+	if secretsMount != nil {
+		spec.Mounts = append(spec.Mounts, *secretsMount)
+	}
 	// Network before task: an alloc must never run without its network, and the
 	// datapath denies an attachment whose identity is not yet written (§5.2.5).
 	if r.network != nil {
@@ -1051,11 +1083,22 @@ func (r *Reconciler) ensureVolumes(ctx context.Context, d Desired, index int) er
 			if err != nil {
 				return fmt.Errorf("volume %s: %w", v.Name, err)
 			}
-			v.resolvedHostPath = resolved
+			// The string Resolve answers about is not pinned; the staging
+			// bind is (K-20). What the alloc mounts is the staged object.
+			staged, err := r.mounts.StageHost(AllocID(d.Project, d.Service, index), v.Name, resolved)
+			if err != nil {
+				return fmt.Errorf("volume %s: %w", v.Name, err)
+			}
+			v.resolvedHostPath = staged
 			continue
 		}
 
 		path := VolumePath(r.volumeDir, d, index, *v)
+		if !withinBase(r.volumeDir, path) {
+			// Names are DNS-1123 labels at both boundaries (parse, apply
+			// seam); this is the assertion at the point of the root write.
+			return fmt.Errorf("volume %s: path %q escapes the volume directory", v.Name, path)
+		}
 		if err := os.MkdirAll(path, 0o750); err != nil {
 			return fmt.Errorf("volume %s: %w", v.Name, err)
 		}
@@ -1196,6 +1239,19 @@ func (r *Reconciler) teardown(ctx context.Context, desired Desired, action Actio
 		spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
 		if err := r.network.Detach(ctx, spec); err != nil {
 			return fmt.Errorf("detach network: %w", err)
+		}
+	}
+	// The alloc's secrets are per-alloc tmpfs files (PRD §6.2 R3): they die
+	// with the alloc, not at the next boot.
+	r.discardSecrets(action.AllocID)
+	// Staged host-volume binds die with the alloc too (K-20): the staging
+	// tree is per-alloc, and a leaked bind pins a directory nobody owns.
+	if r.mounts != nil {
+		if err := r.mounts.UnstageHost(action.AllocID); err != nil {
+			// Logged, not returned: the alloc is already gone, and retrying
+			// teardown for a mount is the janitor's job, not a reconcile
+			// failure's.
+			r.log.Warn("cannot unstage host volumes", "alloc", action.AllocID, "error", err)
 		}
 	}
 	return nil

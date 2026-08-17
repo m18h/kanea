@@ -1439,9 +1439,21 @@ func (f *fakeMounter) ResolveHost(path string, _ bool) (string, error) {
 	return path, nil
 }
 
-// A host volume is bind-mounted straight from the operator's directory: there
-// is nothing under data_dir to derive, and copying it there would give the
-// container a different filesystem than the one the operator named.
+// StageHost and UnstageHost stand in for the fd-pinned staging (K-20) without
+// touching the filesystem: the fake returns a staging-shaped path so tests can
+// see that the alloc mounts the staged path rather than the resolved one.
+func (f *fakeMounter) StageHost(allocID, volume, _ string) (string, error) {
+	if f.hostErr != nil {
+		return "", f.hostErr
+	}
+	return filepath.Join("/run/kanea/host-volumes", allocID, volume), nil
+}
+
+func (f *fakeMounter) UnstageHost(string) error { return nil }
+
+// A host volume is bind-mounted from the operator's directory - via the
+// staging bind since K-20: the container sees the checked object itself, and
+// there is nothing under data_dir to derive either way.
 func TestHostVolumeMountsTheOperatorsDirectory(t *testing.T) {
 	h := newHarness(t)
 	mounter := &fakeMounter{}
@@ -1474,8 +1486,8 @@ func TestHostVolumeMountsTheOperatorsDirectory(t *testing.T) {
 			source = m.Source
 		}
 	}
-	if source != "/srv/shop/config" {
-		t.Fatalf("mount source = %q, want the operator's directory", source)
+	if source != "/run/kanea/host-volumes/shop-web-0/config" {
+		t.Fatalf("mount source = %q, want the staged pin of the operator's directory", source)
 	}
 	// A host directory needs no mount command; it is already a directory here.
 	if len(mounter.ensured) != 0 {
