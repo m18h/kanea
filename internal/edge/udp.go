@@ -36,6 +36,20 @@ const udpSweepInterval = 15 * time.Second
 // a truncated datagram is protocol corruption, not backpressure.
 const udpBufferSize = 64 * 1024
 
+// DefaultMaxSessionsPerIP bounds one source IP's sessions on one listener
+// (K-12, v1.77). The listener cap alone is keyed on the full address, and a
+// spoofed-source flood varies the port: this is the bound that actually
+// bites, and a real client never needs more than a handful of sockets.
+const DefaultMaxSessionsPerIP = 8
+
+// udpUnverifiedByteCap bounds what a session may send TO a client before the
+// client has sent a second datagram (K-12, v1.77). One spoofed datagram can
+// open a session; it cannot make the session send twice, so the second
+// datagram is the (weak) proof the source address receives. 4 KiB answers a
+// real DNS/WireGuard handshake while making the relay useless as an
+// amplifier: below the request it answers, amplification is impossible.
+const udpUnverifiedByteCap = 4096
+
 // udpRelay is a running udp listener: one socket, a session per client
 // address, and an idle janitor (PRD v1.42, §7.2.2).
 //
@@ -58,7 +72,11 @@ type udpRelay struct {
 	cfg      Listener
 	rules    compiled
 	sessions map[string]*udpSession
-	closed   bool
+	// perIP counts live sessions by source IP (K-12): the sessions map is
+	// keyed by the full address, and a spoofed-source flood varies the port,
+	// so the per-IP bound lives beside it.
+	perIP  map[string]int
+	closed bool
 	// now is the janitor's clock, mutex-guarded so a test can advance it
 	// while the relay is serving. Read through clock().
 	now func() time.Time
@@ -82,12 +100,20 @@ type udpSession struct {
 	// lastActive is unix nanos of the last datagram in either direction.
 	lastActive atomic.Int64
 	// expired marks a janitor kill, so the close is counted as an expiry
-	// rather than as an upstream failure.
+	// rather than an upstream failure.
 	expired atomic.Bool
 	// bytesIn/bytesOut mirror the tcp relay's accounting: reported once, when
 	// the session closes.
 	bytesIn  atomic.Int64
 	bytesOut atomic.Int64
+	// verified records the weak reachability proof (K-12): the client has
+	// sent a SECOND datagram from the same socket, which a spoofed source
+	// cannot do. Until then, replyLoop caps what the backend may send to the
+	// (possibly forged) address at udpUnverifiedByteCap.
+	verified atomic.Bool
+	// unverifiedOut is the bytes sent toward the client before verification,
+	// the budget the cap above spends.
+	unverifiedOut atomic.Int64
 }
 
 func (s *udpSession) touch(now time.Time) { s.lastActive.Store(now.UnixNano()) }
@@ -110,6 +136,7 @@ func newUDPRelay(cfg Listener, conn net.PacketConn, limiter *connLimiter, log *s
 		log: log, limiter: limiter, metrics: metrics, dial: dial, now: time.Now,
 		conn: conn, cfg: cfg, rules: rules,
 		sessions: map[string]*udpSession{},
+		perIP:    map[string]int{},
 	}, nil
 }
 
@@ -192,6 +219,12 @@ func (u *udpRelay) handle(payload []byte, addr net.Addr) {
 		if session == nil {
 			return // refused, and counted by openSession
 		}
+	} else {
+		// A second datagram from the same socket is the proof the source
+		// address receives (K-12): a spoofed source can open the session but
+		// never sends twice, and until this lands the reply cap bounds what
+		// the backend can push to the (possibly forged) address.
+		session.verified.Store(true)
 	}
 
 	session.touch(u.clock())
@@ -271,6 +304,15 @@ func (u *udpRelay) openSession(addr net.Addr, key string) *udpSession {
 		}
 		return nil
 	}
+	if u.perIP[clientIP.String()] >= DefaultMaxSessionsPerIP {
+		u.mu.Unlock()
+		u.limiter.release()
+		_ = upstream.Close() //nolint:errcheck // cleanup path
+		u.log.Warn("published udp listener refused a session at the per-source limit",
+			"service", name, "port", cfg.Port, "remote", key)
+		u.metrics.UDPRefused(name, entrypoint, ReasonSourceLimit)
+		return nil
+	}
 	if raced, ok := u.sessions[key]; ok {
 		// Another goroutine won the create. Impossible with the single read
 		// loop, cheap to be safe against anyway.
@@ -280,6 +322,7 @@ func (u *udpRelay) openSession(addr net.Addr, key string) *udpSession {
 		return raced
 	}
 	u.sessions[key] = session
+	u.perIP[clientIP.String()]++
 	u.mu.Unlock()
 
 	u.metrics.UDPSessionOpened(name, entrypoint)
@@ -296,10 +339,22 @@ func (u *udpRelay) replyLoop(s *udpSession, key, name, entrypoint string) {
 		n, err := s.upstream.Read(buf)
 		if n > 0 {
 			s.touch(u.clock())
-			written, werr := u.conn.WriteTo(buf[:n], s.client)
-			s.bytesOut.Add(int64(written))
-			if werr != nil && errors.Is(werr, net.ErrClosed) {
-				break // the listener itself is going away
+			// The pre-verification cap (K-12): until the client has proven it
+			// receives (a second datagram), the backend may push at most
+			// udpUnverifiedByteCap to the address - enough for a real
+			// handshake, far too little for amplification.
+			if !s.verified.Load() &&
+				s.unverifiedOut.Load()+int64(n) > udpUnverifiedByteCap {
+				u.metrics.UDPRefused(name, entrypoint, ReasonUnverifiedCap)
+			} else {
+				written, werr := u.conn.WriteTo(buf[:n], s.client)
+				s.bytesOut.Add(int64(written))
+				if !s.verified.Load() {
+					s.unverifiedOut.Add(int64(written))
+				}
+				if werr != nil && errors.Is(werr, net.ErrClosed) {
+					break // the listener itself is going away
+				}
 			}
 		}
 		if err != nil {
@@ -310,6 +365,13 @@ func (u *udpRelay) replyLoop(s *udpSession, key, name, entrypoint string) {
 	u.mu.Lock()
 	if u.sessions[key] == s {
 		delete(u.sessions, key)
+		if ip := packetAddr(s.client); ip.IsValid() {
+			if u.perIP[ip.String()] <= 1 {
+				delete(u.perIP, ip.String())
+			} else {
+				u.perIP[ip.String()]--
+			}
+		}
 	}
 	u.mu.Unlock()
 	_ = s.upstream.Close() //nolint:errcheck // idempotent cleanup

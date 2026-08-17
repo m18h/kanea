@@ -154,6 +154,12 @@ func compileAuth(e AuthEntry) *compiledAuth {
 				c.invalid = fmt.Sprintf("user line for %q is not user:<bcrypt-hash>", user)
 				return c
 			}
+			// The projection enforces the same ceiling; this is the
+			// belt-and-braces half for a bundle that never passed through it.
+			if cost, err := bcrypt.Cost([]byte(hash)); err != nil || cost > MaxBcryptCost {
+				c.invalid = fmt.Sprintf("user line for %q has a bcrypt cost above %d", user, MaxBcryptCost)
+				return c
+			}
 			c.users[user] = []byte(hash)
 		}
 		if len(c.users) == 0 {
@@ -295,10 +301,18 @@ func (c *compiledAuth) verify(r *http.Request, now time.Time) bool {
 	return false
 }
 
-// bcryptDummy equalises the unknown-user path's cost. Generated once; the
-// password compared against it never matches.
+// MaxBcryptCost bounds the work a basic_auth line may demand per request
+// (K-23). The twin lives in reconciler (the projection enforces it at
+// resolve); the two are deliberately duplicated, like CapabilityNone: the
+// import direction between the packages points the other way.
+const MaxBcryptCost = 14
+
+// bcryptDummy equalises the unknown-user path's cost. Generated once, at the
+// cost ceiling (K-23): a line may cost up to MaxBcryptCost, so the dummy must
+// not burn *less* than any real line, or the unknown-user timing becomes a
+// username oracle.
 var bcryptDummy = func() []byte {
-	h, err := bcrypt.GenerateFromPassword([]byte("kanea-timing-equalizer"), bcrypt.DefaultCost)
+	h, err := bcrypt.GenerateFromPassword([]byte("kanea-timing-equalizer"), MaxBcryptCost)
 	if err != nil {
 		panic(err)
 	}

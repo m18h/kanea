@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
@@ -250,6 +251,18 @@ func (s *Server) Listen() error {
 		s.httpsLn = httpsLn
 	}
 	if s.status != nil {
+		// The status listener serves health, metrics, the route table and the
+		// certificate list with no authentication: loopback is the design
+		// (K-21). A public bind is not refused - an operator may have a
+		// monitoring LAN - but it is said loudly, pointing at the
+		// authenticated alternative.
+		if host, _, err := net.SplitHostPort(s.cfg.StatusAddr); err == nil {
+			if ip, err := netip.ParseAddr(host); err == nil && !ip.IsLoopback() {
+				s.log.Warn("status listener is not on loopback: it serves unauthenticated "+
+					"health, metrics and the route table; kanead's /v1/metrics is the authenticated endpoint",
+					"addr", s.cfg.StatusAddr)
+			}
+		}
 		statusLn, err := net.Listen("tcp", s.cfg.StatusAddr)
 		if err != nil {
 			return errors.Join(
