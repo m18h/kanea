@@ -41,7 +41,11 @@ func (d *Datapath) SyncServices(ctx context.Context, services []network.Service)
 	}
 
 	// Withdraw first, like the VIP allocator: an address moving between
-	// services in one pass must not meet its own stale entry.
+	// services in one pass must not meet its own stale entry. The frontend
+	// goes before its backends (audit I-2): a connect racing the window
+	// blackholes rather than failing fast (EPERM) - microseconds, and the
+	// alternative (backends without a frontend) is a connect that dials a
+	// dead address, which is worse.
 	for _, key := range sortedSvcKeys(current) {
 		if _, keep := desired[key]; keep {
 			continue

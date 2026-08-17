@@ -84,14 +84,14 @@ func (n *netlinkOps) EnsureHost(hostIP, hostIP6 netip.Addr) error {
 	return nil
 }
 
-func (n *netlinkOps) CreateVeth(host, peer, alias string) (string, string, error) {
+func (n *netlinkOps) CreateVeth(host, peer, alias string) (string, string, int, error) {
 	la := netlink.NewLinkAttrs()
 	la.Name = host
 	la.MTU = vethMTU
 	// The host side is created DOWN and stays DOWN until SetHostUp: policy is
 	// not attached yet, and a link that cannot carry a packet needs none.
 	if err := netlink.LinkAdd(&netlink.Veth{LinkAttrs: la, PeerName: peer}); err != nil {
-		return "", "", fmt.Errorf("create veth %s: %w", host, err)
+		return "", "", 0, fmt.Errorf("create veth %s: %w", host, err)
 	}
 	// Wait for udev to finish processing the new veth before its MAC is read.
 	// systemd's default 99-default.link carries MACAddressPolicy=persistent,
@@ -107,19 +107,20 @@ func (n *netlinkOps) CreateVeth(host, peer, alias string) (string, string, error
 	settleUdev()
 	hostLink, err := netlink.LinkByName(host)
 	if err != nil {
-		return "", "", fmt.Errorf("find %s: %w", host, err)
+		return "", "", 0, fmt.Errorf("find %s: %w", host, err)
 	}
 	if err := netlink.LinkSetAlias(hostLink, alias); err != nil {
-		return "", "", fmt.Errorf("alias %s: %w", host, err)
+		return "", "", 0, fmt.Errorf("alias %s: %w", host, err)
 	}
 	peerLink, err := netlink.LinkByName(peer)
 	if err != nil {
-		return "", "", fmt.Errorf("find %s: %w", peer, err)
+		return "", "", 0, fmt.Errorf("find %s: %w", peer, err)
 	}
 	if err := netlink.LinkSetMTU(peerLink, vethMTU); err != nil {
-		return "", "", fmt.Errorf("mtu on %s: %w", peer, err)
+		return "", "", 0, fmt.Errorf("mtu on %s: %w", peer, err)
 	}
-	return hostLink.Attrs().HardwareAddr.String(), peerLink.Attrs().HardwareAddr.String(), nil
+	return hostLink.Attrs().HardwareAddr.String(), peerLink.Attrs().HardwareAddr.String(),
+		hostLink.Attrs().Index, nil
 }
 
 func (n *netlinkOps) AttachPrograms(hostDev string) error {
@@ -372,7 +373,7 @@ func (n *netlinkOps) List() ([]Link, error) {
 		if !strings.HasPrefix(attrs.Name, devPrefix) {
 			continue
 		}
-		out = append(out, Link{Name: attrs.Name, Alias: attrs.Alias})
+		out = append(out, Link{Name: attrs.Name, Alias: attrs.Alias, Index: attrs.Index})
 	}
 	return out, nil
 }

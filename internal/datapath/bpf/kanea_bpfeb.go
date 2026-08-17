@@ -141,6 +141,8 @@ const (
 	kaneaMapSvcBackends6        = "svc_backends6"
 	kaneaMapSvcV4               = "svc_v4"
 	kaneaMapSvcV6               = "svc_v6"
+	kaneaMapVethSrc             = "veth_src"
+	kaneaMapVethSrc6            = "veth_src6"
 	kaneaProgKaneaConnect4      = "kanea_connect4"
 	kaneaProgKaneaConnect6      = "kanea_connect6"
 	kaneaProgKaneaFromContainer = "kanea_from_container"
@@ -215,6 +217,8 @@ type kaneaMapSpecs struct {
 	SvcBackends6 *ebpf.MapSpec `ebpf:"svc_backends6"`
 	SvcV4        *ebpf.MapSpec `ebpf:"svc_v4"`
 	SvcV6        *ebpf.MapSpec `ebpf:"svc_v6"`
+	VethSrc      *ebpf.MapSpec `ebpf:"veth_src"`
+	VethSrc6     *ebpf.MapSpec `ebpf:"veth_src6"`
 }
 
 // kaneaVariableSpecs contains global variables before they are loaded into the kernel.
@@ -259,6 +263,8 @@ type kaneaMaps struct {
 	SvcBackends6 *ebpf.Map `ebpf:"svc_backends6"`
 	SvcV4        *ebpf.Map `ebpf:"svc_v4"`
 	SvcV6        *ebpf.Map `ebpf:"svc_v6"`
+	VethSrc      *ebpf.Map `ebpf:"veth_src"`
+	VethSrc6     *ebpf.Map `ebpf:"veth_src6"`
 }
 
 func (m *kaneaMaps) Close() error {
@@ -279,6 +285,8 @@ func (m *kaneaMaps) Close() error {
 		m.SvcBackends6,
 		m.SvcV4,
 		m.SvcV6,
+		m.VethSrc,
+		m.VethSrc6,
 	)
 }
 

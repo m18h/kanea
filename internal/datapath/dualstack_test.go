@@ -1,6 +1,7 @@
 package datapath
 
 import (
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -143,10 +144,13 @@ func TestDualStackAttachOrdering(t *testing.T) {
 	attach(t, f)
 
 	host := hostDevName(testSpec.ID)
+	idx := f.nl.link[host].Index
 	want := []string{
 		"put-identity 10.200.0.2",
 		"put-identity fd10:244::2",
 		"create-veth " + host,
+		fmt.Sprintf("put-veth-src %d 10.200.0.2", idx),
+		fmt.Sprintf("put-veth-src %d fd10:244::2", idx),
 		"attach-programs " + host,
 		"netns-create " + testSpec.ID,
 		"move-peer " + host + "p",

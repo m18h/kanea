@@ -6,11 +6,13 @@ import (
 	"github.com/m18h/kanea/internal/datapath/dpmap"
 )
 
-// Link is one host interface as the datapath sees it: the name and the
-// ownership alias. Only "kn"-prefixed links are ever reported.
+// Link is one host interface as the datapath sees it: the name, the
+// ownership alias, and the ifindex (which keys the veth_src binding maps,
+// v1.77). Only "kn"-prefixed links are ever reported.
 type Link struct {
 	Name  string
 	Alias string
+	Index int
 }
 
 // Nl is the netlink plumbing seam. The linux implementation drives
@@ -25,9 +27,10 @@ type Nl interface {
 	// prerequisites the kernel owns.
 	EnsureHost(hostIP, hostIP6 netip.Addr) error
 	// CreateVeth creates the veth pair with the host side DOWN and the alias
-	// set on the host side, returning both MAC addresses. The host side must
-	// not come up here: policy is not attached yet.
-	CreateVeth(host, peer, alias string) (hostMAC, peerMAC string, err error)
+	// set on the host side, returning both MAC addresses and the host side's
+	// ifindex (the veth_src key, v1.77). The host side must not come up
+	// here: policy is not attached yet.
+	CreateVeth(host, peer, alias string) (hostMAC, peerMAC string, hostIndex int, err error)
 	// AttachPrograms installs the clsact qdisc and the two tc filters on the
 	// host device: kanea_to_container on egress, kanea_from_container on
 	// ingress.
@@ -68,6 +71,16 @@ type Maps interface {
 	// the address has one.
 	PutIdentity(ip netip.Addr, id dpmap.Identity) error
 	DeleteIdentity(ip netip.Addr) error
+	// PutVethSrc and DeleteVethSrc bind a host veth (by ifindex) to the
+	// address kanead assigned it (K-09, v1.77): from_container drops a packet
+	// whose claimed source is anything else, so the identity a destination's
+	// policy evaluates cannot be forged from inside the alloc. Family
+	// dispatch lives in the implementation, exactly like the identity maps.
+	PutVethSrc(ifindex uint32, ip netip.Addr) error
+	DeleteVethSrc(ifindex uint32, ip netip.Addr) error
+	// DeleteEndpointStats evicts a dead alloc's per-endpoint counters (K-29):
+	// the map is capped and nothing else frees a slot.
+	DeleteEndpointStats(ip netip.Addr) error
 	// ApplyFlip executes a dpmap.FlipPlan in order against one service entry,
 	// in the family the key's address selects (svc_v4/svc_backends or
 	// svc_v6/svc_backends6). The key is supplied here because dpmap.Op

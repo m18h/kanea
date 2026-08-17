@@ -2,6 +2,7 @@ package datapath
 
 import (
 	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -28,6 +29,9 @@ func TestAttachOrdering(t *testing.T) {
 	want := []string{
 		"put-identity 10.200.0.2",
 		"create-veth " + host,
+		// The source binding lands while the host side is still down (K-09):
+		// before policy, before any packet the veth can carry.
+		fmt.Sprintf("put-veth-src %d 10.200.0.2", f.nl.link[host].Index),
 		"attach-programs " + host,
 		"netns-create " + testSpec.ID,
 		"move-peer " + host + "p",
@@ -85,8 +89,12 @@ func TestAttachIsIdempotent(t *testing.T) {
 	f.log.reset()
 
 	attach(t, f)
-	if got := f.log.taken(); len(got) != 0 {
-		t.Fatalf("second Attach touched the node: %v", got)
+	// The adopt path re-asserts the source binding idempotently (K-09): a
+	// pre-v1.77 attach has none, and the write is the same value, not a change.
+	for _, s := range f.log.taken() {
+		if !strings.HasPrefix(s, "put-veth-src") {
+			t.Fatalf("second Attach touched the node: %q", s)
+		}
 	}
 }
 
@@ -158,15 +166,17 @@ func TestAttachFailsWhenTheIdentityCannotBeWritten(t *testing.T) {
 func TestDetachOrdering(t *testing.T) {
 	f := newFixture(t)
 	attach(t, f)
+	host := hostDevName(testSpec.ID)
+	idx := f.nl.link[host].Index // captured before Detach removes the link
 	f.log.reset()
 
 	if err := f.d.Detach(t.Context(), testSpec); err != nil {
 		t.Fatalf("Detach: %v", err)
 	}
-	host := hostDevName(testSpec.ID)
 	want := []string{
 		"delete-veth " + host,
 		"delete-identity 10.200.0.2",
+		fmt.Sprintf("delete-veth-src %d 10.200.0.2", idx),
 		"netns-delete " + testSpec.ID,
 	}
 	if got := f.log.taken(); !slices.Equal(got, want) {
