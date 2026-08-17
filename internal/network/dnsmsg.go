@@ -30,6 +30,12 @@ const (
 	maxDNSLabel   = 63
 	maxUDPPayload = 512
 
+	// maxForwardPayload is the upstream reply read size (K-28): 4096 covers
+	// the standard EDNS UDP size; a reply that fills it may be clipped
+	// mid-record, so it is answered as truncated rather than relayed with its
+	// counts intact.
+	maxForwardPayload = 4096
+
 	// Header flag bits.
 	flagResponse           = 1 << 15
 	flagAuthoritative      = 1 << 10
@@ -49,6 +55,11 @@ const (
 	rcodeNotImpl  = 4
 	rcodeRefused  = 5
 )
+
+// errUpstreamTruncated marks a reply that filled the forward read buffer
+// (K-28): possibly clipped mid-record, so the client is told to retry over
+// TCP rather than handed a parse error.
+var errUpstreamTruncated = errors.New("dns: upstream reply exceeded the read buffer")
 
 // Record types and classes.
 const (
@@ -284,6 +295,17 @@ func (b *answerBuilder) questionOnlyLen() int {
 		offset += length
 	}
 	return min(offset+4, len(b.buf))
+}
+
+// truncatedAnswers answers with the header and question only and TC set (K-28):
+// the relayed upstream reply did not fit the read buffer, so the resolver
+// retries over TCP - the same semantics finish() applies to an oversized built
+// answer.
+func (b *answerBuilder) truncatedAnswers() []byte {
+	flags := binary.BigEndian.Uint16(b.buf[2:4]) | flagTruncated
+	binary.BigEndian.PutUint16(b.buf[2:4], flags)
+	binary.BigEndian.PutUint16(b.buf[6:8], 0) // ANCOUNT
+	return b.buf[:b.questionOnlyLen()]
 }
 
 // encodeName writes a name in DNS label form.

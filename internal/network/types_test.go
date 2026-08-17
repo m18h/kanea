@@ -86,7 +86,9 @@ func TestServiceValidation(t *testing.T) {
 }
 
 func TestValidateLabelValue(t *testing.T) {
-	for _, bad := range []string{"", "a=b", "a:b", "a b", "a,b"} {
+	// The "/" refusals are the filesystem half: these names compose into
+	// paths kanead writes as root (resolv.conf, volume directories, logs).
+	for _, bad := range []string{"", "a=b", "a:b", "a b", "a,b", "a/b", "../../etc", "../x"} {
 		if err := validateLabelValue("project", bad); err == nil {
 			t.Errorf("validateLabelValue(%q) = nil, want error", bad)
 		}
