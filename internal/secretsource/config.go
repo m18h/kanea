@@ -232,6 +232,22 @@ func (p *Providers) Current() []Provider {
 
 // build constructs one provider from its validated config.
 func (p *Providers) build(cfg providerConfig) (Provider, error) {
+	// Plaintext endpoints are legal (Vault on RFC1918 is the reason the egress
+	// guard does not apply here) and warned about, on every build (K-50):
+	// http carries the provider's own credential, and a rebuild is a config
+	// change, which is when the operator is listening.
+	for _, ep := range []struct{ name, v string }{
+		{"base_url", cfg.hcl.BaseURL}, {"address", cfg.hcl.Address},
+		{"endpoint", cfg.hcl.Endpoint}, {"vault_uri", cfg.hcl.VaultURI},
+		{"login_url", cfg.hcl.LoginURL},
+	} {
+		if strings.HasPrefix(ep.v, "http://") {
+			p.log.Warn("secrets provider endpoint is plain HTTP",
+				"provider", cfg.name, ep.name, ep.v,
+				"detail", "the provider's credential travels unencrypted; fine on a trusted "+
+					"link, never across one you do not own")
+		}
+	}
 	switch cfg.kind {
 	case KindDoppler:
 		return newDoppler(cfg, p.client, p.log), nil

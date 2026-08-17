@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -67,6 +68,13 @@ type Manifest struct {
 	// decrypting it, which is what an operator actually needs when choosing
 	// which one to restore.
 	Counts map[string]int `json:"counts,omitempty"`
+	// MAC authenticates the whole manifest (v1.74). Empty on archives written
+	// before it existed; a restore accepts those with a loud warning, because
+	// everything above this line is bucket-side writable without it: KeyID,
+	// Index, CreatedAt and the snapshot's own name and hash all decide what a
+	// restore trusts, and all of them came from the same unauthenticated
+	// document.
+	MAC string `json:"mac,omitempty"`
 }
 
 // Part is one stored object and how to verify it.
@@ -234,6 +242,7 @@ func (a *Archiver) Create(ctx context.Context, reason string, counts map[string]
 		Index: index, Reason: reason, Snapshot: part,
 		Node: a.node, Version: a.version, Counts: counts,
 	}
+	manifest.MAC = a.signManifest(manifest)
 	if err := a.putManifest(ctx, manifest); err != nil {
 		return Manifest{}, err
 	}
@@ -284,12 +293,43 @@ func (a *Archiver) upload(ctx context.Context, name, path string) (_ Part, err e
 // Unencrypted, deliberately. It holds no secret (hashes, sizes, an index, a
 // key fingerprint and counts) and it is what someone recovering from a bucket
 // with no key needs to read to know what is there and whether it is intact.
+// It is MAC'd (v1.74): readable by anyone, writable only by the key.
 func (a *Archiver) putManifest(ctx context.Context, m Manifest) error {
 	body, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("backup: encode manifest: %w", err)
 	}
 	return a.sink.Put(ctx, prefixManifests+m.ID+".json", int64(len(body)), strings.NewReader(string(body)))
+}
+
+// signManifest computes the manifest's MAC. The canonical form is the compact
+// encoding of the struct with the MAC field empty: one deterministic byte
+// string, and no dependence on how the stored document happened to be spaced.
+func (a *Archiver) signManifest(m Manifest) string {
+	m.MAC = ""
+	canonical, err := json.Marshal(m)
+	if err != nil {
+		// A struct of strings, numbers and one map of ints cannot fail to
+		// encode; the error branch exists so the compiler agrees.
+		return ""
+	}
+	sum := hmac.New(sha256.New, a.keys.mac)
+	sum.Write(canonical)
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
+// verifyManifestMAC authenticates a manifest read back from the sink. A
+// manifest with no MAC predates v1.74 and verifies as legacy: the caller
+// decides whether to warn (a restore does; a listing does not).
+func (a *Archiver) verifyManifestMAC(m Manifest) error {
+	if m.MAC == "" {
+		return nil
+	}
+	if subtle.ConstantTimeCompare([]byte(m.MAC), []byte(a.signManifest(m))) != 1 {
+		return fmt.Errorf("%w: manifest %s failed authentication: its metadata does not "+
+			"match the key's MAC, so it was written or altered off-node", ErrCorrupt, m.ID)
+	}
+	return nil
 }
 
 // List returns the archives in the sink, newest first.
@@ -350,6 +390,9 @@ func (a *Archiver) manifest(ctx context.Context, name string) (_ Manifest, err e
 	if m.Format != FormatVersion {
 		return Manifest{}, fmt.Errorf("backup: %s is format %d; this build reads format %d",
 			name, m.Format, FormatVersion)
+	}
+	if err := a.verifyManifestMAC(m); err != nil {
+		return Manifest{}, err
 	}
 	return m, nil
 }

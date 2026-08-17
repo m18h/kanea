@@ -72,6 +72,17 @@ func (a *Archiver) Restore(ctx context.Context, opts RestoreOptions) (RestoreRes
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	if manifest.MAC == "" {
+		// A pre-v1.74 archive: genuine, but its metadata is unauthenticated.
+		// The snapshot is still AEAD-verified at decrypt and hash-verified
+		// against the manifest - which is where the residual lives: a
+		// bucket-write attacker could have swapped in an older (manifest,
+		// snapshot) pair, so this restore must say loudly *which* state it is
+		// rolling back to.
+		log.Warn("archive predates manifest authentication (v1.74)",
+			"detail", "its metadata is unauthenticated; verify the archive id and "+
+				"created-at are the state you mean to roll back to before replaying")
+	}
 	log.Info("restoring from an archive",
 		"archive", manifest.ID, "created", manifest.CreatedAt, "index", manifest.Index,
 		"node", manifest.Node, "sink", a.sink.Describe())
@@ -118,11 +129,36 @@ func (a *Archiver) replay(
 
 	applied := 0
 	index := from
+	var prev *Segment
 	for _, segment := range segments {
 		// A segment entirely below the snapshot is already in it.
 		if segment.To <= from {
 			continue
 		}
+		// The chain must be contiguous, and it must start where the snapshot
+		// ends. An *unreadable* segment already stops the replay below; a
+		// *missing* one is quieter and worse: a delete that was in it would
+		// never apply, and the record it removed would come back from the
+		// dead. Segments are pruned only below the oldest kept archive, so a
+		// gap here means the bucket lost something, and the honest answer is
+		// the snapshot alone.
+		if prev == nil {
+			if segment.From > from+1 {
+				return applied, index, fmt.Errorf(
+					"%w: the earliest segment starts at index %d, but the snapshot covers %d: "+
+						"the changes between them are missing; "+
+						"re-run with --skip-replay to accept the snapshot alone",
+					ErrCorrupt, segment.From, from)
+			}
+		} else if segment.From != prev.To+1 {
+			return applied, index, fmt.Errorf(
+				"%w: segments %d-%d and %d-%d do not chain: a segment is missing between them; "+
+					"re-run with --skip-replay to accept the snapshot alone",
+				ErrCorrupt, prev.From, prev.To, segment.From, segment.To)
+		}
+		s := segment
+		prev = &s
+
 		changes, err := a.GetSegment(ctx, segment)
 		if err != nil {
 			// Stated and stopped, not skipped. Replaying a later segment over a

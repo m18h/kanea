@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -408,8 +409,7 @@ func TestSkipReplayRestoresTheSnapshotAlone(t *testing.T) {
 	}
 }
 
-func TestReplayStopsAtAMissingSegmentRatherThanSkippingIt(t *testing.T) {
-	// Replaying past a gap produces a state that never existed: a delete that
+func TestReplayStopsAtAMissingSegmentRatherThanSkippingIt(t *testing.T) { // Replaying past a gap produces a state that never existed: a delete that
 	// was in the missing segment never happens, and the record it removed comes
 	// back.
 	ctx := context.Background()
@@ -453,6 +453,140 @@ func TestReplayStopsAtAMissingSegmentRatherThanSkippingIt(t *testing.T) {
 		t.Fatal("a restore replayed past a segment it could not read")
 	} else if !errors.Is(err, ErrCorrupt) {
 		t.Errorf("err = %v, want ErrCorrupt", err)
+	}
+}
+
+func TestReplayRefusesADeletedSegment(t *testing.T) {
+	// A segment *unreadable* stops the replay (the test above); a segment
+	// *deleted from the bucket* is the quieter half of the same attack: the
+	// chain must refuse rather than skip, or a delete in the gap resurrects.
+	ctx := context.Background()
+	root := t.TempDir()
+	sink, err := NewFileSink(root, nil)
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	src := openStore(t)
+	archiver := newStoreArchiver(t, src, sink, testKeys(t, 28))
+	rep, err := NewReplicator(ReplicatorConfig{Archiver: archiver, Store: src, MaxChanges: 1})
+	if err != nil {
+		t.Fatalf("new replicator: %v", err)
+	}
+
+	put(t, src, store.KindService, "shop/web", "one")
+	if err := rep.Snapshot(ctx, "test"); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	put(t, src, store.KindService, "shop/api", "two")
+	put(t, src, store.KindService, "shop/worker", "three")
+	if err := rep.ShipOnce(ctx); err != nil {
+		t.Fatalf("ship: %v", err)
+	}
+
+	segments, err := archiver.Segments(ctx)
+	if err != nil {
+		t.Fatalf("segments: %v", err)
+	}
+	if len(segments) < 2 {
+		t.Fatalf("expected at least two segments, got %d", len(segments))
+	}
+	// Delete the middle one: nothing is "unreadable"; the chain just has a hole.
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(segments[0].Name))); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	target := filepath.Join(t.TempDir(), "restored.db")
+	_, err = archiver.Restore(ctx, RestoreOptions{Target: target})
+	if err == nil {
+		t.Fatal("a restore replayed across a deleted segment")
+	} else if !errors.Is(err, ErrCorrupt) {
+		t.Errorf("err = %v, want ErrCorrupt", err)
+	}
+}
+
+func TestATamperedManifestIsRefused(t *testing.T) {
+	// Everything a restore trusts comes from the manifest: the key id, the
+	// index, the snapshot's name and hash. A bucket-write attacker editing any
+	// of them must fail authentication (v1.74).
+	ctx := context.Background()
+	root := t.TempDir()
+	sink, err := NewFileSink(root, nil)
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	src := openStore(t)
+	archiver := newStoreArchiver(t, src, sink, testKeys(t, 29))
+	put(t, src, store.KindService, "shop/web", "one")
+	m, err := archiver.Create(ctx, "test", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	manifestPath := filepath.Join(root, "manifests", m.ID+".json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var tampered Manifest
+	if err := json.Unmarshal(raw, &tampered); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// The rollback shape: an older index, so a restore replays nothing recent.
+	tampered.Index = 1 << 40
+	edited, err := json.MarshalIndent(tampered, "", "  ")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, edited, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if _, err := archiver.Find(ctx, m.ID); err == nil {
+		t.Fatal("a tampered manifest passed authentication")
+	} else if !errors.Is(err, ErrCorrupt) {
+		t.Errorf("err = %v, want ErrCorrupt", err)
+	}
+}
+
+func TestAPreMACManifestIsAccepted(t *testing.T) {
+	// An archive written before v1.74 has no MAC: the snapshot is still
+	// AEAD-verified at decrypt, so the restore proceeds - with the warning
+	// that says its metadata is unauthenticated.
+	ctx := context.Background()
+	root := t.TempDir()
+	sink, err := NewFileSink(root, nil)
+	if err != nil {
+		t.Fatalf("new sink: %v", err)
+	}
+	src := openStore(t)
+	archiver := newStoreArchiver(t, src, sink, testKeys(t, 31))
+	put(t, src, store.KindService, "shop/web", "one")
+	m, err := archiver.Create(ctx, "test", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	manifestPath := filepath.Join(root, "manifests", m.ID+".json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var legacy Manifest
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	legacy.MAC = ""
+	rewritten, err := json.MarshalIndent(legacy, "", "  ")
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, rewritten, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	target := filepath.Join(t.TempDir(), "restored.db")
+	if _, err := archiver.Restore(ctx, RestoreOptions{Target: target}); err != nil {
+		t.Fatalf("a pre-MAC archive did not restore: %v", err)
 	}
 }
 

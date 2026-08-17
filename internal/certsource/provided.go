@@ -264,6 +264,15 @@ func (p *Provided) resolve(policy *certPolicy, req Request) (Certificate, error)
 	var names []string
 	var lastErr error
 	for _, g := range candidates {
+		// A key file readable by group or world is a leak in waiting (K-51):
+		// warned about, not refused - certbot's own layouts are group-readable
+		// and refusal would break exactly the operator this is for.
+		if info, err := os.Stat(g.keyPath); err == nil && info.Mode().Perm()&0o077 != 0 {
+			p.log.Warn("certificate key file is readable by group or other",
+				"grant", g.name, "path", g.keyPath,
+				"mode", fmt.Sprintf("%04o", info.Mode().Perm()),
+				"detail", "a private key wants 0600; this one can be read by more than its owner")
+		}
 		cert, err := loadGrant(g)
 		if err != nil {
 			lastErr = err

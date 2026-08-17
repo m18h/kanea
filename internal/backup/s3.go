@@ -116,6 +116,14 @@ func NewS3Sink(cfg S3Config) (*S3Sink, error) {
 			// because a replicator blocked forever on a dead endpoint stops
 			// shipping and never says why.
 			Timeout: 30 * time.Minute,
+			// Redirects are answered, not followed (K-49): a 307 from an S3
+			// endpoint carries a signed URL worth re-signing, and blindly
+			// re-sending the signature to wherever Location points is how a
+			// credential travels. The error names where the redirect wanted
+			// to go.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		}
 	}
 	if endpoint.Scheme == "http" {
@@ -341,6 +349,14 @@ func (s *S3Sink) expect(resp *http.Response, what string, allowed ...int) error 
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("%w: %s", ErrNotFound, what)
+	}
+	// A redirect is never followed (K-49); say where it pointed so an operator
+	// can fix the endpoint instead of decoding a 307 with no destination.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		where := resp.Header.Get("Location")
+		return fmt.Errorf("%s: the endpoint redirects to %s; configure the sink's "+
+			"endpoint at the final address (Kanea never re-sends a signature across a redirect)",
+			what, where)
 	}
 
 	// The body is read for its Code, which is the difference between "your
