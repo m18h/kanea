@@ -31,7 +31,7 @@ func pinHost(resolved string, allowed []string) (int, error) {
 	}
 	fdPath, err := os.Readlink("/proc/self/fd/" + strconv.Itoa(fd))
 	if err != nil {
-		_ = unix.Close(fd)
+		_ = unix.Close(fd) //nolint:errcheck // cleanup path //nolint:errcheck // cleanup path
 		return -1, fmt.Errorf("read the pinned path for %s: %w", resolved, err)
 	}
 	for _, prefix := range allowed {
@@ -39,7 +39,7 @@ func pinHost(resolved string, allowed []string) (int, error) {
 			return fd, nil
 		}
 	}
-	_ = unix.Close(fd)
+	_ = unix.Close(fd) //nolint:errcheck // cleanup path
 	return -1, fmt.Errorf("%w: %q (pinned as %q) is not under any allowed prefix",
 		ErrHostPathNotAllowed, resolved, fdPath)
 }
@@ -61,7 +61,7 @@ func pinAndBind(resolved, staging string, allowed []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = unix.Close(fd) }()
+	defer func() { _ = unix.Close(fd) }() //nolint:errcheck // cleanup path
 
 	if err := os.MkdirAll(staging, 0o750); err != nil {
 		return fmt.Errorf("staging directory %s: %w", staging, err)

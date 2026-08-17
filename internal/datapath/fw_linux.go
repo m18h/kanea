@@ -109,7 +109,7 @@ func (fw nftFirewall) EnsureMasquerade(clusterCIDR netip.Prefix, _ string) error
 // no route to on a v4-only node; the v4 /16 is the one that is routable
 // everywhere it matters.
 func buildEgressExprs(uid int) []expr.Any {
-	uidBytes := binaryutil.NativeEndian.PutUint32(uint32(uid))
+	uidBytes := binaryutil.NativeEndian.PutUint32(uint32(uid)) // #nosec G115: a uid is 32 bits by construction
 	return []expr.Any{
 		// meta skuid == uid
 		&expr.Meta{Key: expr.MetaKeySKUID, Register: 1},

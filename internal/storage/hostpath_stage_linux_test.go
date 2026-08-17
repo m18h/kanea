@@ -13,12 +13,12 @@ import (
 // needs no privileges to verify.
 func TestPinHostRefusesASymlinkedPath(t *testing.T) {
 	root := t.TempDir()
-	real := filepath.Join(root, "data")
-	if err := os.Mkdir(real, 0o750); err != nil {
+	realDir := filepath.Join(root, "data")
+	if err := os.Mkdir(realDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(root, "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realDir, link); err != nil {
 		t.Fatal(err)
 	}
 
@@ -28,7 +28,7 @@ func TestPinHostRefusesASymlinkedPath(t *testing.T) {
 		t.Fatal("a symlinked path was pinned")
 	}
 
-	fd, err := pinHost(real, []string{root})
+	fd, err := pinHost(realDir, []string{root})
 	if err != nil {
 		t.Fatalf("pin the real directory: %v", err)
 	}

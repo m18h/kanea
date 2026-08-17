@@ -261,7 +261,13 @@ jobs:
               add("blobs/sha256/"+ld, ldata)
               add("blobs/sha256/"+md, mdata)
           PY
-          if sudo ./bin/kanea install --bundle forged --only buildkit; then
+          # Install into a clean prefix: the real-node job's earlier steps
+          # already installed buildkit, and the up-to-date receipt check would
+          # skip Fetch - and with it the digest comparison - entirely. The
+          # forged archive still imports into the node's shared containerd;
+          # the refusal comes from Fetch seeing the name claimed by content
+          # whose digest is not the pin.
+          if sudo ./bin/kanea install --bundle forged --only buildkit --prefix /tmp/forged-prefix; then
             echo "a forged bundle installed without complaint"; exit 1
           fi
           echo "refused: the name matched, the digest did not"
