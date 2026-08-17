@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/user"
 	"path/filepath"
 	goruntime "runtime"
 	"strconv"
@@ -93,6 +94,7 @@ func platformChecks(opts preflightOptions) []checkResult {
 		checkClock(),
 		checkSystemd(),
 		checkDataDir(opts.dataDir),
+		checkEdgeUser(),
 	}
 }
 
@@ -104,6 +106,7 @@ func componentChecks(opts preflightOptions) []checkResult {
 				"(PRD §5.2.12); or point --containerd at an existing one"),
 		checkVersionMatrix(opts.layout),
 		checkSubnets(opts.layout, opts.serviceCIDR),
+		checkStateDBPerms(opts.dataDir),
 	}
 	if opts.layout.NodeCIDR6 != "" || opts.serviceCIDR6 != "" {
 		results = append(results, checkSubnets6(opts.layout, opts.serviceCIDR6), checkKernelIPv6())
@@ -260,6 +263,28 @@ func checkVersionMatrix(layout provision.Layout) checkResult {
 	default:
 		return pass("version matrix", fmt.Sprintf("%d components at their pinned versions", len(manifest.All())))
 	}
+}
+
+// checkStateDBPerms reports a state.db readable by group or other (K-52): it
+// holds the encrypted secrets and certificates buckets, and 0600 is set at
+// creation but an operator's copy/restore can arrive wider. Absent is a pass:
+// the daemon creates it.
+func checkStateDBPerms(dataDir string) checkResult {
+	path := filepath.Join(dataDir, "state.db")
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return pass("state permissions", path)
+	}
+	if err != nil {
+		return warn("state permissions", "cannot stat "+path+": "+err.Error(),
+			"check permissions on the data directory")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return warn("state permissions",
+			fmt.Sprintf("%s is mode %04o (group/other can read it)", path, info.Mode().Perm()),
+			"chmod 0600 "+path+": it holds encrypted secrets and certificates")
+	}
+	return pass("state permissions", path)
 }
 
 // checkSubnets checks the container subnet against the service pool.
@@ -489,7 +514,36 @@ func checkDataDir(path string) checkResult {
 	return pass("data directory", path)
 }
 
-// checkSocket verifies a unix socket is there and answers.
+// checkEdgeUser verifies the §5.2.6 boundary's account half: the edge runs as
+// its own user, not root. Two halves, because they fail independently: the
+// account (created by `kanea init`) and the installed unit's User= directive
+// (a node installed before the directive existed keeps its root unit until a
+// re-init - nothing rewrites units in place).
+func checkEdgeUser() checkResult {
+	if _, err := user.Lookup(provision.EdgeUser); err != nil {
+		return warn("edge user", provision.EdgeUser+" does not exist",
+			"re-run `kanea init` (idempotent): it creates the account; until then the "+
+				"kanea-edge unit cannot start, or the edge runs as root and the §5.2.6 boundary is void")
+	}
+	body, err := os.ReadFile(filepath.Join(provision.DefaultUnitDir, "kanea-edge.service")) // #nosec G304; a fixed unit path
+	if errors.Is(err, fs.ErrNotExist) {
+		// No unit, no finding: `kanea edge` run by hand is a dev topology, and
+		// this check is about the installed one.
+		return pass("edge user", provision.EdgeUser)
+	}
+	if err != nil {
+		return warn("edge user", "cannot read kanea-edge.service: "+err.Error(),
+			"check permissions on "+provision.DefaultUnitDir)
+	}
+	if !strings.Contains(string(body), "User="+provision.EdgeUser) {
+		return warn("edge user",
+			"kanea-edge.service has no User="+provision.EdgeUser+" directive, so the edge runs as root",
+			"re-run `kanea init` (idempotent) to rewrite the units: as uid 0 the edge can read "+
+				"every root-owned file on the node without needing one capability")
+	}
+	return pass("edge user", provision.EdgeUser)
+}
+
 func checkSocket(name, path, fix string) checkResult {
 	if _, err := os.Stat(path); err != nil {
 		return fail(name, path+" is not present", fix)

@@ -88,6 +88,17 @@ func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
 	if !strings.Contains(edge, "CapabilityBoundingSet=CAP_NET_BIND_SERVICE") {
 		t.Error("the edge unit does not drop the capabilities it does not need")
 	}
+	// The process split is a boundary only if the edge is not root: as uid 0
+	// it would match the owner of every root-owned file (the master key, the
+	// containerd socket) without needing one capability.
+	if !strings.Contains(edge, "User=kanea-edge") || !strings.Contains(edge, "Group=kanea-edge") {
+		t.Error("the edge unit does not run as its own user; the §5.2.6 boundary is void without it")
+	}
+	// ...and kanead must name that user's group for the certificate bundle's
+	// 0640 half, or the edge cannot read what it presents.
+	if !strings.Contains(service, "--edge-group kanea-edge") {
+		t.Error("kanead.service does not pass --edge-group kanea-edge")
+	}
 	// Checked as directives rather than as substrings: both units *mention*
 	// Type=notify in the comment explaining why they do not use it.
 	for _, unit := range []string{service, edge} {

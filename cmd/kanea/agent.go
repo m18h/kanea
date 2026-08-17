@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -456,7 +457,12 @@ func runAgent(args []string) error {
 		BPFDir:       *bpfDir,
 		Store:        st,
 		DNS:          dns,
-		Logger:       logger,
+		// The build-egress drop (v1.75) keys on the build daemon's uid. A
+		// node without the account (no install, no pipelines) gets no rule:
+		// there is no build traffic to filter, and a rule keyed on a uid
+		// nobody owns would match nothing anyway.
+		BuildEgressUID: buildEgressUID(logger),
+		Logger:         logger,
 	}, logger)
 	if err != nil {
 		return err
@@ -1143,6 +1149,26 @@ func buildNetwork(ctx context.Context, mode string, cfg datapath.Config, logger 
 	default:
 		return nil, fmt.Errorf("unknown --network %q: want %s or %s", mode, networkEBPF, networkNetns)
 	}
+}
+
+// buildEgressUID resolves the build daemon's account to the uid the
+// build-egress nftables rule matches on (v1.75). 0 - no rule - when the
+// account does not exist: a node with no build daemon has no build traffic
+// to filter, and init creates the account before the daemon first runs.
+func buildEgressUID(logger *slog.Logger) int {
+	u, err := user.Lookup(provision.BuildkitUser)
+	if err != nil {
+		logger.Debug("no build daemon account; the build-egress rule is off",
+			"user", provision.BuildkitUser, "error", err)
+		return 0
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		logger.Warn("the build daemon account has a non-numeric uid; the build-egress rule is off",
+			"user", provision.BuildkitUser, "uid", u.Uid)
+		return 0
+	}
+	return uid
 }
 
 // DNS wiring.

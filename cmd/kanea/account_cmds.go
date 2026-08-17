@@ -24,7 +24,7 @@ import (
 // for a config stanza the daemon would have to be restarted to notice.
 func runUser(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: kanea user <add|ls|rm> [args]")
+		return errors.New("usage: kanea user <add|ls|rm|revoke-sessions> [args]")
 	}
 	switch args[0] {
 	case "add", "set":
@@ -33,8 +33,10 @@ func runUser(args []string) error {
 		return runUserList(args[1:])
 	case "rm", "delete":
 		return runUserDelete(args[1:])
+	case "revoke-sessions":
+		return runUserRevokeSessions(args[1:])
 	default:
-		return fmt.Errorf("unknown user command %q: want add, ls or rm", args[0])
+		return fmt.Errorf("unknown user command %q: want add, ls, rm or revoke-sessions", args[0])
 	}
 }
 
@@ -114,9 +116,32 @@ func runUserDelete(args []string) error {
 	if err := api.NewClient(*socket).DeleteUser(context.Background(), fs.Arg(0)); err != nil {
 		return err
 	}
-	// Sessions are not swept here: they carry an absolute expiry and are
-	// revoked server-side, so the account is gone and its sessions age out.
+	// The account's sessions die with it server-side (K-13): a stolen cookie
+	// stops working the moment the account is gone, not 12 hours later.
 	_, err := fmt.Fprintf(os.Stdout, "removed account %s\n", fs.Arg(0))
+	return err
+}
+
+// runUserRevokeSessions is `kanea user revoke-sessions <name>`: ends every
+// session the subject holds without touching the account (K-13). It is the
+// emergency lever for a stolen cookie, and the only one for
+// directory-established sessions, whose subjects have no local account to
+// delete or re-credential.
+func runUserRevokeSessions(args []string) error {
+	fs := flag.NewFlagSet("user revoke-sessions", flag.ContinueOnError)
+	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: kanea user revoke-sessions <name>")
+	}
+
+	n, err := api.NewClient(*socket).RevokeUserSessions(context.Background(), fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(os.Stdout, "revoked %d session(s) for %s\n", n, fs.Arg(0))
 	return err
 }
 
@@ -195,12 +220,14 @@ func runTokenList(args []string) error {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "ID\tNAME\tROLE\tCREATED\tEXPIRES\tLAST USED"); err != nil {
+	// No LAST USED column (K-38): writing it would be a Store write per
+	// request; use is in the audit log, keyed by token id.
+	if _, err := fmt.Fprintln(tw, "ID\tNAME\tROLE\tCREATED\tEXPIRES"); err != nil {
 		return err
 	}
 	for _, t := range tokens {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			t.ID, t.Name, t.Role, age(t.Created), expiry(t.Expires), age(t.LastUsed)); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			t.ID, t.Name, t.Role, age(t.Created), expiry(t.Expires)); err != nil {
 			return err
 		}
 	}

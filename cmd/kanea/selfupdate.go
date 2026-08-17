@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -46,6 +47,35 @@ const maxArchiveBytes = 512 << 20
 // script's lesson, kept here.
 var releaseTag = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
+// compareReleaseTags orders two release tags: -1, 0, +1. Unparseable inputs
+// (a "dev" build) compare equal to anything: a dev binary never blocks an
+// upgrade on a version it cannot know.
+func compareReleaseTags(a, b string) int {
+	parse := func(tag string) (int, int, int, bool) {
+		if !releaseTag.MatchString(tag) {
+			return 0, 0, 0, false
+		}
+		var maj, minv, pat int
+		if _, err := fmt.Sscanf(strings.TrimPrefix(tag, "v"), "%d.%d.%d", &maj, &minv, &pat); err != nil {
+			return 0, 0, 0, false
+		}
+		return maj, minv, pat, true
+	}
+	am, an, ap, aok := parse(a)
+	bm, bn, bp, bok := parse(b)
+	if !aok || !bok {
+		return 0
+	}
+	switch {
+	case am != bm:
+		return cmp.Compare(am, bm)
+	case an != bn:
+		return cmp.Compare(an, bn)
+	default:
+		return cmp.Compare(ap, bp)
+	}
+}
+
 // releaseSource fetches release artifacts. The base URL is a field so tests
 // can point it at an httptest server; everything else is the contract
 // release.yml publishes: kanea_<ver>_linux_<arch>.tar.gz beside a
@@ -61,8 +91,22 @@ func newReleaseSource() *releaseSource {
 		repo = defaultRepo
 	}
 	return &releaseSource{
-		base:   "https://github.com/" + repo,
-		client: &http.Client{Timeout: 5 * time.Minute},
+		base: "https://github.com/" + repo,
+		client: &http.Client{
+			Timeout: 5 * time.Minute,
+			// The provision fetcher's rule (K-43): a release download never
+			// follows a redirect off https.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 10 {
+					return fmt.Errorf("stopped after %d redirects", 10)
+				}
+				if req.URL.Scheme != "https" {
+					return fmt.Errorf("refusing a redirect to %s://%s; release downloads stay on https",
+						req.URL.Scheme, req.URL.Host)
+				}
+				return nil
+			},
+		},
 	}
 }
 
@@ -184,6 +228,12 @@ func verifySignature(ctx context.Context, base, checksums, sig, pem string) (not
 		return "no signature published for this release; checksum only", nil
 	}
 	identity := base + "/" // the release workflow of this repository, any ref
+	// I-4: the regexp's semantics are load-bearing and easy to misread. cosign
+	// anchors it implicitly (it runs Go's regexp unanchored-match semantics,
+	// and certificate SANs here are GitHub workflow URLs), so `base + "/"`
+	// matches any ref path of this repository's workflows - that is the
+	// intent: the release workflow is the only publisher, and a fork's
+	// identity fails on the base mismatch, not on a missing anchor.
 	cmd := exec.CommandContext(ctx, cosign, "verify-blob",
 		"--certificate", pem,
 		"--signature", sig,

@@ -196,6 +196,14 @@ func runInit(args []string) error {
 	if err := provision.EnsureGroup(context.Background(), api.SocketGroup, nil); err != nil {
 		o.printf("WARN  %v\n      (the CLI still works with sudo)\n", err)
 	}
+	// The edge's own account (PRD §5.2.6): the process split is only a
+	// boundary if the edge is not root, and the certificate bundle's 0640
+	// group-read half names this user's group. Same warning shape as the
+	// socket group: an edge run by hand as root still works, it just is not
+	// the boundary the threat model describes.
+	if err := provision.EnsureUser(context.Background(), provision.EdgeUser, nil); err != nil {
+		o.printf("WARN  %v\n      (the kanea-edge unit will not start until it exists)\n", err)
+	}
 	if err := keyCeremony(o, filepath.Join(*dataDir, secrets.KeyFileName), reader); err != nil {
 		return err
 	}
