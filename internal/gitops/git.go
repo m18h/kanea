@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -98,28 +99,63 @@ type SyncerConfig struct {
 	// Timeout bounds one clone. A repository that is not answering must not
 	// hold the sync loop open indefinitely.
 	Timeout time.Duration
-	Logger  *slog.Logger
+	// MaxCloneBytes bounds the materialized checkout (K-44). go-git exposes
+	// no transport byte cap, so this is a post-clone walk that fails the run
+	// and removes the directory: the bound is on what a build retains, not on
+	// what the wire delivered - stated plainly rather than implied.
+	// Zero means DefaultMaxCloneBytes.
+	MaxCloneBytes int64
+	Logger        *slog.Logger
 }
 
 // Syncer fetches job specs from a git remote.
 type Syncer struct {
 	secrets Resolver
 	timeout time.Duration
-	log     *slog.Logger
+	// maxCloneBytes bounds a materialized checkout (K-44).
+	maxCloneBytes int64
+	log           *slog.Logger
+}
+
+// treeSize sums a checked-out tree's file bytes (K-44). Symlinks are skipped:
+// their size is the path length, not a cost worth counting, and following one
+// would measure somewhere else entirely.
+func treeSize(root string) (int64, error) {
+	var total int64
+	err := filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("gitops: measure the checkout: %w", err)
+	}
+	return total, nil
 }
 
 // DefaultSyncTimeout bounds one clone.
 const DefaultSyncTimeout = 2 * time.Minute
+
+// DefaultMaxCloneBytes bounds a materialized checkout (K-44): 1 GiB of tree
+// is far past any honest build context.
+const DefaultMaxCloneBytes = 1 << 30
 
 // NewSyncer builds the syncer.
 func NewSyncer(cfg SyncerConfig) *Syncer {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = DefaultSyncTimeout
 	}
+	if cfg.MaxCloneBytes <= 0 {
+		cfg.MaxCloneBytes = DefaultMaxCloneBytes
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &Syncer{secrets: cfg.Secrets, timeout: cfg.Timeout, log: cfg.Logger}
+	return &Syncer{secrets: cfg.Secrets, timeout: cfg.Timeout, maxCloneBytes: cfg.MaxCloneBytes, log: cfg.Logger}
 }
 
 // Errors a sync distinguishes.
@@ -175,7 +211,7 @@ func (s *Syncer) Fetch(ctx context.Context, src Source) (Checkout, error) {
 
 	head, err := repo.Head()
 	if err != nil {
-		return Checkout{}, fmt.Errorf("gitops: read HEAD of %s: %w", src.URL, err)
+		return Checkout{}, fmt.Errorf("gitops: read HEAD of %s: %w", redactURL(src.URL), err)
 	}
 	commit, err := repo.CommitObject(head.Hash())
 	if err != nil {
@@ -240,7 +276,7 @@ func (s *Syncer) Materialize(ctx context.Context, src Source, dir string) (Check
 
 	head, err := repo.Head()
 	if err != nil {
-		return Checkout{}, fmt.Errorf("gitops: read HEAD of %s: %w", src.URL, err)
+		return Checkout{}, fmt.Errorf("gitops: read HEAD of %s: %w", redactURL(src.URL), err)
 	}
 	commit, err := repo.CommitObject(head.Hash())
 	if err != nil {
@@ -251,6 +287,16 @@ func (s *Syncer) Materialize(ctx context.Context, src Source, dir string) (Check
 	// override, and this must not be overridable.
 	if err := os.RemoveAll(filepath.Join(dir, ".git")); err != nil {
 		return Checkout{}, fmt.Errorf("gitops: remove .git from the build context: %w", err)
+	}
+
+	// The retained tree is bounded (K-44): over the cap the run fails and the
+	// checkout is removed, so a push cannot turn into resident disk.
+	if size, err := treeSize(dir); err != nil {
+		return Checkout{}, err
+	} else if size > s.maxCloneBytes {
+		_ = os.RemoveAll(dir) //nolint:errcheck // cleanup path
+		return Checkout{}, fmt.Errorf("gitops: checkout of %s is %d bytes, over the %d-byte cap",
+			redactURL(src.URL), size, s.maxCloneBytes)
 	}
 
 	return Checkout{
@@ -274,7 +320,7 @@ func (s *Syncer) auth(ctx context.Context, src Source) (transport.AuthMethod, er
 	}
 	if s.secrets == nil {
 		return nil, fmt.Errorf("gitops: %s references %s but no secrets store is configured",
-			src.URL, src.AuthRef)
+			redactURL(src.URL), src.AuthRef)
 	}
 
 	value, err := s.secrets.Resolve(ctx, src.AuthRef)
@@ -396,14 +442,28 @@ func cloneError(src Source, err error) error {
 	case errors.Is(err, transport.ErrAuthenticationRequired),
 		errors.Is(err, transport.ErrAuthorizationFailed):
 		return fmt.Errorf("%w: %s (check the deploy key or token in %s)",
-			ErrAuthRequired, src.URL, src.AuthRef)
+			ErrAuthRequired, redactURL(src.URL), src.AuthRef)
 	case errors.Is(err, plumbing.ErrReferenceNotFound):
-		return fmt.Errorf("gitops: %s has no branch %q", src.URL, src.Branch)
+		return fmt.Errorf("gitops: %s has no branch %q", redactURL(src.URL), src.Branch)
 	case errors.Is(err, transport.ErrRepositoryNotFound):
-		return fmt.Errorf("gitops: no repository at %s", src.URL)
+		return fmt.Errorf("gitops: no repository at %s", redactURL(src.URL))
 	default:
-		return fmt.Errorf("gitops: clone %s: %w", src.URL, err)
+		return fmt.Errorf("gitops: clone %s: %w", redactURL(src.URL), err)
 	}
+}
+
+// redactURL renders a remote for a log or error line with any userinfo
+// removed. validateGit refuses credentials in the URL at plan, but a record
+// can pre-date that refusal or arrive from a direct call, and the URL is
+// echoed into build logs any viewer can read - exactly the escape auth_ref
+// exists to prevent.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }
 
 // isSSHURL reports whether a remote wants an SSH key rather than a token.
