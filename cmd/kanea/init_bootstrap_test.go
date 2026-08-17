@@ -105,7 +105,7 @@ func TestBootstrapCreatesTheFirstAdminAndRestartsOnce(t *testing.T) {
 }
 
 func TestBootstrapSkipsAnExistingAccountAndDoesNotRestart(t *testing.T) {
-	// Idempotency: PutUser is an upsert, so a re-run must never reach it — a
+	// Idempotency: PutUser is an upsert, so a re-run must never reach it; a
 	// prompt on a re-run would replace a password nobody asked to change. And
 	// with the listener already open, there is nothing to restart for.
 	fake := &fakeAdminAPI{
@@ -133,7 +133,7 @@ func TestBootstrapSkipsAnExistingAccountAndDoesNotRestart(t *testing.T) {
 
 func TestBootstrapRestartsWhenTheListenerIsNotOpen(t *testing.T) {
 	// The changed-flag re-run: accounts exist, but the running daemon reports
-	// no listener — `enable --now` does not re-exec a running unit, so the
+	// no listener; `enable --now` does not re-exec a running unit, so the
 	// restart is the only way the new --listen ever binds.
 	fake := &fakeAdminAPI{
 		users:              []auth.User{{Name: "michael", Role: auth.RoleAdmin}},
@@ -225,7 +225,7 @@ func TestDNSAddrForDerivesTheNodeCIDRsDotOne(t *testing.T) {
 
 func TestResolveListenValidatesWithoutPrompting(t *testing.T) {
 	// Under `go test` stdin is not a terminal, so an explicit=false call must
-	// not consume the reader — the piped-init contract.
+	// not consume the reader: the piped-init contract.
 	cases := []struct {
 		name     string
 		explicit bool

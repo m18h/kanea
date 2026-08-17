@@ -7,7 +7,7 @@ export interface LiveState<T> {
   data: T | null
   error: string | null
   /**
-   * connected means a frame has arrived on the *current* connection — it
+   * connected means a frame has arrived on the *current* connection; it
    * resets to false when the transport drops. "We have data and it is
    * current" is the question pages actually ask; a flag that stayed true
    * across a reconnect gap made a missing service look deliberately absent.
@@ -24,7 +24,7 @@ export interface LiveState<T> {
  * daemon that changed shape should surface as a visible error on one panel, not
  * as an undefined-property crash somewhere else.
  *
- * data survives a disconnect on purpose — stale beats blank while the socket
+ * data survives a disconnect on purpose: stale beats blank while the socket
  * reconnects; `connected` is what says whether to trust it as current.
  */
 export function useLiveTopic<S extends z.ZodTypeAny>(

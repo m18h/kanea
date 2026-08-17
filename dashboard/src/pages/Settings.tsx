@@ -29,13 +29,13 @@ function isSettingsTab(tab: string): tab is SettingsTab {
 /**
  * Settings (PRD v1.46, §12.2): the node's flag-decided facts, the two Store
  * records that supersede flags (backup destination, notification channels),
- * accounts and tokens, and the audit log — one section per tab, deep-linkable
+ * accounts and tokens, and the audit log; one section per tab, deep-linkable
  * as /settings/<tab> through the ordinary router (bare /settings is the first
  * tab). Only the active tab mounts, so the Accounts and Audit queries run
  * when someone is actually looking.
  *
- * The whole view is admin-only at the daemon — it names credentials'
- * references and lists accounts, which is a list of things worth attacking —
+ * The whole view is admin-only at the daemon: it names credentials'
+ * references and lists accounts, which is a list of things worth attacking;
  * so a viewer gets an explanation rather than a page of 403 banners. The
  * canWrite gate is the same one Backups uses; here it also gates the reads,
  * because the API does.
@@ -122,7 +122,7 @@ export function Settings({ tab }: { tab?: string | undefined }) {
 
 /**
  * TabRail is the left navigation: real links, so tabs are bookmarkable and
- * back/forward work for free. Below md it becomes a horizontal chip row —
+ * back/forward work for free. Below md it becomes a horizontal chip row:
  * five short labels scroll fine and stay links.
  */
 function TabRail({ active }: { active: SettingsTab | null }) {

@@ -26,8 +26,8 @@ type gcpFixture struct {
 }
 
 // newGCPFixture builds a fake token endpoint that verifies the RS256
-// assertion against the test key — a signature the verifier does not check is
-// the MinIO lesson again — plus a Secret Manager `:access` surface.
+// assertion against the test key (a signature the verifier does not check is
+// the MinIO lesson again) plus a Secret Manager `:access` surface.
 func newGCPFixture(t *testing.T, secrets map[string]string, maps []syncMapping) *gcpFixture {
 	t.Helper()
 	f := &gcpFixture{}

@@ -12,7 +12,7 @@ import (
 // udpBytesOut totals what the relay has written back to its clients.
 //
 // The reply loop touches a session immediately before it writes, so a non-zero
-// total is proof the touch has already happened — which is what makes it safe
+// total is proof the touch has already happened, which is what makes it safe
 // to move the clock out from under it.
 func udpBytesOut(u *udpRelay) int64 {
 	u.mu.Lock()
@@ -109,9 +109,9 @@ func TestUDPRelayRoundTrip(t *testing.T) {
 	}
 }
 
-// ip_restriction is checked on the datagram that would create a session — the
+// ip_restriction is checked on the datagram that would create a session (the
 // accept-time hook a datagram socket lacks, recovered at the only moment there
-// is — and a refused client's datagrams never reach a backend.
+// is) and a refused client's datagrams never reach a backend.
 func TestUDPRelayIPRestrictionRefusesBeforeDialling(t *testing.T) {
 	cfg := udpListenerFor("127.0.0.1", 9)
 	cfg.IPRestriction = &IPRestriction{Allow: []string{"203.0.113.0/24"}}
@@ -144,7 +144,7 @@ func TestUDPRelayIPRestrictionRefusesBeforeDialling(t *testing.T) {
 	}
 }
 
-// A datagram with no backends is dropped and counted — UDP has no way to tell
+// A datagram with no backends is dropped and counted: UDP has no way to tell
 // the client, so the operator's counter is the only witness.
 func TestUDPRelayCountsDropsWithNoBackends(t *testing.T) {
 	cfg := udpListenerFor("127.0.0.1", 9)
@@ -199,7 +199,7 @@ func TestUDPRelayRefusesAtItsSessionCap(t *testing.T) {
 }
 
 // An idle session is swept, counted as expired, and the client's next datagram
-// simply re-creates it — on the same backend, because the choice is a hash.
+// simply re-creates it: on the same backend, because the choice is a hash.
 func TestUDPRelayExpiresIdleSessions(t *testing.T) {
 	ip, port := udpBackend(t)
 	metrics := NewMetrics()
@@ -212,7 +212,7 @@ func TestUDPRelayExpiresIdleSessions(t *testing.T) {
 	}
 
 	// Wait for the echo before touching the clock. The backend replies, and the
-	// reply loop stamps the session with the *relay's* clock when it does — so
+	// reply loop stamps the session with the *relay's* clock when it does, so
 	// a stamp that lands after the clock moves puts lastActive two timeouts in
 	// the future, where no deadline can ever be earlier than it. The session is
 	// then immortal, the janitor finds nothing to collect, and the sweep below

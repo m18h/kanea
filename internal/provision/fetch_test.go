@@ -110,7 +110,7 @@ func TestVerifiedReaderCatchesTruncation(t *testing.T) {
 	}
 }
 
-// A caller that stops before EOF — an extractor that has what it wants — must
+// A caller that stops before EOF (an extractor that has what it wants) must
 // still be able to prove the artefact was whole.
 func TestVerifiedReaderRequiresAnExplicitVerifyOnAShortRead(t *testing.T) {
 	full := "0123456789"

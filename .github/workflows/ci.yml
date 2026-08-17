@@ -1,4 +1,4 @@
-# CI — all gates mirror `make check` locally. Security gates are release
+# CI: all gates mirror `make check` locally. Security gates are release
 # gates (AGENTS.md constraint #7): they may never be skipped or made
 # non-blocking.
 name: CI
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   go:
-    name: Go — build, vet, test
+    name: "Go: build, vet, test"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -39,8 +39,8 @@ jobs:
     # The S3 client is hand-written (PRD v1.27), and a fake server that does not
     # verify signatures accepts a broken signer as happily as a correct one. This
     # job is the only thing establishing that the signature is one a service will
-    # take — it found a body-ownership bug the unit tests structurally could not.
-    name: S3 interop — MinIO
+    # take: it found a body-ownership bug the unit tests structurally could not.
+    name: "S3 interop: MinIO"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -74,7 +74,7 @@ jobs:
           done
           echo "MinIO did not become healthy"; docker logs minio; exit 1
 
-      - name: Interoperability tests — path-style
+      - name: Interoperability tests; path-style
         env:
           KANEA_S3_ENDPOINT: http://127.0.0.1:9000
           KANEA_S3_ACCESS_KEY: kaneatest
@@ -89,9 +89,9 @@ jobs:
       # that verifies.
       #
       # The bucket subdomain is resolved through /etc/hosts rather than by
-      # trusting the runner to synthesise *.localhost — whether it does is a
+      # trusting the runner to synthesise *.localhost: whether it does is a
       # systemd-resolved detail, and a required job must not rest on one.
-      - name: Interoperability tests — virtual-hosted
+      - name: Interoperability tests; virtual-hosted
         env:
           KANEA_S3_ENDPOINT: http://localhost:9000
           KANEA_S3_PATH_STYLE: "false"
@@ -111,10 +111,10 @@ jobs:
     # asks the only question the unit tests cannot: do the artefacts upstream
     # still hash to what we pinned?
     #
-    # A failure here is not a broken build — it means an upstream project
+    # A failure here is not a broken build; it means an upstream project
     # re-tagged a release, which is exactly the event the pinning exists to
     # catch and exactly the one nobody would otherwise notice.
-    name: Component manifest — upstream hashes
+    name: "Component manifest: upstream hashes"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -144,9 +144,9 @@ jobs:
     # do the committed artifacts still come from the committed sources?
     #
     # A failure here means someone edited a generated file by hand, or
-    # edited kanea.c/headers.h without running `make bpf` — both are the
+    # edited kanea.c/headers.h without running `make bpf`; both are the
     # drift the committed-artifact scheme exists to catch.
-    name: BPF artifacts — regenerate and diff
+    name: "BPF artifacts: regenerate and diff"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -157,15 +157,15 @@ jobs:
       - name: Regenerate and diff
         run: make bpf-verify
 
-  # The kernel floor is NOT exercised in CI (PRD §21: "kernel ≥ 5.10 — the floor
+  # The kernel floor is NOT exercised in CI (PRD §21: "kernel ≥ 5.10; the floor
   # is spike-validated, not inherited"). internal/datapath's bpfload-tagged test
-  # loads the shipping object and verifies all four programs and sixteen maps —
+  # loads the shipping object and verifies all four programs and sixteen maps;
   # but it needs a 5.10 kernel to mean anything, and the attempt to boot one here
   # through cilium/little-vm-helper could not be made to work: the action fetches
   # the image and then hands lvh the qcow2 path where it expects a registry
-  # reference. Rather than leave a check permanently red — which teaches people to
+  # reference. Rather than leave a check permanently red, which teaches people to
   # stop reading the checks, the same argument bpf-verify's neighbour makes about
-  # flaky required jobs — the floor is verified on a real Debian 11 node as part of
+  # flaky required jobs; the floor is verified on a real Debian 11 node as part of
   # the spike ⑤ run (spikes/ebpf-datapath, docs/VALIDATION.md §3):
   #
   #     sudo -E go test -tags bpfload -run Floor -v ./internal/datapath/
@@ -177,7 +177,7 @@ jobs:
     # `kanea install` places binaries, writes units and starts daemons. None of
     # that can be tested off a real Linux host, and the S3 `Put` defect in
     # AGENTS.md is the standing reminder of what a fake server does not catch.
-    name: Install smoke — real node
+    name: "Install smoke: real node"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -190,14 +190,14 @@ jobs:
       # The datapath is left out deliberately: it needs BPF features a hosted
       # runner does not reliably have, and a flaky required job teaches people
       # to ignore CI. The dataplane is exercised on a real node instead
-      # (§20 M10) — the same reasoning that kept cilium out before it.
+      # (§20 M10): the same reasoning that kept cilium out before it.
       - name: Install the host components
         run: sudo ./bin/kanea install --only containerd,runc,buildkit
       - name: The sockets answer
         run: |
           set -euo pipefail
           sudo systemctl is-active --quiet kanea-containerd.service
-          # sudo because /run/kanea is 0710 root:root (Layout.Directories) — an
+          # sudo because /run/kanea is 0710 root:root (Layout.Directories); an
           # unprivileged stat cannot traverse it, and the socket being root-only
           # is the design, not the defect under test.
           sudo test -S /run/kanea/containerd.sock
@@ -210,7 +210,7 @@ jobs:
           sudo test -S /run/containerd/containerd.sock
           docker run --rm hello-world >/dev/null
           echo "the distribution's containerd still serves Docker"
-      - name: Constraint #11 — every unit joined kanea.slice
+      - name: Constraint #11; every unit joined kanea.slice
         run: |
           set -euo pipefail
           for unit in kanea-containerd; do
@@ -227,7 +227,7 @@ jobs:
     # path that reaches for the network *fails* rather than quietly succeeding
     # through a fallback. A mocked "offline" would pass while the real thing
     # dialled out.
-    name: Install smoke — air-gapped
+    name: "Install smoke: air-gapped"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -271,7 +271,7 @@ jobs:
   # in the tap repository, beside the file they verify.
 
   lint:
-    name: Lint — golangci-lint
+    name: "Lint: golangci-lint"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -284,7 +284,7 @@ jobs:
           version: latest
 
   security:
-    name: Security gates — gosec, govulncheck, gitleaks
+    name: "Security gates: gosec, govulncheck, gitleaks"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -311,7 +311,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dashboard:
-    name: Dashboard — lint, typecheck, test, build, audit
+    name: "Dashboard: lint, typecheck, test, build, audit"
     runs-on: ubuntu-latest
     defaults:
       run:

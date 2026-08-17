@@ -9,7 +9,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-// Pin layout — a spike-specific root so nothing here can ever collide with
+// Pin layout: a spike-specific root so nothing here can ever collide with
 // another user of bpffs.
 const (
 	pinRoot         = "/sys/fs/bpf/kanea-spike"
@@ -26,7 +26,7 @@ const (
 	flagHost uint32 = 0x1
 )
 
-// stats_drops indices — mirror bpf/spike.c.
+// stats_drops indices: mirror bpf/spike.c.
 const (
 	dropIDMiss uint32 = iota
 	dropPolicy

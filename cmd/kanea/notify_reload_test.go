@@ -17,7 +17,7 @@ import (
 func TestNodeRoutesForClearsTheProjectScope(t *testing.T) {
 	// "node" names the channels; it must never *scope* them. A route whose
 	// Project were "node" would match only events of a project literally called
-	// node — the node-wide default would silently see nothing.
+	// node: the node-wide default would silently see nothing.
 	ctx := context.Background()
 	n := &jobspec.Notifications{
 		Webhook: &jobspec.WebhookChannel{URL: "http://127.0.0.1:9/hook"},
@@ -36,10 +36,10 @@ func TestNodeRoutesForClearsTheProjectScope(t *testing.T) {
 		t.Fatalf("%d routes, want 1", len(routes))
 	}
 	if got := routes[0].Project; got != "" {
-		t.Errorf("Project = %q, want empty — the dispatcher's \"sees everything\"", got)
+		t.Errorf("Project = %q, want empty; the dispatcher's \"sees everything\"", got)
 	}
 	if got := routes[0].Channel.Name(); got != "node/webhook" {
-		t.Errorf("channel name = %q, want %q — the label survives the scope clearing", got, "node/webhook")
+		t.Errorf("channel name = %q, want %q; the label survives the scope clearing", got, "node/webhook")
 	}
 
 	// A nil block is a node without defaults, not an error.
@@ -62,7 +62,7 @@ func TestNotifyFingerprintChangesOnlyWithConfig(t *testing.T) {
 		t.Fatalf("notifyFingerprint: %v", err)
 	}
 
-	// An unrelated kv write — the kind every reconcile pass produces.
+	// An unrelated kv write: the kind every reconcile pass produces.
 	if _, err := st.Apply(ctx, store.Mutation{
 		Op: store.OpPut, Kind: store.KindKV, Key: "unrelated/key", Value: []byte(`"noise"`),
 	}); err != nil {

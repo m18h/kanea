@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# provision-vm.sh — one-time setup for spike ③ (S3 FUSE drivers) on the
+# provision-vm.sh: one-time setup for spike ③ (S3 FUSE drivers) on the
 # kanea-spike OrbStack VM (Ubuntu 24.04 arm64).
 #
 # Installs a local MinIO as the S3 endpoint plus the three candidate drivers:
-#   s3fs        (apt)                       — the FUSE veteran, full POSIX-ish semantics
-#   rclone      (upstream .deb)             — `rclone mount`, VFS cache modes
-#   mount-s3    (AWS mountpoint-s3, .deb)   — replaces goofys: goofys' last release is
+#   s3fs        (apt): the FUSE veteran, full POSIX-ish semantics
+#   rclone      (upstream .deb): `rclone mount`, VFS cache modes
+#   mount-s3    (AWS mountpoint-s3, .deb); replaces goofys: goofys' last release is
 #                                             v0.24.0 (Apr 2020) and ships amd64 only,
 #                                             so it cannot run on Kanea's arm64 target.
 # Idempotent. Spike-only, nothing ships. No real cloud credentials are used.
@@ -27,7 +27,7 @@ sudo apt-get install -y -qq fuse3 s3fs curl ca-certificates >/dev/null
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT; cd "$tmp"
 
 if ! command -v rclone >/dev/null 2>&1; then
-  say "rclone $RCLONE_VERSION (upstream .deb — noble ships 1.60)"
+  say "rclone $RCLONE_VERSION (upstream .deb; noble ships 1.60)"
   curl -fsSLO "https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${ARCH}.deb"
   curl -fsSLO "https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/SHA256SUMS"
   grep " rclone-v${RCLONE_VERSION}-linux-${ARCH}.deb$" SHA256SUMS | sed 's|\*||' | sha256sum -c - >/dev/null \

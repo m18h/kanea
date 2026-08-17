@@ -2,7 +2,7 @@ package jobspec
 
 // The `auth` block (PRD v1.40, §6.2 R27): request authentication on an
 // `expose` block or a function's http trigger. Every field is a `secret:`
-// reference (R3/R5) — the spec never carries a credential, a key or a path,
+// reference (R3/R5): the spec never carries a credential, a key or a path,
 // and the node resolves references into the verifier material the edge is
 // handed (R17's split, applied to authentication).
 
@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 )
 
-// JWT algorithms R27 accepts. A closed set, configured — never read from a
+// JWT algorithms R27 accepts. A closed set, configured, never read from a
 // token.
 var jwtAlgorithms = map[string]bool{"HS256": true, "RS256": true, "ES256": true}
 
@@ -95,7 +95,7 @@ func validateAuth(svc *Service, a *Auth) hcl.Diagnostics {
 			Severity: hcl.DiagError,
 			Summary:  "Auth needs exactly one mode",
 			Detail: fmt.Sprintf("Service %q declares %d auth modes; exactly one of basic_ref, "+
-				"bearer_ref or a jwt block is required — two modes would be a fallback chain, "+
+				"bearer_ref or a jwt block is required; two modes would be a fallback chain, "+
 				"and a fallback in authentication is the weakest link wearing the strongest's name.",
 				svc.Name, modes),
 			Subject: a.DefRange.Ptr(),
@@ -115,7 +115,7 @@ func validateJWTAuth(svc *Service, j *JWTAuth) hcl.Diagnostics {
 	if !jwtAlgorithms[j.Algorithm] {
 		bad("Unknown JWT algorithm",
 			fmt.Sprintf("Service %q: algorithm %q is not one of HS256, RS256, ES256. "+
-				"The algorithm is configuration — it is never read from a token.", svc.Name, j.Algorithm))
+				"The algorithm is configuration: it is never read from a token.", svc.Name, j.Algorithm))
 		return diags
 	}
 

@@ -67,7 +67,7 @@ func TestServerConfigMalformedProbedFileIsFatal(t *testing.T) {
 
 // The v1.51/v1.61 all-halves probe-skip is retired (v1.63): the variables
 // stanza is a file-only half with no flag, so the file is probed whenever
-// --config does not say off — flags or no flags. A node that never wanted the
+// --config does not say off; flags or no flags. A node that never wanted the
 // file read says --config off, the whole-file switch it has always been.
 func TestServerConfigProbesTheFileEvenWhenEveryFlaggedHalfIsFlagged(t *testing.T) {
 	path := writeServerConfig(t, `variables { domain = "home.lan" }`)
@@ -78,7 +78,7 @@ func TestServerConfigProbesTheFileEvenWhenEveryFlaggedHalfIsFlagged(t *testing.T
 	if cfg.Variables["domain"] != "home.lan" {
 		t.Fatalf("the variables stanza was not read: %+v", cfg)
 	}
-	// A malformed file is fatal on the probe — there is no flag set that
+	// A malformed file is fatal on the probe; there is no flag set that
 	// makes it unread short of --config off.
 	bad := writeServerConfig(t, `garbage {{{`)
 	if _, err := serverConfigForRun("", bad); err == nil {
@@ -172,7 +172,7 @@ func TestAPIListenerTLSEnabled(t *testing.T) {
 }
 
 // The init-side half of the same precedence (v1.61): a file-declared listener
-// skips the prompt and renders no listen flags — and meets the same
+// skips the prompt and renders no listen flags, and meets the same
 // beyond-loopback refusal the flags meet, at the file's coordinates.
 func TestListenFromServerConfig(t *testing.T) {
 	tls := &nodeconfig.Config{Path: "kanea.hcl", Bind: &nodeconfig.BindConfig{

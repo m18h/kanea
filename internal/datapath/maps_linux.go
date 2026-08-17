@@ -27,7 +27,7 @@ func (k *kernelMaps) mp(name string) (*ebpf.Map, error) {
 	return m, nil
 }
 
-// identityMapFor picks the identity map by the address's family — the one
+// identityMapFor picks the identity map by the address's family: the one
 // place the PutIdentity/DeleteIdentity dispatch lives.
 func (k *kernelMaps) identityMapFor(ip netip.Addr) (*ebpf.Map, []byte, error) {
 	if ip.Is4() {

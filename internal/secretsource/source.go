@@ -5,14 +5,14 @@
 // platform already reads, so every consumer is untouched, the node keeps
 // working through a provider outage on whatever the last pass wrote, and a
 // rotation propagates on the next poll instead of on the next human. A job
-// spec never sees any of this — it references `secret:<project>/<name>`
+// spec never sees any of this: it references `secret:<project>/<name>`
 // exactly as before, and which of those paths are provider-backed is this
 // node's config (`--secrets-providers-config`), never the spec's (R17's rule,
 // applied to secret origin).
 //
 // The seam follows internal/certsource: a closed Kind set, a batch call per
 // pass, partial failure as data rather than as an error that suppresses the
-// rest, and explicit wiring in cmd/kanea — no registries.
+// rest, and explicit wiring in cmd/kanea; no registries.
 package secretsource
 
 import "context"
@@ -61,7 +61,7 @@ type Provider interface {
 type Value struct {
 	// To is the local path the mapping targets, <project|shared>/<name>.
 	To string
-	// Ref is the external coordinate, e.g. "backend/prd/DATABASE_URL" — safe
+	// Ref is the external coordinate, e.g. "backend/prd/DATABASE_URL": safe
 	// for logs and status because it names a secret, never holds one.
 	Ref string
 	// Data is the fetched plaintext.

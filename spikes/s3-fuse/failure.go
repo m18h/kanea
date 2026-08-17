@@ -10,7 +10,7 @@ import (
 // runFailure answers the reliability half of the spike question: when the object
 // store goes away, does the mount fail fast or hang forever, and does it recover
 // when the store comes back? A mount that hangs uninterruptibly takes the
-// workload's threads with it — and, if Kanea ever stats it from the reconciler,
+// workload's threads with it, and, if Kanea ever stats it from the reconciler,
 // the control plane too. That is the property that disqualifies a driver.
 func runFailure(ctx context.Context, d *driver) error {
 	fmt.Printf("\n── %s: object store outage ──\n", d.Name)
@@ -60,7 +60,7 @@ func runFailure(ctx context.Context, d *driver) error {
 		}
 		detail = fmt.Sprintf("%s after %v: %s", outcome, r.dur.Round(time.Millisecond), trimErrOrNil(r.err))
 	case <-time.After(blockCap):
-		detail = fmt.Sprintf("still blocked after %v — caller is stuck in the FUSE call", blockCap)
+		detail = fmt.Sprintf("still blocked after %v; caller is stuck in the FUSE call", blockCap)
 	}
 	check(d.Name+": read during outage returns instead of hanging", failedFast, detail)
 
@@ -78,7 +78,7 @@ func runFailure(ctx context.Context, d *driver) error {
 		writeReturned = true
 		outcome := "error"
 		if r.err == nil {
-			outcome = "accepted (buffered locally — data not yet durable)"
+			outcome = "accepted (buffered locally; data not yet durable)"
 		}
 		writeDetail = fmt.Sprintf("%s after %v: %s", outcome, r.dur.Round(time.Millisecond), trimErrOrNil(r.err))
 	case <-time.After(blockCap):
@@ -109,9 +109,9 @@ func runFailure(ctx context.Context, d *driver) error {
 	if !recovered {
 		// Distinguish a wedged/stale mount from actual data loss: ask the store.
 		if out, err := mc("stat", fmt.Sprintf("kaneaspike/%s/outage.txt", bucket)); err == nil && len(out) > 0 {
-			recDetail += " — but the object IS in the bucket (mount is stale, data intact)"
+			recDetail += ", but the object IS in the bucket (mount is stale, data intact)"
 		} else {
-			recDetail += " — and the object is NOT in the bucket (data lost)"
+			recDetail += ", and the object is NOT in the bucket (data lost)"
 		}
 	}
 	check(d.Name+": mount recovers when the store returns", recovered, recDetail)

@@ -20,7 +20,7 @@ type selector struct {
 	service string // empty means the whole project
 }
 
-// parseSelector reads "project" or "project/service". It is pure grammar —
+// parseSelector reads "project" or "project/service". It is pure grammar:
 // the caller decides first whether the argument was a file.
 func parseSelector(arg string) (selector, bool) {
 	project, service, hasSlash := strings.Cut(arg, "/")
@@ -34,8 +34,8 @@ func parseSelector(arg string) (selector, bool) {
 }
 
 // splitFilesAndSelectors decides, per positional argument, spec file or
-// selector. An argument that exists on disk is a file — existence wins (PRD
-// v1.57) — and only a non-existent one is read as a selector. Anything that
+// selector. An argument that exists on disk is a file (existence wins (PRD
+// v1.57)) and only a non-existent one is read as a selector. Anything that
 // is neither is refused by name, which is also what catches a mistyped
 // filename: a dot cannot appear in a DNS-1123 label.
 func splitFilesAndSelectors(args []string) ([]string, []selector, error) {
@@ -123,7 +123,7 @@ func noMatchError(sel selector, desired []reconciler.Desired) error {
 // filterPipelines keeps the configs of projects that kept a service. The
 // configs are built from the UNFILTERED spec on purpose: the server replaces
 // a project's Builds wholesale on apply, so a config derived from a pruned
-// spec would delete the build entries of every unselected sibling — and a
+// spec would delete the build entries of every unselected sibling, and a
 // project none of whose services were selected sends none, because applying
 // one project must not rewrite another's sync state.
 func filterPipelines(configs []gitops.Config, kept []reconciler.Desired) []gitops.Config {

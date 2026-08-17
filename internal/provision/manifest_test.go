@@ -16,8 +16,8 @@ func TestLoadEmbeddedManifest(t *testing.T) {
 }
 
 // The manifest is the §15.4 version matrix, so a component that covers one
-// architecture is an install that fails on the other at download time — on a
-// node, months from now — rather than here.
+// architecture is an install that fails on the other at download time (on a
+// node, months from now) rather than here.
 func TestEveryComponentCoversEveryArch(t *testing.T) {
 	m := MustLoad()
 	for _, c := range m.All() {
@@ -109,7 +109,7 @@ func TestContainerdIsInstalledFirst(t *testing.T) {
 }
 
 // The functions runtime (PRD v1.39, §6.2 R25) is one shim binary. Its release
-// artefacts are named by uname arch, which is what {{.UnameArch}} exists for —
+// artefacts are named by uname arch, which is what {{.UnameArch}} exists for:
 // and the shim must be on disk before containerd serves a wasm task create,
 // which the artefact/image install split already guarantees for any non-image
 // kind.
@@ -140,7 +140,7 @@ func TestWasmtimeShimComponent(t *testing.T) {
 }
 
 // containerd's shim lookup uses containerd's own PATH, and systemd's default
-// does not include Kanea's bin dir — the unit must say so or every non-runc
+// does not include Kanea's bin dir: the unit must say so or every non-runc
 // runtime fails at task create (PRD v1.39).
 func TestContainerdUnitPutsBinDirOnPath(t *testing.T) {
 	l := Layout{Prefix: "/usr/local/lib/kanea", ConfDir: "/etc/kanea", DataDir: "/var/lib/kanea", RunDir: "/run/kanea", UnitDir: "/etc/systemd/system"}

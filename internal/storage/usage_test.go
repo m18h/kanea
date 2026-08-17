@@ -138,7 +138,7 @@ func TestAnS3VolumeIsNeverWalked(t *testing.T) {
 	}
 }
 
-// A walk that fails reports absence, not zero — the same rule, applied to the
+// A walk that fails reports absence, not zero: the same rule, applied to the
 // error path where it is easiest to get wrong.
 func TestAFailedWalkReportsAbsenceNotZero(t *testing.T) {
 	du := newFakeDu()
@@ -343,7 +343,7 @@ func TestAFirstSuccessfulMountIsSilent(t *testing.T) {
 }
 
 // A dead NFS server is retried every reconcile pass. One event, not one per
-// attempt — and one recovery event when it comes back.
+// attempt, and one recovery event when it comes back.
 func TestMountEventsFireOnTransitionsOnly(t *testing.T) {
 	runner := newFakeRunner()
 	runner.failWith["mount"] = errors.New("server not responding")
@@ -367,7 +367,7 @@ func TestMountEventsFireOnTransitionsOnly(t *testing.T) {
 	if err := m2.Ensure(context.Background(), nfsMount(target)); err != nil {
 		t.Fatalf("Ensure after recovery: %v", err)
 	}
-	// A fresh Manager has no memory of the failure, so it stays silent — which
+	// A fresh Manager has no memory of the failure, so it stays silent, which
 	// is the restart case, and is correct: nothing here claims to recover a
 	// state it never observed.
 	if got := events.names(); len(got) != 1 {

@@ -1,4 +1,4 @@
-# build products — regenerated on the node
+# build products: regenerated on the node
 bpf/spike.o
 spike-linux
 kanea-spike-ebpf-datapath

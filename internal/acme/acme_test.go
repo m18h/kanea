@@ -175,7 +175,7 @@ func TestSyncSkipsAFreshCertificate(t *testing.T) {
 	}
 
 	// No ACME directory is reachable in this test, so any attempt to issue
-	// would fail — reaching the end with the stored certificate returned is
+	// would fail: reaching the end with the stored certificate returned is
 	// what proves nothing was requested.
 	out, err := m.Sync(context.Background(), []Request{
 		{Domains: []string{"web.example.com"}, Service: "shop/web"},

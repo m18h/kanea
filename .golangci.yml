@@ -1,5 +1,5 @@
 # golangci-lint configuration (v2 format).
-# Security gates (gosec) are also run standalone via `make security` — this
+# Security gates (gosec) are also run standalone via `make security`: this
 # config is the general lint gate. See AGENTS.md "Coding conventions".
 version: "2"
 

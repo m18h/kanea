@@ -1,4 +1,4 @@
-# Gitleaks configuration — secret scanning gate (AGENTS.md constraint #7).
+# Gitleaks configuration: secret scanning gate (AGENTS.md constraint #7).
 title = "kanea"
 
 [extend]

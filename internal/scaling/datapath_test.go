@@ -108,8 +108,8 @@ func TestDatapathAttributesPerService(t *testing.T) {
 func TestDatapathUnattributableTrafficLandsOnTheNode(t *testing.T) {
 	h := newDatapathHarness(t)
 
-	// A source folds what it cannot attribute — a counter surviving from
-	// before a pin rebuild, a drop toward no alloc — into the node subject. A
+	// A source folds what it cannot attribute (a counter surviving from
+	// before a pin rebuild, a drop toward no alloc) into the node subject. A
 	// number nobody can break down is still worth having, so it is not lost.
 	h.source.drops = map[string]uint64{scaling.NodeSubject: 100}
 	h.scrape(t)
@@ -167,7 +167,7 @@ func TestDatapathCounterResetRebaselines(t *testing.T) {
 	h.source.connects = map[string]uint64{"shop/web": 100000}
 	h.scrape(t)
 
-	// The pinned maps were recreated — a schema rebuild — and the counters
+	// The pinned maps were recreated (a schema rebuild) and the counters
 	// began again. There is no rate across that discontinuity.
 	h.clock.advance(5 * time.Second)
 	h.source.connects = map[string]uint64{"shop/web": 12}

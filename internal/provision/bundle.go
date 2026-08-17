@@ -17,7 +17,7 @@ import (
 // A bundle is a [Source] backed by a directory an operator carried in on a
 // disk. That is the whole mechanism: because the installer is *handed* bytes
 // rather than fetching them, the air-gapped path is the same code as the
-// online one — verified by the same hashes, extracted by the same extractor,
+// online one; verified by the same hashes, extracted by the same extractor,
 // covered by the same tests. There is no second install implementation to rot.
 //
 // A bundle is not trusted more than the network. Its contents are checked
@@ -78,7 +78,7 @@ func OpenBundle(path string) (*BundleSource, error) {
 		if err != nil {
 			return nil, fmt.Errorf("unpack the bundle: %w", err)
 		}
-		f, err := os.Open(path) // #nosec G304 — an operator-supplied path, which is the point
+		f, err := os.Open(path) // #nosec G304; an operator-supplied path, which is the point
 		if err != nil {
 			_ = os.RemoveAll(tmp) //nolint:errcheck // cleanup path
 			return nil, fmt.Errorf("open %s: %w", path, err)
@@ -102,9 +102,9 @@ func OpenBundle(path string) (*BundleSource, error) {
 }
 
 func (b *BundleSource) readMeta() error {
-	raw, err := os.ReadFile(filepath.Join(b.dir, bundleMetaName)) // #nosec G304 — inside the opened bundle
+	raw, err := os.ReadFile(filepath.Join(b.dir, bundleMetaName)) // #nosec G304; inside the opened bundle
 	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%s has no %s — it is not a Kanea bundle", b.from, bundleMetaName)
+		return fmt.Errorf("%s has no %s; it is not a Kanea bundle", b.from, bundleMetaName)
 	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", bundleMetaName, err)
@@ -140,11 +140,11 @@ func (b *BundleSource) Offline() bool { return true }
 // Open returns a component's artefact from the bundle.
 func (b *BundleSource) Open(_ context.Context, c *Component, arch string) (io.ReadCloser, error) {
 	if b.meta.Arch != "" && arch != b.meta.Arch {
-		return nil, fmt.Errorf("this bundle is for %s, not %s — build one with `kanea bundle create --arch %s`",
+		return nil, fmt.Errorf("this bundle is for %s, not %s; build one with `kanea bundle create --arch %s`",
 			b.meta.Arch, arch, arch)
 	}
 	path := filepath.Join(b.dir, bundleArtefact, c.Name)
-	f, err := os.Open(path) // #nosec G304 — a path composed from a validated component name
+	f, err := os.Open(path) // #nosec G304; a path composed from a validated component name
 	if errors.Is(err, fs.ErrNotExist) {
 		// Named rather than left as "no such file": the usual cause is a
 		// bundle authored by a different Kanea version, whose manifest did not
@@ -209,7 +209,7 @@ type BundleOptions struct {
 // CreateBundle downloads every component and writes a bundle directory.
 //
 // Every artefact is verified on the way in, so a bundle cannot be authored
-// from a tampered download — which matters more here than usual, because the
+// from a tampered download, which matters more here than usual, because the
 // bundle is the thing that then crosses an air gap and gets trusted by a human
 // rather than by a network.
 func CreateBundle(ctx context.Context, m *Manifest, src Source, opts BundleOptions) error {
@@ -217,7 +217,7 @@ func CreateBundle(ctx context.Context, m *Manifest, src Source, opts BundleOptio
 		return fmt.Errorf("unsupported architecture %q (Kanea publishes %v)", opts.Arch, SortedArches())
 	}
 	artefactDir := filepath.Join(opts.Dest, bundleArtefact)
-	// #nosec G301 — a bundle holds published upstream binaries and nothing
+	// #nosec G301: a bundle holds published upstream binaries and nothing
 	// else. It is built to be copied to a USB stick and read on another
 	// machine, quite possibly by a different user than the one that made it.
 	if err := os.MkdirAll(artefactDir, 0o755); err != nil {
@@ -238,7 +238,7 @@ func CreateBundle(ctx context.Context, m *Manifest, src Source, opts BundleOptio
 				continue
 			}
 			imageDir := filepath.Join(opts.Dest, bundleImages)
-			// #nosec G301 — see above: public artefacts, meant to be carried.
+			// #nosec G301; see above: public artefacts, meant to be carried.
 			if err := os.MkdirAll(imageDir, 0o755); err != nil {
 				return fmt.Errorf("create %s: %w", imageDir, err)
 			}

@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils'
 
 export type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement>
 
-/** Select is the styled native select — same face as Input, no popover lib. */
+/** Select is the styled native select: same face as Input, no popover lib. */
 export function Select({ className, children, ...props }: SelectProps) {
   return (
     <select

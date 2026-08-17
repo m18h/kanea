@@ -1,6 +1,6 @@
 package main
 
-// Directory authentication wiring (PRD v1.47, §13.2) — the oidc.go twin.
+// Directory authentication wiring (PRD v1.47, §13.2): the oidc.go twin.
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func (c ldapSettings) configured() bool {
 // buildLDAP assembles the verifier, or nil when LDAP is not configured.
 //
 // Validation is hard and connection is soft, deliberately split (§3.20): a
-// config error refuses at startup in front of the operator — the OIDC rule —
+// config error refuses at startup in front of the operator; the OIDC rule;
 // while an unreachable directory is a warning and a serving daemon, because a
 // directory outage is weather and must not keep kanead down.
 func buildLDAP(
@@ -92,7 +92,7 @@ func buildLDAP(
 const ldapStartupCheckTimeout = 5 * time.Second
 
 // ldapVerifier adapts the nil case: a nil *auth.LDAP in an auth.PasswordVerifier
-// field would be a non-nil interface holding a nil pointer — the buildOIDC
+// field would be a non-nil interface holding a nil pointer; the buildOIDC
 // lesson, applied here.
 func ldapVerifier(l *auth.LDAP) auth.PasswordVerifier {
 	if l == nil {

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 /*
- * headers.h — the minimal, self-contained UAPI surface the Kanea datapath
+ * headers.h; the minimal, self-contained UAPI surface the Kanea datapath
  * programs compile against.
  *
  * Deliberately NOT <linux/bpf.h>, NOT vmlinux.h, NOT CO-RE (PRD v1.36
  * §5.2.5): the programs read only stable UAPI context layouts, so the
  * target node needs no BTF and the build needs no kernel headers. Every
  * definition here mirrors the kernel UAPI byte-for-byte; the context
- * structs are truncated prefixes — the verifier checks field *offsets* in
+ * structs are truncated prefixes: the verifier checks field *offsets* in
  * the compiled instructions, not our struct declarations, so a prefix that
  * covers every field we touch is exact.
  */
@@ -25,7 +25,7 @@ typedef signed long long __s64;
 typedef unsigned long long __u64;
 
 /* Annotations only: a __be* field holds network byte order regardless of
- * the host. The compiler does not enforce this — the names document it. */
+ * the host. The compiler does not enforce this: the names document it. */
 typedef __u16 __be16;
 typedef __u32 __be32;
 typedef __u16 __sum16;
@@ -176,7 +176,7 @@ struct in6_addr {
 	__be32 s6_addr32[4];
 };
 
-/* <linux/ipv6.h> struct ipv6hdr — fixed 40 bytes, no options inside the
+/* <linux/ipv6.h> struct ipv6hdr: fixed 40 bytes, no options inside the
  * header itself. Extension headers follow it and are deliberately not
  * parsed (PRD v1.41): both endpoints are Linux stacks kanead configured,
  * and a packet whose nexthdr is not TCP falls through to the deny-closed

@@ -1,7 +1,7 @@
 // Package certsource is where a certificate comes from (PRD §7.3).
 //
-// Kanea terminates TLS with certificates from three places — an ACME CA, a
-// self-signed CA this node owns, and certificates an operator put on the node —
+// Kanea terminates TLS with certificates from three places: an ACME CA, a
+// self-signed CA this node owns, and certificates an operator put on the node;
 // and `kanea-edge` knows about none of them. It polls one bundle file and
 // selects on SNI. Everything here runs in kanead, for the reason §5.2.6 gives:
 // obtaining or minting a certificate is *writing*, and the process that
@@ -95,7 +95,7 @@ func (c Certificate) RenewAfter() time.Time {
 	life := c.NotAfter.Sub(c.NotBefore)
 	if life <= 0 {
 		// A certificate with no usable validity window is due immediately
-		// rather than never — the alternative is a silent non-renewal.
+		// rather than never: the alternative is a silent non-renewal.
 		return c.NotBefore
 	}
 	return c.NotBefore.Add(time.Duration(float64(life) * RenewalFraction))
@@ -145,7 +145,7 @@ type Request struct {
 	// Auto reports whether Domains are the generated FQDNs of §7.2.
 	//
 	// Only the ACME source reads it, and only to decide whether a project's
-	// names may be collapsed into one wildcard — a rate-limit workaround no
+	// names may be collapsed into one wildcard: a rate-limit workaround no
 	// other source needs, because no other source has a rate limit.
 	Auto bool
 	// Name selects one of the certificates an operator configured on this node.
@@ -165,7 +165,7 @@ type Result struct {
 	Certificates []Certificate
 	// Failures names what produced nothing, and why.
 	//
-	// One bad domain must not suppress the rest — the rule acme.Sync already
+	// One bad domain must not suppress the rest: the rule acme.Sync already
 	// follows, lifted into the interface so every source has to follow it.
 	Failures []Failure
 }

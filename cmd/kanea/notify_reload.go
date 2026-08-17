@@ -2,7 +2,7 @@ package main
 
 // Change-driven notification routes (PRD v1.46, §11). Routes were
 // startup-static because a channel holds a resolved credential and an HTTP
-// client; what changes is not that reasoning but the trigger — routes rebuild
+// client; what changes is not that reasoning but the trigger: routes rebuild
 // when the configuration actually changed, detected by fingerprint, so a busy
 // Store never causes a rebuild and a changed channel never needs a restart.
 
@@ -30,7 +30,7 @@ func nodeRoutesFor(
 	if n == nil {
 		return nil, nil
 	}
-	// "node" names the channels ("node/telegram") — a label, not a scope.
+	// "node" names the channels ("node/telegram"): a label, not a scope.
 	routes, err := RoutesFor(ctx, "node", n, egress, secrets, log)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func allNotifyRoutes(
 }
 
 // notifyFingerprint hashes everything the route set is built from, so the
-// reloader rebuilds only when configuration actually changed — the v1.44
+// reloader rebuilds only when configuration actually changed; the v1.44
 // Providers.Current rule: a rebuild per store write would re-resolve
 // credentials on every deploy.
 func notifyFingerprint(ctx context.Context, cfg notifySettings) (string, error) {

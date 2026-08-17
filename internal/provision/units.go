@@ -11,7 +11,7 @@ import (
 // systemd units and configuration for the host components (PRD §5.2.12).
 //
 // Since v1.30 these are Kanea's own units, so each simply declares
-// Slice=kanea.slice — you do not need a drop-in for a unit you wrote. That is
+// Slice=kanea.slice: you do not need a drop-in for a unit you wrote. That is
 // how constraint #11's memory floor reaches containerd and buildkitd; the
 // drop-in machinery §5.2.11 describes survives only for an adopted external
 // containerd, whose unit belongs to the distribution.
@@ -27,7 +27,7 @@ type ConfigFile struct {
 	Mode os.FileMode
 }
 
-// SocketPath is Kanea's containerd socket — deliberately not the
+// SocketPath is Kanea's containerd socket: deliberately not the
 // distribution's /run/containerd/containerd.sock, which belongs to whatever
 // else on the node is using it.
 //
@@ -44,7 +44,7 @@ func (l Layout) SocketPath() string {
 //
 // Components are asked for by name rather than rendered wholesale, so
 // `kanea install --only containerd` does not write a buildkit unit for a
-// buildkit that is not there — a unit systemd would then fail to start on every
+// buildkit that is not there: a unit systemd would then fail to start on every
 // boot.
 func (l Layout) Files(components []*Component, binary, reserve string) []ConfigFile {
 	want := make(map[string]bool, len(components))
@@ -75,7 +75,7 @@ const DistroContainerdSocket = "/run/containerd/containerd.sock"
 // containerd Kanea did not install (`--containerd external`).
 //
 // This is the one case §5.2.11's drop-in language still describes. For a unit
-// Kanea wrote, `Slice=kanea.slice` goes in the unit — you do not need a
+// Kanea wrote, `Slice=kanea.slice` goes in the unit: you do not need a
 // drop-in for a file you own. For the distribution's unit you do, because
 // editing it would put Kanea's changes in the path of the next package
 // upgrade, which would silently discard them.
@@ -86,7 +86,7 @@ func AdoptedContainerdDropIn(unitDir string) ConfigFile {
 		Body: heredoc(`
 			# Written by kanea (PRD §5.2.11, §5.2.12).
 			#
-			# This containerd is not Kanea's — it was adopted with
+			# This containerd is not Kanea's: it was adopted with
 			# --containerd external. The drop-in extends the control plane's
 			# memory floor to it without editing a unit the distribution owns
 			# and will replace on its next upgrade.
@@ -154,7 +154,7 @@ func (l Layout) containerdUnit() string {
 		Delegate=yes
 		# containerd resolves a runtime name (io.containerd.wasmtime.v1) to a
 		# binary (containerd-shim-wasmtime-v1) on ITS OWN PATH, and systemd's
-		# default does not include Kanea's bin dir — without this line every
+		# default does not include Kanea's bin dir: without this line every
 		# non-runc runtime fails at task create with "shim not found"
 		# (PRD v1.39, §5.2.12). runc's shim never noticed: containerd launches
 		# it by the configured default, and it ships beside containerd anyway.
@@ -266,7 +266,7 @@ func (l Layout) CreateDirectories() error {
 		if err := os.MkdirAll(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("create %s: %w", d.Path, err)
 		}
-		// MkdirAll honours umask, so the mode is set explicitly afterwards —
+		// MkdirAll honours umask, so the mode is set explicitly afterwards;
 		// the same correction cmd/kanea/init.go makes for the data directory.
 		if err := os.Chmod(d.Path, d.Mode); err != nil {
 			return fmt.Errorf("chmod %s: %w", d.Path, err)

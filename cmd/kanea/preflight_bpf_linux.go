@@ -24,23 +24,23 @@ const (
 // connect-time LB link to, and a pin directory kanead can create.
 //
 // Checked here rather than left to kanead's own startup because an Init
-// failure is a hard startup error in ebpf mode — there is no external agent to
-// wait for — and `doctor` should name the cause before systemd shows the
+// failure is a hard startup error in ebpf mode (there is no external agent to
+// wait for) and `doctor` should name the cause before systemd shows the
 // symptom as a restart loop.
 func checkBPF() checkResult {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs("/sys/fs/bpf", &stat); err != nil {
 		return fail("bpf", "/sys/fs/bpf: "+err.Error(),
-			"mount -t bpf bpf /sys/fs/bpf — the datapath pins its maps, programs "+
+			"mount -t bpf bpf /sys/fs/bpf; the datapath pins its maps, programs "+
 				"and links there, and without the pins they die with the process that loaded them")
 	}
 	if stat.Type != bpffsMagic {
 		return fail("bpf", "/sys/fs/bpf is not a bpf filesystem",
-			"mount -t bpf bpf /sys/fs/bpf — systemd mounts it by default on any supported distribution")
+			"mount -t bpf bpf /sys/fs/bpf; systemd mounts it by default on any supported distribution")
 	}
 	if err := syscall.Statfs("/sys/fs/cgroup", &stat); err != nil || stat.Type != cgroup2Magic {
 		return fail("bpf", "/sys/fs/cgroup is not the unified cgroup2 mount",
-			"boot with systemd.unified_cgroup_hierarchy=1 — connect-time load "+
+			"boot with systemd.unified_cgroup_hierarchy=1; connect-time load "+
 				"balancing attaches at the cgroup root (PRD §5.2.5)")
 	}
 

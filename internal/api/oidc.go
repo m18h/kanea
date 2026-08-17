@@ -29,7 +29,7 @@ type Provider interface {
 }
 
 // SessionIssuer mints a session for an identity the daemon has already
-// authenticated by some other means — today, an identity provider.
+// authenticated by some other means: today, an identity provider.
 //
 // Separate from Authenticator because it is a different question: that
 // interface asks "who is this caller", this one says "this one is vouched for".
@@ -54,14 +54,14 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// #nosec G124 — sessionCookie sets HttpOnly and SameSite unconditionally;
+	// #nosec G124: sessionCookie sets HttpOnly and SameSite unconditionally;
 	// Secure is the documented InsecureCookies opt-out for a plain-HTTP daemon.
 	cookie := s.sessionCookie(handle, time.Now().Add(auth.PendingLoginTTL))
 	cookie.Name = oidcCookie
 	// Lax, like the session cookie: the provider returns the browser here by a
 	// top-level GET, which Lax allows and Strict would silently break.
 	http.SetCookie(w, cookie)
-	// #nosec G710 — authURL is built by the provider from the configured issuer
+	// #nosec G710: authURL is built by the provider from the configured issuer
 	// and this daemon's own state, nonce and PKCE challenge. The only
 	// caller-supplied value that reached Start is `next`, which never appears
 	// here: it is stored server-side, bounded to a path on this origin by
@@ -78,7 +78,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	// The handle cookie is cleared first, on every path out of here: a login
 	// that failed must not leave a reusable handle in the browser.
-	// #nosec G124 — same cookie builder, same flags; this one only clears it.
+	// #nosec G124: same cookie builder, same flags; this one only clears it.
 	cleared := s.sessionCookie("", time.Unix(0, 0))
 	cleared.Name, cleared.MaxAge = oidcCookie, -1
 	http.SetCookie(w, cleared)
@@ -91,7 +91,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	if desc := query.Get("error"); desc != "" {
 		// The provider refused, and it is the one with the reason. Recorded
-		// with its message, shown to the user without it — the message is the
+		// with its message, shown to the user without it: the message is the
 		// provider's to explain, and repeating it here would let a crafted
 		// redirect put arbitrary text on Kanea's page.
 		s.log.Warn("the identity provider refused a login",

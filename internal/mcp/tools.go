@@ -16,13 +16,13 @@ import (
 //
 // Every tool is a translation: arguments in, one or more requests against the
 // API, a rendered answer out. None of them reach past the Backend, which is
-// what makes the tier system honest — a tool cannot be more privileged than the
+// what makes the tier system honest: a tool cannot be more privileged than the
 // credential its caller presented, because the credential is the only thing it
 // has.
 
 // API paths the tools call. Named here rather than imported from internal/api,
 // so that this package depends on the API's *wire* surface and not on its
-// implementation — the stdio transport talks to a daemon that may be a
+// implementation: the stdio transport talks to a daemon that may be a
 // different build.
 const (
 	pathSession   = "/v1/auth/session"
@@ -47,7 +47,7 @@ const (
 	// tierMutate is the admin role: it changes the platform's state.
 	tierMutate
 	// tierDestructive is admin plus an explicit confirm argument. The
-	// distinction is not about authorization — an admin may do all of it — but
+	// distinction is not about authorization (an admin may do all of it) but
 	// about intent: these are the ones with no undo.
 	tierDestructive
 )
@@ -125,7 +125,7 @@ func (a arguments) boolean(key string) bool {
 }
 
 // has reports whether an argument was supplied at all, which is different from
-// it being empty — scale_service with count 0 is a real request.
+// it being empty: scale_service with count 0 is a real request.
 func (a arguments) has(key string) bool {
 	v, ok := a[key]
 	return ok && v != nil
@@ -273,7 +273,7 @@ func registry() []*tool {
 		{
 			name: "get_audit", tier: tierRead,
 			description: "Read the audit log: who did what, when, from where, and whether it was " +
-				"allowed. Requires the admin role — the daemon enforces that.",
+				"allowed. Requires the admin role; the daemon enforces that.",
 			schema: object(map[string]property{
 				"actor":  {Type: "string", Description: "Filter by the acting subject."},
 				"action": {Type: "string", Description: "Filter by action, e.g. service.apply."},
@@ -377,7 +377,7 @@ func registry() []*tool {
 		{
 			name: "restore_backup", tier: tierDestructive,
 			description: "Stage a restore of the platform's entire state from an archive. " +
-				"It does NOT restore immediately — a restore happens on a stopped node, so " +
+				"It does NOT restore immediately: a restore happens on a stopped node, so " +
 				"this verifies the archive and records the request, and an operator restarts " +
 				"the daemon to apply it. Everything currently on the node is replaced. " +
 				"Requires confirm=true.",
@@ -704,7 +704,7 @@ func runDeploy(ctx context.Context, s *Server, sess *Session, args arguments) (c
 	project, service, image := args.text("project"), args.text("service"), args.text("image")
 
 	// Read, change one field, write back. The whole desired state has to go
-	// through apply — there is no route that sets an image — and sending back
+	// through apply (there is no route that sets an image) and sending back
 	// what was read means a deploy never silently drops a field this tool does
 	// not know about.
 	svc, err := s.service(ctx, sess, project, service)
@@ -782,7 +782,7 @@ func runTestNotification(ctx context.Context, s *Server, sess *Session, args arg
 			continue
 		}
 		failed = true
-		fmt.Fprintf(&b, "%s: FAILED — %s\n", r.Channel, r.Error)
+		fmt.Fprintf(&b, "%s: FAILED; %s\n", r.Channel, r.Error)
 	}
 	result := textResult(strings.TrimRight(b.String(), "\n"))
 	// A channel that did not deliver is a tool failure, not a successful report
@@ -868,7 +868,7 @@ func (s *Server) services(ctx context.Context, sess *Session) ([]reconciler.Desi
 	return out.Services, nil
 }
 
-// service finds one, or says which ones exist in that project — a model that
+// service finds one, or says which ones exist in that project: a model that
 // misremembers a name gets the correction rather than a bare "not found".
 func (s *Server) service(
 	ctx context.Context, sess *Session, project, service string,

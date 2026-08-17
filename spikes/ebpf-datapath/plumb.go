@@ -23,7 +23,7 @@ func ipnet32(ip net.IP) *net.IPNet {
 
 // deterministicMAC builds a locally-administered unicast MAC from a lead byte
 // and the four bytes of a v4 address: lead:00:a:b:c:d. Locally-administered
-// (bit 1 of the first octet set — 0x02/0x06 both qualify) and unicast (bit 0
+// (bit 1 of the first octet set: 0x02/0x06 both qualify) and unicast (bit 0
 // clear), unique per pod, and distinct for the two ends via the lead byte.
 // The point is that it is CHOSEN, not read: see createPod's MAC comment.
 func deterministicMAC(lead byte, ip net.IP) net.HardwareAddr {
@@ -92,24 +92,24 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 	// MAC: MACAddressPolicy is applied asynchronously on add, so a MAC we set
 	// (or read) before udev settles can be clobbered afterwards. After settle
 	// the queue is empty and our explicit address below is final. (`up` does
-	// not re-trigger the policy — only "add" does.)
+	// not re-trigger the policy: only "add" does.)
 	settleUdev()
 	host, err := netlink.LinkByName(p.veth)
 	if err != nil {
 		return nil, err
 	}
-	// Deterministic, explicitly-set MACs — NOT the kernel's creation-time
+	// Deterministic, explicitly-set MACs, NOT the kernel's creation-time
 	// random ones. On a systemd host, 99-default.link's MACAddressPolicy
 	// generates and applies a fresh MAC to a virtual device *asynchronously*
 	// after it appears, so a MAC read at creation is stale by the time traffic
 	// flows and the PERMANENT neighbors built from it point at an address
-	// nothing answers to — every packet dropped silently at L2. Because we
+	// nothing answers to: every packet dropped silently at L2. Because we
 	// CHOOSE the addresses (deterministically from the pod IP) the neighbor
 	// entries can be programmed up front; the interfaces are made to carry
 	// them at the last moment (the host side right before it comes up, the
 	// peer inside its fresh netns) so udev's async policy cannot clobber the
 	// value between assignment and use. This is the datapath's bug too, not
-	// just the spike's — see REPORT.md check 4 / the MAC finding.
+	// just the spike's: see REPORT.md check 4 / the MAC finding.
 	hostMAC := deterministicMAC(0x02, p.ip)
 	peerMAC := deterministicMAC(0x06, p.ip)
 	// Host side stays DOWN until the very end; the alias is the marker the
@@ -143,7 +143,7 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 		return nil, err
 	}
 	// The peer's MAC is set inside the fresh netns, where no MACAddressPolicy
-	// runs — so the value we chose is the value it keeps.
+	// runs, so the value we chose is the value it keeps.
 	if err := nl.LinkSetHardwareAddr(eth0, peerMAC); err != nil {
 		return nil, fmt.Errorf("set peer mac: %w", err)
 	}
@@ -176,7 +176,7 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 	}
 
 	// The in-ns gateway neighbor (eth0 is already up), from the host MAC we
-	// chose above — no ARP on this pair, ever.
+	// chose above: no ARP on this pair, ever.
 	if err := nl.NeighAdd(&netlink.Neigh{
 		LinkIndex:    eth0.Attrs().Index,
 		IP:           gw,
@@ -186,7 +186,7 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 		return nil, fmt.Errorf("in-ns neigh: %w", err)
 	}
 
-	// Set the host side's chosen MAC and bring it up in immediate succession —
+	// Set the host side's chosen MAC and bring it up in immediate succession:
 	// the narrowest possible window for udev's async policy to clobber it.
 	if err := netlink.LinkSetHardwareAddr(host, hostMAC); err != nil {
 		return nil, fmt.Errorf("set host mac: %w", err)
@@ -196,7 +196,7 @@ func createPod(e *env, id string, ip net.IP, project, service uint32) (*pod, err
 	}
 
 	// The host->pod PERMANENT neighbor goes in AFTER the host veth is up: a
-	// neighbor added to a down device does not reliably stay NUD_PERMANENT —
+	// neighbor added to a down device does not reliably stay NUD_PERMANENT;
 	// the kernel re-resolves it via ARP once the link carries traffic, which
 	// defeats the point of a static entry (check 7c).
 	if err := netlink.NeighAdd(&netlink.Neigh{

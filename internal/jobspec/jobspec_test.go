@@ -43,7 +43,7 @@ service "web" {
 `
 
 func TestMinimalImageOnlyService(t *testing.T) {
-	// R8: the minimal service is just an image — no git, no build block.
+	// R8: the minimal service is just an image; no git, no build block.
 	spec := parse(t, minimalSpec)
 
 	if spec.SpecVersion != jobspec.SpecVersion {
@@ -166,7 +166,7 @@ service "` + tc.svcName + `" {
 }
 
 // IsName is the parser's R1 rule exported for the CLI's selector grammar
-// (PRD v1.57) — one implementation, so the two cannot drift.
+// (PRD v1.57): one implementation, so the two cannot drift.
 func TestIsNameIsTheParserRule(t *testing.T) {
 	for name, want := range map[string]bool{
 		"web":                   true,
@@ -371,7 +371,7 @@ service "web" {
 }
 
 func TestHealthCheckRules(t *testing.T) {
-	// R7: http, tcp, exec — and exec takes an argument array, never a shell string.
+	// R7: http, tcp, exec, and exec takes an argument array, never a shell string.
 	tests := []struct {
 		name    string
 		block   string
@@ -579,7 +579,7 @@ service "assets" {
 }
 
 func TestCrossProjectReferenceIsRejectedWithABetterMessage(t *testing.T) {
-	// R9: same-project only in v1 — and the diagnostic should say which project
+	// R9: same-project only in v1, and the diagnostic should say which project
 	// the target actually lives in, not just "unknown service".
 	out := parseErr(t, `
 spec_version = 1
@@ -873,7 +873,7 @@ service "web" {
 }
 
 // Passthrough blocks name a grant and never a path (R17, R18). The spec is
-// checked for shape only — whether the node has the grant is a server-config
+// checked for shape only: whether the node has the grant is a server-config
 // question this package deliberately cannot answer.
 func TestPassthroughValidation(t *testing.T) {
 	tests := []struct {
@@ -1163,7 +1163,7 @@ func TestScalingValidation(t *testing.T) {
 		},
 		{
 			// R11 (v1.58): cpu/memory targets are percent-of-limit, and a
-			// limitless alloc records no percent — the rule could never fire.
+			// limitless alloc records no percent; the rule could never fire.
 			name:    "cpu metric with no cpu limit",
 			count:   "count = 3",
 			scaling: "scaling {\n min = 2\n max = 10\n metric \"cpu\" {\n target = 70\n }\n}",
@@ -1556,7 +1556,7 @@ func TestCapabilityAllowlist(t *testing.T) {
 		{"binding port 80", `["CAP_NET_BIND_SERVICE"]`, ""},
 		{"empty list", `[]`, ""},
 		// "none" opts out of the v1.56 baseline. It is a token, not a
-		// capability, so the CAP_ prefix rule does not apply to it — but the
+		// capability, so the CAP_ prefix rule does not apply to it, but the
 		// duplicate rule does.
 		{"none opts out of the baseline", `["none"]`, ""},
 		{"none is case-insensitive", `["NONE"]`, ""},
@@ -1627,8 +1627,8 @@ func TestNormalizeCapabilities(t *testing.T) {
 	}
 }
 
-// The "none" token canonicalizes to lowercase — a spec-level word, visually
-// distinct from the CAP_ names it stands beside — and deduplicates across
+// The "none" token canonicalizes to lowercase (a spec-level word, visually
+// distinct from the CAP_ names it stands beside) and deduplicates across
 // spellings. Its stored form is what the reconciler's projection matches on,
 // so this is a contract, not cosmetics.
 func TestNormalizeCapabilitiesCanonicalizesNone(t *testing.T) {
@@ -1645,7 +1645,7 @@ func TestNormalizeCapabilitiesCanonicalizesNone(t *testing.T) {
 }
 
 // R14: the per-service ingress allowlist. Every entry is checked at parse time
-// because a network rule that fails to match denies silently — the failure mode
+// because a network rule that fails to match denies silently: the failure mode
 // this whole area is prone to.
 func TestNetworkPolicyValidation(t *testing.T) {
 	spec := func(allowFrom string) string {
@@ -1719,7 +1719,7 @@ service "api" {
 }
 
 // The parsed form is what the reconciler consumes, and a service with no policy
-// block is by far the common case — so a nil block must be safe to read.
+// block is by far the common case, so a nil block must be safe to read.
 func TestNetworkPolicyPeers(t *testing.T) {
 	var absent *jobspec.NetworkPolicy
 	if got := absent.Peers(); got != nil {
@@ -1856,7 +1856,7 @@ project "shop" {
 func TestUpdateStrategyMustBeKnown(t *testing.T) {
 	// A strategy nobody implements has to be rejected at parse time. Accepting
 	// it and quietly rolling instead would mean the spec says one thing and the
-	// deploy does another — on the operation where a surprise costs the most.
+	// deploy does another: on the operation where a surprise costs the most.
 	got := parseErr(t, `
 spec_version = 1
 project "shop" {}
@@ -2055,7 +2055,7 @@ func TestUserAndVolumeOwnershipValidation(t *testing.T) {
 		},
 		// Inheritance stops at a driver that cannot carry ownership. Adding a
 		// user block to a task must not break the NFS volume it happens to
-		// have — there would be no way to say "not that one" — and the task's
+		// have (there would be no way to say "not that one") and the task's
 		// user is a statement about the process, not about the NFS server.
 		{
 			name:    "an nfs volume in a service whose task names a user",
@@ -2113,7 +2113,7 @@ service "web" {
 
 // A volume with no ownership of its own takes the task's. Without this the
 // common spec carries the same two numbers twice, and forgetting the second
-// copy fails at alloc start rather than at plan — the exact failure R23/R24
+// copy fails at alloc start rather than at plan: the exact failure R23/R24
 // exist to remove.
 func TestVolumeOwnershipInheritsTheTaskUser(t *testing.T) {
 	spec := parse(t, `
@@ -2174,7 +2174,7 @@ service "db" {
 // validation, adding a `user` block to a task would break every host and NFS
 // volume that service happened to have, with no field to opt out of a default
 // nobody typed. A volume that declares ownership on one of these is still an
-// error — that is a claim the spec made.
+// error: that is a claim the spec made.
 func TestOwnershipDoesNotInheritIntoADriverThatCannotCarryIt(t *testing.T) {
 	spec := parse(t, `
 spec_version = 1
@@ -2209,7 +2209,7 @@ service "web" {
 		t.Errorf("local volume uid = %v, want the inherited 999", deref(v.UID))
 	}
 	if v := svc.Volumes[1]; v.Owned() {
-		t.Errorf("nfs volume owned = %v:%v mode %v, want none — inheritance must stop here",
+		t.Errorf("nfs volume owned = %v:%v mode %v, want none: inheritance must stop here",
 			deref(v.UID), deref(v.GID), v.Mode)
 	}
 }
@@ -2241,7 +2241,7 @@ service "web" {
 	}
 }
 
-// A volume may name an owner without the task naming one — a directory owned
+// A volume may name an owner without the task naming one: a directory owned
 // by a uid the image itself drops to. It still gets the default mode.
 func TestVolumeMayDeclareOwnershipWithoutATaskUser(t *testing.T) {
 	spec := parse(t, `

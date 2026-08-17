@@ -103,7 +103,7 @@ func newListenerSet(proxy *Proxy, cfg Config) *listenerSet {
 // Apply reconciles the bound ports against what the snapshot asks for.
 //
 // It deliberately returns no error. It is called from the watcher, where an
-// error means "reject this file and keep the last one" — and a port held by
+// error means "reject this file and keep the last one", and a port held by
 // something else on the node must not freeze the whole route table. The rest of
 // the snapshot takes effect, the failure is recorded and logged, and the next
 // poll retries the bind.
@@ -161,7 +161,7 @@ func (s *listenerSet) Apply(want []Listener) {
 	}
 
 	// A withdrawn port must stop being reported, or its entrypoint's gauges sit
-	// at whatever they held when the listener went away — a connection count
+	// at whatever they held when the listener went away: a connection count
 	// that never returns to zero because nothing is left to decrement it. The
 	// two well-known entrypoints are always kept: they belong to the main
 	// server, which this set does not own.
@@ -177,7 +177,7 @@ func (s *listenerSet) Apply(want []Listener) {
 // A changed upstream, CIDR or connection cap is a configuration swap behind an
 // atomic pointer: the socket stays open and live connections finish against
 // what they started with. Only a change of listener *kind* forces a rebind,
-// which drops every connection on that port — far too much to charge for fixing
+// which drops every connection on that port: far too much to charge for fixing
 // a typo in a CIDR.
 func rebindRequired(old, want Listener) bool { return old.Mode != want.Mode }
 
@@ -293,7 +293,7 @@ func (s *listenerSet) httpServer(cfg Listener) *http.Server {
 	scope := fmt.Sprintf("p%d", cfg.Port)
 	route, err := compile(cfg.asRoute())
 	if err != nil {
-		// Unreachable via Apply — Validate compiles every listener first — but
+		// Unreachable via Apply (Validate compiles every listener first) but
 		// a handler that answered 500 would be less confusing than one that
 		// silently served without the middleware it was told to apply.
 		s.log.Error("cannot compile a published port's middleware",
@@ -323,7 +323,7 @@ func (s *listenerSet) httpServer(cfg Listener) *http.Server {
 
 // connStateCounter tracks open connections on an entrypoint (§9.1.1).
 //
-// http.Server's ConnState hook is the only place a *connection* is visible —
+// http.Server's ConnState hook is the only place a *connection* is visible:
 // the handler sees requests, and keep-alive means those are not the same thing.
 // StateNew and StateClosed are the pair; StateHijacked is also terminal, since
 // a hijacked connection leaves the server's accounting for good and would
@@ -376,7 +376,7 @@ func (s *listenerSet) Shutdown(grace time.Duration) {
 	var udpRelays []*udpRelay
 	for _, entry := range entries {
 		if entry.pc != nil {
-			// The socket closes now — no new sessions — but live sessions
+			// The socket closes now (no new sessions) but live sessions
 			// drain like tcp connections: a game tick has no natural
 			// completion point either.
 			_ = entry.pc.Close() //nolint:errcheck // cleanup path

@@ -4,7 +4,7 @@
 // This is the feature people run watchtower for, and it is deliberately not
 // built the way watchtower is. Nothing here talks to the container runtime,
 // creates a container or stops one. It resolves a tag, writes one field on the
-// desired state, and lets the reconciler converge — the same seam §10.2's
+// desired state, and lets the reconciler converge; the same seam §10.2's
 // pipeline uses to deploy a built image, and the same relationship the
 // autoscaler has with the scheduler: *it is not a second deployer, it writes a
 // digest and something else does the work.*
@@ -282,7 +282,7 @@ func (w *Watcher) pollIfDue(ctx context.Context, d reconciler.Desired, index uin
 //
 // The health half is conditional on purpose. AllocRecord.Healthy is only ever
 // written by a probe, so a service with no `check` block has it false for every
-// alloc for its whole life — testing it unconditionally would call every
+// alloc for its whole life: testing it unconditionally would call every
 // check-free service permanently failed and revert every update it ever made.
 // Without a check, "running and not crash-looping" is the strongest true
 // statement available, and it is the same standard the rest of the reconciler

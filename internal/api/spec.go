@@ -17,7 +17,7 @@ import (
 // The spec editor's routes (PRD §12.2, §16.1, v1.38).
 //
 // Render converts HCL to what the apply route accepts and reports diagnostics
-// with file/line positions — it is the editor's "validate" button and has no
+// with file/line positions: it is the editor's "validate" button and has no
 // side effects. Apply renders the same bytes and hands the result to the same
 // core PUT /v1/services uses, so generation carry-over, pin carry-over and
 // the R22 port check are shared by construction rather than replicated.
@@ -29,8 +29,8 @@ const (
 )
 
 // SpecRenderer converts HCL job-spec text into what the apply route accepts,
-// and back. Implemented in cmd/kanea beside toDesired — the one place that
-// knows both vocabularies — and injected, the same seam shape as
+// and back. Implemented in cmd/kanea beside toDesired (the one place that
+// knows both vocabularies) and injected, the same seam shape as
 // gitops.Applier. Nil means the daemon was built without one: 503.
 type SpecRenderer interface {
 	// Render parses and validates. Diagnostics are data, not an error: a spec
@@ -38,7 +38,7 @@ type SpecRenderer interface {
 	// diagnostic list. The error return is for renders that could not run.
 	Render(files map[string][]byte) (RenderResult, error)
 	// Generate writes HCL for a desired state. A field the generator cannot
-	// express is an error naming it — never silently dropped output.
+	// express is an error naming it, never silently dropped output.
 	Generate(services []reconciler.Desired, pipelines []gitops.Config) (string, error)
 }
 
@@ -76,7 +76,7 @@ type SpecRenderRequest struct {
 	// Files maps a name (for diagnostics) to HCL source.
 	Files map[string]string `json:"files"`
 	// Project, when set, scopes the spec: declaring any other project is
-	// refused — the boundary gitops.parseCheckout draws for a repository
+	// refused; the boundary gitops.parseCheckout draws for a repository
 	// (§10), applied to the editor.
 	Project string `json:"project,omitempty"`
 }
@@ -125,7 +125,7 @@ func (s *Server) renderRequest(r *http.Request) (RenderResult, int, error) {
 
 	// The project boundary: an editor scoped to one project may not redefine
 	// another. Same rule as a synced repository (§10), same failure mode
-	// prevented — "can edit one project" quietly becoming "owns every service
+	// prevented: "can edit one project" quietly becoming "owns every service
 	// on the node".
 	if req.Project != "" && !hasErrorDiagnostics(result.Diagnostics) {
 		var foreign []string
@@ -149,7 +149,7 @@ func (s *Server) renderRequest(r *http.Request) (RenderResult, int, error) {
 	return result, 0, nil
 }
 
-// handleSpecRender is the editor's validate: parse, validate, convert —
+// handleSpecRender is the editor's validate: parse, validate, convert;
 // nothing written.
 func (s *Server) handleSpecRender(w http.ResponseWriter, r *http.Request) {
 	result, status, err := s.renderRequest(r)
@@ -167,7 +167,7 @@ func (s *Server) handleSpecRender(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSpecApply renders and applies in one request, so validation provably
-// ran on the bytes that were applied — there is no window for a client to
+// ran on the bytes that were applied: there is no window for a client to
 // mutate the rendered JSON between validate and apply.
 func (s *Server) handleSpecApply(w http.ResponseWriter, r *http.Request) {
 	result, status, err := s.renderRequest(r)

@@ -1,10 +1,10 @@
-# REPORT — Spike ③: S3 FUSE driver choice
+# REPORT; Spike ③: S3 FUSE driver choice
 
-**Date:** 2026-07-30 · **Verdict: GO for `storage "s3"` volumes — with `mountpoint-s3` as the default (read-only) driver and `s3fs` as the opt-in read-write driver. `goofys` is dropped; `rclone mount` is rejected as a built-in default.** · **PRD amendments required: yes (§8, §21 — see the last section)**
+**Date:** 2026-07-30 · **Verdict: GO for `storage "s3"` volumes, with `mountpoint-s3` as the default (read-only) driver and `s3fs` as the opt-in read-write driver. `goofys` is dropped; `rclone mount` is rejected as a built-in default.** · **PRD amendments required: yes (§8, §21; see the last section)**
 
 The headline is not throughput. All three drivers move bulk data acceptably. What
 separates them is **semantics** (what a workload may do on the mount), **durability**
-(when a write is actually in the bucket), and **behaviour during an outage** — and on
+(when a write is actually in the bucket), and **behaviour during an outage**, and on
 those three axes they are not interchangeable.
 
 ## Environment
@@ -17,11 +17,11 @@ those three axes they are not interchangeable.
 | Container runtime | containerd 2.3.3 (spike ②) for the volume phase |
 
 Provision: `provision-vm.sh`. Reproduce: `README.md`. Full suite: **45/48 PASS**
-(`spike all`) — the three failures are the outage findings in Q5, not defects in the
+(`spike all`); the three failures are the outage findings in Q5, not defects in the
 harness; plus `spike unpriv` 9/9 and `spike perf 15ms` for the shaped numbers.
 
 **goofys was not tested and is dropped from the candidate list.** Its last release is
-**v0.24.0 (April 2020)** and the release carries a single amd64 binary — there is no
+**v0.24.0 (April 2020)** and the release carries a single amd64 binary: there is no
 arm64 build, and Kanea targets `linux amd64/arm64` (PRD §21). An unmaintained,
 architecture-incomplete dependency cannot sit behind Kanea's CVE release gates
 (AGENTS.md #7). **AWS `mountpoint-s3`** takes its place as the "fast, read-mostly"
@@ -32,12 +32,12 @@ not S3. To get a decision-relevant picture the `perf` phase can shape loopback w
 `tc netem`; results are reported both at zero latency and at **+15 ms one-way (~30 ms
 RTT)**, which is what a same-region S3 feels like. Under shaping, sequential-throughput
 numbers are pessimistic for every driver (netem delays every packet and defeats the
-parallel range requests mountpoint-s3 is built around) — read the shaped run as a
+parallel range requests mountpoint-s3 is built around): read the shaped run as a
 **per-operation round-trip sensitivity test**, which is exactly what metadata cost is.
 
 ---
 
-## Q1 — POSIX semantics: **the drivers are not interchangeable**
+## Q1; POSIX semantics: **the drivers are not interchangeable**
 
 `spike matrix`, capability table as printed:
 
@@ -63,18 +63,18 @@ Two findings matter more than the rest:
   file believes it worked. Kanea must document this, and anything Kanea itself writes to
   an S3 volume must never rely on truncate.
 - **mountpoint-s3 is deliberately not a POSIX filesystem.** No append, no writes at an
-  offset, no chmod, no symlink — it supports sequential create-and-write of new objects
+  offset, no chmod, no symlink: it supports sequential create-and-write of new objects
   plus reads. That is fine for media, static assets and backup targets, and fatal for a
   database or anything that rewrites files in place.
 
-## Q2 — Throughput, metadata cost and durability
+## Q2: Throughput, metadata cost and durability
 
 `spike perf` (zero-latency, local MinIO):
 
 | | s3fs | rclone | mount-s3 |
 |---|---|---|---|
 | sequential write 128 MiB | 307 MiB/s | 741 MiB/s | 665 MiB/s |
-| **durable in bucket after `close()`** | **yes (+29 ms)** | **NO — +5.8 s** | **yes (+24 ms)** |
+| **durable in bucket after `close()`** | **yes (+29 ms)** | **NO: +5.8 s** | **yes (+24 ms)** |
 | sequential read 128 MiB (fresh mount) | 1049 MiB/s | 907 MiB/s | 702 MiB/s |
 | create 200 × 4 KiB | 1.11 s (5.5 ms/file) | 0.10 s (0.5 ms/file) | 1.75 s (8.8 ms/file) |
 | list 200 entries | 40 ms | ~0 ms | 6 ms |
@@ -86,7 +86,7 @@ Two findings matter more than the rest:
 | | s3fs | rclone | mount-s3 |
 |---|---|---|---|
 | sequential write 128 MiB | 112 MiB/s | 447 MiB/s¹ | 222 MiB/s |
-| durable after `close()` | yes (+153 ms) | **NO — +6.7 s** | yes (+156 ms) |
+| durable after `close()` | yes (+153 ms) | **NO: +6.7 s** | yes (+156 ms) |
 | sequential read 128 MiB | 15.9 MiB/s | 458 MiB/s¹ | 17.5 MiB/s |
 | create 200 × 4 KiB | **28.1 s** (140 ms/file) | 0.12 s (0.6 ms/file)¹ | **39.9 s** (199 ms/file) |
 | list 200 entries | 435 ms | ~0 ms¹ | 56 ms |
@@ -97,16 +97,16 @@ directory survives a remount, so reads and metadata are served locally and uploa
 deferred. That is why it looks 100× faster and why its data is not yet in the bucket.
 
 **The durability result is the important one.** rclone reports `close()` success and
-uploads ~6 seconds later. Kanea stops allocs routinely — scale-down, rolling deploy,
-drain — so a workload that writes a file and exits can have its data discarded with the
+uploads ~6 seconds later. Kanea stops allocs routinely (scale-down, rolling deploy,
+drain) so a workload that writes a file and exits can have its data discarded with the
 alloc. s3fs and mountpoint-s3 both upload synchronously in `close()`.
 
 The metadata numbers say the obvious thing loudly: an S3 volume costs one round trip
-per file operation. 200 small files take **28–40 seconds** to create at 30 ms RTT.
+per file operation. 200 small files take **28-40 seconds** to create at 30 ms RTT.
 PRD §8's "not for latency-sensitive data" is right and should be stated as
 "not for many-small-files workloads" too.
 
-## Q3 — As a container volume: **GO for all three**
+## Q3; As a container volume: **GO for all three**
 
 `spike container` (12/12 PASS). For each driver: mount established on the host, then
 `rbind`-ed into a containerd task at `/data`.
@@ -119,11 +119,11 @@ PASS  <driver>: alloc sees host writes made after it started
 ```
 
 This is the PRD §8 lifecycle ("mounts are established before task start"), and it works
-as specified — including the case that usually breaks with FUSE: objects written on the
+as specified; including the case that usually breaks with FUSE: objects written on the
 host *after* the container started are visible inside the alloc, so the bind does not
 snapshot the mount.
 
-## Q4 — Unprivileged mounts: **GO for all three**
+## Q4; Unprivileged mounts: **GO for all three**
 
 `spike unpriv` (9/9 PASS). Each driver is mounted by a dedicated system user
 (`kanea-s3`, `nologin`, no shell) via `sudo -u`, which is how a systemd `User=` helper
@@ -140,7 +140,7 @@ achievable with all three drivers. Two host prerequisites, both of which `kanea 
 must handle:
 
 - **`user_allow_other` in `/etc/fuse.conf`.** Without it the helper cannot pass
-  `allow_other`, and then root — i.e. containerd, binding the mount into an alloc —
+  `allow_other`, and then root: i.e. containerd, binding the mount into an alloc:
   gets `EACCES` walking the mount. This is the one setting that decides whether an
   unprivileged mount is usable as a container volume at all.
 - **Per-helper credential files** (0600, owned by the helper user): s3fs reads
@@ -148,20 +148,20 @@ must handle:
   The root-owned copies are unreadable to the helper, so Kanea's secret materialisation
   must target the helper's uid.
 
-## Q5 — Object-store outage: **the sharpest difference**
+## Q5; Object-store outage: **the sharpest difference**
 
 `spike failure`. MinIO is stopped with a read and a write in flight, then restarted.
 
 | | s3fs | rclone | mount-s3 |
 |---|---|---|---|
-| read during outage | error after **1 m 40 s** | **never returned** (>2 min cap) | error after **39–48 s** |
-| write during outage | error after **1 m 00 s** | **never returned** (>2 min cap) | error after **36–60 s** |
-| recovery on the same mount | **NO** — `ENOENT` for 90 s+ after the store returned; the object *is* intact in the bucket, the mount is stale | yes | yes |
+| read during outage | error after **1 m 40 s** | **never returned** (>2 min cap) | error after **39-48 s** |
+| write during outage | error after **1 m 00 s** | **never returned** (>2 min cap) | error after **36-60 s** |
+| recovery on the same mount | **NO**: `ENOENT` for 90 s+ after the store returned; the object *is* intact in the bucket, the mount is stale | yes | yes |
 
 - **rclone blocks indefinitely.** Neither the read nor the write returned within the
   2-minute cap. A workload thread stuck in a FUSE call is not killable, and if Kanea's
   own reconciler ever stats such a mount, the control plane inherits the hang.
-- **s3fs blocks for ~1–1.7 minutes, then errors — and then does not heal.** After MinIO
+- **s3fs blocks for ~1-1.7 minutes, then errors, and then does not heal.** After MinIO
   returned, the mount kept serving `ENOENT` for a file that was verifiably still in the
   bucket. Recovery requires a remount, which means Kanea's mount supervisor must detect
   and re-establish it.
@@ -198,18 +198,18 @@ Concretely for M2:
 
 ## PRD amendments required
 
-1. **§8 storage table** — replace "FUSE mount (s3fs / goofys / rclone — chosen in M2
+1. **§8 storage table**: replace "FUSE mount (s3fs / goofys / rclone, chosen in M2
    spike)" with the outcome: **mountpoint-s3 (default, read-mostly) / s3fs (opt-in
    read-write)**; goofys removed (unmaintained, amd64-only); rclone noted as not a
    built-in driver.
-2. **§8** — record the capability limits as product behaviour: no `truncate` on any
+2. **§8**: record the capability limits as product behaviour: no `truncate` on any
    driver (s3fs silently no-ops it), no append/offset-write/chmod/symlink on the default
    driver, and "not for many-small-files workloads" alongside the existing latency
    caveat.
-3. **§8 lifecycle** — the mount helper must **supervise and remount** (health-check with
+3. **§8 lifecycle**: the mount helper must **supervise and remount** (health-check with
    timeout), because s3fs does not self-heal after an object-store outage; mount access
    from the control plane always carries a timeout.
-4. **§21** — add an S3-volume expectation to the non-functional table: file operations on
+4. **§21**: add an S3-volume expectation to the non-functional table: file operations on
    an S3 volume cost one round trip each (~30 ms typical), so a 200-file directory
    listing/creation is seconds, not milliseconds.
 
@@ -218,10 +218,10 @@ Concretely for M2:
 - Mount commands validated by this spike are in `drivers.go`; each daemonizes, and
   `findmnt <target>` is the readiness signal (poll, ~100 ms).
 - `fusermount3 -u` is the unmount path; `umount -l` is the escape hatch for a wedged
-  daemon — the mount supervisor needs both.
+  daemon: the mount supervisor needs both.
 - Bind into the alloc with `rbind` after the mount is live; host-side writes stay visible.
 - Credentials come from the Kanea secret store (PRD §12) into a per-driver file:
-  s3fs `-o passwd_file=`, rclone config section, mountpoint-s3 `~/.aws/credentials` —
+  s3fs `-o passwd_file=`, rclone config section, mountpoint-s3 `~/.aws/credentials`;
   all three must be 0600 and owned by the helper user.
 - `user_allow_other` in `/etc/fuse.conf` plus `allow_other` is what lets root-run
   containerd traverse a helper-owned mount.

@@ -350,7 +350,7 @@ func TestApplySpecApplies(t *testing.T) {
 
 func TestNoToolReadsASecret(t *testing.T) {
 	// §16.3: secrets are write-only over the API and no tool returns one. The
-	// enforcement is that the secrets routes are not reachable from any tool —
+	// enforcement is that the secrets routes are not reachable from any tool:
 	// this test is what keeps that true as tools are added.
 	names := toolNames(t, newServer(t, newFakeAPI("admin")))
 	for _, name := range names {
@@ -428,7 +428,7 @@ func TestHTTPTransportRefusesAForeignOrigin(t *testing.T) {
 		t.Errorf("an allowed origin got %d, want %d", rec.Code, http.StatusOK)
 	}
 
-	// And a request with no Origin at all — every real MCP client — passes.
+	// And a request with no Origin at all (every real MCP client) passes.
 	req = httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

@@ -24,7 +24,7 @@ import (
 // certCheckInterval is how often the renewal pass runs.
 //
 // Twelve hours, against certificates renewed a third of their life before
-// expiry — for Let's Encrypt that is a 30-day window, so a node can miss sixty
+// expiry: for Let's Encrypt that is a 30-day window, so a node can miss sixty
 // consecutive passes and still renew in time. Checking more often would only
 // spend rate limit faster when something is wrong.
 const certCheckInterval = 12 * time.Hour
@@ -41,7 +41,7 @@ const certFileCheckInterval = time.Minute
 
 // certRetryInterval is how soon a failed pass is retried. Short enough that a
 // transient DNS or network problem resolves within the hour, long enough not to
-// hammer the CA — whose failed-validation limits are the ones that bite.
+// hammer the CA: whose failed-validation limits are the ones that bite.
 const certRetryInterval = 15 * time.Minute
 
 // runCertificates is kanead's certificate loop: obtain what is missing, renew
@@ -57,7 +57,7 @@ func runCertificates(ctx context.Context, c *certificates, st store.Store,
 	seen := map[string]time.Time{}
 	// Publish immediately, before the first issuance. A restart must put the
 	// certificates it already holds back in front of the edge without waiting
-	// for the CA to answer — or every kanead restart is a TLS outage.
+	// for the CA to answer, or every kanead restart is a TLS outage.
 	if err := syncCertificates(ctx, c, st, baseDomain, nodeDefault, logger, emit, seen); err != nil {
 		logger.Error("certificate pass failed", "error", err)
 	}
@@ -66,7 +66,7 @@ func runCertificates(ctx context.Context, c *certificates, st store.Store,
 	defer timer.Stop()
 
 	// A separate, much faster tick for the one source whose material changes
-	// without Kanea doing anything. It does not run a pass — it asks whether
+	// without Kanea doing anything. It does not run a pass: it asks whether
 	// the files moved, and only then wakes the loop.
 	files := time.NewTicker(certFileCheckInterval)
 	defer files.Stop()
@@ -87,7 +87,7 @@ func runCertificates(ctx context.Context, c *certificates, st store.Store,
 			logger.Info("provided certificates changed on disk", "path", c.provided.Path())
 		case <-trigger:
 			// Give the reconciler a moment to publish the route first. Nothing
-			// depends on it — challenges are served regardless of routing — but
+			// depends on it (challenges are served regardless of routing) but
 			// issuing for a service that has not converged wastes an attempt if
 			// the deploy is about to fail.
 			select {
@@ -194,7 +194,7 @@ func syncCertificates(ctx context.Context, c *certificates, st store.Store,
 //
 // The explicit nil is the point. A nil *certificates assigned to the interface
 // field would be a *non-nil* interface holding a nil pointer, so the API's "is
-// one configured" check would answer yes — the trap buildReplication documents
+// one configured" check would answer yes: the trap buildReplication documents
 // for api.Backups, and it costs one function to not fall into.
 func certificateAuthority(c *certificates) api.CertificateAuthority {
 	if c == nil || c.ca == nil {
@@ -250,7 +250,7 @@ func (a *acmeSource) Ensure(ctx context.Context, reqs []certsource.Request) (cer
 	if plan.OverThreshold {
 		// The condition §7.3 wants said out loud: past this many certificates a
 		// node is spending its weekly Let's Encrypt allowance on redeploys, and
-		// the fix — a wildcard — needs a DNS-01 solver nobody has configured.
+		// the fix (a wildcard) needs a DNS-01 solver nobody has configured.
 		a.log.Warn("more per-service certificates than Let's Encrypt rate limits are comfortable with",
 			"certificates", plan.PerService, "threshold", acme.DefaultWildcardThreshold,
 			"detail", "configure --acme-dns-server to switch to per-project wildcards (PRD §7.3)")
@@ -284,7 +284,7 @@ func emitCertChanges(emit func(notify.Event), certs []acme.Certificate, seen map
 		}
 		// First time this daemon has seen it is "issued"; a later issuance for
 		// a name it already held is a renewal. A restart therefore reports the
-		// certificates it loads as issued once, which is the honest answer —
+		// certificates it loads as issued once, which is the honest answer:
 		// it does not know what happened before it started.
 		name := notify.EventCertIssued
 		if known {
@@ -311,7 +311,7 @@ func emitCert(emit func(notify.Event), name, domain, message string) {
 // source it asked for (PRD §6.2 R20).
 //
 // The domains come from the same resolution the route table uses, so a service
-// cannot end up with a certificate for a name the edge does not route — which
+// cannot end up with a certificate for a name the edge does not route, which
 // would be an issuance that always fails validation.
 //
 // Every mode gets an entry, including an empty one. A source is called with
@@ -341,7 +341,7 @@ func certRequests(ctx context.Context, st store.Store, baseDomain, nodeDefault s
 				//
 				// R28's one warning: a grpc route that *resolved* here (an
 				// undeclared mode on a --tls-default plaintext node) can never
-				// serve a real gRPC client — the plaintext path is HTTP/1.1. The
+				// serve a real gRPC client; the plaintext path is HTTP/1.1. The
 				// declared combination is a plan error; this half is a warning
 				// because R20 resolves node-side, where plan cannot see.
 				if e.Protocol == "grpc" {
@@ -472,7 +472,7 @@ func readCABundle(path string) ([]byte, error) {
 	if path == "" {
 		return nil, nil
 	}
-	body, err := os.ReadFile(path) // #nosec G304 — operator configuration
+	body, err := os.ReadFile(path) // #nosec G304; operator configuration
 	if err != nil {
 		return nil, fmt.Errorf("acme CA bundle: %w", err)
 	}
@@ -537,7 +537,7 @@ type listenerCertificate struct {
 	cert    atomic.Pointer[tls.Certificate]
 }
 
-// GetCertificate implements tls.Config.GetCertificate. No SNI is required —
+// GetCertificate implements tls.Config.GetCertificate. No SNI is required:
 // a dashboard is dialled by IP, and this listener holds exactly one
 // certificate. Before the first issuance the handshake fails by name rather
 // than serving something wrong.
@@ -623,7 +623,7 @@ type certConfig struct {
 func buildCertificates(cfg certConfig) (*certificates, error) {
 	// Refused at startup rather than resolved to something. A typo here would
 	// otherwise apply to every service that declares no tls block, and the
-	// symptom — plain HTTP everywhere — looks like a DNS problem.
+	// symptom (plain HTTP everywhere) looks like a DNS problem.
 	if !certsource.Mode(cfg.Default).Valid() {
 		return nil, fmt.Errorf("--tls-default %q: use one of %s",
 			cfg.Default, strings.Join(modeNames(), ", "))
@@ -733,7 +733,7 @@ func buildCertificates(cfg certConfig) (*certificates, error) {
 
 // caName is what the self-signed CA is called in a device's trust list.
 //
-// The operator's own name, else the base domain, else this host — it has to be
+// The operator's own name, else the base domain, else this host: it has to be
 // recognisable a year later, when the only context is a list of certificate
 // authorities on a phone.
 func caName(cfg certConfig) string {

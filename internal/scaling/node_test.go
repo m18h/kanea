@@ -132,14 +132,14 @@ func TestNodeCountersGoingBackwardsReportNothing(t *testing.T) {
 func TestNodeUnreadableProcfsIsMissingNotZero(t *testing.T) {
 	// A node whose /proc cannot be read still has a control plane worth talking
 	// to. Reporting zeroes would make a broken reader indistinguishable from an
-	// idle node — the same rule the time series and the exporter follow.
+	// idle node: the same rule the time series and the exporter follow.
 	stats := scaling.NewNodeReader(filepath.Join(t.TempDir(), "nothing-here")).Read()
 
 	if stats.MemoryTotal != nil || stats.Load1 != nil || stats.CPUPercent != nil {
 		t.Errorf("an unreadable procfs produced values: %+v", stats)
 	}
 	// The core count comes from the runtime, not from procfs, so it is still
-	// there — and the reading is still a reading rather than an error.
+	// there, and the reading is still a reading rather than an error.
 	if stats.Cores <= 0 {
 		t.Errorf("cores = %d", stats.Cores)
 	}

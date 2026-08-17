@@ -18,8 +18,8 @@ import (
 //
 // This is the one route on the control plane that no session or token can
 // authenticate: a push comes from GitHub, not from a person. It is not
-// *unauthenticated* — it is authenticated by a shared secret the operator
-// configured on both ends — but that is a different mechanism from §13, and
+// *unauthenticated* (it is authenticated by a shared secret the operator
+// configured on both ends) but that is a different mechanism from §13, and
 // saying so plainly is the point. Everything below exists to make that
 // mechanism hold up:
 //
@@ -29,13 +29,13 @@ import (
 //   - the comparison is constant-time, because a byte-at-a-time compare turns
 //     forging a signature into 32 sequential guesses;
 //   - a delivery is accepted once, because a replayed push would redeploy
-//     whatever that commit contained — including a commit since reverted;
+//     whatever that commit contained; including a commit since reverted;
 //   - and the body is bounded, because the sender chooses its size.
 
 // MaxWebhookBody bounds an inbound payload.
 //
 // GitHub's push payloads grow with the number of commits and its own limit is
-// 25 MB. Kanea reads a ref and a sha out of them, so a megabyte is generous —
+// 25 MB. Kanea reads a ref and a sha out of them, so a megabyte is generous:
 // and a bound the sender does not choose is the point.
 const MaxWebhookBody = 1 << 20
 
@@ -47,8 +47,8 @@ const (
 	// ProviderGitHub signs the body: X-Hub-Signature-256.
 	ProviderGitHub Provider = "github"
 	// ProviderGitLab sends the shared secret itself: X-Gitlab-Token. Weaker
-	// than a signature — the secret is on the wire every time rather than
-	// proving knowledge of it — but it is what GitLab sends, and refusing to
+	// than a signature (the secret is on the wire every time rather than
+	// proving knowledge of it) but it is what GitLab sends, and refusing to
 	// support it would not make anyone's deployment safer.
 	ProviderGitLab Provider = "gitlab"
 )
@@ -104,7 +104,7 @@ type WebhooksConfig struct {
 	// Secrets resolves the per-project webhook secret.
 	Secrets Resolver
 	// Tolerance bounds how old a timestamped payload may be. It applies only
-	// to senders that provide a timestamp — see Verify.
+	// to senders that provide a timestamp: see Verify.
 	Tolerance time.Duration
 	// Remember is how long a delivery id is remembered for replay rejection.
 	Remember time.Duration
@@ -121,7 +121,7 @@ const (
 	DefaultWebhookMemory = time.Hour
 	// maxRememberedDeliveries bounds the replay cache. The keys come from
 	// whoever can reach the route, so without a cap this is a memory
-	// exhaustion vector — the same bound the rate limiter and the metrics
+	// exhaustion vector: the same bound the rate limiter and the metrics
 	// store apply for the same reason.
 	maxRememberedDeliveries = 4096
 )
@@ -161,8 +161,8 @@ func NewWebhooks(cfg WebhooksConfig) *Webhooks {
 // the next restart.
 //
 // **On timestamp tolerance.** §10.1 asks for it, and it is applied to any
-// sender that provides one. Neither GitHub nor GitLab does — their payloads
-// carry no signed timestamp — so for those two the replay defence is the
+// sender that provides one. Neither GitHub nor GitLab does (their payloads
+// carry no signed timestamp) so for those two the replay defence is the
 // delivery-id cache below, and saying that plainly beats implying a protection
 // that is not there.
 func (w *Webhooks) Verify(
@@ -190,7 +190,7 @@ func (w *Webhooks) Verify(
 		return Delivery{}, err
 	}
 	// Accepted once. A replayed push would redeploy whatever that commit
-	// contained — which, after a revert, is precisely the thing someone
+	// contained, which, after a revert, is precisely the thing someone
 	// deliberately took out of production.
 	if err := w.remembering(delivery); err != nil {
 		return Delivery{}, err

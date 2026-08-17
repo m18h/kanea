@@ -179,7 +179,7 @@ func parseServiceRef(spec *Spec, from *Service, tr hcl.Traversal, envKey string)
 	}
 
 	// Same-project only in v1 (R9). The lookup is scoped to the referencing
-	// service's project, so a cross-project name simply does not resolve —
+	// service's project, so a cross-project name simply does not resolve:
 	// say so explicitly rather than reporting a bare "unknown service".
 	target := spec.ServiceByName(from.Project, name)
 	if target == nil {
@@ -218,7 +218,7 @@ func parseServiceRef(spec *Spec, from *Service, tr hcl.Traversal, envKey string)
 		}
 		if port.IsUDP() {
 			return ServiceRef{}, bad(fmt.Sprintf("Port %q of service %q is udp, and udp ports have "+
-				"no service frontend (v1.42) — the address this reference pairs with would reach "+
+				"no service frontend (v1.42); the address this reference pairs with would reach "+
 				"nothing. A udp port is reachable only where it is published.", portName, name))
 		}
 		return ServiceRef{From: from.Name, Service: name, Port: portName, EnvKey: envKey}, nil

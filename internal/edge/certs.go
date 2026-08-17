@@ -15,7 +15,7 @@ import (
 // DefaultBundlePath is where kanead projects certificates for the edge.
 //
 // Separate from the route table, and not by accident. Routes are world-readable
-// because the edge runs as its own user and nothing in them is secret — the
+// because the edge runs as its own user and nothing in them is secret: the
 // domains are in public DNS. A private key is neither, so it gets its own file
 // at 0640 rather than dragging the route table's permissions down or pushing
 // the key's up (PRD §7.3).
@@ -40,8 +40,8 @@ type Bundle struct {
 	HTTPChallenges []HTTPChallenge `json:"http_challenges,omitempty"`
 	// Auth is the R27 verifier material (v1.40), one entry per authenticated
 	// service. It rides this bundle rather than routes.json because this is
-	// the restricted projection (0640): bcrypt lines, token hashes, and — the
-	// one genuinely secret field — a JWT HS256 key.
+	// the restricted projection (0640): bcrypt lines, token hashes, and (the
+	// one genuinely secret field) a JWT HS256 key.
 	Auth []AuthEntry `json:"auth,omitempty"`
 }
 
@@ -59,7 +59,7 @@ type Certificate struct {
 	NotAfter time.Time `json:"not_after"`
 	// Source is the §7.3 mode that supplied this certificate: acme,
 	// self-signed or provided. Carried for the expiry metric's label and for
-	// nothing else — the edge does not know the precedence rule that chose it
+	// nothing else: the edge does not know the precedence rule that chose it
 	// (certsource.Publisher.merged resolves that), and must not learn one.
 	//
 	// omitempty, and empty is tolerated: a bundle written by a pre-v1.35 kanead
@@ -127,7 +127,7 @@ func PublishBundle(path string, bundle Bundle, gid int) error {
 	body = append(body, '\n')
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil { // #nosec G301 — the file, not the dir, is the secret
+	if err := os.MkdirAll(dir, 0o755); err != nil { // #nosec G301; the file, not the dir, is the secret
 		return fmt.Errorf("edge dir: %w", err)
 	}
 
@@ -193,7 +193,7 @@ func writeBundleFile(tmp *os.File, name string, body []byte, gid int) error {
 
 // LoadBundle reads a published certificate projection.
 func LoadBundle(path string) (Bundle, error) {
-	body, err := os.ReadFile(path) // #nosec G304 — the path is operator configuration
+	body, err := os.ReadFile(path) // #nosec G304; the path is operator configuration
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -212,7 +212,7 @@ func BundlePath(dir string) string { return filepath.Join(dir, BundleName) }
 
 // expiriesOf turns a bundle into the expiry gauges the metrics collector holds.
 //
-// One entry per certificate, labelled with its first domain — not one per name
+// One entry per certificate, labelled with its first domain, not one per name
 // it covers. A wildcard covering forty subdomains is one thing that expires on
 // one date, and forty gauges saying so would make a single renewal look like a
 // fleet-wide event.

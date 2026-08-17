@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 
 /**
- * FilterChips is the row of status buttons every list page filters by — the
+ * FilterChips is the row of status buttons every list page filters by: the
  * Events page's severity chips, generalised so four pages don't grow four
  * slightly different chip rows.
  */

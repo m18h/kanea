@@ -1,8 +1,8 @@
 package jobspec_test
 
-// The `function` block (PRD v1.39, §6.2 R25–R26): lowering, and the refusals.
-// R25's structural half — no volume/device/socket/capabilities/user/scaling
-// field exists — is asserted here too, because "the schema has no field" is a
+// The `function` block (PRD v1.39, §6.2 R25-R26): lowering, and the refusals.
+// R25's structural half (no volume/device/socket/capabilities/user/scaling
+// field exists) is asserted here too, because "the schema has no field" is a
 // property someone could quietly change.
 
 import (
@@ -44,7 +44,7 @@ func TestFunctionLowersToAService(t *testing.T) {
 	if svc.Count != 1 {
 		t.Errorf("count = %d, want the default 1", svc.Count)
 	}
-	// The sole declared port, named "http", at the default — that is what
+	// The sole declared port, named "http", at the default; that is what
 	// makes R16's port selection and the edge work untouched.
 	if svc.Network == nil || len(svc.Network.Ports) != 1 ||
 		svc.Network.Ports[0].Name != "http" ||
@@ -167,7 +167,7 @@ func TestFunctionRefusals(t *testing.T) {
 			 trigger "event" { on = ["depoly.*"] }`,
 			"matches no known event",
 		},
-		// R26 — a pattern that would match function.* is a feedback loop.
+		// R26: a pattern that would match function.* is a feedback loop.
 		{
 			"function.* pattern",
 			`module = "example.com/fn:1"
@@ -217,7 +217,7 @@ func TestFunctionRefusals(t *testing.T) {
 			 trigger "http" {}`,
 			"1-65535",
 		},
-		// R25 — the wasmtime shim has no exec, refused by name.
+		// R25: the wasmtime shim has no exec, refused by name.
 		{
 			"exec health check",
 			`module = "example.com/fn:1"
@@ -338,7 +338,7 @@ function "fn" {
 }
 
 // R28's function half is structural: `trigger "http"` has no `protocol` field
-// and must not gain one — wasi-http is HTTP/1.1, and the absent field is the
+// and must not gain one; wasi-http is HTTP/1.1, and the absent field is the
 // refusal (R25's pattern). This pins the absence, because "the schema has no
 // field" is a property someone could quietly change.
 func TestFunctionTriggerHasNoProtocolField(t *testing.T) {

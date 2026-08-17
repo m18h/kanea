@@ -14,7 +14,7 @@ import (
 // Events are the one thing every channel, the dashboard feed and the filters
 // all agree on, so the names are fixed here rather than built by each emitter.
 // A typo in a name is otherwise a notification that silently never matches a
-// filter — the failure mode where nothing appears to be wrong.
+// filter: the failure mode where nothing appears to be wrong.
 
 // Event names, exactly as §11 lists them. The `<noun>.<verb>` shape is what
 // makes `deploy.*` a useful filter.
@@ -50,7 +50,7 @@ const (
 	EventAuthLoginFailed = "auth.login_failed"
 
 	// External secret sync (PRD §5.2.13, v1.44). `synced` fires only when a
-	// pass actually changed something — steady state is silent — and both
+	// pass actually changed something (steady state is silent) and both
 	// carry local paths only, never values.
 	EventSecretSynced     = "secret.synced"
 	EventSecretSyncFailed = "secret.sync_failed"
@@ -58,7 +58,7 @@ const (
 	// EventFunctionInvokeFailed fires when the event/cron invoker exhausted its
 	// retries against a function's endpoint (PRD v1.39, §11). It is the ONLY
 	// function.* event, deliberately: a per-invocation info event would be a
-	// metric wearing an event's name, at invocation cardinality — the rate
+	// metric wearing an event's name, at invocation cardinality; the rate
 	// lives in §9.1's counters. R26 refuses function.* in a function's own
 	// trigger patterns, so this event can never invoke a function.
 	EventFunctionInvokeFailed = "function.invoke_failed"
@@ -69,7 +69,7 @@ const (
 	// Every one of these fires on a *transition*, never per sample or per
 	// probe. A breached budget persists for hours and a mount is probed every
 	// 30 s, so an event per observation would be a metric wearing an event's
-	// name — and a notification storm on the way.
+	// name, and a notification storm on the way.
 	EventVolumeOverBudget     = "volume.over_budget"
 	EventVolumeUnderBudget    = "volume.under_budget"
 	EventVolumeMountFailed    = "volume.mount_failed"
@@ -77,7 +77,7 @@ const (
 
 	// EventTest is the test action's payload (§11). It is in the vocabulary so
 	// that a test message renders like every other event rather than as a
-	// special case each channel has to know about — but the test action does not
+	// special case each channel has to know about, but the test action does not
 	// route it through the filters, so nobody has to add it to an `on` list to
 	// be able to test their channel.
 	EventTest = "notify.test"
@@ -201,14 +201,14 @@ var severities = map[string]Severity{
 	// Error: a mount that will not establish fails every alloc that needs it
 	// (§8's "mount failures fail the alloc loudly"), and a probe failure past
 	// the threshold means a workload is reading a filesystem that is lying to
-	// it — the s3fs-serves-stale-ENOENT case the supervisor exists for.
+	// it; the s3fs-serves-stale-ENOENT case the supervisor exists for.
 	EventVolumeMountFailed:    SeverityError,
 	EventVolumeMountRecovered: SeverityInfo,
 
 	EventTest: SeverityInfo,
 }
 
-// IsFunctionEvent reports whether an event name is in the function.* space —
+// IsFunctionEvent reports whether an event name is in the function.* space:
 // the events R26 refuses in a function's own trigger patterns, and the ones
 // the invoker skips at match time. One predicate, both layers.
 func IsFunctionEvent(name string) bool {
@@ -259,7 +259,7 @@ type Event struct {
 	// Message is one human-readable line. It is the thing a person reads in
 	// Telegram, so it says what happened, not what struct it came from.
 	Message string `json:"message"`
-	// Detail is optional extra context — an error string, a digest, a count.
+	// Detail is optional extra context: an error string, a digest, a count.
 	Detail string    `json:"detail,omitempty"`
 	At     time.Time `json:"at"`
 }
@@ -321,8 +321,8 @@ func (e Event) WithDetail(detail string) Event {
 //
 // The same shape a pipeline run uses: a zero-padded nanosecond prefix so the
 // Store's byte-ordered keys are time-ordered for free, and random bytes so two
-// events in the same nanosecond — which happens, a fleet restart emits a burst
-// — do not collide and silently overwrite one another.
+// events in the same nanosecond (which happens, a fleet restart emits a burst)
+// do not collide and silently overwrite one another.
 func eventID(at time.Time) string {
 	suffix := make([]byte, 4)
 	if _, err := rand.Read(suffix); err != nil {

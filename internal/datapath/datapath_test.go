@@ -640,7 +640,7 @@ func TestInitRefreshesProgramsOnAdoptedVeths(t *testing.T) {
 }
 
 // RepairIdentity is map-only: the identity comes back, and no veth is
-// touched — a running workload's interface is not a thing a repair may yank.
+// touched; a running workload's interface is not a thing a repair may yank.
 func TestRepairIdentityIsMapOnly(t *testing.T) {
 	f := newFixture(t)
 	ip := netip.MustParseAddr("10.200.0.2")
@@ -668,7 +668,7 @@ func TestRepairIdentityIsMapOnly(t *testing.T) {
 }
 
 // A repair for an alloc with no attachment reports so rather than inventing
-// one — plumbing is Attach's job, on Attach's order.
+// one: plumbing is Attach's job, on Attach's order.
 func TestRepairIdentityRefusesAMissingAttachment(t *testing.T) {
 	f := newFixture(t)
 	if err := f.d.Init(t.Context()); err != nil {

@@ -58,7 +58,7 @@ func TestAnInvalidVolumeSizeIsRefusedWithItsPosition(t *testing.T) {
 			if !strings.Contains(out, tc.want) {
 				t.Errorf("diagnostics = %q, want %q", out, tc.want)
 			}
-			// The position, not just the complaint — this is a spec someone is
+			// The position, not just the complaint: this is a spec someone is
 			// editing, and the line is the useful half.
 			if !strings.Contains(out, "shop.hcl:") {
 				t.Errorf("diagnostics = %q, want a file and line", out)
@@ -67,7 +67,7 @@ func TestAnInvalidVolumeSizeIsRefusedWithItsPosition(t *testing.T) {
 	}
 }
 
-// R31's refusal. s3 is not walked, so a budget on it could never be evaluated —
+// R31's refusal. s3 is not walked, so a budget on it could never be evaluated:
 // and a control the platform silently drops is worse than one nobody claimed
 // (R21's rule).
 func TestASizeOnAnS3VolumeIsRefused(t *testing.T) {
@@ -88,7 +88,7 @@ func TestASizeOnAnS3VolumeIsRefused(t *testing.T) {
 	}
 }
 
-// Everything that *is* walked takes a budget, including host and nfs — those
+// Everything that *is* walked takes a budget, including host and nfs: those
 // refuse ownership (R24) and this is a different question.
 func TestASizeIsAcceptedOnEveryWalkedDriver(t *testing.T) {
 	for name, block := range map[string]string{

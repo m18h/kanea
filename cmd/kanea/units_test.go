@@ -30,7 +30,7 @@ func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
 
 	read := func(name string) string {
 		t.Helper()
-		body, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304 — a test path
+		body, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304; a test path
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
@@ -73,7 +73,7 @@ func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
 	}
 
 	// The edge is a separate process from day one (§18 rule 8), and must not
-	// wait on the control plane — that separation is the whole reason it exists.
+	// wait on the control plane: that separation is the whole reason it exists.
 	edge := read("kanea-edge.service")
 	for _, line := range strings.Split(edge, "\n") {
 		// A directive, not the comment that explains why there isn't one.
@@ -105,12 +105,12 @@ func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
 }
 
 // TestKaneadUnitCreatesNoMountNamespace pins PRD v1.53: kanead is the node's
-// mount manager — the netns bind mounts runc joins and the volume mounts
+// mount manager; the netns bind mounts runc joins and the volume mounts
 // containerd binds into containers must be made in the host mount namespace.
 // Every directive below gives the unit a private mount namespace with slave
 // propagation, where a mount kanead makes is invisible to its consumer: runc
 // setns()es an empty file (EINVAL on every task create) and a mounted volume
-// reads as an empty directory inside the workload — the silent one. Found on
+// reads as an empty directory inside the workload; the silent one. Found on
 // the first real systemd-managed node to reach task-create.
 func TestKaneadUnitCreatesNoMountNamespace(t *testing.T) {
 	dir := t.TempDir()
@@ -120,7 +120,7 @@ func TestKaneadUnitCreatesNoMountNamespace(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write units: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(dir, "kanead.service")) // #nosec G304 — a test path
+	body, err := os.ReadFile(filepath.Join(dir, "kanead.service")) // #nosec G304; a test path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestKaneadUnitCreatesNoMountNamespace(t *testing.T) {
 
 	// The edge keeps the full sandbox: it mounts nothing and writes nothing,
 	// so the reasoning above does not apply to it.
-	edge, err := os.ReadFile(filepath.Join(dir, "kanea-edge.service")) // #nosec G304 — a test path
+	edge, err := os.ReadFile(filepath.Join(dir, "kanea-edge.service")) // #nosec G304: a test path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestKaneadUnitRendersTheNetworkFlags(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("write units: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(dir, "kanead.service")) // #nosec G304 — a test path
+	body, err := os.ReadFile(filepath.Join(dir, "kanead.service")) // #nosec G304; a test path
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestUnitsHaveNoLeadingTabs(t *testing.T) {
 		t.Fatalf("read dir: %v", err)
 	}
 	for _, entry := range entries {
-		body, err := os.ReadFile(filepath.Join(dir, entry.Name())) // #nosec G304 — a test path
+		body, err := os.ReadFile(filepath.Join(dir, entry.Name())) // #nosec G304; a test path
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}
@@ -247,7 +247,7 @@ func TestUnitExecStartFlagsAreDefined(t *testing.T) {
 		t.Fatalf("read dir: %v", err)
 	}
 	for _, entry := range entries {
-		body, err := os.ReadFile(filepath.Join(dir, entry.Name())) // #nosec G304 — a test path
+		body, err := os.ReadFile(filepath.Join(dir, entry.Name())) // #nosec G304; a test path
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}
@@ -279,7 +279,7 @@ func TestUnitExecStartFlagsAreDefined(t *testing.T) {
 
 // definedFlags asks a subcommand for its usage and reads back the flag names it
 // declares. `-h` returns flag.ErrHelp straight out of Parse, so nothing the
-// subcommand would otherwise do — open a database, bind a port — happens here.
+// subcommand would otherwise do (open a database, bind a port) happens here.
 func definedFlags(t *testing.T, sub string) map[string]bool {
 	t.Helper()
 
@@ -518,7 +518,7 @@ func TestExecArgumentsRequireTheSeparator(t *testing.T) {
 	if service != "web" {
 		t.Errorf("service = %q", service)
 	}
-	// The remote flags survive intact — that is the whole point of the
+	// The remote flags survive intact; that is the whole point of the
 	// separator.
 	if len(command) != 2 || command[1] != "-la" {
 		t.Errorf("command = %q, want [ls -la]", command)

@@ -24,8 +24,8 @@ import (
 //
 // # Two families, and why they have different names
 //
-// §9.1.1 splits this surface in two. The **aggregate** family — one series per
-// service — is the autoscaler's input and is differenced into the in-memory
+// §9.1.1 splits this surface in two. The **aggregate** family (one series per
+// service) is the autoscaler's input and is differenced into the in-memory
 // rings. The **labelled** family carries `{code,method,protocol}` and is
 // retained verbatim by the exporter, never differenced.
 //
@@ -33,7 +33,7 @@ import (
 // (`kanea_edge_requests_total` versus `kanea_edge_service_requests_total`)
 // rather than as one name at two label cardinalities. One name carrying both
 // would double-count under any `sum()` a user writes and would make
-// `promtool check metrics` complain — the aggregate is the same traffic already
+// `promtool check metrics` complain: the aggregate is the same traffic already
 // counted once. The labelled names follow Traefik's `_service_`/`_entrypoint_`
 // shape, which is the vocabulary someone arriving from it already has.
 
@@ -75,7 +75,7 @@ const (
 	ProtocolGRPC = "grpc"
 )
 
-// Refusal reasons. A closed set, so no cap is needed on this dimension —
+// Refusal reasons. A closed set, so no cap is needed on this dimension;
 // and separate series because they are separate operator problems: an
 // ip_restriction refusal is policy working, a rate_limit refusal is capacity.
 const (
@@ -116,13 +116,13 @@ func normalizeMethod(method string) string {
 // maxSeriesPerService caps the labelled combinations one service may hold.
 //
 // Codes are upstream-chosen and methods are allowlisted, so the product is
-// bounded in ordinary operation — but "ordinary" is not a guarantee, and a
+// bounded in ordinary operation, but "ordinary" is not a guarantee, and a
 // service that answers a different status per request would otherwise grow this
 // map forever. Past the cap everything folds into one overflow series and the
 // drop is counted, which is the discipline scaling.Metrics already applies at
 // MaxSeries: a cap nobody can see is indistinguishable from a leak.
 // It is the ceiling on the *whole* map, and the overflow series occupies one of
-// its slots — so a service holds at most maxSeriesPerService-1 distinct
+// its slots, so a service holds at most maxSeriesPerService-1 distinct
 // combinations plus the fold. A cap that admitted N and then added an N+1th for
 // the overflow would be a cap that is quietly one larger than it says.
 const maxSeriesPerService = 40
@@ -157,7 +157,7 @@ type labelledSeries struct {
 	requests atomic.Uint64
 	// timed counts only the observations that entered the histogram. A hijacked
 	// connection is counted in requests but never timed (§9.1.1), and a
-	// histogram's _count must equal its +Inf bucket — so the two need separate
+	// histogram's _count must equal its +Inf bucket, so the two need separate
 	// counters.
 	timed atomic.Uint64
 	// buckets are cumulative counts per latency bound, plus one overflow.
@@ -197,7 +197,7 @@ func (s *labelledSeries) observe(ms float64, timed bool) {
 // below it is the labelled family, which no scraper differences.
 type serviceMetrics struct {
 	requests atomic.Uint64
-	// timed counts observations that entered the histogram — see
+	// timed counts observations that entered the histogram: see
 	// labelledSeries.timed for why it is separate from requests.
 	timed       atomic.Uint64
 	buckets     []atomic.Uint64
@@ -208,7 +208,7 @@ type serviceMetrics struct {
 
 	requestBytes  atomic.Uint64
 	responseBytes atomic.Uint64
-	// inFlight is a gauge, so it decrements — hence Int64. It can be
+	// inFlight is a gauge, so it decrements: hence Int64. It can be
 	// transiently negative under a racing decrement and is clamped at render.
 	//
 	// Requests, not connections: the handler never sees a connection, and with
@@ -235,7 +235,7 @@ func newServiceMetrics() *serviceMetrics {
 
 // observeAggregate records into the unlabelled family the scraper reads.
 // timed=false counts the request (and any 5xx) without touching the latency
-// histogram — a hijacked connection's duration is its session lifetime, and
+// histogram: a hijacked connection's duration is its session lifetime, and
 // one long WebSocket would otherwise dominate the p95 the autoscaler reads.
 func (m *serviceMetrics) observeAggregate(ms float64, status int, timed bool) {
 	m.requests.Add(1)
@@ -338,8 +338,8 @@ func newTCPMetrics() *tcpMetrics {
 
 // udpMetrics is one published UDP listener's counters (v1.42, §7.2.2).
 //
-// Sessions, not connections — a udp "connection" is an entry in the relay's
-// table — and expiries are counted separately from ordinary closes, because a
+// Sessions, not connections (a udp "connection" is an entry in the relay's
+// table) and expiries are counted separately from ordinary closes, because a
 // session cap or an aggressive expiry that nobody can see is indistinguishable
 // from packet loss.
 type udpMetrics struct {
@@ -505,7 +505,7 @@ func (m *Metrics) ConnClosed(entrypoint string) {
 // RequestStarted and RequestFinished move the per-service in-flight gauge.
 //
 // Paired around the upstream call, so the gauge answers "how many requests is
-// this service handling right now" — the number that distinguishes a service
+// this service handling right now": the number that distinguishes a service
 // that is slow from one that is merely busy.
 func (m *Metrics) RequestStarted(service string) {
 	if service != "" {

@@ -58,7 +58,7 @@ export function Services() {
   const [status, setStatus] = useState<StatusFilter>('all')
   const sort = useSort<SortKey>()
 
-  // Functions are services underneath (v1.39) but have a page of their own —
+  // Functions are services underneath (v1.39) but have a page of their own:
   // one record, shown as what it is, on exactly one list.
   const list = (services.data?.services ?? []).filter((s) => s.function == null)
   const byService = groupAllocs(allocs.data?.allocs ?? [])
@@ -227,13 +227,13 @@ function memoryText(s: { memory?: number | undefined; allocs?: { memory_bytes?: 
   )
   if (bytes !== undefined) return formatBytes(bytes)
   if (s?.memory !== undefined) return formatMetric(s.memory, '%')
-  return '—'
+  return '-'
 }
 
 /**
  * StatsCells is per-row so each row holds its own stats subscription. The page
  * is bounded by pagination (10 by default, at most 100), and every
- * subscription rides the one shared socket — a bounded cost for live numbers
+ * subscription rides the one shared socket: a bounded cost for live numbers
  * in the table.
  */
 function StatsCells({
@@ -253,16 +253,16 @@ function StatsCells({
   return (
     <>
       <TD className="font-mono tabular-nums">
-        {s?.cpu === undefined ? '—' : formatMetric(s.cpu, '%')}
+        {s?.cpu === undefined ? '-' : formatMetric(s.cpu, '%')}
       </TD>
       <TD className="font-mono tabular-nums">{memoryText(s)}</TD>
-      <TD className="font-mono tabular-nums">{s?.rps === undefined ? '—' : Math.round(s.rps)}</TD>
+      <TD className="font-mono tabular-nums">{s?.rps === undefined ? '-' : Math.round(s.rps)}</TD>
       <TD
         className={`font-mono tabular-nums ${
           s?.p95_latency_ms !== undefined && s.p95_latency_ms > p95Target ? 'text-status-error' : ''
         }`}
       >
-        {s?.p95_latency_ms === undefined ? '—' : formatMetric(s.p95_latency_ms, ' ms')}
+        {s?.p95_latency_ms === undefined ? '-' : formatMetric(s.p95_latency_ms, ' ms')}
       </TD>
     </>
   )

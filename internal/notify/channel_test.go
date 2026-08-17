@@ -299,7 +299,7 @@ func TestNtfyMapsSeverityToPriority(t *testing.T) {
 }
 
 func TestRenderDigestsABatch(t *testing.T) {
-	// "42 allocs restarted in 5m" — one message, not 42. The header carries the
+	// "42 allocs restarted in 5m": one message, not 42. The header carries the
 	// count and the span; the lines say which.
 	at := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	var events []notify.Event
@@ -353,7 +353,7 @@ func TestChannelConstructorsEnforceEgress(t *testing.T) {
 
 func TestSMTPRefusesHeaderInjection(t *testing.T) {
 	// A subject carries a service name and an error string, both of which can
-	// hold a newline — and a newline in a header is a second header. That is
+	// hold a newline, and a newline in a header is a second header. That is
 	// how an alert becomes a way to add recipients (§14 A03).
 	ch, err := notify.NewSMTP(context.Background(), notify.SMTPConfig{
 		Host: "mail.example.com", From: "kanea@example.com",
@@ -371,7 +371,7 @@ func TestSMTPRefusesHeaderInjection(t *testing.T) {
 	headers, _, _ := strings.Cut(msg, "\r\n\r\n")
 
 	// The property is that no new header *line* exists. The injected text
-	// surviving inside the Subject value is harmless — it is one header with an
+	// surviving inside the Subject value is harmless: it is one header with an
 	// odd value, which is what folding a CRLF into a space is supposed to
 	// produce. What must never happen is a line that starts with a field name.
 	for _, line := range strings.Split(headers, "\r\n") {
@@ -418,7 +418,7 @@ func TestSMTPDotStuffsTheBody(t *testing.T) {
 }
 
 func TestSMTPRejectsMalformedAddresses(t *testing.T) {
-	// Found at configuration time, not on the first alert — which is by
+	// Found at configuration time, not on the first alert, which is by
 	// definition the moment something else is already wrong.
 	for _, addr := range []string{
 		"ops@example.com\r\nBcc: attacker@example.com",

@@ -35,7 +35,7 @@ func TestPickMirrorsTheModulo(t *testing.T) {
 }
 
 // TestPickIsLooselyUniform: 100k draws over 4 backends land each backend
-// near 25k. The tolerance is ±4% of the total per bucket — ~7σ, loose on
+// near 25k. The tolerance is ±4% of the total per bucket; ~7σ, loose on
 // purpose: this pins "the selection is a modulo over the whole set", not
 // the PRNG's quality (the kernel's prandom is not ours to test).
 func TestPickIsLooselyUniform(t *testing.T) {
@@ -67,7 +67,7 @@ func backendsOf(ips ...byte) []Backend {
 
 // TestFlipPlanOrdering: every put of the new generation strictly before
 // the one commit, every delete of the old generation strictly after. That
-// order IS the atomicity — reordering it is the torn-set bug.
+// order IS the atomicity: reordering it is the torn-set bug.
 func TestFlipPlanOrdering(t *testing.T) {
 	const oldGen = 7
 	current := backendsOf(1, 2, 3)
@@ -132,7 +132,7 @@ func (m *flipModel) apply(op Op) {
 }
 
 // read is the datapath's view: resolve the committed generation, then look
-// up every index the committed count names — exactly what kanea_connect4
+// up every index the committed count names; exactly what kanea_connect4
 // does for the one index it draws.
 func (m *flipModel) read() ([]Backend, error) {
 	out := make([]Backend, 0, m.svc.Count)
@@ -163,8 +163,8 @@ func sameSet(got, want []Backend) bool {
 }
 
 // TestFlipPlanIsAtomicAtEveryBoundary interleaves a reader at every op
-// boundary of the plan — before the first op, between every pair, after
-// the last — and requires it to see the complete old set or the complete
+// boundary of the plan (before the first op, between every pair, after
+// the last) and requires it to see the complete old set or the complete
 // new set, never a mixture and never a miss. This is the property the
 // generation flip exists for: a connect during a backend change must not
 // observe a torn set.

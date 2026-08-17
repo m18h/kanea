@@ -15,7 +15,7 @@ import (
 // Cilium 1.18 removed the writable service API (PUT/DELETE /v1/service/{id}).
 // The supported non-k8s replacement is --lb-state-file: a JSON/YAML file the
 // agent watches, holding Kubernetes-*shaped* Service and EndpointSlice objects
-// (schema only — no API server, no CRDs, no client-go). GET /v1/service remains
+// (schema only; no API server, no CRDs, no client-go). GET /v1/service remains
 // read-only and is used here to verify what the agent programmed.
 const lbStateFile = "/var/run/cilium/lb-state.json"
 
@@ -71,7 +71,7 @@ type lbState struct {
 }
 
 // webService builds the state file contents for one service with the given
-// backend IPs — the shape Kanea's reconciler would emit per project/service.
+// backend IPs: the shape Kanea's reconciler would emit per project/service.
 func webService(backendIPs ...string) lbState {
 	var svc lbService
 	svc.Metadata = objectMeta{Name: "web", Namespace: "shop"}
@@ -98,7 +98,7 @@ func webService(backendIPs ...string) lbState {
 }
 
 // writeLBState swaps the state file in atomically. The agent watches it with
-// fsnotify, so a partially written file must never be observable — Cilium's own
+// fsnotify, so a partially written file must never be observable: Cilium's own
 // test data documents rename-into-place as the required production pattern.
 func writeLBState(state lbState) error {
 	b, err := json.MarshalIndent(state, "", " ")

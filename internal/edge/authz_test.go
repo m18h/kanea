@@ -1,6 +1,6 @@
 package edge
 
-// R27 (v1.40): the auth middleware — modes, fail-closed behaviour, and the
+// R27 (v1.40): the auth middleware; modes, fail-closed behaviour, and the
 // JWT verifier's refusals.
 
 import (
@@ -229,8 +229,8 @@ func TestJWTAlgorithmIsConfiguredNotRead(t *testing.T) {
 	}); code != 0 {
 		t.Fatalf("valid ES256 token refused with %d", code)
 	}
-	// An HS256 token MACed with the public key's PEM — the classic downgrade
-	// — is refused on the alg mismatch alone.
+	// An HS256 token MACed with the public key's PEM (the classic downgrade)
+	// is refused on the alg mismatch alone.
 	forged := signJWT(t, "HS256", []byte(pubPEM), map[string]any{"exp": exp})
 	if code := try(t, p, route, func(r *http.Request) {
 		r.Header.Set("Authorization", "Bearer "+forged)
@@ -248,7 +248,7 @@ func TestJWTAlgorithmIsConfiguredNotRead(t *testing.T) {
 }
 
 // End to end through serveRoute: the marked route refuses before the
-// upstream, and passes with credentials — auth sits inside the chain, not
+// upstream, and passes with credentials; auth sits inside the chain, not
 // beside it.
 func TestServeRouteEnforcesAuth(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

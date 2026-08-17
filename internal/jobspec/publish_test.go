@@ -47,7 +47,7 @@ func TestPublishAcceptsAValidBlock(t *testing.T) {
 	}
 }
 
-// A published port cannot name a port the service did not declare — there is
+// A published port cannot name a port the service did not declare: there is
 // no field for a container port number, so the label is the only way in.
 func TestPublishRejectsAnUndeclaredPort(t *testing.T) {
 	got := parseErr(t, publishSpec(publishBlock("grpc", "host = 9000")))
@@ -141,7 +141,7 @@ func TestPublishAcceptsIPRestrictionOnATCPListener(t *testing.T) {
 }
 
 // The middleware validators are the expose block's own, so their errors have to
-// be the same errors — with the publish block named instead.
+// be the same errors, with the publish block named instead.
 func TestPublishReusesTheMiddlewareValidators(t *testing.T) {
 	got := parseErr(t, publishSpec(publishBlock("http", "host = 9000",
 		"ip_restriction {\n        allow = [\"10.0.0.0/33\"]\n      }")))
@@ -266,7 +266,7 @@ service "s" {
 	}
 }
 
-// A listener and its port must agree on the L4 family — either mismatch is a
+// A listener and its port must agree on the L4 family: either mismatch is a
 // listener that black-holes by construction (v1.42).
 func TestPublishRejectsAFamilyMismatch(t *testing.T) {
 	tests := []struct{ name, src, want string }{
@@ -499,7 +499,7 @@ service "s" {
 	})
 }
 
-// An unpublished udp port is legal — a spec staged before its publish block —
+// An unpublished udp port is legal: a spec staged before its publish block;
 // but nothing can reach it, and the spec author is told so.
 func TestUnpublishedUDPPortWarns(t *testing.T) {
 	src := `

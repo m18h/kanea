@@ -43,7 +43,7 @@ const udpBufferSize = 64 * 1024
 // kernel then filters inbound datagrams to that peer, and a reply loop per
 // session needs no demultiplexing. The backend is chosen by rendezvous hash of
 // the client IP over the live backend set, so a client keeps its backend
-// across an edge restart, a session expiry and other backends' churn — a
+// across an edge restart, a session expiry and other backends' churn: a
 // stateful UDP conversation must not migrate mid-exchange.
 type udpRelay struct {
 	log     *slog.Logger
@@ -288,8 +288,8 @@ func (u *udpRelay) openSession(addr net.Addr, key string) *udpSession {
 }
 
 // replyLoop copies backend datagrams back to the client, and owns the
-// session's teardown: whoever closes the upstream socket — janitor, config
-// update, shutdown, or a write error — lands here.
+// session's teardown: whoever closes the upstream socket (janitor, config
+// update, shutdown, or a write error) lands here.
 func (u *udpRelay) replyLoop(s *udpSession, key, name, entrypoint string) {
 	buf := make([]byte, udpBufferSize)
 	for {
@@ -386,7 +386,7 @@ func pickBackend(clientIP string, backends []string) string {
 	return best
 }
 
-// packetAddr is a datagram's source address, unmapped — connAddr's rule, for
+// packetAddr is a datagram's source address, unmapped: connAddr's rule, for
 // an address that never came from a net.Conn.
 func packetAddr(addr net.Addr) netip.Addr {
 	udpAddr, ok := addr.(*net.UDPAddr)

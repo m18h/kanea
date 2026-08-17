@@ -20,7 +20,7 @@ import (
 //
 // Two rounds, with traffic in *both*. The first reading of a counter measures
 // nothing but uptime, and a second reading with no traffic between measures a
-// genuinely empty interval — the scraper then records no percentile and no
+// genuinely empty interval: the scraper then records no percentile and no
 // error rate, correctly, because "no requests" is not "requests that were
 // fast". A harness that scraped twice back to back would be asserting on that
 // emptiness while looking like it was asserting on the traffic.
@@ -68,7 +68,7 @@ func TestTheLabelledFamiliesNeverReachTheTimeSeries(t *testing.T) {
 		}
 	})
 
-	// Exactly the five §9.1 metrics, and one subject each — the service. Not
+	// Exactly the five §9.1 metrics, and one subject each: the service. Not
 	// one subject per status code, and no metric named after a label.
 	for _, metric := range []string{
 		scaling.MetricRPS, scaling.MetricP50, scaling.MetricP95,
@@ -82,7 +82,7 @@ func TestTheLabelledFamiliesNeverReachTheTimeSeries(t *testing.T) {
 	// Thirty status codes produced thirty labelled series in the edge and must
 	// have produced no extra series at all here.
 	if got := metrics.Len(); got != 5 {
-		t.Errorf("time series = %d, want 5 — a labelled dimension leaked into the rings", got)
+		t.Errorf("time series = %d, want 5: a labelled dimension leaked into the rings", got)
 	}
 }
 
@@ -157,7 +157,7 @@ func TestTypeCommentsTravelWithTheirFamily(t *testing.T) {
 
 	body, _, _ := held.Snapshot()
 	// A counter exported without its TYPE is read as untyped, and rate() will
-	// not compute over an untyped series — the metric would be present and
+	// not compute over an untyped series: the metric would be present and
 	// useless.
 	for line := range strings.SplitSeq(body, "\n") {
 		if !strings.HasPrefix(line, "kanea_edge_service_requests_total{") {
@@ -229,7 +229,7 @@ func TestBreakdownForgetsAServiceTheEdgeStoppedReporting(t *testing.T) {
 	}
 
 	// The service leaves the route table. Set replaces rather than merges, or
-	// its totals stay visible for the life of the process — the same leak
+	// its totals stay visible for the life of the process: the same leak
 	// edge.Metrics.Retain prevents on the other side of the wire.
 	m.Retain(map[string]bool{})
 	if _, err := scraper.Scrape(context.Background()); err != nil {
@@ -242,8 +242,8 @@ func TestBreakdownForgetsAServiceTheEdgeStoppedReporting(t *testing.T) {
 
 func TestSnapshotIsNotOkBeforeTheFirstScrape(t *testing.T) {
 	// The exporter turns this into kanea_edge_up 0. Without it a gap in the
-	// labelled families has two causes — the edge is down, or nothing is
-	// exposed — and they are indistinguishable.
+	// labelled families has two causes (the edge is down, or nothing is
+	// exposed) and they are indistinguishable.
 	held := scaling.NewEdgeExposition()
 	if _, _, ok := held.Snapshot(); ok {
 		t.Error("an unscraped holder reported a snapshot")

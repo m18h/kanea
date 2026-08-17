@@ -7,8 +7,8 @@ import (
 	"github.com/m18h/kanea/internal/jobspec"
 )
 
-// R30: a variables block declares once, the spec references flat ${name} — or
-// a bare identifier where HCL takes an expression — and precedence is
+// R30: a variables block declares once, the spec references flat ${name} (or
+// a bare identifier where HCL takes an expression) and precedence is
 // node < spec < caller.
 
 func TestVariablesResolveAcrossTheSpec(t *testing.T) {

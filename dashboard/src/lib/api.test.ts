@@ -49,7 +49,7 @@ describe('logBatchSchema', () => {
       ],
     })
     expect(parsed.lines).toHaveLength(2)
-    // Absent, not zero — the daemon omits it on the ordinary frame.
+    // Absent, not zero; the daemon omits it on the ordinary frame.
     expect(parsed.dropped).toBeUndefined()
   })
 
@@ -62,7 +62,7 @@ describe('logBatchSchema', () => {
   })
 
   // The pre-v1.70 shape was one line per frame. It must fail here, in a test,
-  // rather than silently in a browser — a tab left open across an upgrade is
+  // rather than silently in a browser: a tab left open across an upgrade is
   // the one place the old shape can still show up.
   it('rejects the old one-line-per-frame shape', () => {
     const result = logBatchSchema.safeParse({ alloc_id: 'shop-web-0', line: 'hello' })

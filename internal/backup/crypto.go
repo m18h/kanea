@@ -35,7 +35,7 @@ type Keys struct {
 	//
 	// It exists so that restoring with the wrong key says so. Without it the
 	// failure is an authentication error on the first chunk, which is
-	// indistinguishable from a corrupt archive — and those two have completely
+	// indistinguishable from a corrupt archive, and those two have completely
 	// different remedies: find the escrowed key, or fetch another backup.
 	ID string
 }
@@ -76,7 +76,7 @@ func derive(master []byte, info string, size int) ([]byte, error) {
 }
 
 // The stream format. A snapshot is a whole bbolt database and can be hundreds of
-// megabytes, so it is encrypted in chunks rather than as one buffer — a control
+// megabytes, so it is encrypted in chunks rather than as one buffer: a control
 // plane with a memory floor to defend (§5.2.11) must not need twice the archive
 // in RAM to write it.
 const (
@@ -172,8 +172,8 @@ func decryptStream(dst io.Writer, src io.Reader, keys Keys) error {
 	}
 
 	// The magic is read on its own, before the nonce prefix. Reading both at
-	// once would make a file that is merely *short* — the common case for
-	// something that is not an archive at all — fail with "unexpected EOF",
+	// once would make a file that is merely *short* (the common case for
+	// something that is not an archive at all) fail with "unexpected EOF",
 	// which sends an operator looking for a truncated backup rather than for the
 	// file they meant to point at.
 	header := make([]byte, len(magic))
@@ -213,7 +213,7 @@ func decryptStream(dst io.Writer, src io.Reader, keys Keys) error {
 		plain, err = aead.Open(plain[:0], nonceFor(prefix, counter), sealed[:n], aad)
 		if err != nil {
 			// Deliberately one message for every authentication failure. The
-			// reasons — wrong key, flipped bit, reordered chunk, truncation —
+			// reasons: wrong key, flipped bit, reordered chunk, truncation;
 			// are not distinguishable here, and guessing between them in the
 			// error would be a guess presented as a diagnosis. The manifest's
 			// key id is what tells the two apart, and it is checked first.

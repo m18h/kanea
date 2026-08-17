@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Outbound egress rules (PRD §11, §14 A10 — server-side request forgery).
+// Outbound egress rules (PRD §11, §14 A10: server-side request forgery).
 //
 // A notification target is a URL an operator writes into a job spec, and a job
 // spec is not always written by the person who owns the node. Kanea reaching an
@@ -23,7 +23,7 @@ import (
 // So: **https only, private and link-local destinations refused**, with an
 // explicit opt-out for the operator who really is running an internal chat
 // server. The check happens at dial time rather than on the hostname, because a
-// hostname is not a destination — the same name can resolve to a public address
+// hostname is not a destination: the same name can resolve to a public address
 // when it is validated and a private one when it is connected to, and only the
 // address the socket actually goes to is worth checking.
 
@@ -59,7 +59,7 @@ type EgressPolicy struct {
 // CheckURL validates a target before it is ever used.
 //
 // The scheme check belongs here because it is a property of the URL. The
-// address check does *not* — a name that resolves publicly now can resolve to
+// address check does *not*: a name that resolves publicly now can resolve to
 // 127.0.0.1 later, so that one happens per connection, in the dialer.
 func (p EgressPolicy) CheckURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
@@ -115,7 +115,7 @@ func (p EgressPolicy) HTTPClient(timeout time.Duration) *http.Client {
 // dial connects only to an address the policy allows.
 //
 // The check is on the resolved address, immediately before the connection, so
-// there is no window between validating a name and using it — the DNS rebinding
+// there is no window between validating a name and using it: the DNS rebinding
 // attack this whole function exists to close.
 func (p EgressPolicy) dial(
 	ctx context.Context, dialer *net.Dialer, network, addr string,
@@ -151,7 +151,7 @@ func (p EgressPolicy) dial(
 	}
 	if last == nil {
 		// LookupIPAddr returned no addresses and no error, which should not
-		// happen — but returning a nil error with a nil connection would panic
+		// happen, but returning a nil error with a nil connection would panic
 		// in the transport rather than fail the delivery.
 		return nil, fmt.Errorf("notify: %s resolved to no usable address", host)
 	}
@@ -192,7 +192,7 @@ func AllowedIP(ip net.IP) bool {
 // redactURL renders a URL for an error or a log with its credentials and query
 // removed.
 //
-// A notification target is frequently a capability URL — a Slack incoming
+// A notification target is frequently a capability URL: a Slack incoming
 // webhook is a secret in path form, and an ntfy topic can be. Logging one in
 // full puts a credential in a file that is not the secrets store (R3, §14 A09).
 func redactURL(u *url.URL) string {

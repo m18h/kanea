@@ -10,13 +10,13 @@
 # This is deliberately NOT a required check and never runs on a pull request. It
 # needs credentials the repository owner provisions, a fork has none, and a job
 # that depends on someone else's cloud account must not be able to block a
-# merge. It runs on demand and monthly — monthly because the failure being
+# merge. It runs on demand and monthly: monthly because the failure being
 # watched for is a provider changing under us, which has no commit to attach to.
 #
 # To enable a provider, set its secrets (all four; an unset endpoint skips it):
 #
 #   <P>_S3_ENDPOINT     e.g. https://s3.eu-west-1.amazonaws.com
-#   <P>_S3_REGION       the signing region — wrong region, wrong signature
+#   <P>_S3_REGION       the signing region: wrong region, wrong signature
 #   <P>_S3_BUCKET       provisioned by hand; the tests never create it
 #   <P>_S3_ACCESS_KEY / <P>_S3_SECRET_KEY   scoped to that bucket alone
 #
@@ -120,12 +120,12 @@ jobs:
           export KANEA_S3_ACCESS_KEY="${!access}"
           export KANEA_S3_SECRET_KEY="${!secret}"
           # The bucket is provisioned by hand and the key is scoped to it, so
-          # the suite must not try to create it — see createBucket's comment.
+          # the suite must not try to create it: see createBucket's comment.
           export KANEA_S3_SKIP_BUCKET_CREATE=1
 
           # Each run writes under its own random prefix and deletes only that,
           # so a matrix leg cannot disturb another or a previous run.
-          echo "::group::${PROVIDER} — path-style"
+          echo "::group::${PROVIDER}: path-style"
           KANEA_S3_PATH_STYLE=true go test ./internal/backup/ -run Live -count=1 -v
           echo "::endgroup::"
 
@@ -135,7 +135,7 @@ jobs:
           # are endpoint-addressed in practice; running the style they do not
           # advertise would test their compatibility shims, not our client.
           if [ "$PROVIDER" = "AWS" ]; then
-            echo "::group::${PROVIDER} — virtual-hosted"
+            echo "::group::${PROVIDER}: virtual-hosted"
             KANEA_S3_PATH_STYLE=false go test ./internal/backup/ -run Live -count=1 -v
             echo "::endgroup::"
           fi

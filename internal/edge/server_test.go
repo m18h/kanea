@@ -347,7 +347,7 @@ func TestServerServesACMEChallenges(t *testing.T) {
 		return code == http.StatusOK && body == "tok-123.thumbprint"
 	}, "the challenge was never answered")
 
-	// An unknown token 404s rather than being proxied — the internet scans
+	// An unknown token 404s rather than being proxied: the internet scans
 	// this path constantly.
 	if code, _ := getWith(t, client, plain+acmeChallengePrefix+"nope", "web.shop.example.com"); code != http.StatusNotFound {
 		t.Errorf("unknown token = %d, want 404", code)

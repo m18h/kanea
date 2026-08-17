@@ -16,7 +16,7 @@ import (
 //
 // Events go in the Store rather than a file, because unlike logs and metrics
 // they are state: bounded, low-rate, and something an operator expects to still
-// be there after a restart. The bound is what keeps that true — a crash loop
+// be there after a restart. The bound is what keeps that true: a crash loop
 // emits events for as long as it loops, and an unbounded bucket in a
 // single-writer bbolt is a way to make the control plane slow (constraint #2).
 
@@ -96,7 +96,7 @@ func (f *Feed) List(ctx context.Context, project string, limit int) ([]Event, er
 
 	// Reverse, because the bucket is time-ordered and what anyone wants is the
 	// end of it. Without this, "the last 100 events" means scanning every event
-	// ever written — the one read pattern a bounded-transaction rule cannot
+	// ever written: the one read pattern a bounded-transaction rule cannot
 	// afford (AGENTS.md #2).
 	out := make([]Event, 0, limit)
 	var after string

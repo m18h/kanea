@@ -7,7 +7,7 @@
 //
 // Daemon (kanead/kanea-edge) file sinks rotate via lumberjack: bounded size,
 // bounded backups, gzip compression. The workload log pipeline (PRD §17) adds
-// its own non-blocking drain in front of a sink like this — never let a
+// its own non-blocking drain in front of a sink like this, never let a
 // rotation stall a workload's write().
 package logging
 

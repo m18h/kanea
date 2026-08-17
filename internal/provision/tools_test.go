@@ -8,7 +8,7 @@ import (
 
 // A stock Debian box handed `kanea init` a PATH without /usr/sbin, and the
 // install failed over a useradd that was sitting right there. PATH is an
-// environment variable, not a statement about what is installed — these tests
+// environment variable, not a statement about what is installed: these tests
 // pin the fallback that closes that gap.
 func TestLookupToolFallsBackToSbinDirs(t *testing.T) {
 	writeExecutable := func(t *testing.T, dir, name string, mode os.FileMode) string {

@@ -22,7 +22,7 @@ import (
 
 // Node preflight checks, shared by `kanea init` and `kanea doctor` (PRD §16.2).
 //
-// One implementation, because two would drift — and they would drift into the
+// One implementation, because two would drift, and they would drift into the
 // case where `init` says a node is ready and `doctor` says it is not.
 
 // checkResult is one check's outcome.
@@ -77,7 +77,7 @@ type preflightOptions struct {
 // Platform checks are things no installer can supply: a kernel, cgroups v2, a
 // clock. They gate `kanea init` before anything is downloaded, because an
 // install that proceeds past them produces a node that looks configured and is
-// not — the reason init.go refuses rather than warns.
+// not: the reason init.go refuses rather than warns.
 //
 // Component checks are things `kanea install` establishes. Since v1.30 they
 // run *after* the install rather than before it, so they verify rather than
@@ -100,7 +100,7 @@ func platformChecks(opts preflightOptions) []checkResult {
 func componentChecks(opts preflightOptions) []checkResult {
 	results := []checkResult{
 		checkSocket("containerd", opts.containerdSocket,
-			"run `kanea install` — Kanea installs and supervises its own containerd "+
+			"run `kanea install`: Kanea installs and supervises its own containerd "+
 				"(PRD §5.2.12); or point --containerd at an existing one"),
 		checkVersionMatrix(opts.layout),
 		checkSubnets(opts.layout, opts.serviceCIDR),
@@ -125,7 +125,7 @@ func componentChecks(opts preflightOptions) []checkResult {
 // checkWasmShim verifies the functions runtime is reachable (PRD v1.39,
 // §5.2.12, §6.2 R25). Always a warning, never a failure: a node running no
 // functions is a supported node, and this check exists so the first wasm alloc
-// fails here — in front of an operator — rather than at task create.
+// fails here (in front of an operator) rather than at task create.
 func checkWasmShim(layout provision.Layout) checkResult {
 	const shim = "containerd-shim-wasmtime-v1"
 	if layout.ContainerdSocket == "" {
@@ -138,7 +138,7 @@ func checkWasmShim(layout provision.Layout) checkResult {
 		return pass("wasm shim", shim+" installed")
 	}
 	// An adopted containerd resolves shims on its own PATH, which Kanea does
-	// not control and must not edit — a missing shim there is a finding, not
+	// not control and must not edit: a missing shim there is a finding, not
 	// something to fix in a unit Kanea did not write (§5.2.11).
 	for _, dir := range []string{"/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"} {
 		if _, err := os.Stat(filepath.Join(dir, shim)); err == nil {
@@ -154,8 +154,8 @@ func checkWasmShim(layout provision.Layout) checkResult {
 //
 // The one check here that touches the network, and the reason `--offline`
 // exists rather than being decoration. It answers a question an operator
-// genuinely has before an upgrade — "can this node fetch components, or do I
-// need to carry a bundle in?" — and it is a warning, because a node that
+// genuinely has before an upgrade ("can this node fetch components, or do I
+// need to carry a bundle in?") and it is a warning, because a node that
 // cannot reach GitHub is a supported node, not a broken one.
 func checkUpstreamReachable() checkResult {
 	manifest, err := provision.Load()
@@ -315,7 +315,7 @@ func checkBuildkit(socket string, layout provision.Layout) checkResult {
 	path := strings.TrimPrefix(socket, "unix://")
 	if _, err := os.Stat(path); err != nil {
 		return warn("buildkit", path+" is not present",
-			"systemctl status kanea-buildkit — builds and GitOps will fail until it answers")
+			"systemctl status kanea-buildkit: builds and GitOps will fail until it answers")
 	}
 	return pass("buildkit", path)
 }
@@ -329,7 +329,7 @@ func checkFUSE() checkResult {
 	if goruntime.GOOS != "linux" {
 		return warn("fuse", "not checked on "+goruntime.GOOS, "")
 	}
-	raw, err := os.ReadFile(provision.FuseConfPath) // #nosec G304 — a package constant
+	raw, err := os.ReadFile(provision.FuseConfPath) // #nosec G304: a package constant
 	if err != nil {
 		return warn("fuse", provision.FuseConfPath+" is not present",
 			"S3 volumes need user_allow_other there; `kanea install` writes it")
@@ -346,7 +346,7 @@ func checkFUSE() checkResult {
 // checkPlatform refuses a host Kanea cannot run workloads on.
 //
 // Not a warning. containerd, cgroups v2, netns and eBPF are Linux, and a
-// macOS or Windows host is a development machine — where the CLI is useful and
+// macOS or Windows host is a development machine: where the CLI is useful and
 // the daemon is not.
 func checkPlatform() checkResult {
 	if goruntime.GOOS != "linux" {
@@ -361,7 +361,7 @@ func checkPlatform() checkResult {
 // Constraint #11 rests on it: the control plane's memory floor is cgroups v2
 // `memory.min`, and there is no v1 equivalent that gives the same guarantee. A
 // node on v1 runs, and the floor that keeps kanead alive under memory pressure
-// is simply absent — which is the kind of thing to find out now.
+// is simply absent, which is the kind of thing to find out now.
 func checkCgroupV2() checkResult {
 	if goruntime.GOOS != "linux" {
 		return warn("cgroups v2", "not checked on "+goruntime.GOOS, "")
@@ -484,7 +484,7 @@ func checkDataDir(path string) checkResult {
 	// warning.
 	if perm := info.Mode().Perm(); perm&0o007 != 0 {
 		return fail("data directory", fmt.Sprintf("%s is mode %04o", path, perm),
-			"chmod 0750 "+path+" — it holds the master key and every secret")
+			"chmod 0750 "+path+": it holds the master key and every secret")
 	}
 	return pass("data directory", path)
 }

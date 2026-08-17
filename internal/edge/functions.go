@@ -6,7 +6,7 @@ package edge
 // This is a mode of the published-port machinery, not path routing: the host
 // route table is untouched, the dispatch table is its own namespace, and the
 // §7.2.1 middleware chain is reused by converting each FunctionRoute to a
-// Route and compiling it — the Listener.asRoute trick, played again.
+// Route and compiling it; the Listener.asRoute trick, played again.
 //
 // Plaintext HTTP by design: a client connecting by IP sends no SNI, the same
 // fact that keeps `tls` off published ports (§19.3). A function that needs TLS
@@ -28,7 +28,7 @@ const EntrypointFunctions = "functions"
 // functionsSet owns the functions port.
 //
 // One port, bound while the dispatch table is non-empty and released when it
-// empties — a port held open for nothing is a port something else on the node
+// empties: a port held open for nothing is a port something else on the node
 // cannot use.
 type functionsSet struct {
 	log   *slog.Logger
@@ -151,7 +151,7 @@ func (f *functionsSet) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Strip the prefix, the way http.StripPrefix would: the function's
-	// wasi-http server sees /nightly, not /shop/report/nightly — its spec's
+	// wasi-http server sees /nightly, not /shop/report/nightly; its spec's
 	// trigger paths are its own namespace (R26).
 	r2 := new(http.Request)
 	*r2 = *r

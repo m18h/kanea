@@ -18,7 +18,7 @@ import (
 const PathStatsHistory = "/v1/stats/history"
 
 // Window bounds. The default answers what a sparkline shows; the ceiling is
-// the rollup tier's retention — asking for more would read an empty ring and
+// the rollup tier's retention: asking for more would read an empty ring and
 // look like a quiet week.
 const (
 	defaultHistoryWindow = 15 * time.Minute
@@ -69,7 +69,7 @@ func (s *Server) handleStatsHistory(w http.ResponseWriter, r *http.Request) {
 	from := to.Add(-window)
 
 	// Which tier Range will serve decides the slot width the client rebuilds
-	// gaps against — the same rule Range itself applies.
+	// gaps against: the same rule Range itself applies.
 	interval := scaling.RawInterval
 	if window > scaling.RawWindow {
 		interval = scaling.RollupInterval

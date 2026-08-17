@@ -86,7 +86,7 @@ func TestReadOOMStateReadsTheKillCounter(t *testing.T) {
 
 // An unreadable cgroup is not evidence of anything. This is the case that
 // decides whether a `kanea stop` gets reported as a memory problem: the exit is
-// 137 either way, and only the cgroup can tell them apart — so when it cannot
+// 137 either way, and only the cgroup can tell them apart, so when it cannot
 // be read, nothing may be claimed.
 func TestAnUnreadableCgroupClaimsNothing(t *testing.T) {
 	root := t.TempDir()

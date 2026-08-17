@@ -114,7 +114,7 @@ func TestWriteFilesInstallsWithTheRightModes(t *testing.T) {
 	}
 }
 
-// The install's directories are created with the modes they declare — the
+// The install's directories are created with the modes they declare: the
 // content store is not world-traversable, and the run dir holds the sockets.
 func TestSensitiveDirectoriesAreNotWorldReadable(t *testing.T) {
 	l := testLayout(t)

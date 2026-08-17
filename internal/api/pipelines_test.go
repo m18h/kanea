@@ -169,7 +169,7 @@ func TestRunLogsAreStreamedAsText(t *testing.T) {
 func TestWebhookIsAcceptedWithoutASession(t *testing.T) {
 	// The one route authenticated by something other than §13. A git push comes
 	// from a provider, not a person, so it carries a per-project HMAC instead of
-	// a session — and it must work with no credential attached.
+	// a session, and it must work with no credential attached.
 	fake := &fakePipelines{}
 	h := newHarness(t, withPipelines(fake))
 

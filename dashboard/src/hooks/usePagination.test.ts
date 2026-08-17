@@ -21,7 +21,7 @@ describe('usePagination', () => {
   })
 
   it('re-windows around the first visible item when the size changes', () => {
-    // Reading rows 21–30 and choosing 50 must keep those rows in view, not
+    // Reading rows 21-30 and choosing 50 must keep those rows in view, not
     // teleport the reader back to the top of the list.
     const { result } = renderHook(() => usePagination(list(100)))
     act(() => result.current.setPage(2))

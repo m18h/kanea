@@ -35,7 +35,7 @@ func TestUnknownCommandFails(t *testing.T) {
 }
 
 // Aliases resolve before dispatch: every alias must target a real command and
-// must not shadow one — a map entry naming an existing command would silently
+// must not shadow one; a map entry naming an existing command would silently
 // re-route it.
 func TestAliasesResolveToRealCommands(t *testing.T) {
 	names := map[string]bool{}
@@ -138,7 +138,7 @@ func TestImplementedCommandsAreWired(t *testing.T) {
 func TestFindServiceResolvesTheSlashForm(t *testing.T) {
 	// PRD §16.2 has always written `kanea stop shop/web`; v1.55 makes the CLI
 	// actually parse it, and v1.56 routes every service-targeting command
-	// through this one resolver — logs, exec, build and status included, the
+	// through this one resolver: logs, exec, build and status included, the
 	// four that used to carry their own weaker parsing. A service name is a
 	// DNS-1123 label, so the slash is unambiguous.
 	services := []reconciler.Desired{
@@ -184,7 +184,7 @@ func TestFindServiceResolvesTheSlashForm(t *testing.T) {
 }
 
 // The status table's scope filter: a project narrows, a resolved service
-// narrows further, and the zero filter shows everything. Display-only — the
+// narrows further, and the zero filter shows everything. Display-only: the
 // dependency reasoning keeps the full list.
 func TestVisibleServicesNarrowsTheStatusTable(t *testing.T) {
 	services := []reconciler.Desired{
@@ -206,7 +206,7 @@ func TestVisibleServicesNarrowsTheStatusTable(t *testing.T) {
 
 func TestServiceHealth(t *testing.T) {
 	// `kanea status` is where an operator looks to decide whether to worry, so
-	// "ok" must mean settled — not merely "nothing has failed yet".
+	// "ok" must mean settled, not merely "nothing has failed yet".
 	tests := []struct {
 		name                                         string
 		desired, running, backoff, failed, unhealthy int
@@ -310,10 +310,10 @@ func TestBlockedOnIgnoresZeroCountAndMissingDependencies(t *testing.T) {
 	}
 }
 
-// PRD §6.2 R23–R24, end to end: HCL text through toDesired to the alloc spec
+// PRD §6.2 R23-R24, end to end: HCL text through toDesired to the alloc spec
 // the runtime is handed. Each layer has its own test; this is the one that
 // would catch a field that is carried correctly everywhere and dropped at a
-// seam — which is where a chain this long actually breaks.
+// seam, which is where a chain this long actually breaks.
 func TestUserAndVolumeOwnershipSurviveConversion(t *testing.T) {
 	src := `
 spec_version = 1
@@ -429,7 +429,7 @@ service "web" {
 			if !strings.Contains(out, tc.wantErr) {
 				t.Errorf("diagnostics = %q, want %q", out, tc.wantErr)
 			}
-			// file:line,col — the position, not just the complaint.
+			// file:line,col; the position, not just the complaint.
 			if !strings.Contains(out, "shop.hcl:") {
 				t.Errorf("diagnostics = %q, want a file and line", out)
 			}

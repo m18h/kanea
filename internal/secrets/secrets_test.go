@@ -129,7 +129,7 @@ func TestCiphertextIsBoundToItsPath(t *testing.T) {
 	}
 }
 
-// A different master key must not open existing records — that is what makes
+// A different master key must not open existing records: that is what makes
 // the key worth escrowing.
 func TestADifferentKeyCannotDecrypt(t *testing.T) {
 	dir := t.TempDir()
@@ -359,7 +359,7 @@ func TestPutManagedStampsProvenance(t *testing.T) {
 }
 
 // A manual `kanea secret put` over a managed path takes manual control, and
-// the metadata must say so — the sync's next pass is what reasserts a mapping,
+// the metadata must say so: the sync's next pass is what reasserts a mapping,
 // not a stale stamp.
 func TestAnOperatorWriteClearsProvenance(t *testing.T) {
 	s, _, _ := newStore(t)
@@ -381,7 +381,7 @@ func TestAnOperatorWriteClearsProvenance(t *testing.T) {
 }
 
 // The R23 lesson, applied to the record schema: an operator-written record must
-// serialise exactly as it did before v1.44 — no "source" key at all — so
+// serialise exactly as it did before v1.44 (no "source" key at all) so
 // existing databases and their backups decode byte-identically.
 func TestAnOperatorRecordCarriesNoSourceKey(t *testing.T) {
 	s, _, raw := newStore(t)

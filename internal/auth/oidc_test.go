@@ -160,7 +160,7 @@ func newOIDC(t *testing.T, p *fakeProvider, adjust ...func(*auth.OIDCConfig)) *a
 
 // start begins a login and returns the handle, the state and the nonce.
 //
-// Callers pass the nonce back as the authorization code — see the token
+// Callers pass the nonce back as the authorization code: see the token
 // endpoint above for why.
 func start(t *testing.T, o *auth.OIDC, next string) (handle, state, nonce string) {
 	t.Helper()
@@ -269,7 +269,7 @@ func TestOIDCSendsAPKCEChallenge(t *testing.T) {
 		t.Fatal("no PKCE challenge in the authorization request")
 	}
 	if got := query.Get("code_challenge_method"); got != "S256" {
-		t.Fatalf("challenge method = %q, want S256 — plain is no protection at all", got)
+		t.Fatalf("challenge method = %q, want S256; plain is no protection at all", got)
 	}
 
 	if _, err := o.Complete(ctx, handle, query.Get("state"), query.Get("nonce")); err != nil {
@@ -394,7 +394,7 @@ func TestOIDCBoundsTheReturnPath(t *testing.T) {
 				t.Fatalf("Complete: %v", err)
 			}
 			if result.Next != "/" {
-				t.Fatalf("next = %q, want / — that is an open redirect", result.Next)
+				t.Fatalf("next = %q, want /; that is an open redirect", result.Next)
 			}
 		})
 	}

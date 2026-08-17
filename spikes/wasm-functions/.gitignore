@@ -1,4 +1,4 @@
-# Build artifacts — regenerable, never committed.
+# Build artifacts: regenerable, never committed.
 /spike-wasm
 /spike-wasm-linux
 /wasm-functions

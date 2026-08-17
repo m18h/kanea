@@ -4,7 +4,7 @@ import type { StatsHistory } from '@/lib/api'
 /**
  * How many samples a sparkline keeps.
  *
- * At the daemon's five-second cadence this is five minutes — enough to see a
+ * At the daemon's five-second cadence this is five minutes: enough to see a
  * spike arrive and settle, short enough that the shape stays readable at the
  * width a table cell allows.
  */
@@ -21,7 +21,7 @@ export interface SeriesSeed {
 /**
  * seedFromHistory turns one series of a /v1/stats/history response into a
  * SeriesSeed: fixed slots, one per interval, with absent points restored as
- * undefined gaps — "measured nothing" survives the round trip.
+ * undefined gaps; "measured nothing" survives the round trip.
  */
 export function seedFromHistory(history: StatsHistory, series: string): SeriesSeed | undefined {
   const points = history.series[series]
@@ -59,13 +59,13 @@ export function mergeSeed(
 }
 
 /** TimedSeries is a series over real time: aligned unix-seconds and values,
- * null marking a gap — uPlot's native vocabulary. */
+ * null marking a gap; uPlot's native vocabulary. */
 export interface TimedSeries {
   times: number[]
   values: (number | null)[]
 }
 
-/** How many timed points a chart keeps — the 15 m history window at the 5 s
+/** How many timed points a chart keeps: the 15 m history window at the 5 s
  * cadence, with headroom for a long-open page. */
 const maxTimedPoints = 400
 
@@ -76,7 +76,7 @@ const gapSeconds = 30
 /**
  * timedSeedFromHistory turns one /v1/stats/history series into TimedSeries
  * points at their real timestamps, inserting a null wherever the record goes
- * quiet for longer than gapSeconds — a sparse history must not draw a line
+ * quiet for longer than gapSeconds: a sparse history must not draw a line
  * across an hour nobody measured.
  */
 export function timedSeedFromHistory(
@@ -112,11 +112,11 @@ export function timedSeedFromHistory(
  * useTimedSeries accumulates live samples onto their real timestamps,
  * optionally seeded from /v1/stats/history. Because x is actual time, mixed
  * cadences (a 5 s history under a 10 s poll) lay out correctly by
- * construction — there is no slot grid to disagree about.
+ * construction: there is no slot grid to disagree about.
  *
  * Same discipline as useSeries below: an undefined value is a gap (null),
  * samples dedupe on their timestamp, and the returned object's identity
- * changes exactly when a point lands — which is what lets a chart call
+ * changes exactly when a point lands, which is what lets a chart call
  * setData only when there is new data.
  */
 export function useTimedSeries(
@@ -191,8 +191,8 @@ export function useSeries(
   seed?: SeriesSeed,
 ): (number | undefined)[] {
   const series = useRef<(number | undefined)[]>([])
-  // Keyed on the sample's timestamp so React's strict-mode double render — or
-  // a re-render for an unrelated prop — does not record the same sample twice.
+  // Keyed on the sample's timestamp so React's strict-mode double render (or
+  // a re-render for an unrelated prop) does not record the same sample twice.
   const lastAt = useRef<string>('')
   const seeded = useRef(false)
 
@@ -216,7 +216,7 @@ export function useSeries(
   }, [value, at])
 
   // Read during render on purpose: the consumer re-renders because the sample
-  // that grew the series also changed its props, so the value is never stale —
+  // that grew the series also changed its props, so the value is never stale;
   // and state here would re-render every consumer a second time per sample.
   // eslint-disable-next-line react-hooks/refs
   return series.current

@@ -43,7 +43,7 @@ func TestPlanSwitchesToWildcardsPastTheThreshold(t *testing.T) {
 	plan := acme.PlanRequests(exposures,
 		acme.PlanOptions{BaseDomain: "apps.example.com", Wildcards: true})
 
-	// Two projects, two certificates — instead of 25 that would spend half a
+	// Two projects, two certificates: instead of 25 that would spend half a
 	// week's Let's Encrypt allowance on one deploy.
 	if plan.Wildcard != 2 || plan.PerService != 0 {
 		t.Fatalf("plan = %+v, want two wildcards", plan)

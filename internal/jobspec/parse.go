@@ -14,20 +14,20 @@ import (
 
 // Options configures parsing.
 type Options struct {
-	// Vars are caller-supplied ${VAR} substitutions — a pipeline's checkout
+	// Vars are caller-supplied ${VAR} substitutions: a pipeline's checkout
 	// values and built-ins such as GIT_SHA_SHORT (R2). Highest precedence:
 	// they win over the spec's own variables block and the node's stanza.
 	Vars map[string]string
 	// NodeVars are the node's `variables { }` stanza from /etc/kanea/kanea.hcl
-	// (R30, v1.63) — the lowest-precedence source: defaults the spec's own
+	// (R30, v1.63); the lowest-precedence source: defaults the spec's own
 	// variables block specializes and Vars overrides. Client-side callers fill
 	// this from GET /v1/vars; server-side callers from the loaded nodeconfig.
 	NodeVars map[string]string
 	// BaseDomain is the server's `base_domain` (§15.1). An expose block that
 	// omits `domains` gets <service>.<project>.<base_domain> (§7.2).
 	//
-	// Optional: a spec is parseable without it — `kanea plan` run against a file
-	// alone has no server config to read — and the auto-FQDN is then left for
+	// Optional: a spec is parseable without it (`kanea plan` run against a file
+	// alone has no server config to read) and the auto-FQDN is then left for
 	// the agent to fill in. What it costs is the R16 collision check between a
 	// generated domain and an explicitly declared one, which is only possible
 	// when the generated name is known.
@@ -51,7 +51,7 @@ type hclRoot struct {
 	Storages  []hclStorage  `hcl:"storage,block"`
 	// Variables is the shared-variables block (R30). Its attribute names are
 	// the spec author's to choose, so the body is captured raw and evaluated
-	// by specVariables (variables.go) *before* this struct is decoded — the
+	// by specVariables (variables.go) *before* this struct is decoded: the
 	// field exists so the schema owns the block rather than the remain
 	// catch-all swallowing it.
 	Variables []hclVariables `hcl:"variables,block"`
@@ -117,7 +117,7 @@ type hclTelegram struct {
 
 type hclWebhook struct {
 	URL string `hcl:"url"`
-	// SecretRef signs the payload. Optional — a receiver that authenticates by
+	// SecretRef signs the payload. Optional: a receiver that authenticates by
 	// URL alone is legitimate.
 	SecretRef string `hcl:"secret_ref,optional"`
 }
@@ -202,7 +202,7 @@ type hclResources struct {
 // There is deliberately no `name` field. Resolving one means reading
 // /etc/passwd out of the container's own rootfs, which would let a
 // container-controlled file decide which uid the control plane runs a process
-// as — the same thing `kanea exec --user` already refuses. A name is also not
+// as: the same thing `kanea exec --user` already refuses. A name is also not
 // stable across an image rebuild, so under R19 it would quietly come to mean a
 // different uid than the one that was reviewed.
 //
@@ -281,7 +281,7 @@ type hclExpose struct {
 	// Auth is R27 (v1.40): request authentication, every field a reference.
 	Auth *hclAuth `hcl:"auth,block"`
 	// Protocol is R28 (v1.41): how the edge dials the upstream. Deliberately
-	// absent from hclTrigger — wasi-http is HTTP/1.1, and the missing field is
+	// absent from hclTrigger: wasi-http is HTTP/1.1, and the missing field is
 	// the refusal (R25's pattern).
 	Protocol string    `hcl:"protocol,optional"`
 	DefRange hcl.Range `hcl:",def_range"`
@@ -341,7 +341,7 @@ type hclVolume struct {
 	// to 0700; declared, they override. Pointers for the same reason hclUser
 	// uses them: `uid = 0` is a legitimate request for root.
 	//
-	// Mode is a string because HCL has no octal literal — `mode = 0700` would
+	// Mode is a string because HCL has no octal literal: `mode = 0700` would
 	// parse as decimal 700, which is 0o1274 and not what anyone means.
 	UID  *int    `hcl:"uid,optional"`
 	GID  *int    `hcl:"gid,optional"`
@@ -392,7 +392,7 @@ func ParseFiles(opts Options, paths ...string) (*Spec, hcl.Diagnostics) {
 	files := make([]*hcl.File, 0, len(paths))
 
 	for _, path := range paths {
-		src, err := os.ReadFile(path) // #nosec G304 — operator-supplied spec path
+		src, err := os.ReadFile(path) // #nosec G304; operator-supplied spec path
 		if err != nil {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
@@ -434,7 +434,7 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 
 	body := hcl.MergeFiles(files)
 
-	// Pass 0 — the spec's own variables blocks (R30), evaluated before the
+	// Pass 0: the spec's own variables blocks (R30), evaluated before the
 	// structural decode so their values are in scope for it. From here on
 	// opts.Vars is the one merged view (node < spec < caller) both passes
 	// evaluate against.
@@ -445,7 +445,7 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 	}
 	opts.Vars = overlayVars(opts.NodeVars, specVars, opts.Vars)
 
-	// Pass 1 — structure. Only variables are in scope, so a ${service.*}
+	// Pass 1: structure. Only variables are in scope, so a ${service.*}
 	// reference stays an unevaluated expression (Env is typed hcl.Expression).
 	var root hclRoot
 	structDiags := gohcl.DecodeBody(body, varContext(opts.Vars), &root)
@@ -477,8 +477,8 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 			spec.Services = append(spec.Services, svc)
 		}
 	}
-	// Functions lower to services here (R25), so everything downstream — the
-	// duplicate check, R8, R16, the dependency graph — sees one kind.
+	// Functions lower to services here (R25), so everything downstream (the
+	// duplicate check, R8, R16, the dependency graph) sees one kind.
 	for i := range root.Functions {
 		svc, fnDiags := convertFunction(&root.Functions[i])
 		diags = append(diags, fnDiags...)
@@ -495,7 +495,7 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 	// is spec-level and a service does not have.
 	resolveVolumeOwnership(spec)
 
-	// Pass 2 — evaluate env with a context that knows every service's DNS name
+	// Pass 2: evaluate env with a context that knows every service's DNS name
 	// and ports, and record the reference edges while doing it (R9, R10).
 	diags = append(diags, resolveEnv(spec, &root, opts)...)
 	if diags.HasErrors() {
@@ -515,12 +515,12 @@ func varContext(vars map[string]string) *hcl.EvalContext {
 	// The build-time built-ins resolve to themselves when nobody supplied them.
 	//
 	// R2 lists GIT_SHA_SHORT among the built-in variables, but the value only
-	// exists once a commit has been checked out — which is the pipeline runner,
+	// exists once a commit has been checked out, which is the pipeline runner,
 	// long after the file is parsed. Without this, the PRD's own §6.1 example
 	// (`tag = "${GIT_SHA_SHORT}"`) fails to parse everywhere: `kanea plan`,
 	// `kanea run` and every GitOps sync. Passing the reference through unchanged
-	// leaves it for gitops.ExpandTag, and a caller that *does* know the value —
-	// `-var-file`, or a sync that has the checkout — still overrides it here.
+	// leaves it for gitops.ExpandTag, and a caller that *does* know the value
+	// (`-var-file`, or a sync that has the checkout) still overrides it here.
 	for _, name := range BuildTimeVars {
 		ctx.Variables[name] = cty.StringVal("${" + name + "}")
 	}
@@ -643,8 +643,8 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 	for i := range s.Exposes {
 		out.Exposes = append(out.Exposes, convertExpose(&s.Exposes[i]))
 	}
-	// Expose remains the first block (v1.50): every single-route reader —
-	// functions, the R28 publish check, the CLI — keeps meaning what it meant.
+	// Expose remains the first block (v1.50): every single-route reader
+	// (functions, the R28 publish check, the CLI) keeps meaning what it meant.
 	if len(out.Exposes) > 0 {
 		out.Expose = out.Exposes[0]
 	}
@@ -709,12 +709,12 @@ func convertTask(t *hclTask) *Task {
 		RegistryAuthRef: t.RegistryAuthRef,
 		Env:             map[string]string{},
 		// Resources stay zero unless declared: zero means unbounded (R11,
-		// v1.58) — the alloc gets no per-alloc quota and is bounded by the
+		// v1.58); the alloc gets no per-alloc quota and is bounded by the
 		// workload parent cgroup. No default is filled in, here or anywhere.
 	}
 	if t.User != nil {
 		// Carried as written. Range checking is validateUser's job, and it runs
-		// against the converted spec — narrowing here would turn a value the
+		// against the converted spec: narrowing here would turn a value the
 		// operator has to be told about into one that silently became legal.
 		out.User = &User{Groups: t.User.Groups, DefRange: t.User.DefRange}
 		if t.User.UID != nil {
@@ -839,7 +839,7 @@ func sortUnique(in []string) []string {
 //
 // It exists for GitOps (§10.1): a sync reads the specs out of the repository
 // object database and never writes them to disk, so there is no path to hand
-// ParseFiles. Keeping them in memory is the point — a checkout materialised
+// ParseFiles. Keeping them in memory is the point: a checkout materialised
 // under a temp directory is one more place a spec, and whatever a spec quotes,
 // can be read from.
 //

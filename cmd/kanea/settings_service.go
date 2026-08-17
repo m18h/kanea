@@ -2,8 +2,8 @@ package main
 
 // The settings service (PRD v1.46): the daemon's implementation of the API's
 // SettingsService. It lives here because this is where records become running
-// machinery — sinks are assembled beside the flags they supersede, channels
-// are built by the same RoutesFor every other path uses — and the API's job
+// machinery: sinks are assembled beside the flags they supersede, channels
+// are built by the same RoutesFor every other path uses, and the API's job
 // stays deciding who may ask.
 
 import (
@@ -83,7 +83,7 @@ func (s *settingsService) flagsBackupRecord() settings.BackupSettings {
 	return rec
 }
 
-// PutBackup validates, probes, commits and swaps — in that order (v1.46), so a
+// PutBackup validates, probes, commits and swaps: in that order (v1.46), so a
 // bad destination leaves working replication untouched.
 func (s *settingsService) PutBackup(
 	ctx context.Context, rec settings.BackupSettings,
@@ -104,7 +104,7 @@ func (s *settingsService) PutBackup(
 	return s.Backup(ctx)
 }
 
-// ResetBackup deletes the record and reverts to the flags — or to
+// ResetBackup deletes the record and reverts to the flags, or to
 // unconfigured, when the unit never named a destination.
 func (s *settingsService) ResetBackup(ctx context.Context) (api.BackupSettingsView, error) {
 	var svc *backupService
@@ -137,8 +137,8 @@ func (s *settingsService) Notifications(ctx context.Context) (api.NotificationSe
 	return api.NotificationSettingsView{Source: sourceStore, Settings: &rec}, nil
 }
 
-// PutNotifications validates by building the channels — a bad reference or a
-// refused URL is a 400 now, not a skipped route later — then commits and
+// PutNotifications validates by building the channels (a bad reference or a
+// refused URL is a 400 now, not a skipped route later) then commits and
 // pulses the reloader.
 func (s *settingsService) PutNotifications(
 	ctx context.Context, rec settings.NotificationSettings,
@@ -181,7 +181,7 @@ func (s *settingsService) ProjectNotifications(
 }
 
 // PutProjectNotifications writes the same field on the same project record the
-// HCL apply and the GitOps sync write — three writers, one config — and warns
+// HCL apply and the GitOps sync write (three writers, one config) and warns
 // when the project is git-managed, because the next sync wins.
 func (s *settingsService) PutProjectNotifications(
 	ctx context.Context, project string, n *jobspec.Notifications,
@@ -224,7 +224,7 @@ func projectNotificationsView(cfg gitops.Config) api.ProjectNotificationsView {
 	}
 	if view.GitManaged {
 		view.Warning = "this project syncs from git; the notifications block in its " +
-			"spec file wins on the next sync — make the change there to keep it"
+			"spec file wins on the next sync; make the change there to keep it"
 	}
 	return view
 }

@@ -19,7 +19,7 @@ import (
 // objects in a map, ListObjectsV2 with pagination, and the error shapes.
 //
 // These tests establish that the sink drives the protocol correctly. They do
-// not establish interoperability with any particular implementation — only a
+// not establish interoperability with any particular implementation: only a
 // real endpoint does that, and the signature is the part where a real endpoint
 // would disagree.
 type fakeS3 struct {
@@ -247,7 +247,7 @@ func TestS3ListPaginates(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	if len(objects) != 7 {
-		t.Fatalf("listed %d objects, want 7 — pagination stopped early", len(objects))
+		t.Fatalf("listed %d objects, want 7; pagination stopped early", len(objects))
 	}
 }
 
@@ -327,7 +327,7 @@ func TestSignatureHasTheRequiredShape(t *testing.T) {
 
 func TestSignatureDependsOnTheRequest(t *testing.T) {
 	// A signature that did not change with the key, the region or the time
-	// would be a signature that is not signing anything — the failure mode a
+	// would be a signature that is not signing anything: the failure mode a
 	// hand-written implementation is most likely to have and least likely to
 	// notice, because a fake server accepts it either way.
 	base := signatureOf(t, signedRequest(t))
@@ -393,7 +393,7 @@ func TestS3RefusesAnObjectAboveTheSingleUploadLimit(t *testing.T) {
 func TestS3PutDoesNotCloseTheCallersReader(t *testing.T) {
 	// The regression the fake server could not catch on its own. net/http uses
 	// an io.ReadCloser body directly rather than wrapping it, and the transport
-	// closes what it was given — so an *os.File passed here would be closed out
+	// closes what it was given, so an *os.File passed here would be closed out
 	// from under the caller. It surfaced as an upload that succeeded and an
 	// archive whose manifest was never written: invisible, every time.
 	//
@@ -407,7 +407,7 @@ func TestS3PutDoesNotCloseTheCallersReader(t *testing.T) {
 	if err := os.WriteFile(path, []byte("archive bytes"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	file, err := os.Open(path) // #nosec G304 — a test path
+	file, err := os.Open(path) // #nosec G304; a test path
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}

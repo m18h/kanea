@@ -73,8 +73,8 @@ func parseCredentials(raw []byte) (credentials, error) {
 
 // normalizeAuthHost reduces a config.json key to a bare host.
 //
-// The keys in the wild are inconsistent — `https://index.docker.io/v1/`,
-// `ghcr.io`, `registry.example.com:5000/v2/` — and comparing them literally
+// The keys in the wild are inconsistent (`https://index.docker.io/v1/`,
+// `ghcr.io`, `registry.example.com:5000/v2/`) and comparing them literally
 // against what the resolver asks for finds nothing most of the time.
 func normalizeAuthHost(host string) string {
 	host = strings.TrimPrefix(host, "https://")

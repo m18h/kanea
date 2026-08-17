@@ -8,7 +8,7 @@ export interface DialogProps {
   onClose: () => void
   title?: React.ReactNode
   /** dismiss on backdrop click and Escape; the terminal passes false so a
-   * stray click cannot kill a shell — only the X button closes it. */
+   * stray click cannot kill a shell; only the X button closes it. */
   dismissable?: boolean
   /** className sizes the panel, e.g. 'w-[90vw] max-w-4xl'. */
   className?: string | undefined
@@ -17,8 +17,8 @@ export interface DialogProps {
 
 /**
  * Dialog is the one modal primitive: portal, backdrop, focus capture and
- * return, body scroll lock. Deliberately small — no stacking, no nesting,
- * no animation machinery — because one dialog at a time is all this app has
+ * return, body scroll lock. Deliberately small (no stacking, no nesting,
+ * no animation machinery) because one dialog at a time is all this app has
  * a use for.
  */
 export function Dialog({ open, onClose, title, dismissable = true, className, children }: DialogProps) {

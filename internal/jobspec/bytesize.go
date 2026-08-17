@@ -11,7 +11,7 @@ import (
 // A string rather than a number, for the reason `mode` is one: HCL has no size
 // literal, and `size = 10GiB` is not expressible. Unlike R11's `memory`, which
 // is a bare count of MiB and always was, storage spans MiB to TiB in ordinary
-// use — a bare integer there would be a unit nobody could infer from the value.
+// use: a bare integer there would be a unit nobody could infer from the value.
 
 // byteUnits are the suffixes ParseByteSize accepts, longest first so "GiB" is
 // matched before "G".

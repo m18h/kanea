@@ -1,6 +1,6 @@
 package api_test
 
-// Directory-login routes and — most importantly — the v1.47 CSRF allowlist.
+// Directory-login routes and (most importantly) the v1.47 CSRF allowlist.
 // The directory protocol is internal/auth's problem; a stub verifier stands in
 // (the stubProvider pattern), and what is under test is what the routes do
 // with each answer.
@@ -41,7 +41,7 @@ func (s *stubVerifier) Verify(_ context.Context, name, _ string) (string, auth.R
 }
 
 // withLDAP rebuilds the harness's auth store over the same backing Store with
-// a directory verifier wired in, and tells the server the directory's name —
+// a directory verifier wired in, and tells the server the directory's name:
 // which is how a real kanead is assembled (cmd/kanea/ldap.go).
 func withLDAP(t *testing.T, v auth.PasswordVerifier) func(*api.ServerConfig) {
 	return func(cfg *api.ServerConfig) {
@@ -61,8 +61,8 @@ func withLDAP(t *testing.T, v auth.PasswordVerifier) func(*api.ServerConfig) {
 // TestCookieMutationViaAnExternalLoginStillNeedsCSRF is the v1.47 regression
 // test: checkCSRF skips by an allowlist (token, socket), never by "unless the
 // Via is session". An "ldap" or "oidc" session is still a browser cookie a
-// cross-site request can ride, and the old predicate — skip unless
-// MethodSession — would have silently exempted both.
+// cross-site request can ride, and the old predicate (skip unless
+// MethodSession) would have silently exempted both.
 func TestCookieMutationViaAnExternalLoginStillNeedsCSRF(t *testing.T) {
 	h := newAuthHarness(t)
 	ctx := context.Background()
@@ -142,7 +142,7 @@ func TestSessionRouteHandsExternalLoginsTheirCSRFToken(t *testing.T) {
 				t.Errorf("via = %q, want %q", out.Via, method)
 			}
 			if out.CSRF != session.CSRF {
-				t.Errorf("CSRF = %q, want the session's own token — a cookie client has nowhere else to get one", out.CSRF)
+				t.Errorf("CSRF = %q, want the session's own token; a cookie client has nowhere else to get one", out.CSRF)
 			}
 		})
 	}

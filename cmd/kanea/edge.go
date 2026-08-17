@@ -19,7 +19,7 @@ import (
 // runEdge is kanea-edge: the public ingress proxy.
 //
 // It is a separate process from kanead by design (PRD §5.2.6), and everything
-// about how it starts follows from that. It opens no database — bbolt is
+// about how it starts follows from that. It opens no database: bbolt is
 // single-writer, and the edge holding a handle would mean a control-plane
 // restart could not proceed. It reads one file kanead publishes. It needs no
 // containerd, no datapath, no state directory. A kanead that is down,
@@ -86,7 +86,7 @@ func runEdge(args []string) error {
 	if status == statusOff {
 		status = ""
 	}
-	// Without TLS the edge still serves :80 — a node with no certificate yet
+	// Without TLS the edge still serves :80: a node with no certificate yet
 	// must be reachable, or the HTTP-01 validation that would produce one
 	// cannot complete (PRD §7.3).
 	tlsAddr := *httpsAddr

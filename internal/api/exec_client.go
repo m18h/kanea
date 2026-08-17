@@ -48,7 +48,7 @@ func (c *Client) Exec(ctx context.Context, opts ExecOptions) (_ uint32, err erro
 
 	// Raw mode before the socket opens, restored on every path out. A terminal
 	// left in raw mode after a session is a shell that no longer echoes what
-	// the operator types — recoverable with `reset`, and alarming until they
+	// the operator types: recoverable with `reset`, and alarming until they
 	// remember that.
 	var restore func()
 	if opts.TTY {
@@ -105,7 +105,7 @@ func (c *Client) dialExec(ctx context.Context, opts ExecOptions) (*websocket.Con
 	})
 	if err != nil {
 		if resp != nil {
-			// The daemon refused before upgrading — 401, 403, 503 — and its body
+			// The daemon refused before upgrading (401, 403, 503) and its body
 			// says why. That message is far more useful than "bad handshake".
 			refusal := decodeError(resp)
 			return nil, errors.Join(refusal, resp.Body.Close())
@@ -252,12 +252,12 @@ func clampDimension(v int) uint16 {
 //
 // Raw mode is what makes a remote shell behave like a shell: without it the
 // local terminal buffers a line before sending it, echoes it locally, and eats
-// Ctrl-C — so tab completion does nothing, arrow keys print escape sequences,
+// Ctrl-C, so tab completion does nothing, arrow keys print escape sequences,
 // and interrupting the remote process is impossible.
 func enterRawMode(stdin io.Reader) (func(), error) {
 	fd, ok := terminalFD(stdin)
 	if !ok {
-		// Not a terminal — a pipe, or a test. Asking for a TTY is then a
+		// Not a terminal: a pipe, or a test. Asking for a TTY is then a
 		// request that cannot be honoured locally, and pretending otherwise
 		// would corrupt whatever is actually on the other end.
 		return func() {}, nil

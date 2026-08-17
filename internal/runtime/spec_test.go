@@ -151,7 +151,7 @@ func TestDeclaredResourceLimitsAreSet(t *testing.T) {
 	}
 }
 
-// R11 (v1.58): a zero limit is unbounded — no memory.max, no cpu.max — but the
+// R11 (v1.58): a zero limit is unbounded (no memory.max, no cpu.max) but the
 // pids cap stays on every alloc, because a fork bomb is not a resource to
 // serve to capacity.
 func TestUnboundedResourcesSetNoQuotaButKeepThePidsCap(t *testing.T) {
@@ -459,7 +459,7 @@ func TestValidate(t *testing.T) {
 		// runc refuses an unknown capability name at task create, failing every
 		// alloc of the service with an error nobody can attribute. The spec-level
 		// "none" token must be resolved by the reconciler's projection before the
-		// spec reaches this driver — a leaked one is a caller bug, refused here
+		// spec reaches this driver: a leaked one is a caller bug, refused here
 		// by name (R13, v1.56).
 		{"granted capability", func(a *AllocSpec) { a.Capabilities = []string{"CAP_CHOWN"} }, ""},
 		{
@@ -513,7 +513,7 @@ func TestRuntimeOptsSelectTheWasmtimeShim(t *testing.T) {
 	}
 }
 
-// An empty Runtime must produce NO option at all — not the runc name spelled
+// An empty Runtime must produce NO option at all, not the runc name spelled
 // out. The default is containerd's to own, and every pre-v1.39 alloc relies on
 // that meaning staying put.
 func TestNoRuntimeMeansContainerdsDefault(t *testing.T) {
@@ -606,7 +606,7 @@ func TestRequestedCapabilitiesAreGranted(t *testing.T) {
 func TestNoRequestedCapabilitiesStillDropsAll(t *testing.T) {
 	// The DRIVER's default must not change: an empty list means no
 	// capabilities, full stop. The R13 baseline is the reconciler's
-	// projection (effectiveCapabilities) — by the time a spec reaches this
+	// projection (effectiveCapabilities): by the time a spec reaches this
 	// package the union has already happened, so an empty list here is a
 	// service that opted out, or a function.
 	s := buildSpec(t, validAlloc())
@@ -652,7 +652,7 @@ func TestUserOverridesTheImage(t *testing.T) {
 	}
 
 	if s.Process.User.UID != 999 || s.Process.User.GID != 998 {
-		t.Errorf("user = %d:%d, want 999:998 — the image's own USER won",
+		t.Errorf("user = %d:%d, want 999:998: the image's own USER won",
 			s.Process.User.UID, s.Process.User.GID)
 	}
 	if len(s.Process.User.AdditionalGids) != 2 ||

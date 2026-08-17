@@ -172,7 +172,7 @@ func TestCrashesReachTheBreaker(t *testing.T) {
 	h.setDesired(t, d)
 	h.reconcile(t)
 
-	// Three allocs crash at once — the shape of a node-wide fault rather than
+	// Three allocs crash at once: the shape of a node-wide fault rather than
 	// one bad service, which is what the breaker is for.
 	for i := range 3 {
 		h.driver.crash(reconciler.AllocID("shop", "web", i), 137, h.now)
@@ -240,7 +240,7 @@ func TestRestoreReopensWithinCooldown(t *testing.T) {
 	}
 
 	// The remaining cooldown is the original one, measured from the original
-	// trip — not restarted at the restore.
+	// trip, not restarted at the restore.
 	c.advance(3*time.Minute + time.Second)
 	if allowed, _ := b.Allow(); !allowed {
 		t.Error("still open after the original cooldown expired")
@@ -262,7 +262,7 @@ func TestRestoreIgnoresAnExpiredTrip(t *testing.T) {
 
 func TestRestoredFailuresCannotCauseASecondTrip(t *testing.T) {
 	// The restored samples are stamped at the trip, so once the cooldown
-	// expires they are long out of the window — one fresh failure on a
+	// expires they are long out of the window: one fresh failure on a
 	// recovered node must not re-trip on inherited history.
 	b, c := newBreaker(t)
 	b.Restore(c.at.Add(-time.Minute), 1, reconciler.DefaultBreakerThreshold)
@@ -274,7 +274,7 @@ func TestRestoredFailuresCannotCauseASecondTrip(t *testing.T) {
 }
 
 func TestPersistFiresOnTransitionsOnly(t *testing.T) {
-	// The record is written on trip and on reset, never per failure sample —
+	// The record is written on trip and on reset, never per failure sample:
 	// a per-failure write would be a metric stream into the Store.
 	var calls []time.Time
 	b, c := newBreaker(t, func(cfg *reconciler.BreakerConfig) {

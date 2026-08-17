@@ -14,7 +14,7 @@ import (
 
 // awssmProvider fetches from AWS Secrets Manager: one SigV4-signed
 // `GetSecretValue` per distinct secret id, sharing the signer the backup S3
-// sink uses. Static access keys only — instance roles mean the IMDS, which
+// sink uses. Static access keys only: instance roles mean the IMDS, which
 // the platform's egress posture treats as hostile (§5.2.13, §14 A10).
 type awssmProvider struct {
 	name      string

@@ -59,7 +59,7 @@ func buildTarGz(t *testing.T, entries []tarEntry) []byte {
 }
 
 // This is the test that matters. Every path in an archive comes from somebody
-// else's build and is used to write a file that runs as root — the same shape
+// else's build and is used to write a file that runs as root: the same shape
 // as GO-2026-5597, the go-billy traversal AGENTS.md pins a floor for.
 func TestExtractRefusesEscapingMembers(t *testing.T) {
 	tests := []struct {
@@ -122,8 +122,8 @@ func TestExtractIgnoresNonRegularMembers(t *testing.T) {
 	}
 }
 
-// A destination that is itself a symlink is ordinary — /usr/local is one on
-// some distributions — so the check has to resolve it rather than refuse it.
+// A destination that is itself a symlink is ordinary (/usr/local is one on
+// some distributions) so the check has to resolve it rather than refuse it.
 func TestExtractFollowsASymlinkedDestination(t *testing.T) {
 	base := t.TempDir()
 	target := filepath.Join(base, "real")
@@ -272,7 +272,7 @@ func TestResolveUnderRejectsAPrefixSibling(t *testing.T) {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// "kanea-evil" shares a string prefix with "kanea" but is not inside it —
+	// "kanea-evil" shares a string prefix with "kanea" but is not inside it:
 	// the case strings.HasPrefix gets wrong.
 	if _, err := resolveUnder(dest, "../kanea-evil/x"); err == nil {
 		t.Fatal("resolveUnder accepted a prefix-sharing sibling directory")

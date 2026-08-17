@@ -2,7 +2,7 @@ package main
 
 // The end of `kanea init` (PRD v1.45): start the daemon, create the first
 // admin, and summarise what was built. §13.1 has promised since v1.18 that
-// init creates the first account "through the same API everything else uses —
+// init creates the first account "through the same API everything else uses:
 // over the local unix socket"; this is that promise kept, instead of printed.
 
 import (
@@ -27,7 +27,7 @@ import (
 	"github.com/m18h/kanea/internal/nodeconfig"
 )
 
-// adminAPI is the slice of the API client the bootstrap needs — a seam so the
+// adminAPI is the slice of the API client the bootstrap needs: a seam so the
 // flow is testable without a daemon on the other end of a socket.
 type adminAPI interface {
 	Health(ctx context.Context) (api.Health, error)
@@ -36,8 +36,8 @@ type adminAPI interface {
 }
 
 // systemdAvailable reports whether this host can be asked to start units at
-// all. Not a check that systemd is pid 1 — LookPath is as far as a CLI can
-// honestly see — but it cleanly excludes macOS builds and containers.
+// all. Not a check that systemd is pid 1 (LookPath is as far as a CLI can
+// honestly see) but it cleanly excludes macOS builds and containers.
 func systemdAvailable() bool {
 	if runtime.GOOS != "linux" {
 		return false
@@ -57,7 +57,7 @@ func systemctl(ctx context.Context, timeout time.Duration, args ...string) error
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "systemctl", args...) // #nosec G204 — every call site passes literals
+	cmd := exec.CommandContext(ctx, "systemctl", args...) // #nosec G204; every call site passes literals
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("systemctl %s: %w", strings.Join(args, " "), err)
@@ -98,7 +98,7 @@ func resolveListen(o *out, reader *bufio.Reader, explicit bool, value, cert, key
 	}
 	if public && cert == "" {
 		// The same refusal listenNetwork makes at startup (§13.1, §14 A05),
-		// moved in front of whoever typed the address — a unit that fails on
+		// moved in front of whoever typed the address: a unit that fails on
 		// its first boot is a refusal in a journal nobody is watching yet.
 		return "", fmt.Errorf("%s is beyond loopback and would carry credentials in clear text; "+
 			"pass --listen-cert/--listen-key, bind loopback, or answer none", addr)
@@ -109,7 +109,7 @@ func resolveListen(o *out, reader *bufio.Reader, explicit bool, value, cert, key
 // listenFromServerConfig decides whether kanea.hcl owns the API listener for
 // this init run (PRD §15.1, v1.61): a bind.api_addr with no explicit --listen.
 // When it does, init skips the prompt and renders no listen flags into the
-// unit — a unit that repeated the file's answer would turn the file off. The
+// unit: a unit that repeated the file's answer would turn the file off. The
 // beyond-loopback refusal is resolveListen's, made at the file's coordinates:
 // a unit that fails on its first boot is a refusal in a journal nobody is
 // watching yet.
@@ -122,7 +122,7 @@ func listenFromServerConfig(cfg *nodeconfig.Config, explicitListen bool) (addr s
 		return "", false, fmt.Errorf("%s: bind.api_addr: %w", cfg.Path, err)
 	}
 	// A declared api_tls mode is a TLS story (or, for plaintext, a typed
-	// decision) — parse already refused its contradictions. Only the unset
+	// decision); parse already refused its contradictions. Only the unset
 	// mode with no pair meets the beyond-loopback refusal, exactly as the
 	// bare flags would.
 	if public && cfg.Bind.APITLS == "" && cfg.Bind.APICert == "" {
@@ -143,11 +143,11 @@ func printManualNext(o *out) {
 	o.println("  2. sudo kanea user add --role admin <name>   # the first account")
 	o.println("  3. kanea run <spec.hcl>                      # deploy something")
 	o.println()
-	o.println("Configure a backup destination before you need one — see docs/DR_RUNBOOK.md.")
+	o.println("Configure a backup destination before you need one: see docs/DR_RUNBOOK.md.")
 }
 
-// bootstrapOptions is everything bootstrapDaemon needs, with the two effects —
-// the API and systemctl — injected so the flow is testable.
+// bootstrapOptions is everything bootstrapDaemon needs, with the two effects
+// (the API and systemctl) injected so the flow is testable.
 type bootstrapOptions struct {
 	listen                                string // the effective listen address; "" is socket-only
 	adminUser                             string // --admin-user; empty means prompt
@@ -176,13 +176,13 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 	o.println("  waiting for the control plane…")
 	health, err := waitForDaemon(ctx, opts.client, opts.timeout)
 	if err != nil {
-		o.println("  kanead did not answer — check `journalctl -u kanead`.")
+		o.println("  kanead did not answer; check `journalctl -u kanead`.")
 		printManualNext(o)
 		return err
 	}
 
 	// The first admin, idempotently: an account that exists is skipped, never
-	// re-prompted — PutUser is an upsert, and a re-run of init must not
+	// re-prompted; PutUser is an upsert, and a re-run of init must not
 	// replace a password nobody asked it to.
 	users, err := opts.client.Users(ctx)
 	if err != nil {
@@ -192,7 +192,7 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 	created := false
 	adminName := ""
 	if len(users) > 0 {
-		o.println("An account already exists — skipping the first-admin step.")
+		o.println("An account already exists; skipping the first-admin step.")
 	} else {
 		adminName = opts.adminUser
 		if adminName == "" {
@@ -229,7 +229,7 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 	// §13.1 refuses a network listener on a daemon that booted with no
 	// account, and its refusal message prescribes exactly this: create the
 	// account, then restart. The health.Listen check also covers a re-run
-	// whose only change was --listen — `enable --now` does not re-exec a
+	// whose only change was --listen: `enable --now` does not re-exec a
 	// running unit, so without a restart the new address would never bind.
 	if opts.listen != "" && (created || health.Listen == "") {
 		o.println("Restarting kanead so the network listener opens…")
@@ -245,7 +245,7 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 		if health.Listen == "" {
 			// A warning, not a failure: the node works over the socket, and
 			// the journal has the listener's own refusal with its reason.
-			o.println("Warning: the network listener did not open — check `journalctl -u kanead`.")
+			o.println("Warning: the network listener did not open; check `journalctl -u kanead`.")
 			o.println("The API still answers on the local socket.")
 		}
 	}
@@ -261,7 +261,7 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 	return o.Err()
 }
 
-// dashboardFor derives the summary's URL from what the daemon actually bound —
+// dashboardFor derives the summary's URL from what the daemon actually bound:
 // never from what init asked for, because those differing is the failure the
 // summary must not paper over.
 func dashboardFor(health api.Health) string {
@@ -312,7 +312,7 @@ func initSummary(o *out, s summaryInfo) {
 	case s.dashboard != "":
 		o.printf("  Dashboard      %s\n", s.dashboard)
 	default:
-		o.printf("  Dashboard      not exposed — the API answers only on %s\n", api.DefaultSocket)
+		o.printf("  Dashboard      not exposed; the API answers only on %s\n", api.DefaultSocket)
 		o.println("                 (re-run kanead with --listen to serve it)")
 	}
 	if s.dnsAddr != "" {
@@ -333,5 +333,5 @@ func initSummary(o *out, s summaryInfo) {
 	o.println()
 	o.println("Deploy something:  kanea run <spec.hcl>")
 	o.println("CLI without sudo:  sudo usermod -aG kanea <user>   # root-equivalent; log in again")
-	o.println("Configure a backup destination before you need one — see docs/DR_RUNBOOK.md.")
+	o.println("Configure a backup destination before you need one; see docs/DR_RUNBOOK.md.")
 }

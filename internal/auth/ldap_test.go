@@ -1,8 +1,8 @@
 package auth
 
 // LDAP tests (PRD v1.47). These live in the package's internal test package,
-// unlike auth_test.go: roleFor is deliberately unexported — nothing outside
-// Verify needs it — and testing the mapping directly beats simulating a whole
+// unlike auth_test.go: roleFor is deliberately unexported (nothing outside
+// Verify needs it) and testing the mapping directly beats simulating a whole
 // directory for every row of the table.
 
 import (
@@ -130,7 +130,7 @@ func TestNewLDAPRefusesWhatItCannotRun(t *testing.T) {
 		},
 		{
 			// Construction accepts ldap:// because Verify forces StartTLS on
-			// it — the wire is still TLS, just negotiated after connect.
+			// it; the wire is still TLS, just negotiated after connect.
 			name:   "ldap is accepted with StartTLS forced later",
 			mutate: func(c *LDAPConfig) { c.URL = "ldap://dc.example.test:389" },
 		},
@@ -185,7 +185,7 @@ func TestRoleForIsAdminFirstAndCaseInsensitive(t *testing.T) {
 		{
 			// Admin first even when the viewer group comes earlier in the
 			// membership: checking viewer first would demote every admin who
-			// is also in a viewer group — which is most of them.
+			// is also in a viewer group, which is most of them.
 			name: "membership in both lists is admin",
 			groups: []string{
 				"cn=viewers,ou=groups,dc=example,dc=test",
@@ -230,7 +230,7 @@ func TestRoleForIsAdminFirstAndCaseInsensitive(t *testing.T) {
 // blackholeAddr is an address that accepts a TCP connection and then says
 // nothing: a dial "succeeds" instantly (kernel backlog) and the TLS handshake
 // hangs until the configured timeout. That is what makes the timing assertion
-// below meaningful — against a refused port, even a dial returns instantly.
+// below meaningful: against a refused port, even a dial returns instantly.
 func blackholeAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -259,7 +259,7 @@ func TestVerifyRefusesAnEmptyPasswordBeforeDialing(t *testing.T) {
 	// RFC 4513 §5.1.2: a bind with a DN and an empty password is an
 	// "unauthenticated bind" many servers treat as anonymous success, so an
 	// empty (or whitespace) password must be refused before the network is
-	// touched — a directory's permissiveness must never become a login.
+	// touched; a directory's permissiveness must never become a login.
 	cfg := validLDAPConfig()
 	cfg.URL = "ldaps://" + blackholeAddr(t)
 	cfg.Timeout = 3 * time.Second
@@ -290,7 +290,7 @@ func TestVerifyRefusesAnEmptyPasswordBeforeDialing(t *testing.T) {
 			// The blackhole makes a dial cost the full 3 s handshake timeout;
 			// returning well inside that proves the network was never touched.
 			if elapsed > 500*time.Millisecond {
-				t.Errorf("Verify took %v — it dialed before refusing", elapsed)
+				t.Errorf("Verify took %v: it dialed before refusing", elapsed)
 			}
 		})
 	}
@@ -329,7 +329,7 @@ func TestFilterEscaping(t *testing.T) {
 	const hostile = `*)(uid=*`
 	escaped := ldap.EscapeFilter(hostile)
 
-	// RFC 4515: `*` → \2a, `)` → \29, `(` → \28 — exactly these, as hex pairs.
+	// RFC 4515: `*` → \2a, `)` → \29, `(` → \28; exactly these, as hex pairs.
 	if escaped != `\2a\29\28uid=\2a` {
 		t.Fatalf("EscapeFilter(%q) = %q, want %q", hostile, escaped, `\2a\29\28uid=\2a`)
 	}

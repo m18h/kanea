@@ -19,7 +19,7 @@ import (
 // PathExec is the debug-shell route (PRD §16.2, §14 A01).
 //
 // The most privileged thing this API does. An exec is a shell inside a
-// workload with the workload's own filesystem, environment and credentials —
+// workload with the workload's own filesystem, environment and credentials:
 // which is why §14 names it specifically as admin-only and audited, and why it
 // is the one route here whose audit entry is written whether or not anything
 // went wrong.
@@ -29,7 +29,7 @@ const PathExec = "/v1/exec"
 //
 // Binary frames carry data, prefixed with one byte naming the stream. Text
 // frames carry control, as JSON. Two frame types rather than one envelope
-// because the data path is the hot one — a shell echoing a build log should not
+// because the data path is the hot one: a shell echoing a build log should not
 // pay for base64 and a JSON parse per keystroke.
 //
 //	client → server   binary: raw stdin bytes (no prefix)
@@ -41,7 +41,7 @@ const PathExec = "/v1/exec"
 //
 // The handshake, for a browser client (PRD v1.64): the WebSocket constructor
 // cannot set X-Kanea-CSRF, so a cookie-authenticated dashboard offers
-// ["kanea.exec.v1", "kanea-csrf.<token>"] as its subprotocols — the token from
+// ["kanea.exec.v1", "kanea-csrf.<token>"] as its subprotocols; the token from
 // GET /v1/auth/session. The server echoes only ExecSubprotocol, never the
 // token entry; a CLI client over the socket offers nothing and nothing is
 // echoed, byte-for-byte the pre-v1.64 handshake.
@@ -52,7 +52,7 @@ const (
 
 // ExecSubprotocol is the negotiable subprotocol name. A browser client must
 // offer it beside its kanea-csrf.<token> entry: the server echoes only this
-// one, so the token never reflects into the response — and a browser whose
+// one, so the token never reflects into the response, and a browser whose
 // offer contains no entry the server echoes fails the connection itself.
 const ExecSubprotocol = "kanea.exec.v1"
 
@@ -68,7 +68,7 @@ type ExecFrame struct {
 // Execer is the slice of the runtime driver the exec route needs.
 //
 // One method. The API can attach a shell to an alloc and can do nothing else to
-// the runtime — it cannot create, start, stop or remove one, because those go
+// the runtime: it cannot create, start, stop or remove one, because those go
 // through the reconciler and a second path to them would be a second scheduler.
 type Execer interface {
 	ExecStream(ctx context.Context, project, id string, opts runtime.ExecOptions) (uint32, error)
@@ -81,7 +81,7 @@ const maxExecStdinFrame = 1 << 20
 // handleExec attaches a shell to an alloc.
 //
 // The audit entry is written by the route wrapper because the policy marks this
-// as mutating — which it is, in the sense that matters: an exec can do anything
+// as mutating, which it is, in the sense that matters: an exec can do anything
 // the workload's user can do, and the trail has to say who opened one, on what,
 // and when.
 func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +121,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		// already run and produced a better error.
 		InsecureSkipVerify: true,
 		// Echo the protocol name to a browser that offered it (the CSRF token
-		// rides Sec-WebSocket-Protocol beside it — see the handshake note
+		// rides Sec-WebSocket-Protocol beside it; see the handshake note
 		// above). The token entry is never selected, so it never reflects.
 		Subprotocols: []string{ExecSubprotocol},
 	})
@@ -140,8 +140,8 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 
 	// The read loop runs for the whole handler, not just for the exec.
 	// Cancelling the context a websocket read is blocked on *closes the
-	// connection* — that is coder/websocket's documented behaviour, because a
-	// half-read frame leaves the stream unusable — so a read loop scoped to the
+	// connection*: that is coder/websocket's documented behaviour, because a
+	// half-read frame leaves the stream unusable, so a read loop scoped to the
 	// exec would tear the socket down the instant the process exited, and the
 	// exit frame below would be written to a dead connection.
 	stdin, stdinWriter := io.Pipe()
@@ -151,7 +151,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	code, err := s.runExec(r.Context(), session, project, alloc, command, q, stdin, resize)
 	// Closed so the driver's stdin copier finishes; the process is already gone.
 	// A pipe close only fails if it is already closed, which the read loop may
-	// have done — either way stdin is shut, which is all this needs.
+	// have done: either way stdin is shut, which is all this needs.
 	if cerr := stdinWriter.Close(); cerr != nil {
 		s.log.Debug("closing exec stdin", "error", cerr)
 	}
@@ -166,7 +166,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	// remote status comes from, so the handler waits for the client to hang up
 	// before returning. Without this the handler returns, net/http tears the
 	// hijacked connection down, and the client sees EOF where the exit code
-	// should have been — intermittently, which is worse than never.
+	// should have been: intermittently, which is worse than never.
 	session.awaitPeer(execDrainTimeout)
 	s.log.Info("exec session closed", "project", project, "alloc", alloc, "exit_code", code)
 }

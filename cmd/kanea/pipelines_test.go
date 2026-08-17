@@ -8,7 +8,7 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// The daemon's own pipeline wiring must construct — not just the gitops
+// The daemon's own pipeline wiring must construct, not just the gitops
 // package's pieces individually. RunnerConfig.WorkDir was required from the
 // day the runner landed and this call site never set it, so kanead with
 // pipelines enabled (the default) refused to start on every real node while

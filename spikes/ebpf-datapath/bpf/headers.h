@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only OR MIT */
 /*
- * headers.h — self-contained minimal UAPI definitions for the spike's BPF
+ * headers.h; self-contained minimal UAPI definitions for the spike's BPF
  * programs. Deliberately no vmlinux.h and no CO-RE: the structs below mirror
  * the *stable UAPI* context layouts (include/uapi/linux/bpf.h) that the
  * verifier's context rewriting is keyed on, so exact field offsets matter
  * and must not be "cleaned up".
  *
- * Little-endian targets only (bpfel) — both target nodes (Debian 11 amd64,
+ * Little-endian targets only (bpfel): both target nodes (Debian 11 amd64,
  * current kernel amd64/arm64) are LE, and build.sh compiles with -target bpf
  * on the node itself.
  */
@@ -42,7 +42,7 @@ typedef __u32 __be32;
 /* LIBBPF_PIN_BY_NAME */
 #define PIN_BY_NAME 1
 
-/* helpers — enum bpf_func_id values are UAPI-stable */
+/* helpers: enum bpf_func_id values are UAPI-stable */
 static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
 static long (*bpf_map_update_elem)(void *map, const void *key, const void *value,
 				   __u64 flags) = (void *)2;
@@ -59,7 +59,7 @@ static __u32 (*bpf_get_prandom_u32)(void) = (void *)7;
 #define TC_ACT_SHOT 2
 
 /*
- * struct bpf_sock_addr — full UAPI layout as of the 5.10 floor. The `sk`
+ * struct bpf_sock_addr: full UAPI layout as of the 5.10 floor. The `sk`
  * tail member is really __bpf_md_ptr(struct bpf_sock *, sk); we never touch
  * it, only its alignment matters for the fields before it (none follow).
  */
@@ -76,7 +76,7 @@ struct bpf_sock_addr {
 	__u64 sk __attribute__((aligned(8)));
 };
 
-/* struct __sk_buff — UAPI prefix; fields past data_end are unused here */
+/* struct __sk_buff: UAPI prefix; fields past data_end are unused here */
 struct __sk_buff {
 	__u32 len;
 	__u32 pkt_type;
@@ -99,7 +99,7 @@ struct __sk_buff {
 };
 
 /*
- * Packet headers — bitfield-free on purpose: bitfield layout differs by
+ * Packet headers; bitfield-free on purpose: bitfield layout differs by
  * endianness, so version/ihl and the TCP flags are read as raw bytes
  * instead, which is byte-order proof.
  */

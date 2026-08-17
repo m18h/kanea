@@ -12,8 +12,8 @@ import (
 const hazardFile = "kanea-spike-hazard.yaml"
 
 // malformedPolicy is not valid CNP YAML. pkg/policy/directory/watcher.go calls
-// logging.Fatal() when translation fails — both during the startup scan and on
-// fsnotify events — so this is expected to take the agent down.
+// logging.Fatal() when translation fails (both during the startup scan and on
+// fsnotify events) so this is expected to take the agent down.
 const malformedPolicy = `apiVersion: cilium.io/v2
 kind: CiliumClusterwideNetworkPolicy
 metadata:

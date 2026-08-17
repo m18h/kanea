@@ -28,13 +28,13 @@ func TestClassifyExit(t *testing.T) {
 		},
 		{
 			// R11/v1.58 made unbounded the default, so this is now the common
-			// OOM — and "raise the service's limit" is the wrong advice for it.
+			// OOM, and "raise the service's limit" is the wrong advice for it.
 			name: "OOM with no declared limit names the node ceiling",
 			status: runtime.Status{
 				ExitCode: 137, OOMKnown: true, OOMKilled: true, MemoryLimit: 0,
 			},
 			wantReason:  ExitOOMKilled,
-			wantMessage: "out of memory under the node's workload ceiling — no limit declared",
+			wantMessage: "out of memory under the node's workload ceiling (no limit declared)",
 		},
 		{
 			name:        "an ordinary failure is an error",
@@ -76,7 +76,7 @@ func TestClassifyExit(t *testing.T) {
 }
 
 // The single most important negative case. `kanea stop` on a service that
-// ignores SIGTERM produces exit 137 — exactly what an OOM kill produces — so a
+// ignores SIGTERM produces exit 137 (exactly what an OOM kill produces) so a
 // classifier that pattern-matched the code would report every forced stop as a
 // memory problem, and an operator would go resize a service that is fine.
 func TestAKillIsNotAnOOMWithoutTheCounter(t *testing.T) {
@@ -97,7 +97,7 @@ func TestAnUnknownCgroupNeverClaimsAnOOM(t *testing.T) {
 	unknown := runtime.Status{ExitCode: 137, OOMKnown: false, OOMKilled: true}
 
 	if reason, _ := classifyExit(unknown); reason != ExitSignal {
-		t.Errorf("reason = %q, want %q — OOMKilled is meaningless while OOMKnown is false",
+		t.Errorf("reason = %q, want %q: OOMKilled is meaningless while OOMKnown is false",
 			reason, ExitSignal)
 	}
 }
@@ -133,7 +133,7 @@ func TestStartFailureCarriesItsPhase(t *testing.T) {
 	}
 }
 
-// A failure off the create path — a teardown, a removal, an unknown action —
+// A failure off the create path: a teardown, a removal, an unknown action;
 // is not the alloc's own problem and must not be written onto its record.
 func TestAnUnphasedErrorIsNotAStartFailure(t *testing.T) {
 	if _, _, ok := startFailure(errors.New("teardown failed")); ok {
@@ -159,7 +159,7 @@ func TestFailedAtPreservesTheCause(t *testing.T) {
 
 func TestALongMessageIsBounded(t *testing.T) {
 	// Multi-byte, so a naive byte slice would cut a rune in half and the
-	// message would render as a replacement character — corruption, where a
+	// message would render as a replacement character: corruption, where a
 	// truncation was meant.
 	for _, filler := range []string{"x", "é", "→"} {
 		err := failedAt(phaseImage, errors.New(strings.Repeat(filler, 5000)))

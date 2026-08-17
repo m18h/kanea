@@ -136,7 +136,7 @@ func masqCounter(e *env) (packets, bytes uint64, err error) {
 }
 
 // simDropInstall creates a second table whose FORWARD chain has policy drop
-// and no rules — what a docker or ufw install effectively does to routed
+// and no rules: what a docker or ufw install effectively does to routed
 // traffic. Returns the objects so the check can add "rescue" rules into it.
 func simDropInstall(e *env) (*nftables.Table, *nftables.Chain, error) {
 	drop := nftables.ChainPolicyDrop
@@ -155,7 +155,7 @@ func simDropInstall(e *env) (*nftables.Table, *nftables.Chain, error) {
 	return tbl, chain, nil
 }
 
-// simDropRescue inserts pod-CIDR accepts into the simulated chain itself —
+// simDropRescue inserts pod-CIDR accepts into the simulated chain itself:
 // the "insert into DOCKER-USER/ufw's chain" move an operator would make.
 func simDropRescue(e *env, tbl *nftables.Table, chain *nftables.Chain) error {
 	for _, off := range []uint32{12, 16} {

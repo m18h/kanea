@@ -1,7 +1,7 @@
 // Package api is the control-plane API kanead serves and the CLI consumes.
 //
 // Every route is authenticated, deny-by-default, with exactly two exemptions
-// (§5.2.1): health and login. A caller is one of three things — a bearer token,
+// (§5.2.1): health and login. A caller is one of three things: a bearer token,
 // a session cookie, or the local root of §13.1 reaching the 0600 unix socket,
 // where the socket's file mode *is* the credential. Mutations additionally
 // require the admin role, a CSRF token when the credential is a cookie, and an
@@ -30,8 +30,8 @@ const DefaultSocket = "/run/kanea/kanead.sock"
 
 // SocketGroup is the operator-created group whose members may use the CLI
 // without sudo (PRD v1.48, §13.1). When it exists the socket is published
-// root:kanea 0660 instead of 0600. Membership is root-equivalent — docker's
-// model — and the group's absence, which is the default, changes nothing.
+// root:kanea 0660 instead of 0600. Membership is root-equivalent (docker's
+// model) and the group's absence, which is the default, changes nothing.
 const SocketGroup = "kanea"
 
 // Paths served by the API. Versioned from the start so the CLI and the daemon
@@ -51,7 +51,7 @@ const (
 type Health struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
-	// StoreIndex is the latest applied store index — a cheap liveness signal
+	// StoreIndex is the latest applied store index: a cheap liveness signal
 	// that also tells the CLI whether its write landed.
 	StoreIndex uint64 `json:"store_index"`
 	// WSConnections is how many live-data sockets are attached. It answers
@@ -69,7 +69,7 @@ type Health struct {
 	//
 	// Reported on the unauthenticated route for the same reason the issuer is:
 	// it is needed before there is a credential to ask with, and it is not a
-	// secret — a caller on the network already knows an address that works, and
+	// secret; a caller on the network already knows an address that works, and
 	// a caller on the socket is the local root of §13.1.
 	Listen string `json:"listen,omitempty"`
 	TLS    bool   `json:"tls,omitempty"`
@@ -107,7 +107,7 @@ type ApplyResponse struct {
 }
 
 // ServiceView is a Desired as the API serves it, with fields computed at
-// projection time. SpecHash is reconciler.SpecHash over the record — never
+// projection time. SpecHash is reconciler.SpecHash over the record, never
 // stored, so the hash material and the Store shape are untouched. A client
 // compares it against AllocRecord.SpecHash (the planner's own staleness
 // rule) to tell whether a deploy is in flight.

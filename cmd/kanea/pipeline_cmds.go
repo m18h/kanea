@@ -63,7 +63,7 @@ func runBuild(args []string) error {
 // followBuild streams a run's log, then reports how it ended.
 //
 // The exit status matters: `kanea build` in a script must fail when the build
-// failed, and a streamed log that ends is not by itself a success — the stream
+// failed, and a streamed log that ends is not by itself a success; the stream
 // also ends when the run is cancelled.
 func followBuild(ctx context.Context, client *api.Client, run gitops.Run) error {
 	// A queued build has no log file until the worker picks it up, and the

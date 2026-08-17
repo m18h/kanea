@@ -12,7 +12,7 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// IDStore is the slice of the state store id allocation needs — the same
+// IDStore is the slice of the state store id allocation needs; the same
 // consumer-side shape reconciler.Store has, for the same reason: the
 // dependency stays honest and a test substitutes a map.
 type IDStore interface {
@@ -22,7 +22,7 @@ type IDStore interface {
 }
 
 // KV keys for the numeric id space. One monotonic sequence covers all three
-// namespaces, so no id is ever minted twice — a reused id would make a pinned
+// namespaces, so no id is ever minted twice: a reused id would make a pinned
 // map lie after a restart (AGENTS.md, PRD v1.36).
 const (
 	idSeqKey         = "net/id/seq"
@@ -35,7 +35,7 @@ const (
 //
 // Three namespaces share the sequence: project ids and service ids (uint32,
 // what identity_v4 and allow_v4 speak) and frontend ids (uint16, what svc_v4
-// and svc_backends speak — one per service *port*, because svc_backends keys
+// and svc_backends speak; one per service *port*, because svc_backends keys
 // entries by (svc_id, index, gen) and two ports of one service have different
 // target ports, so sharing an id would collide their backend sets).
 //
@@ -74,7 +74,7 @@ func (a *idAllocator) ServiceID(ctx context.Context, project, service string) (u
 
 // FrontendID returns the numeric id for one service port frontend, minting one
 // if needed. svc_val.svc_id is a __u16, so the shared sequence running past
-// 65535 makes new frontends unrepresentable — an error, not a wrap.
+// 65535 makes new frontends unrepresentable: an error, not a wrap.
 func (a *idAllocator) FrontendID(ctx context.Context, project, service, port string) (uint16, error) {
 	id, err := a.idFor(ctx, idFrontendPrefix+project+"/"+service+"/"+port)
 	if err != nil {

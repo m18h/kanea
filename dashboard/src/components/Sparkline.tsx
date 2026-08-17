@@ -12,7 +12,7 @@ export interface SparklineProps {
   /** unit rides the hover readout ("%", "/s", " ms"). */
   unit?: string | undefined
   /** tone picks the series colour: 1 amber, 2 blue, 3 green, 4 red. Identity
-   * never rides on the hue alone — every sparkline sits under its own label. */
+   * never rides on the hue alone: every sparkline sits under its own label. */
   tone?: 1 | 2 | 3 | 4 | undefined
 }
 
@@ -35,8 +35,8 @@ const padRight = 6
  *
  * No charting library: this is a couple of paths over a bounded array, and the
  * dashboard's whole premise is a self-contained bundle inside the §21 budget.
- * The marks follow the usual smallmark grammar — a 2px line, a thin area wash
- * under it, an end dot ringed in the surface color, and a hairline baseline —
+ * The marks follow the usual smallmark grammar: a 2px line, a thin area wash
+ * under it, an end dot ringed in the surface color, and a hairline baseline;
  * and a crosshair readout on hover, because a chart whose values can only be
  * guessed at is a decoration.
  */
@@ -50,7 +50,7 @@ export function Sparkline({ points, max, className, label, unit = '', tone }: Sp
   // component be a table-cell mini and a full-width panel chart.
   //
   // The wrapper (and so this ref) exists from the first render even while the
-  // chart shows "no data" — the observer must attach then, because an effect
+  // chart shows "no data": the observer must attach then, because an effect
   // with no dependencies will not run again when the data arrives, and a
   // viewBox stuck at the 120px fallback under a CSS-stretched svg puts every
   // hover coordinate somewhere other than the mouse.
@@ -108,7 +108,7 @@ export function Sparkline({ points, max, className, label, unit = '', tone }: Sp
 
   const hoverValue = hover !== null ? points[hover] : undefined
 
-  // Both sides of the mapping — this and xAt — are in the same coordinate
+  // Both sides of the mapping (this and xAt) are in the same coordinate
   // space only because the observed size *is* the CSS size. rect.width is
   // used here (not state) so a pointer event racing a resize still lands.
   const locate = (clientX: number): number => {
@@ -178,7 +178,7 @@ export function Sparkline({ points, max, className, label, unit = '', tone }: Sp
         {hover !== null && hoverValue !== undefined ? (
           <circle cx={xAt(hover)} cy={yAt(hoverValue)} r={3.5} fill="currentColor" className="stroke-card" strokeWidth={2} />
         ) : null}
-        {/* The end dot marks "now" — ringed in the surface color so it stays
+        {/* The end dot marks "now"; ringed in the surface color so it stays
             legible where it sits on the line. */}
         {hover === null && lastValue !== undefined ? (
           <circle cx={xAt(lastIndex)} cy={yAt(lastValue)} r={3.5} fill="currentColor" className="stroke-card" strokeWidth={2} />
@@ -191,7 +191,7 @@ export function Sparkline({ points, max, className, label, unit = '', tone }: Sp
         >
           {/* An em dash for a gap, not a zero: "measured nothing" is not
               "measured zero". */}
-          {hoverValue === undefined ? '—' : formatMetric(hoverValue, unit)}
+          {hoverValue === undefined ? '-' : formatMetric(hoverValue, unit)}
         </div>
       ) : null}
     </div>

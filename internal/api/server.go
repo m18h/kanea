@@ -65,7 +65,7 @@ type ServerConfig struct {
 	Secrets SecretStore
 	// SecretSync reports external-provider sync status (§5.2.13). Nil means
 	// no providers are configured and the route answers 404 naming the flag.
-	// Callers must pass untyped nil when unconfigured — a typed nil pointer
+	// Callers must pass untyped nil when unconfigured: a typed nil pointer
 	// in an interface field is a non-nil interface (the buildReplication
 	// lesson).
 	SecretSync SecretSyncStatus
@@ -88,7 +88,7 @@ type ServerConfig struct {
 	Backups Backups
 	// Settings backs the node-settings routes (v1.46, §15.1). Nil answers 503.
 	Settings SettingsService
-	// LDAPServer names the configured directory (v1.47) — audit Detail on
+	// LDAPServer names the configured directory (v1.47): audit Detail on
 	// directory logins, empty when LDAP is off. A name, never a credential.
 	LDAPServer string
 	// CA serves this node's self-signed CA certificate (§7.3). Nil answers 404
@@ -100,11 +100,11 @@ type ServerConfig struct {
 	// pass and then panic.
 	CA CertificateAuthority
 	// PublishPorts is which node ports a spec may claim (R22). The zero value
-	// has no ranges, which means publishing is off — so a server built without
+	// has no ranges, which means publishing is off, so a server built without
 	// it refuses rather than permitting everything.
 	PublishPorts PortPolicy
 	// NodeVars is the node's `variables { }` stanza (R30, v1.63), served over
-	// GET /v1/vars. Static after startup — the file is load-once (§15.1). Nil
+	// GET /v1/vars. Static after startup: the file is load-once (§15.1). Nil
 	// serves an empty map: a node with no stanza has no variables, which is an
 	// answer, not an error.
 	NodeVars map[string]string
@@ -112,14 +112,14 @@ type ServerConfig struct {
 	// behind the same authentication every other route gets.
 	//
 	// Taken as a bare http.Handler rather than as an *mcp.Server so that this
-	// package does not import that one — the MCP server's backend *is* this
+	// package does not import that one: the MCP server's backend *is* this
 	// server's handler, and the dependency has to point one way. Nil leaves the
 	// route unregistered.
 	MCP http.Handler
 	// Publish emits notification events. Nil disables them.
 	Publish func(notify.Event)
 	// Auth resolves callers. Nil leaves the unix socket as the only credential
-	// the daemon accepts — which is the §13.1 "no auth configured" case, and is
+	// the daemon accepts, which is the §13.1 "no auth configured" case, and is
 	// why a network listener without it is refused rather than warned about.
 	Auth Authenticator
 	// Audit is the trail every mutation is written to (§14, A09).
@@ -135,7 +135,7 @@ type ServerConfig struct {
 	// disables both.
 	Metrics MetricsSource
 	// Invoker reports the function invoker's counters (v1.39). Nil omits them
-	// from GET /v1/functions, which still serves the list — a node running
+	// from GET /v1/functions, which still serves the list: a node running
 	// no event or cron triggers has an invoker with nothing to say.
 	Invoker InvokerSource
 	// Usage reports measured volume usage (v1.69). Nil leaves every volume
@@ -172,7 +172,7 @@ type ServerConfig struct {
 	TLSCert string
 	TLSKey  string
 	// TLSGetCertificate serves a certificate a subsystem manages and renews
-	// (PRD v1.61, bind.api_tls acme/self-signed) — the one listener whose
+	// (PRD v1.61, bind.api_tls acme/self-signed): the one listener whose
 	// material renews behind its own socket, so it cannot be loaded once at
 	// construction. Mutually exclusive with the pair above; the caller
 	// resolves which story applies before building the server.
@@ -214,7 +214,7 @@ type SecretStore interface {
 	Delete(ctx context.Context, path string) error
 }
 
-// SecretSyncStatus reports external-provider sync state (PRD §5.2.13) —
+// SecretSyncStatus reports external-provider sync state (PRD §5.2.13):
 // paths, refs, timestamps and error strings, never values. The write-only
 // property is untouched: nothing here can express a read either.
 type SecretSyncStatus interface {
@@ -351,7 +351,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 
 	// Every route states what it requires next to where it is registered, and
 	// the `public: true` entries are the whole exemption list (§5.2.1). Four of
-	// them are "nobody has a credential yet" — health, because a probe must work
+	// them are "nobody has a credential yet": health, because a probe must work
 	// before anyone can log in, login itself, and the two OIDC legs. The fifth,
 	// the git webhook, is public in the routing sense only: it authenticates
 	// itself with a per-project HMAC because the caller is a provider rather
@@ -372,8 +372,8 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		s.route(policy{action: "auth.oidc.callback", public: true}, s.handleOIDCCallback))
 	mux.Handle("GET "+PathServices, s.route(policy{action: "service.list"}, s.handleListServices))
 	mux.Handle("PUT "+PathServices, s.route(policy{action: "service.apply", mutates: true}, s.handleApply))
-	// The spec editor (v1.38). Render is a read with admin's blast radius —
-	// it evaluates operator-supplied HCL — so it is admin-only like the audit
+	// The spec editor (v1.38). Render is a read with admin's blast radius
+	// (it evaluates operator-supplied HCL) so it is admin-only like the audit
 	// log; apply is a mutation like any other: admin, CSRF, audited.
 	mux.Handle("POST "+PathSpecRender,
 		s.route(policy{action: "spec.render", adminOnly: true}, s.handleSpecRender))
@@ -390,7 +390,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("POST "+PathServices+"/{project}/{service}/restart",
 		s.route(policy{action: "service.restart", mutates: true}, s.handleRestart))
 	// Functions (v1.39): a read-only view. Deploy and edit are the spec
-	// editor's routes; restart and scale are the service routes' — a function
+	// editor's routes; restart and scale are the service routes': a function
 	// is a service underneath, and the mutation paths are inherited, never
 	// replicated.
 	mux.Handle("GET "+PathFunctions, s.route(policy{action: "functions.list"}, s.handleListFunctions))
@@ -411,7 +411,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET "+PathWS, s.route(policy{action: "ws.connect"}, s.handleWS))
 	// The most privileged route here, and §14 names it: an exec is a shell
 	// inside a workload, with the workload's filesystem and credentials. Marked
-	// mutating so it is admin-only and audited — the entry is written whether
+	// mutating so it is admin-only and audited: the entry is written whether
 	// or not the session worked, because "someone tried to open a shell on
 	// production" is worth keeping either way.
 	mux.Handle("GET "+PathExec, s.route(policy{action: "alloc.exec", mutates: true}, s.handleExec))
@@ -444,7 +444,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// The third exemption, and the only one that is not "nobody has a credential
 	// yet": a git push comes from a provider, not a person, so it carries a
 	// per-project HMAC instead of a session. handleGitWebhook authenticates it
-	// itself — see the comment there. CSRF does not apply for the same reason it
+	// itself: see the comment there. CSRF does not apply for the same reason it
 	// does not apply to a bearer token: nothing is taken from a cookie.
 	//
 	// Not marked `mutates`, deliberately: a public route returns before that
@@ -455,14 +455,14 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET "+PathEvents, s.route(policy{action: "event.list"}, s.handleEvents))
 	// Backups (§15.3). Listing is an ordinary read; taking one is a mutation
 	// because it writes to a bucket and costs money. Staging a restore is the
-	// most destructive call this API has — it discards everything on the node
-	// at the next start — and is admin-only and audited like every other.
+	// most destructive call this API has (it discards everything on the node
+	// at the next start) and is admin-only and audited like every other.
 	// The CA certificate (§7.3). A read, and not an admin one: it is presented
 	// in every handshake to every client that trusts it.
 	mux.Handle("GET "+PathEdgePolicy,
 		s.route(policy{action: "edge.policy"}, s.handleEdgePolicy))
 	// The node's shared spec variables (R30, v1.63). A read for any
-	// authenticated caller — R30's contract is that variables are never
+	// authenticated caller: R30's contract is that variables are never
 	// secrets, which is what makes this tier right.
 	mux.Handle("GET "+PathVars,
 		s.route(policy{action: "vars.read"}, s.handleVars))
@@ -476,7 +476,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		s.route(policy{action: "backup.verify"}, s.handleVerifyBackup))
 	mux.Handle("POST "+PathBackups+"/restore",
 		s.route(policy{action: "backup.restore", mutates: true}, s.handleRestore))
-	// Node settings (v1.46, §15.1). Reading them is admin-only — the view
+	// Node settings (v1.46, §15.1). Reading them is admin-only: the view
 	// includes the backup destination and channel config, which is more of the
 	// node than a viewer's role describes. Mutations are CSRF'd and audited
 	// like every other; the settings service itself validates before anything
@@ -520,7 +520,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if cfg.ServeDashboard {
 		// An unmatched API path must not fall through to the SPA. Without this,
 		// a mistyped or removed route answers 200 with HTML, and a client sees
-		// "success" followed by a JSON decode error somewhere unrelated —
+		// "success" followed by a JSON decode error somewhere unrelated:
 		// including for routes that deliberately do not exist, like reading a
 		// secret. Longest-prefix wins, so this claims /v1/* ahead of "/".
 		mux.HandleFunc("/v1/", func(w http.ResponseWriter, r *http.Request) {
@@ -558,7 +558,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 // network listener (§15.1 `bind.api_addr`) and the MCP streamable-HTTP transport
 // (§16.3) serve the same handler, and a route that is only protected on one
 // listener is not protected. Anything mounting it must decide for itself what
-// counts as a local connection — see withLocalConn.
+// counts as a local connection: see withLocalConn.
 func (s *Server) Handler() http.Handler { return s.http.Handler }
 
 // Listen creates the listeners. Separate from Serve so the caller can report a
@@ -584,7 +584,7 @@ func (s *Server) Listen() error {
 	}
 	// 0600: reaching this socket is the local-root credential of §13.1. When
 	// the operator has created the `kanea` group (PRD v1.48), the socket is
-	// published root:kanea 0660 instead — membership is root-equivalent,
+	// published root:kanea 0660 instead: membership is root-equivalent,
 	// docker's model, and the group's absence is the default. Deny-closed:
 	// root-only is set first, and any failure widening it leaves it that way.
 	if err := os.Chmod(s.socket, 0o600); err != nil {
@@ -610,8 +610,8 @@ func (s *Server) Listen() error {
 			"listen", s.listenAddr, "error", err,
 			"remedy", "create an account with `kanea user add`, then restart kanead")
 	case err != nil:
-		// A genuine bind failure — port in use, bad address, unreadable
-		// certificate — is the operator's configuration not working, and
+		// A genuine bind failure (port in use, bad address, unreadable
+		// certificate) is the operator's configuration not working, and
 		// starting anyway would hide it.
 		return errors.Join(err, listener.Close())
 	default:
@@ -629,7 +629,7 @@ func socketGroupID(lookup func(string) (*user.Group, error), log *slog.Logger) (
 		var unknown user.UnknownGroupError
 		if !errors.As(err, &unknown) {
 			// An absent group is the default and not worth a line; a lookup
-			// that failed some other way is — the operator may have created
+			// that failed some other way is: the operator may have created
 			// the group and be waiting on a socket that never widens.
 			log.Warn("could not look up the socket group", "group", SocketGroup, "error", err)
 		}
@@ -646,7 +646,7 @@ func socketGroupID(lookup func(string) (*user.Group, error), log *slog.Logger) (
 // applySocketGroup widens the socket to root:kanea 0660 (PRD v1.48).
 func (s *Server) applySocketGroup(gid int) error {
 	// The directory first: group members need traverse to reach the socket at
-	// all. Ownership only — the mode stays what the unit created (0710 gives
+	// all. Ownership only: the mode stays what the unit created (0710 gives
 	// the group traverse without listing), and the containerd socket next door
 	// keeps its own root-only mode, so the group reaches exactly one thing.
 	if err := os.Chown(filepath.Dir(s.socket), -1, gid); err != nil {
@@ -655,15 +655,15 @@ func (s *Server) applySocketGroup(gid int) error {
 	if err := os.Chown(s.socket, -1, gid); err != nil {
 		return fmt.Errorf("chgrp socket: %w", err)
 	}
-	// #nosec G302 — 0660 is the feature: a unix socket needs the group write
+	// #nosec G302; 0660 is the feature: a unix socket needs the group write
 	// bit for connect(2), and granting the operator-created kanea group the
 	// socket is exactly what PRD v1.48 specifies. Root-only was set first, so
 	// failing here leaves 0600.
 	return os.Chmod(s.socket, 0o660)
 }
 
-// NetworkAddr reports the network listener's address, or "" when there is none
-// — because it was not configured, or because §13.1 refused it.
+// NetworkAddr reports the network listener's address, or "" when there is none,
+// because it was not configured, or because §13.1 refused it.
 //
 // The resolved address, not the requested one: a caller that asked for port 0
 // still needs to know where to point a browser.
@@ -710,7 +710,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			"listen", s.netListener.Addr().String(), "tls", s.tls != nil)
 		if s.tls == nil {
 			s.log.Warn("the network listener has no TLS; credentials cross it in clear text",
-				"detail", "loopback only — put kanea-edge in front, or pass a certificate")
+				"detail", "loopback only: put kanea-edge in front, or pass a certificate")
 		}
 		listeners = append(listeners, s.netListener)
 	}
@@ -768,7 +768,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// What sign-in methods exist is part of what a client needs before it can
 	// authenticate, and health is the one route it can ask without a credential.
 	// It names the issuer and nothing else: a provider URL is public by
-	// definition — every browser sent there sees it.
+	// definition; every browser sent there sees it.
 	if s.oidc != nil {
 		health.OIDC = &OIDCStatus{Enabled: true, Issuer: s.oidc.Issuer(), StartPath: PathOIDCStart}
 	}
@@ -825,7 +825,7 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 		// file: it is bumped by `kanea restart`, and a spec that does not
 		// mention it must not reset it. Without this, the first apply after a
 		// restart would look like another spec change and roll the service a
-		// second time — the same class of bug the pipeline merge below avoids.
+		// second time: the same class of bug the pipeline merge below avoids.
 		if current, _, err := store.GetValue[reconciler.Desired](
 			r.Context(), s.store, store.KindService, key); err == nil {
 			svc.Generation = current.Generation
@@ -833,13 +833,13 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 			// (§6.2 R19): the digest currently pinned, what to fall back to and
 			// when the registry was last asked are all facts about the running
 			// service, not about the file. An apply that reset them would unpin
-			// the service — redeploying it onto its bare tag — and then re-pin
+			// the service (redeploying it onto its bare tag) and then re-pin
 			// it on the next poll, so every `kanea apply` would cost two
 			// deploys of a service nobody changed.
 			//
 			// Two things drop the pin rather than carry it. A changed `image`
 			// means the operator has said which tag to follow and the old
-			// digest is not it — carrying it would leave the service running
+			// digest is not it: carrying it would leave the service running
 			// 10.9 after the spec was edited to say 10.10, which is the spec
 			// being ignored. And auto turned *off* hands the spec back the
 			// authority: what runs should then be what the file says. Both cost
@@ -872,7 +872,7 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 		if svc.Runtime == runtime.RuntimeWasmtime && svc.Check != nil && svc.Check.Type == reconciler.HealthExec {
 			return ApplyResponse{}, http.StatusBadRequest,
 				fmt.Errorf("service %s is a wasm function with an exec health check; the wasm runtime "+
-					"has no exec primitive (PRD §6.2 R25) — probe it over http or tcp", key)
+					"has no exec primitive (PRD §6.2 R25): probe it over http or tcp", key)
 		}
 		mut, err := store.PutMutation(store.KindService, key, svc)
 		if err != nil {
@@ -1183,7 +1183,7 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	// The header is already written, so an encoding failure cannot change the
-	// response — log it rather than pretending to return an error.
+	// response: log it rather than pretending to return an error.
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		encodeFailures.Add(1)
 	}

@@ -5,7 +5,7 @@
 // [Installer] fetches anything. An installer is handed a [Source] and asks it
 // for bytes, and every byte is checked against a hash compiled into this
 // binary. That is what makes the air-gapped path the same code as the online
-// one rather than a second implementation nobody exercises — and it is why the
+// one rather than a second implementation nobody exercises, and it is why the
 // verification lives here, on the near side of the seam, where a Source cannot
 // opt out of it.
 package provision
@@ -88,7 +88,7 @@ type Component struct {
 	Files []File `json:"files"`
 }
 
-// Manifest is the full component set — and the §15.4 version matrix. There is
+// Manifest is the full component set, and the §15.4 version matrix. There is
 // deliberately no second copy of these versions anywhere: a matrix kept apart
 // from the thing that installs is a matrix that describes a node nobody has.
 type Manifest struct {
@@ -180,7 +180,7 @@ func (c *Component) validateSource() error {
 	case KindArchive, KindBinary:
 		// HTTPS is checked rather than assumed. A plaintext URL would still be
 		// hash-checked, so this is not the control that stops a tampered
-		// artefact — it is the one that stops the *request* being readable.
+		// artefact: it is the one that stops the *request* being readable.
 		if !strings.HasPrefix(c.URL, "https://") {
 			return fmt.Errorf("component %q: url must be https, got %q", c.Name, c.URL)
 		}
@@ -227,7 +227,7 @@ func (m *Manifest) Get(name string) (*Component, error) {
 	return nil, fmt.Errorf("no component named %q (have %s)", name, strings.Join(m.Names(), ", "))
 }
 
-// Names lists every component, in manifest order — which is install order
+// Names lists every component, in manifest order, which is install order
 // (§5.2.12). Do not sort this.
 func (m *Manifest) Names() []string {
 	names := make([]string, len(m.Components))
@@ -300,7 +300,7 @@ var unameArch = map[string]string{
 // Hand-rolled rather than text/template: the substitution set is three keys and
 // the inputs are a file in this repository, so a template engine would add a
 // parse error path to something that cannot have one. A variable the replacer
-// does not know is left in place and caught by validate — an unknown template
+// does not know is left in place and caught by validate: an unknown template
 // variable must be a manifest error, not a URL with braces in it.
 func (c *Component) expand(s, arch string) string {
 	r := strings.NewReplacer(

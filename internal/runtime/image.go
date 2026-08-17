@@ -18,8 +18,8 @@ import (
 // PRD §6.2 R8 promises ("the minimal service is just an image") and what every
 // spec example uses, so the driver expands it: `nginx` becomes
 // `docker.io/library/nginx:latest`, `nginx:1.27-alpine` becomes
-// `docker.io/library/nginx:1.27-alpine`, and an already-qualified reference —
-// including a digest-pinned one — is returned unchanged.
+// `docker.io/library/nginx:1.27-alpine`, and an already-qualified reference
+// (including a digest-pinned one) is returned unchanged.
 //
 // Both the pull and the later lookup must use the same expansion, or the pull
 // succeeds and the container creation cannot find what it pulled.

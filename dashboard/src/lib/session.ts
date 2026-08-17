@@ -59,8 +59,8 @@ const errorSchema = z.object({ error: z.string() })
  *
  * It attaches the CSRF token to every mutating request rather than leaving it
  * to each call site: a token each caller has to remember is one that gets
- * forgotten on the call that mattered, and the failure mode — a 403 on a button
- * nobody clicked during testing — is exactly the kind that ships.
+ * forgotten on the call that mattered, and the failure mode (a 403 on a button
+ * nobody clicked during testing) is exactly the kind that ships.
  */
 export async function apiFetch(
   path: string,
@@ -127,7 +127,7 @@ export async function login(user: string, password: string): Promise<Session> {
   })
   if (resp.status === 401) throw new ApiError(401, 'wrong user name or password')
   if (resp.status === 429) {
-    throw new ApiError(429, 'too many attempts — wait a minute and try again')
+    throw new ApiError(429, 'too many attempts; wait a minute and try again')
   }
   if (!resp.ok) throw new ApiError(resp.status, await errorMessage(resp))
   return sessionSchema.parse(await resp.json())

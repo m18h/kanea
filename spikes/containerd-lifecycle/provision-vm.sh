@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# provision-vm.sh — one-time setup of the kanea-spike OrbStack VM
+# provision-vm.sh: one-time setup of the kanea-spike OrbStack VM
 # (Ubuntu 24.04 arm64): containerd 2.3.3, runc 1.5.1, CNI plugins 1.9.1, Go 1.26.5.
 # All downloads checksum-verified. Idempotent. Spike-only, nothing ships.
 set -euo pipefail
@@ -18,7 +18,7 @@ sudo apt-get install -y -qq curl jq iptables iproute2 ca-certificates >/dev/null
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT; cd "$tmp"
 
-verify() { # verify <file> <sha256-file> — normalizes "hash\n" and "hash  file\n"
+verify() { # verify <file> <sha256-file>; normalizes "hash\n" and "hash  file\n"
   printf '%s  %s\n' "$(awk '{print $1}' "$2")" "$1" | sha256sum -c - >/dev/null \
     && echo "  sha256 OK: $1" || { echo "  SHA256 MISMATCH: $1" >&2; exit 1; }
 }

@@ -18,7 +18,7 @@ const revalidateInterval = 60_000
  *
  * The daemon is the only source of truth here. The session cookie is HttpOnly
  * by design (§14, A03), so there is nothing in the browser to read and no local
- * "am I logged in" flag to go stale — the app asks on load, and listens for the
+ * "am I logged in" flag to go stale: the app asks on load, and listens for the
  * 401 that says the answer changed.
  */
 export function SessionProvider({ children }: { children: React.ReactNode }) {
@@ -54,7 +54,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   //
   // Only a 401 signs the user out. A daemon that restarts, or a laptop that
   // sleeps through a lost connection, must not throw away a valid session and
-  // make someone type their password because of a two-second blip — the 401
+  // make someone type their password because of a two-second blip: the 401
   // event above already covers the case where the daemon actually says no.
   useEffect(() => {
     const timer = setInterval(() => {

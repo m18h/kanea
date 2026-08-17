@@ -66,7 +66,7 @@ func SetupBuildkit(ctx context.Context, l Layout, log *slog.Logger) error {
 	// client outside the namespace. M0 spike ④ found that the expensive way.
 	//
 	// The home's parent is the data directory, which `kanea init` and kanead
-	// both create 0750 root:root — a mode the daemon's user can neither own
+	// both create 0750 root:root; a mode the daemon's user can neither own
 	// nor join, so without the group grant below every path under it answers
 	// EACCES and buildkitd's report of that is maximally misleading: a fatal
 	// "permission denied" for an optional config file that does not exist.
@@ -87,7 +87,7 @@ func SetupBuildkit(ctx context.Context, l Layout, log *slog.Logger) error {
 		if err := os.Chown(dir, uid, gid); err != nil {
 			return fmt.Errorf("chown %s: %w", dir, err)
 		}
-		// #nosec G302 — this is a directory, not a file, and 0750 is the
+		// #nosec G302; this is a directory, not a file, and 0750 is the
 		// tightest mode that works: buildkitd runs as its owner and has to
 		// traverse it to reach its own socket. 0600 would leave the daemon
 		// unable to open the thing it listens on.
@@ -117,12 +117,12 @@ func ensureUser(ctx context.Context, name string, log *slog.Logger) error {
 
 	useradd, err := lookupTool("useradd")
 	if err != nil {
-		return fmt.Errorf("cannot create the %s account: %w — install the passwd (Debian) or shadow-utils (RHEL) package", name, err)
+		return fmt.Errorf("cannot create the %s account: %w; install the passwd (Debian) or shadow-utils (RHEL) package", name, err)
 	}
 	// --system: no ageing, no mail spool, a uid below the login range.
 	// --no-create-home: the home directory is under Kanea's data directory and
 	// is created above with the mode it needs, not by useradd's skeleton.
-	// #nosec G204 — the path comes from lookupTool over fixed directories, and
+	// #nosec G204: the path comes from lookupTool over fixed directories, and
 	// name is a package constant.
 	cmd := exec.CommandContext(ctx, useradd,
 		"--system", "--no-create-home", "--shell", "/usr/sbin/nologin", name)
@@ -156,7 +156,7 @@ func numericIDs(u *user.User) (uid, gid int, err error) {
 // distribution's shadow-utils carries. The format is three colon-separated
 // fields and has been stable for thirty years.
 func ensureSubID(path, name string, log *slog.Logger) error {
-	existing, err := os.ReadFile(path) // #nosec G304 — a package constant
+	existing, err := os.ReadFile(path) // #nosec G304; a package constant
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
@@ -193,7 +193,7 @@ func ensureSubID(path, name string, log *slog.Logger) error {
 	line := fmt.Sprintf("%s:%d:%d\n", name, highest, subIDCount)
 	// Appended rather than rewritten: this file belongs to the system and
 	// carries every other user's ranges.
-	// #nosec G304,G302 — /etc/subuid and /etc/subgid are system files with a
+	// #nosec G304,G302; /etc/subuid and /etc/subgid are system files with a
 	// fixed 0644 mode: newuidmap and newgidmap read them as an unprivileged
 	// user, which is the entire mechanism rootless containers rely on.
 	// Tightening them here would break every rootless runtime on the node,
@@ -217,7 +217,7 @@ func ensureSubID(path, name string, log *slog.Logger) error {
 //
 // Group ownership plus the execute bit is the containerd directory's 0710
 // pattern: traverse, never list. The mode's other bits are left exactly as
-// found — the data directory belongs to kanead, and this function's only
+// found: the data directory belongs to kanead, and this function's only
 // claim on it is the one bit the daemon needs to reach its own home.
 func ensureTraversal(dir string, gid int) error {
 	info, err := os.Stat(dir)
@@ -237,7 +237,7 @@ func ensureTraversal(dir string, gid int) error {
 
 // BuildkitSocket is where the provisioned daemon listens, given a layout.
 // The unit's --addr is rendered from the same home path, and
-// gitops.DefaultBuildkitSocket must equal this over DefaultLayout — both
+// gitops.DefaultBuildkitSocket must equal this over DefaultLayout: both
 // pinned by test, because the constant once named a path nothing creates and
 // every provisioned node's builds dialed it.
 func BuildkitSocket(l Layout) string {

@@ -125,7 +125,7 @@ func TestPublishRefusesAnInvalidSnapshot(t *testing.T) {
 }
 
 // R16 catches this at plan time, but a snapshot assembled from several separate
-// applies can still collide — and last-writer-wins in a routing table is a
+// applies can still collide, and last-writer-wins in a routing table is a
 // silent misdelivery.
 func TestSnapshotRefusesADomainClaimedTwice(t *testing.T) {
 	snap := Snapshot{Routes: []Route{
@@ -155,7 +155,7 @@ func TestLoadRejectsGarbage(t *testing.T) {
 	}
 }
 
-// A truncated file — the failure a non-atomic write would produce — must be
+// A truncated file (the failure a non-atomic write would produce) must be
 // rejected rather than serve half a route table.
 func TestLoadRejectsATruncatedSnapshot(t *testing.T) {
 	dir := t.TempDir()

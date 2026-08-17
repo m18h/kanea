@@ -23,7 +23,7 @@ import (
 // Replication defaults.
 const (
 	// DefaultSegmentInterval is how often changes are shipped. Five minutes is
-	// the RPO §15.3 promises, so the interval has to be comfortably inside it —
+	// the RPO §15.3 promises, so the interval has to be comfortably inside it:
 	// at one minute, a failure loses at most a minute of mutations plus
 	// whatever the upload was retrying.
 	DefaultSegmentInterval = time.Minute
@@ -32,7 +32,7 @@ const (
 	DefaultSnapshotInterval = 6 * time.Hour
 	// DefaultRetention is how many snapshots are kept.
 	DefaultRetention = 7
-	// DefaultMaxChanges bounds one segment. A burst — a fleet-wide apply — must
+	// DefaultMaxChanges bounds one segment. A burst (a fleet-wide apply) must
 	// produce several segments rather than one enormous object, because an
 	// upload that fails is retried whole.
 	DefaultMaxChanges = 2000
@@ -55,7 +55,7 @@ type Replicator struct {
 	now  func() time.Time
 	// failing tracks whether the last attempt failed, so events fire on
 	// transitions rather than every interval. A destination that has been down
-	// for a day would otherwise be 1440 identical messages — the dispatcher
+	// for a day would otherwise be 1440 identical messages; the dispatcher
 	// coalesces them, but the right number to send is two: it broke, it came
 	// back.
 	failing atomic.Bool
@@ -63,7 +63,7 @@ type Replicator struct {
 	// shipped is the highest index known to be in the sink.
 	shipped atomic.Uint64
 	// stats are observable so a dashboard can say when replication last
-	// succeeded — which is the number that matters, and the one an operator
+	// succeeded, which is the number that matters, and the one an operator
 	// never has until the restore.
 	lastSegmentAt  atomic.Int64
 	lastSnapshotAt atomic.Int64
@@ -127,7 +127,7 @@ func (r *Replicator) Run(ctx context.Context) {
 	// The cursor comes from the sink, so a restarted daemon resumes where the
 	// bucket actually is rather than where it last remembered being. The
 	// last-success timestamps come from the same listing (v1.37): before this,
-	// Status read "never" after every restart — the wrong answer from the one
+	// Status read "never" after every restart; the wrong answer from the one
 	// number that decides whether a backup strategy is real.
 	if shipped, lastSegmentAt, lastSnapshotAt, err := r.archiver.Resume(ctx); err != nil {
 		r.log.Error("cannot read what has already been replicated",
@@ -161,7 +161,7 @@ func (r *Replicator) Run(ctx context.Context) {
 		case <-ctx.Done():
 			// One last ship on the way out. Shutdown is the moment a lost
 			// minute of changes is most avoidable, and the context is already
-			// cancelled — so this runs on a detached one with its own bound.
+			// cancelled, so this runs on a detached one with its own bound.
 			final, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownShipTimeout)
 			defer cancel()
 			if err := r.ShipOnce(final); err != nil {
@@ -291,7 +291,7 @@ func (r *Replicator) oldestIndex(ctx context.Context) (uint64, error) {
 // report emits a notification when replication changes state (§11).
 //
 // On transitions only. A destination that has been unreachable since yesterday
-// is one fact, not one per minute — the dispatcher would coalesce a stream of
+// is one fact, not one per minute; the dispatcher would coalesce a stream of
 // them, but the right number to send is two: it broke, and it came back.
 func (r *Replicator) report(err error, what string) {
 	failed := err != nil

@@ -1,11 +1,11 @@
 //go:build linux && bpfload
 
-// The kernel-floor gate (PRD §21: "kernel ≥ 5.10 — the floor is spike-validated,
+// The kernel-floor gate (PRD §21: "kernel ≥ 5.10; the floor is spike-validated,
 // not inherited").
 //
 // Nothing else in CI ever loads a BPF program. `bpf-verify` regenerates the
 // committed artifacts and diffs the bytes, which asks whether they still come
-// from the committed sources — not whether any kernel will accept them. So a
+// from the committed sources, not whether any kernel will accept them. So a
 // change to kanea.c that needs a helper, a map type or an instruction added
 // after 5.10 would raise the real floor silently, and the first person to find
 // out would be an operator on a Debian 11 node whose datapath does not come up.
@@ -14,7 +14,7 @@
 // running it accept the shipping object? It loads and verifies, and deliberately
 // does NOT attach: attachment needs cgroup and netlink state that belongs to the
 // spike harness (spikes/ebpf-datapath), which is the full-fidelity run on real
-// hardware. The two are complementary — run this one first, because it is the
+// hardware. The two are complementary: run this one first, because it is the
 // cheapest question and it fails fast if the object will not verify at all.
 //
 // CI does not run it. Booting a 5.10 kernel there was tried through

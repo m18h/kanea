@@ -1,6 +1,6 @@
 package reconciler_test
 
-// R27 (v1.40): the auth projection — references resolved into verifier
+// R27 (v1.40): the auth projection; references resolved into verifier
 // material, tokens reduced to hashes, and a route that fails to resolve left
 // marked-without-material (503 at the edge) rather than dropped open.
 
@@ -88,7 +88,7 @@ func TestAuthProjectionHashesBearerTokens(t *testing.T) {
 }
 
 // A basic_ref holding a non-bcrypt line is refused: the route stays marked,
-// its material is absent, and the edge answers 503 — fail closed.
+// its material is absent, and the edge answers 503; fail closed.
 func TestAuthProjectionRefusesPlaintextBasic(t *testing.T) {
 	h, sink := authHarness(t, fakeSecrets{
 		"secret:shop/web-users": []byte("ama:plaintext\n"),

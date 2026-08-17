@@ -36,7 +36,7 @@ const goodMeta = `{"kind":"kanea-bundle","kaneaVersion":"v9.9.9","arch":"amd64",
 
 // The property the whole air-gapped design rests on: a bundle is not trusted
 // more than the network. Its contents are checked against the hashes compiled
-// into this binary, never against anything the bundle carries — a bundle that
+// into this binary, never against anything the bundle carries: a bundle that
 // supplied its own hashes would be a bundle that authenticates itself.
 func TestBundleContentsAreVerifiedAgainstTheEmbeddedHashes(t *testing.T) {
 	dir := writeBundle(t, goodMeta, map[string]string{"tool": "not what is pinned"})

@@ -41,7 +41,7 @@ func (h *evalHarness) feed(service, metric string, value float64, n int) {
 //
 // feed advances the clock as it goes, so feeding two services in sequence would
 // leave the first one's samples outside the trailing average window by the time
-// the second finished — which looks exactly like a service with no metrics.
+// the second finished, which looks exactly like a service with no metrics.
 func (h *evalHarness) feedAll(metric string, value float64, n int, services ...string) {
 	for range n {
 		for _, service := range services {
@@ -266,7 +266,7 @@ func TestAFailedApplyDoesNotStartTheCooldown(t *testing.T) {
 func TestTheMostDemandingRuleWins(t *testing.T) {
 	h := newEval(t)
 	// CPU is comfortable, latency is not. The rules are constraints, so the
-	// count is whatever the breached one needs — an average would let the
+	// count is whatever the breached one needs: an average would let the
 	// satisfied rule veto it.
 	h.feed("shop/web", scaling.MetricCPU, 35, 6)
 	h.feed("shop/web", scaling.MetricP95, 1600, 6)
@@ -376,7 +376,7 @@ func TestDecisionLatencyFitsTheBudget(t *testing.T) {
 }
 
 func TestScaleDownWaitsForAFullWindowAfterStart(t *testing.T) {
-	// A fresh evaluator — which is what a restarted daemon has — holds an
+	// A fresh evaluator (which is what a restarted daemon has) holds an
 	// empty stabilization window, and an empty window has no higher count in
 	// it to hold a shrink back (v1.37). Scale-down must wait until a full
 	// window has actually been observed.
@@ -394,7 +394,7 @@ func TestScaleDownWaitsForAFullWindowAfterStart(t *testing.T) {
 		t.Error("the held decision gave no reason")
 	}
 
-	// Once a full window has been watched — and stayed quiet — it may shrink.
+	// Once a full window has been watched (and stayed quiet) it may shrink.
 	h.clock.advance(scaling.DefaultScaleDownStabilization)
 	h.feed("shop/web", scaling.MetricCPU, 10, 6)
 	d = h.eval.Evaluate("shop/web", 4, policy)

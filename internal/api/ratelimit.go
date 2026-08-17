@@ -13,13 +13,13 @@ import (
 //
 // Two tiers, because the two kinds of request cost different things and are
 // reached by different people. An unauthenticated request is one anybody on the
-// network can make, and the expensive one among them — login — spends ~250 ms
+// network can make, and the expensive one among them (login) spends ~250 ms
 // in bcrypt by design; that is a denial-of-service lever if it is not bounded
 // well below what an authenticated operator needs. A request that already
 // carries a valid credential is bounded generously: the limit there exists to
 // catch a runaway client, not to ration normal use.
 var (
-	// DefaultPublicLimit applies to health and login — the two routes reachable
+	// DefaultPublicLimit applies to health and login: the two routes reachable
 	// without a credential. The per-account and per-source lockout on failed
 	// logins (§13.3) sits behind this and is much stricter; this is the coarse
 	// guard in front of it.
@@ -39,8 +39,8 @@ const limiterSweepInterval = time.Minute
 // whether to admit a request after paying for the bcrypt it asked for is not a
 // rate limit, it is an accounting exercise.
 //
-// Unix-socket callers are exempt. They are the local root of §13.1 — already
-// able to stop the daemon outright — and they share one meaningless source
+// Unix-socket callers are exempt. They are the local root of §13.1 (already
+// able to stop the daemon outright) and they share one meaningless source
 // address, so a limit there would only make `kanea ps` in a loop throttle the
 // reconciler's own CLI.
 func (s *Server) checkRateLimit(w http.ResponseWriter, r *http.Request, p policy) bool {

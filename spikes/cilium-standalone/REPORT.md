@@ -1,12 +1,12 @@
-# REPORT — Spike ①: standalone Cilium (no Kubernetes)
+# REPORT; Spike ①: standalone Cilium (no Kubernetes)
 
-**Date:** 2026-07-30 · **Verdict: GO on all five questions — but only on Cilium ≥ 1.18, and not through the interfaces the PRD assumes** · **PRD amendments required: yes (§5.2.5, §7.1, §22 R1, §23.2 — see the last section)**
+**Date:** 2026-07-30 · **Verdict: GO on all five questions, but only on Cilium ≥ 1.18, and not through the interfaces the PRD assumes** · **PRD amendments required: yes (§5.2.5, §7.1, §22 R1, §23.2; see the last section)**
 
 This was PRD §22's **#1 technical risk**. Standalone Cilium works, end to end, for
 everything Kanea needs. The surprise is *how*: the two write APIs the PRD builds on
 (service LB, policy import) **were removed in Cilium 1.18**, and their non-k8s
 replacements are **watched files**, not REST calls. Endpoint labelling is also not
-what the PRD assumes — CNI args cannot carry labels at all.
+what the PRD assumes: CNI args cannot carry labels at all.
 
 ## Environment
 
@@ -15,7 +15,7 @@ what the PRD assumes — CNI args cannot carry labels at all.
 | Host | OrbStack VM `kanea-spike` (Ubuntu 24.04, arm64), 18 vCPU / 8 GiB |
 | Kernel | 7.0.11-orbstack, cgroups v2, systemd PID 1 |
 | Runtime | containerd **2.3.3**, runc **1.5.1** (from spike ②) |
-| Cilium | **1.19.6** — `quay.io/cilium/cilium:v1.19.6` @ `sha256:0df5b275…ac92`, run as a privileged host-network containerd task |
+| Cilium | **1.19.6**: `quay.io/cilium/cilium:v1.19.6` @ `sha256:0df5b275…ac92`, run as a privileged host-network containerd task |
 | kvstore | etcd **3.7.1** on 127.0.0.1:2379 (single node), `--identity-allocation-mode=kvstore` |
 | Datapath | native routing, `--enable-k8s=false`, KPR **true**, Maglev, IPAM cluster-pool from `--ipv4-range=10.200.1.0/24` |
 | Image | `docker.io/library/busybox:1.37` |
@@ -25,7 +25,7 @@ Result: **`spike all` = 25/25 PASS, three consecutive clean runs**; `spike hazar
 
 ---
 
-## Q1 — CNI ADD from our own process: **GO**
+## Q1; CNI ADD from our own process: **GO**
 
 ```
 ✓ attach spike-web-1  1.15s   ✓ attach spike-web-2  123ms   ✓ attach spike-client  313ms
@@ -36,7 +36,7 @@ PASS  east-west: client -> web-1                      (eBPF datapath, no policy 
 PASS  north-south: alloc -> internet (masquerade)     1.1.1.1:80
 ```
 
-The attach sequence that works — and the order matters:
+The attach sequence that works, and the order matters:
 
 ```
 ip netns add <alloc>  →  CNI ADD (cilium-cni)  →  PATCH endpoint labels  →  containerd task start
@@ -45,7 +45,7 @@ ip netns add <alloc>  →  CNI ADD (cilium-cni)  →  PATCH endpoint labels  →
 - **Network before start, not after.** Between CNI ADD and the label patch the endpoint
   carries `reserved:init`, and init endpoints are **policy-enforced (deny) in both
   directions**. A workload started in that window has its traffic dropped. Spike ②'s
-  "pre-create persistent netns" note is therefore not just tidy — it is required.
+  "pre-create persistent netns" note is therefore not just tidy: it is required.
 - **Alloc IDs must be ≥ 5 characters.** Cilium derives the temporary interface name from
   the first 5 characters of `"<containerID>:<ifname>"`; a shorter ID leaks the `:` into an
   interface name and CNI ADD fails with a bare `invalid argument` from the kernel. Kanea's
@@ -54,7 +54,7 @@ ip netns add <alloc>  →  CNI ADD (cilium-cni)  →  PATCH endpoint labels  →
   also records `cni-attachment-id = "<id>:eth0"`.
 - `cilium-cni` does not bring `lo` up inside the netns. Kanea must (`ip link set lo up`).
 
-## Q2 — Endpoint labels and identity: **GO, but not via CNI**
+## Q2; Endpoint labels and identity: **GO, but not via CNI**
 
 ```
 PASS  identity labels set via agent API replace reserved:init
@@ -81,7 +81,7 @@ Two further findings:
 - **`project` must also be published as a k8s namespace label.** Cilium rewrites every
   `fromEndpoints`/`toEndpoints` selector (`pkg/k8s/apis/cilium.io/utils`): a clusterwide
   policy gets `k8s:io.kubernetes.pod.namespace Exists` injected, a namespaced one gets
-  `=<ns>`. Endpoints without that label match **no peer selector at all** — every rule
+  `=<ns>`. Endpoints without that label match **no peer selector at all**: every rule
   silently denies everything, which is exactly the failure this spike hit before adding
   `k8s:io.kubernetes.pod.namespace=<project>`. Mapping **project → namespace label** puts
   Kanea on the same policy semantics every Cilium user relies on.
@@ -92,7 +92,7 @@ Two further findings:
   regenerating. Bounded retry (6 × 300 ms backoff, 4xx treated as a real error) made three
   consecutive full runs green.
 
-## Q3 — Service load balancing: **GO via `--lb-state-file`, the REST API is gone**
+## Q3; Service load balancing: **GO via `--lb-state-file`, the REST API is gone**
 
 ```
 ✓ write lb-state.json (2 backends, atomic rename)
@@ -109,18 +109,18 @@ PASS  emptying the state file removes the frontend
 StateDB-based LB control plane.
 
 The supported non-k8s data source is **`--lb-state-file=<path>.json|yaml`**: a watched file
-holding Kubernetes-*shaped* `Service` + `EndpointSlice` objects (schema only — no API
+holding Kubernetes-*shaped* `Service` + `EndpointSlice` objects (schema only; no API
 server, no CRDs, no client-go). Verified properties:
 
 - ClusterIP frontends outside the endpoint CIDR work (10.201.0.1:80 → backends on 10.200.1.0/24).
 - Maglev spreads connections across backends; **host → VIP works** thanks to socket LB
   (`--kube-proxy-replacement=true`), which is what `kanea-edge` needs.
 - Backend add/remove and full deletion converge in well under the 15 s poll budget.
-- **Writes must be atomic** (`rename(2)` into place) — Cilium's own test data states this is
+- **Writes must be atomic** (`rename(2)` into place): Cilium's own test data states this is
   required of production users; the watcher reacts to fsnotify events and would otherwise
   read a partial file.
 
-## Q4 — Network policy: **GO via `--static-cnp-path`, the REST API is gone**
+## Q4; Network policy: **GO via `--static-cnp-path`, the REST API is gone**
 
 ```
 PASS  baseline: cross-project reachable before policy
@@ -139,26 +139,26 @@ even `GET /v1/policy` is marked deprecated "will be removed in v1.19"), and
 **`--static-cnp-path=<dir>`**: a watched directory of CiliumNetworkPolicy YAML files.
 
 - A file with empty `metadata.namespace` is treated as a **CiliumClusterwideNetworkPolicy**.
-- File names must be DNS-1123 subdomains ending in `.yaml`; anything else is ignored —
+- File names must be DNS-1123 subdomains ending in `.yaml`; anything else is ignored,
   which conveniently makes `.<name>.tmp` + rename a safe atomic write.
 - Withdrawing a policy = deleting its file. Policy revision is observable via `GET /v1/policy`.
 
-**Hazard — an invalid policy file kills the agent** (`spike hazard`, 2/2):
+**Hazard; an invalid policy file kills the agent** (`spike hazard`, 2/2):
 
 ```
 PASS  invalid policy file is fatal to cilium-agent   API unreachable ~2s after the write
 PASS  agent recovers once the bad file is removed
 ```
 
-`pkg/policy/directory/watcher.go` calls `logging.Fatal()` when a file fails to translate —
+`pkg/policy/directory/watcher.go` calls `logging.Fatal()` when a file fails to translate:
 both on fsnotify events *and* during the startup directory scan, so a bad file left on disk
 turns into a **crash loop**. This is the sharpest operational finding of the spike: Kanea
 must validate every generated policy before it reaches the watched directory, write it
 atomically, and treat that directory as owned exclusively by `kanead`. PRD §5.2.5's "bad
-policy must never lock out the host endpoints" is now a hard requirement with teeth — the
+policy must never lock out the host endpoints" is now a hard requirement with teeth: the
 failure mode is worse than a rejected import, it is a downed agent.
 
-## Q5 — Hubble metrics without k8s: **GO**
+## Q5; Hubble metrics without k8s: **GO**
 
 ```
 PASS  hubble metrics endpoint serves Prometheus text (no k8s)  :9965 -> 39107 bytes
@@ -170,18 +170,18 @@ PASS  DNS proxied and observed at L7        hubble_dns_queries_total=4
 
 - `--hubble-metrics` is **space-separated inside one value** (`--hubble-metrics='dns drop
   tcp flow port-distribution'`). Comma-separated is parsed as a single unknown metric name
-  and repeating the flag keeps only the last occurrence — both fail *silently* except for one
+  and repeating the flag keeps only the last occurrence: both fail *silently* except for one
   `level=warn "Skipping unknown hubble metric"` line, leaving a metrics endpoint that serves
   200 OK with no flow data. Worth a `kanea doctor` check.
 - L7 DNS visibility works through the standalone DNS proxy with a `toFQDNs` + `rules.dns`
-  policy — PRD §7.1's "or delegated to Cilium's standalone DNS proxy" option is real.
+  policy: PRD §7.1's "or delegated to Cilium's standalone DNS proxy" option is real.
   (Kanea's built-in resolver remains the preferred path; this is a validated fallback.)
 
 ## No Go client: Kanea must speak the REST API directly
 
 PRD §23.2 lists `github.com/cilium/cilium` (API client) as a dependency. **It should not be
 imported.** The module's `go.mod` requires the Kubernetes client graph (`k8s.io/client-go`
-and friends) and ships `replace` directives that consumers do not inherit — dragging it in
+and friends) and ships `replace` directives that consumers do not inherit: dragging it in
 contradicts AGENTS.md constraint #10 ("no client-go, no kube imports, ever") and inflates
 the dependency/CVE surface for a project whose release gates are `govulncheck`/`gosec`.
 
@@ -194,7 +194,7 @@ four calls, all stable and all `GET`/`PATCH`:
 | alloc → endpoint | `GET /v1/endpoint/container-id:<id>` |
 | identity labels | `PATCH /v1/endpoint/container-id:<id>` |
 | verify LB state | `GET /v1/service` |
-| verify policy state | `GET /v1/policy` (deprecated — prefer endpoint `policy-enabled`) |
+| verify policy state | `GET /v1/policy` (deprecated: prefer endpoint `policy-enabled`) |
 
 Everything else is files: `lb-state.json` and `policies/*.yaml`.
 
@@ -208,19 +208,19 @@ Everything else is files: `lb-state.json` and `policies/*.yaml`.
 | `containerd-shim` (per alloc) | 11.3 MiB |
 
 ≈ 218 MiB before `kanead`/`kanea-edge`, with Hubble **enabled**. The §21 budget holds, but
-cilium-agent is the single largest resident component — the PRD's "Hubble off by default"
+cilium-agent is the single largest resident component: the PRD's "Hubble off by default"
 default is the right one, and the 1 GiB `system_reserve_memory` floor (§5.2.11) must cover
 the agent, not just Kanea's own processes.
 
 ## Version floor: **≥ 1.18, pin 1.19.x**
 
 - **1.17** has the writable service and policy APIs but neither `--lb-state-file` nor
-  `--static-cnp-path`. It is now three minors behind 1.20 and effectively out of support —
+  `--static-cnp-path`. It is now three minors behind 1.20 and effectively out of support:
   building v1 on it would put an unpatched component behind Kanea's own CVE release gates
   (AGENTS.md #7). Rejected.
 - **1.18/1.19** have the file-based interfaces this spike validated. Recommendation: floor at
-  **≥ 1.18**, pin and test **1.19.6**, and keep the version matrix (PRD §15.4) enforcing it —
-  these interfaces changed once already and can change again.
+  **≥ 1.18**, pin and test **1.19.6**, and keep the version matrix (PRD §15.4) enforcing it;
+  * these interfaces changed once already and can change again.
 
 ## Fallback status
 
@@ -232,26 +232,26 @@ churned in 1.18", which the version matrix plus `kanea doctor` handle.
 
 ## PRD amendments required
 
-1. **§5.2.5** — service LB is programmed via **`--lb-state-file`** (atomic rename, k8s-shaped
+1. **§5.2.5**: service LB is programmed via **`--lb-state-file`** (atomic rename, k8s-shaped
    Service/EndpointSlice JSON), not `PUT /v1/service/{id}`; network policy via
    **`--static-cnp-path`** (validated, atomically-written CNP YAML), not `PUT /v1/policy`;
    endpoint labels via **`PATCH /v1/endpoint/{id}`** after CNI ADD and **before task start**,
    not via CNI args. Add the agent flags this needs
    (`--kube-proxy-replacement=true`, `--policy-default-local-cluster=false`,
    `--identity-allocation-mode=kvstore`, `--ipv4-range`).
-2. **§5.2.5 / §14** — the policy directory is a **fatal-on-malformed** input: Kanea validates
+2. **§5.2.5 / §14**: the policy directory is a **fatal-on-malformed** input: Kanea validates
    before writing, writes atomically, and owns the directory. A bad file is an agent crash
    loop, not a rejected import.
-3. **§7.1 / §6.2** — a project's identity labels include
+3. **§7.1 / §6.2**: a project's identity labels include
    `k8s:io.kubernetes.pod.namespace=<project>`; without it every policy selector matches
    nothing. Document project ≡ namespace.
-4. **§22 R1** — retire "endpoint labels via CNI args" and the "partially de-risked" wording;
+4. **§22 R1**: retire "endpoint labels via CNI args" and the "partially de-risked" wording;
    record the spike result, the new interfaces, and the residual risk (file-based interfaces,
    churned in 1.18).
-5. **§23.2** — drop `github.com/cilium/cilium` as a dependency (pulls client-go; violates
+5. **§23.2**: drop `github.com/cilium/cilium` as a dependency (pulls client-go; violates
    constraint #10); replace with "agent REST API over the unix socket, hand-rolled client".
    Bump `cilium-agent` from **≥ 1.17** to **≥ 1.18 (tested 1.19.6)**.
-6. **§21** — note that cilium-agent alone is ~150 MiB RSS with Hubble on, inside the 1 GiB
+6. **§21**: note that cilium-agent alone is ~150 MiB RSS with Hubble on, inside the 1 GiB
    control-plane reserve.
 
 ## M2 implementation notes (carry these into `internal/network`)

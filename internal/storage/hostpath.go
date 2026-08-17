@@ -15,8 +15,8 @@ var ErrHostPathNotAllowed = errors.New("storage: host path is not allowed")
 //
 // The allowlist comes from the *server* configuration, never from a job spec.
 // That split is the whole security argument for the driver existing: an
-// unrestricted host mount is `privileged` under another name — `/`, `/etc`, the
-// containerd socket — and would make the §14 A05 hardening defaults irrelevant.
+// unrestricted host mount is `privileged` under another name (`/`, `/etc`, the
+// containerd socket) and would make the §14 A05 hardening defaults irrelevant.
 // So the boundary is set by whoever owns the node, and a spec author can only
 // reference a directory inside it.
 //
@@ -119,8 +119,8 @@ func (p HostPathPolicy) Resolve(path string) (string, error) {
 // The ordering is the entire security argument, and it is forced by a detail:
 // a path that does not exist cannot be symlink-resolved, so the allowlist
 // cannot be checked against it directly. Instead the nearest **existing**
-// ancestor is resolved and checked first — meaning a create outside a permitted
-// prefix refuses before anything is written to disk — and then the ordinary
+// ancestor is resolved and checked first (meaning a create outside a permitted
+// prefix refuses before anything is written to disk) and then the ordinary
 // Resolve runs on the result, so the decision about whether a directory may be
 // mounted is still made in one place, against a real resolved path.
 //
@@ -165,7 +165,7 @@ func (p HostPathPolicy) ResolveOrCreate(path string, create bool) (string, error
 	if err := os.MkdirAll(clean, 0o750); err != nil {
 		return "", fmt.Errorf("create host volume %q: %w", path, err)
 	}
-	// Re-check from scratch. Not paranoia about our own MkdirAll — it is what
+	// Re-check from scratch. Not paranoia about our own MkdirAll: it is what
 	// keeps a single function answering "may this be mounted", so a future
 	// change to Resolve's rules applies here too without anyone remembering to.
 	return p.Resolve(path)
@@ -175,7 +175,7 @@ func (p HostPathPolicy) ResolveOrCreate(path string, create bool) (string, error
 //
 // It stops at the root, which always exists, so it terminates. A path whose
 // ancestor is a *file* rather than a directory is returned as-is and refused by
-// the caller's prefix check or by MkdirAll — either way it does not become a
+// the caller's prefix check or by MkdirAll: either way it does not become a
 // mount.
 func existingAncestor(path string) (string, error) {
 	for {

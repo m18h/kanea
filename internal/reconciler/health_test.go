@@ -36,7 +36,7 @@ func TestProbeHTTP(t *testing.T) {
 		{name: "200 is healthy", status: http.StatusOK},
 		{name: "204 is healthy", status: http.StatusNoContent},
 		// A redirect is the service pointing elsewhere, not a statement that it
-		// is serving — and following one can probe something entirely different.
+		// is serving, and following one can probe something entirely different.
 		{name: "302 is not healthy", status: http.StatusFound, wantErr: true},
 		{name: "404 is not healthy", status: http.StatusNotFound, wantErr: true},
 		{name: "500 is not healthy", status: http.StatusInternalServerError, wantErr: true},
@@ -150,7 +150,7 @@ func TestProbeExec(t *testing.T) {
 	}
 }
 
-// A driver that cannot exec must say so rather than let the check pass — a
+// A driver that cannot exec must say so rather than let the check pass: a
 // silently-passing health check is worse than none.
 func TestProbeExecWithoutADriver(t *testing.T) {
 	err := newProber(nil).Probe(t.Context(),
@@ -171,7 +171,7 @@ func TestProbeUnknownType(t *testing.T) {
 }
 
 // The `failures` threshold is what stops a transient blip from taking a
-// dependency — and everything downstream of it — out of service.
+// dependency (and everything downstream of it) out of service.
 func TestApplyProbeThreshold(t *testing.T) {
 	now := time.Now()
 	check := HealthCheck{Type: HealthTCP, Failures: 3, Interval: time.Second}

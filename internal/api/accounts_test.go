@@ -196,7 +196,7 @@ func TestTokenLifecycle(t *testing.T) {
 		t.Fatalf("viewer token write = %d, want 403", resp.StatusCode)
 	}
 
-	// Revoking it takes effect immediately — that is the point of storing a
+	// Revoking it takes effect immediately: that is the point of storing a
 	// hash server-side rather than a self-contained credential.
 	req = h.request(t, http.MethodDelete, api.PathTokens+"/"+created.Token.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+admin)

@@ -13,8 +13,8 @@ import (
 // PathSettings is the node-settings surface (PRD v1.46, §15.1, §16.1).
 const PathSettings = "/v1/settings"
 
-// ErrInvalidSettings marks a refusal the caller can fix — a malformed record,
-// a destination that failed its probe — and maps to 400 rather than 500.
+// ErrInvalidSettings marks a refusal the caller can fix (a malformed record,
+// a destination that failed its probe) and maps to 400 rather than 500.
 var ErrInvalidSettings = errors.New("api: invalid settings")
 
 // SettingsService is the slice of the daemon the settings routes need. It is
@@ -26,7 +26,7 @@ type SettingsService interface {
 	Node() NodeConfigView
 	Backup(ctx context.Context) (BackupSettingsView, error)
 	// PutBackup validates, probes the new destination, commits the record and
-	// swaps replication — in that order, so a bad destination leaves the old
+	// swaps replication: in that order, so a bad destination leaves the old
 	// replication untouched.
 	PutBackup(ctx context.Context, rec settings.BackupSettings) (BackupSettingsView, error)
 	// ResetBackup deletes the record, reverting to the flags.
@@ -75,7 +75,7 @@ type NotificationSettingsView struct {
 }
 
 // ProjectNotificationsView is one project's channel config. References are
-// names, never values — safe for an admin to read back.
+// names, never values: safe for an admin to read back.
 type ProjectNotificationsView struct {
 	Project       string                 `json:"project"`
 	Notifications *jobspec.Notifications `json:"notifications,omitempty"`
@@ -187,7 +187,7 @@ func (s *Server) handleResetNotificationSettings(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, view)
 }
 
-// handleTestNodeChannels tests the node-wide channels — the ones the
+// handleTestNodeChannels tests the node-wide channels: the ones the
 // project-scoped test route can never name, because their scope is empty.
 func (s *Server) handleTestNodeChannels(w http.ResponseWriter, r *http.Request) {
 	if s.notifier == nil {
@@ -223,7 +223,7 @@ func (s *Server) handleGetProjectNotifications(w http.ResponseWriter, r *http.Re
 // handlePutProjectNotifications replaces one project's channel config.
 //
 // It writes the same field on the same project record HCL apply and GitOps
-// sync write, so the three writers converge on one config — and the response
+// sync write, so the three writers converge on one config, and the response
 // carries the git warning, because for a synced project the next sync wins.
 func (s *Server) handlePutProjectNotifications(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {

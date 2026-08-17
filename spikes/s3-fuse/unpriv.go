@@ -14,7 +14,7 @@ import (
 
 // mountUser is created by provision-vm.sh. PRD §8 requires FUSE mounts to run
 // "under a dedicated, unprivileged helper process per mount", so the mount must
-// work without root — and the mount must still be usable by root-run containerd.
+// work without root, and the mount must still be usable by root-run containerd.
 const mountUser = "kanea-s3"
 
 // runUnpriv checks whether each driver can be mounted by an unprivileged user.
@@ -26,7 +26,7 @@ func runUnpriv(ctx context.Context, d *driver) error {
 	u, err := user.Lookup(mountUser)
 	if err != nil {
 		check(d.Name+": unprivileged mount", false,
-			fmt.Sprintf("user %s missing — rerun provision-vm.sh", mountUser))
+			fmt.Sprintf("user %s missing; rerun provision-vm.sh", mountUser))
 		return nil
 	}
 	uid, _ := strconv.Atoi(u.Uid)
@@ -60,7 +60,7 @@ func runUnpriv(ctx context.Context, d *driver) error {
 
 	// sudo -u drops privileges the way a systemd User= helper unit would.
 	sudoArgs := append([]string{"-n", "-u", mountUser, "-H"}, argv...)
-	out, mErr := exec.Command("sudo", sudoArgs...).CombinedOutput() // #nosec G204 — spike
+	out, mErr := exec.Command("sudo", sudoArgs...).CombinedOutput() // #nosec G204; spike
 	mounted := false
 	if mErr == nil {
 		deadline := time.Now().Add(15 * time.Second)
@@ -89,11 +89,11 @@ func runUnpriv(ctx context.Context, d *driver) error {
 		fmt.Sprintf("daemon owner=%q", strings.TrimSpace(string(owner))))
 
 	// Root (i.e. containerd, which binds the mount into an alloc) must still be
-	// able to traverse it — this is what allow_other + user_allow_other buys.
+	// able to traverse it: this is what allow_other + user_allow_other buys.
 	rootReadable := false
 	testFile := mnt + "/unpriv.txt"
 	werr := exec.Command("sudo", "-n", "-u", mountUser, "sh", "-c",
-		fmt.Sprintf("echo unprivileged-write > %q", testFile)).Run() // #nosec G204 — spike
+		fmt.Sprintf("echo unprivileged-write > %q", testFile)).Run() // #nosec G204; spike
 	if werr == nil {
 		b, rerr := os.ReadFile(testFile) // this process is root
 		rootReadable = rerr == nil && strings.Contains(string(b), "unprivileged-write")

@@ -1,5 +1,5 @@
 // Command kanea-spike-ebpf-datapath is throwaway M0-style validation code
-// (see spikes/README.md) for Kanea's planned internal eBPF datapath — the
+// (see spikes/README.md) for Kanea's planned internal eBPF datapath; the
 // standalone-Cilium replacement: connect-time service load balancing
 // (cgroup/connect4), SYN-gated stateless policy and endpoint accounting on
 // the veth tc hooks, static-neighbor point-to-point plumbing, and nftables

@@ -1,5 +1,5 @@
 // Command kanea is the single binary of the Kanea platform: control plane
-// (agent), ingress (edge), MCP server, and CLI — all subcommands of one
+// (agent), ingress (edge), MCP server, and CLI; all subcommands of one
 // static binary (PRD §2, G1).
 //
 // See PRD.md (the project north star) and AGENTS.md before making any
@@ -21,7 +21,7 @@ import (
 var version = "0.0.0-dev"
 
 // errNotImplemented marks subcommands belonging to a future milestone (PRD §20).
-var errNotImplemented = errors.New("not implemented yet — see PRD §20 milestones")
+var errNotImplemented = errors.New("not implemented yet: see PRD §20 milestones")
 
 type command struct {
 	name string
@@ -34,7 +34,7 @@ type command struct {
 // The order here is for whoever reads this file: it runs roughly install →
 // deploy → observe → administer, which is the order the commands are learned
 // in. printUsage sorts alphabetically for whoever reads the *help*, where a
-// narrative order is no help at all — you are looking up a name you half
+// narrative order is no help at all: you are looking up a name you half
 // remember, and only one of these orders lets you find it. Dispatch scans this
 // slice and does not care either way.
 var commands = []command{
@@ -42,7 +42,7 @@ var commands = []command{
 	{"install", "install the pinned host components: containerd, runc, buildkit (PRD §5.2.12)", runInstall},
 	{"bundle", "author an offline component bundle for an air-gapped node: create", runBundle},
 	{"agent", "run the control-plane daemon (kanead)", runAgent},
-	{"edge", "run the edge ingress proxy (kanea-edge, separate process — PRD §5.2.6)", runEdge},
+	{"edge", "run the edge ingress proxy (kanea-edge, separate process; PRD §5.2.6)", runEdge},
 	{"doctor", "verify node health: deps, versions, disk, clock", runDoctor},
 	{"plan", "dry-run diff of a job spec; selectors (shop, shop/web) scope it", runPlan},
 	{"run", "apply a job spec or just the selected services (shop/web …); alias: apply", runRun},
@@ -60,7 +60,7 @@ var commands = []command{
 	{"project", "project operations: sync, builds", runProject},
 	{"backup", "backup create|list|verify", runBackup},
 	{"restore", "restore state from a snapshot", runRestore},
-	{"secret", "manage secrets: put, ls, rm (write-only — there is no get)", runSecret},
+	{"secret", "manage secrets: put, ls, rm (write-only; there is no get)", runSecret},
 	{"volume", "list volumes: storage resources, their mounts, usage and budgets", runVolume},
 	{"ca", "this node's self-signed CA, to install on your devices: show, info", runCA},
 	{"user", "manage accounts: add, ls, rm", runUser},
@@ -88,7 +88,7 @@ func main() {
 	os.Exit(1)
 }
 
-// aliases map a second spelling onto a command, resolved before dispatch —
+// aliases map a second spelling onto a command, resolved before dispatch:
 // one table entry, one handler, so the spellings cannot drift (PRD v1.52).
 // The usage output deliberately keeps one row per verb; the alias rides the
 // target's description instead.
@@ -121,7 +121,7 @@ func runVersion([]string) error {
 }
 
 func printUsage(w io.Writer) error {
-	if _, err := fmt.Fprintln(w, "kanea — lightweight container orchestration (north star: PRD.md)"); err != nil {
+	if _, err := fmt.Fprintln(w, "kanea: lightweight container orchestration (north star: PRD.md)"); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, "\nUsage: kanea <command> [args]\n\nCommands:"); err != nil {

@@ -36,7 +36,7 @@ func TestSelfSignedIssuesUsableCertificates(t *testing.T) {
 		},
 		{
 			// A wildcard does not cover its own parent, so a project that wants
-			// both asks for both — and we are the CA, so there is no validation
+			// both asks for both, and we are the CA, so there is no validation
 			// to fail.
 			"wildcard and apex",
 			[]string{"*.apps.home.lan", "apps.home.lan"},
@@ -126,7 +126,7 @@ func TestSelfSignedIssuesIPSANs(t *testing.T) {
 }
 
 // A device whose clock runs a few minutes fast must not reject a certificate
-// minted this second — to its owner that reads as "your CA is broken".
+// minted this second: to its owner that reads as "your CA is broken".
 func TestSelfSignedBackdatesForClockSkew(t *testing.T) {
 	now := time.Now()
 	src := newTestSelfSigned(t, func() time.Time { return now })
@@ -198,7 +198,7 @@ func TestSelfSignedRenewsAtTwoThirds(t *testing.T) {
 }
 
 // A service that gained or lost a domain needs a certificate naming exactly
-// what it now claims — Covers is deliberately not a superset test.
+// what it now claims: Covers is deliberately not a superset test.
 func TestSelfSignedReissuesWhenTheDomainSetChanges(t *testing.T) {
 	src := newTestSelfSigned(t, time.Now)
 	first, err := src.Ensure(context.Background(), []Request{{Domains: []string{"nas.home.lan"}}})

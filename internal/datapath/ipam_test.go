@@ -6,7 +6,7 @@ import (
 )
 
 func TestReserveSkipsNetworkHostAndBroadcast(t *testing.T) {
-	// /29: .0 network, .1 host anchor, .7 broadcast — usable is .2 through .6.
+	// /29: .0 network, .1 host anchor, .7 broadcast; usable is .2 through .6.
 	p := newIPAM(netip.MustParsePrefix("10.0.0.0/29"))
 	want := []string{"10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "10.0.0.6"}
 	for i, w := range want {
@@ -145,7 +145,7 @@ func TestAliasForRoundTrips(t *testing.T) {
 	v6 := netip.MustParseAddr("fd10:244::4")
 
 	if got := aliasFor("shop-web-0", v4, netip.Addr{}); got != "kanea/shop-web-0/10.0.0.4" {
-		t.Errorf("v4-only alias = %q — the pre-v1.41 form changed", got)
+		t.Errorf("v4-only alias = %q: the pre-v1.41 form changed", got)
 	}
 	id, ip, ip6, ok := parseAlias(aliasFor("shop-web-0", v4, v6))
 	if !ok || id != "shop-web-0" || ip != v4 || ip6 != v6 {

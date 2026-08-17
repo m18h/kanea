@@ -19,7 +19,7 @@ import (
 //
 // Four moving parts run here: the queue's single worker, the sync loop that
 // polls every project with a git source, the runner behind both, and the two
-// seams — an Applier that turns a synced spec into desired state and a Deployer
+// seams; an Applier that turns a synced spec into desired state and a Deployer
 // that pins a built digest. Everything else lives in internal/gitops.
 
 // DefaultSyncInterval is how often a project with a git source is polled.
@@ -64,8 +64,8 @@ func buildPipelines(cfg pipelineSettings, logger *slog.Logger) (*gitops.Service,
 	if err != nil {
 		return nil, nil, err
 	}
-	// A crash strands runs at queued or running with nothing left to move them
-	// — the graceful path drains the queue, a kill does not (v1.37). Swept
+	// A crash strands runs at queued or running with nothing left to move them:
+	// the graceful path drains the queue, a kill does not (v1.37). Swept
 	// here, structurally before the queue's worker exists, so a stale
 	// "running" can never sit beside a real one.
 	swept, err := runs.SweepOrphans(context.Background())
@@ -102,12 +102,12 @@ func buildPipelines(cfg pipelineSettings, logger *slog.Logger) (*gitops.Service,
 		Deployer: storeDeployer{store: cfg.store, notify: cfg.notify, log: logger},
 		Secrets:  cfg.secrets,
 		LogDir:   cfg.logDir,
-		// Checkouts are materialised beside the build logs — the one directory
-		// §10.2 already gives the right permissions — under their own name.
+		// Checkouts are materialised beside the build logs (the one directory
+		// §10.2 already gives the right permissions) under their own name.
 		// This field was never set until v0.7.1: NewRunner refuses without it,
 		// so kanead with pipelines enabled (the default) crash-looped on every
 		// real node. Only unit tests ever built a RunnerConfig, and they all
-		// passed their own WorkDir — TestBuildPipelinesStartsWithDefaults now
+		// passed their own WorkDir: TestBuildPipelinesStartsWithDefaults now
 		// walks this wiring instead.
 		WorkDir: filepath.Join(cfg.logDir, "checkouts"),
 		Logger:  logger,
@@ -241,7 +241,7 @@ type storeApplier struct {
 // One batch, because they describe one commit: a multi-service change must land
 // atomically or the reconciler converges on half a deploy. The project's
 // pipeline configuration is written by the caller immediately after, since only
-// it knows which commit succeeded — a crash in between costs one repeated sync,
+// it knows which commit succeeded: a crash in between costs one repeated sync,
 // which applies the same specs again and changes nothing.
 func (a storeApplier) Apply(ctx context.Context, spec *jobspec.Spec) ([]string, error) {
 	desired, err := toDesired(spec)

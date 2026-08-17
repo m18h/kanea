@@ -32,7 +32,7 @@ const PublishOff = "off"
 // through the CLI: a synced repository reaches the Store through handleApply,
 // and a check that lives only in `kanea plan` is a check a push walks past.
 // `kanea plan` asks for this policy over PathEdgePolicy so the refusal still
-// lands in front of the person who typed it — but that is a courtesy, and this
+// lands in front of the person who typed it, but that is a courtesy, and this
 // is the boundary.
 type PortPolicy struct {
 	// ranges are the inclusive spans a spec may bind. Empty means publishing is

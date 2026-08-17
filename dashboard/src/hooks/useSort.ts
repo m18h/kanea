@@ -3,7 +3,7 @@ import { useState } from 'react'
 export type SortDir = 'asc' | 'desc'
 
 export interface Sort<K extends string> {
-  /** key is null while the list is in its own order — the order the server
+  /** key is null while the list is in its own order: the order the server
    * chose, which every page treats as the default. */
   key: K | null
   dir: SortDir
@@ -37,7 +37,7 @@ export type SortValue = string | number | undefined
 /**
  * sortItems orders a list by the active column, stably, without mutating it.
  *
- * "No data" sorts last in *both* directions — the dashboard's dashes are not
+ * "No data" sorts last in *both* directions: the dashboard's dashes are not
  * small numbers ("no data is never zero"), and a reader sorting P95 descending
  * is looking for the slowest service, not for the ones nothing has measured.
  */

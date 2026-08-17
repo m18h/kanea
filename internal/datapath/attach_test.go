@@ -180,7 +180,7 @@ func TestDetachToleratesPartialState(t *testing.T) {
 		name  string
 		setup func(f *fixture)
 		// identityStays: with neither a link nor a reservation there is no
-		// way to find the address, so the entry survives — harmless, because
+		// way to find the address, so the entry survives; harmless, because
 		// an identity without an interface denies traffic and the next
 		// allocation of the address overwrites it.
 		identityStays bool

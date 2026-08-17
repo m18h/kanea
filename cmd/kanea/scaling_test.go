@@ -24,7 +24,7 @@ func openScalingStore(t *testing.T) store.Store {
 
 func TestSetCountWritesTheCooldownRecordAtomically(t *testing.T) {
 	// The cooldown clock rides in the scale action's own Apply batch (v1.37):
-	// one index, one CDC unit — durability at zero extra replication cost.
+	// one index, one CDC unit; durability at zero extra replication cost.
 	ctx := context.Background()
 	st := openScalingStore(t)
 

@@ -15,14 +15,14 @@ import (
 // readers (Test, Channels).
 
 // channelNames is what Channels() reports, used to observe when a SetRoutes has
-// actually been applied on Run's goroutine — the swap is asynchronous, and a
+// actually been applied on Run's goroutine: the swap is asynchronous, and a
 // test publishing "after the reload" must know the reload landed first.
 func routesApplied(d *notify.Dispatcher, want int) func() bool {
 	return func() bool { return len(d.Channels()) == want }
 }
 
 func TestSetRoutesReplacesTheRouteSet(t *testing.T) {
-	// After a reload, the new channel receives and the old one does not — the
+	// After a reload, the new channel receives and the old one does not: the
 	// whole point of hot reload is that the retired channel is actually retired,
 	// not merely joined by its replacement.
 	oldCh, newCh := newRecorder("old"), newRecorder("new")
@@ -65,7 +65,7 @@ func TestSetRoutesReplacesTheRouteSet(t *testing.T) {
 func TestReloadFlushesPendingDigests(t *testing.T) {
 	// applyRoutes force-flushes the outgoing routes before swapping: a digest
 	// two seconds from sending when the operator reconfigured channels must not
-	// be silently discarded — delivering it through the outgoing route is the
+	// be silently discarded; delivering it through the outgoing route is the
 	// only honest option. The same rule shutdown follows, applied to reload.
 	ch := newRecorder("chat")
 	c := newClock()
@@ -90,7 +90,7 @@ func TestReloadFlushesPendingDigests(t *testing.T) {
 		t.Fatalf("%d messages before the reload; the window should still be open", got)
 	}
 
-	// Replace with nothing at all — the hardest case, because there is no new
+	// Replace with nothing at all: the hardest case, because there is no new
 	// route the pending events could be re-filed onto.
 	d.SetRoutes(nil)
 
@@ -104,7 +104,7 @@ func TestReloadFlushesPendingDigests(t *testing.T) {
 func TestTestAndChannelsRaceWithReload(t *testing.T) {
 	// Test and Channels read the route set from handler goroutines while Run's
 	// goroutine swaps it (v1.46). The atomic pointer is the mechanism; -race is
-	// the assertion — this test exists to give it something to bite on.
+	// the assertion: this test exists to give it something to bite on.
 	c := newClock()
 	d, err := notify.New(notify.Config{
 		Routes: []notify.Route{{Channel: newRecorder("a"), Filter: allEvents(t)}},
@@ -144,7 +144,7 @@ func TestTestAndChannelsRaceWithReload(t *testing.T) {
 
 func TestNodeChannels(t *testing.T) {
 	// TestNodeChannels exists because Test's project filter can never name the
-	// node-wide routes — their scope is the empty string, and `Test("", ...)`
+	// node-wide routes: their scope is the empty string, and `Test("", ...)`
 	// means "every route", which would page the projects' channels too.
 	node, shop := newRecorder("node/webhook"), newRecorder("shop/webhook")
 	c := newClock()

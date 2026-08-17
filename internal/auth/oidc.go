@@ -23,7 +23,7 @@ var (
 	// ErrOIDCDisabled means no provider is configured.
 	ErrOIDCDisabled = errors.New("auth: no identity provider is configured")
 	// ErrOIDCState marks a callback that does not match a login this daemon
-	// started — a replay, a stale tab, or a forged request.
+	// started; a replay, a stale tab, or a forged request.
 	ErrOIDCState = errors.New("auth: the login state does not match")
 	// ErrOIDCNoRole means the provider authenticated someone Kanea has no role
 	// for. It is the deny-by-default case, not an error in the provider.
@@ -42,7 +42,7 @@ type OIDCConfig struct {
 	ClientSecret string
 	// RedirectURL is the exact URI registered with the provider. Kanea never
 	// takes a redirect target from a request, so this is the only one that can
-	// ever be used (§13.2 — restricted redirect URIs).
+	// ever be used (§13.2: restricted redirect URIs).
 	RedirectURL string
 	// Scopes beyond openid. "profile" and "email" are usual; a provider that
 	// carries roles in a custom scope needs it named here.
@@ -83,7 +83,7 @@ type pendingLogin struct {
 	nonce    string
 	verifier string
 	// next is where to send the browser afterwards. Always a path on this
-	// origin — see safeNext.
+	// origin: see safeNext.
 	next    string
 	expires time.Time
 }
@@ -92,7 +92,7 @@ type pendingLogin struct {
 const PendingLoginTTL = 10 * time.Minute
 
 // maxPendingLogins bounds the in-flight set. Starting a login is unauthenticated
-// by necessity, so without a cap it is a memory exhaustion vector — the same
+// by necessity, so without a cap it is a memory exhaustion vector: the same
 // problem the rate limiter solves for requests, and the rate limiter in front of
 // this route is the other half of the answer.
 const maxPendingLogins = 1024
@@ -135,7 +135,7 @@ func NewOIDC(ctx context.Context, cfg OIDCConfig) (*OIDC, error) {
 	scopes := append([]string{oidc.ScopeOpenID}, cfg.Scopes...)
 	return &OIDC{
 		provider: provider,
-		// The verifier checks signature, issuer, audience and expiry — all four,
+		// The verifier checks signature, issuer, audience and expiry; all four,
 		// because a token that is merely well-formed is not a login.
 		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 		oauth: &oauth2.Config{
@@ -342,8 +342,8 @@ func subjectFrom(claims map[string]any, sub string) string {
 
 // safeNext bounds where a login may return the browser to.
 //
-// Only a path on this origin. Anything else — an absolute URL, a
-// protocol-relative "//evil.example" — is an open redirect, which turns the
+// Only a path on this origin. Anything else (an absolute URL, a
+// protocol-relative "//evil.example") is an open redirect, which turns the
 // login page into a credible phishing hop.
 func safeNext(next string) string {
 	if next == "" || !strings.HasPrefix(next, "/") {

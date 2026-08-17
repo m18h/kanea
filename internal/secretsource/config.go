@@ -22,7 +22,7 @@ import (
 // --secrets-providers-config. Its semantics are certsource.Provided's, not
 // passthrough's load-once: re-read via a content fingerprint over the config
 // and every credential file it names, parse failure keeps the last good set
-// and warns once, and a fingerprint change rebuilds the providers — which is
+// and warns once, and a fingerprint change rebuilds the providers, which is
 // also what drops Azure's and GCP's cached tokens when a credential rotates.
 
 // dns1123Label is the shape an allow entry must have. Held here rather than
@@ -162,7 +162,7 @@ func (p *Providers) Path() string { return p.path }
 // Changed reports whether the config or any credential file it names has
 // moved since the last call, so the loop can wake an immediate pass.
 //
-// Content-hashed, never stat-ed, and a poll rather than fsnotify — the
+// Content-hashed, never stat-ed, and a poll rather than fsnotify; the
 // certsource.Provided reasoning verbatim: rotation tools write then rename,
 // which lies to mtime and replaces the inode a watch would be registered on.
 func (p *Providers) Changed() bool {
@@ -182,7 +182,7 @@ func (p *Providers) Changed() bool {
 
 // Current returns the provider set, rebuilding only when the fingerprint
 // moved. Keeping instances stable across unchanged passes is what lets Azure
-// and GCP hold their cached tokens between passes — rebuilding every pass
+// and GCP hold their cached tokens between passes: rebuilding every pass
 // would re-authenticate against two identity providers per poll for nothing.
 func (p *Providers) Current() []Provider {
 	if p.path == "" {
@@ -195,7 +195,7 @@ func (p *Providers) Current() []Provider {
 		return p.providers
 	}
 
-	src, err := os.ReadFile(p.path) // #nosec G304 — operator-supplied config path
+	src, err := os.ReadFile(p.path) // #nosec G304: operator-supplied config path
 	if err == nil {
 		var configs []providerConfig
 		if configs, err = parseConfig(p.path, src); err == nil {
@@ -260,7 +260,7 @@ func (p *Providers) fingerprint() [sha256.Size]byte {
 		h.Write([]byte(line))
 	}
 
-	src, err := os.ReadFile(p.path) // #nosec G304 — operator-supplied config path
+	src, err := os.ReadFile(p.path) // #nosec G304: operator-supplied config path
 	if err != nil {
 		write("config-error:%v\n", err)
 		return sum256(h)
@@ -273,7 +273,7 @@ func (p *Providers) fingerprint() [sha256.Size]byte {
 	}
 	for _, cfg := range configs {
 		for _, f := range cfg.credentialFiles() {
-			body, err := os.ReadFile(f) // #nosec G304 — operator-supplied path
+			body, err := os.ReadFile(f) // #nosec G304: operator-supplied path
 			if err != nil {
 				write("%s:error:%v\n", f, err)
 				continue
@@ -306,7 +306,7 @@ func parseConfig(filename string, src []byte) ([]providerConfig, error) {
 	}
 
 	seenNames := make(map[string]struct{}, len(root.Providers))
-	// Two writers on one local path is a fight, not a merge — refused across
+	// Two writers on one local path is a fight, not a merge: refused across
 	// the whole file, whichever providers they belong to.
 	targets := make(map[string]string)
 
@@ -327,7 +327,7 @@ func parseConfig(filename string, src []byte) ([]providerConfig, error) {
 		}
 		seenNames[block.Name] = struct{}{}
 
-		// An empty allow is a typo, not a permissive default — the certsource
+		// An empty allow is a typo, not a permissive default: the certsource
 		// and passthrough rule, on the write side this time.
 		if len(block.Allow) == 0 {
 			return nil, fmt.Errorf(
@@ -396,7 +396,7 @@ func joinKinds() string {
 }
 
 // checkProviderFields enforces each kind's required fields and refuses fields
-// that belong to another kind — a field silently ignored is R21's dropped
+// that belong to another kind: a field silently ignored is R21's dropped
 // control wearing a config file's clothes.
 func checkProviderFields(kind Kind, label string, b hclProvider) error {
 	type field struct {

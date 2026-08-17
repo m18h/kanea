@@ -14,7 +14,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-// toHCL generates a job spec from desired state — the inverse of toDesired,
+// toHCL generates a job spec from desired state: the inverse of toDesired,
 // for the dashboard's "edit spec" (v1.38).
 //
 // It is best-effort by design and honest about it: the output is marked
@@ -101,7 +101,7 @@ func toHCL(services []reconciler.Desired, pipelines []gitops.Config) (string, er
 	return string(hclwrite.Format(file.Bytes())), nil
 }
 
-// writeFunction renders one function block — the inverse of convertFunction's
+// writeFunction renders one function block: the inverse of convertFunction's
 // lowering.
 func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Config) error {
 	refuse := func(field string) error {
@@ -109,7 +109,7 @@ func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Conf
 			"generator; edit the original spec file", svc.Project, svc.Service, field)
 	}
 	// A function's spec has no field for any of these (R25), so a desired
-	// record carrying one did not come from the parser — refuse by name rather
+	// record carrying one did not come from the parser; refuse by name rather
 	// than emit a block that would apply as something else.
 	switch {
 	case len(svc.Volumes) > 0:
@@ -129,7 +129,7 @@ func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Conf
 	case svc.Resources.PidsLimit != 0 && svc.Resources.PidsLimit != DefaultPidsLimit:
 		return refuse("a non-default pids limit")
 	}
-	// The lowering declares exactly one port, named "http" — anything else
+	// The lowering declares exactly one port, named "http"; anything else
 	// cannot round-trip through `port = N`.
 	if len(svc.Ports) != 1 || svc.Ports[0].Name != jobspec.EdgePortName {
 		return refuse("its port set (a function has exactly one, named \"http\")")
@@ -137,7 +137,7 @@ func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Conf
 
 	block := body.AppendNewBlock("function", []string{svc.Service}).Body()
 	block.SetAttributeValue("project", cty.StringVal(svc.Project))
-	// The declared tag, never PinnedImage — same rule as writeTask.
+	// The declared tag, never PinnedImage: same rule as writeTask.
 	setOptionalString(block, "module", svc.Image)
 	block.SetAttributeValue("port", cty.NumberIntVal(int64(svc.Ports[0].Container)))
 	block.SetAttributeValue("count", cty.NumberIntVal(int64(svc.Count)))
@@ -290,7 +290,7 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 			port := network.AppendNewBlock("port", []string{p.Name}).Body()
 			port.SetAttributeValue("container", cty.NumberIntVal(int64(p.Container)))
 			// "" is tcp, the default; only udp is stored, and only udp is
-			// emitted — the round-trip depends on the generated spec
+			// emitted: the round-trip depends on the generated spec
 			// converting back to the same "" (v1.42).
 			setOptionalString(port, "protocol", p.Protocol)
 		}
@@ -375,7 +375,7 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 }
 
 // writeResources emits a resources block with only the declared limits. A
-// zero limit is unbounded (R11, v1.58) and regenerates as omission — emitting
+// zero limit is unbounded (R11, v1.58) and regenerates as omission: emitting
 // `cpu = 0` would be legal but would read as a declaration nobody made.
 // Reports whether it wrote anything.
 func writeResources(block *hclwrite.Body, svc *reconciler.Desired) bool {
@@ -520,7 +520,7 @@ func writeExpose(block *hclwrite.Body, svc *reconciler.Desired, e *reconciler.Ex
 	return nil
 }
 
-// writeAuth renders an R27 auth block (v1.40) — references only, matching what
+// writeAuth renders an R27 auth block (v1.40): references only, matching what
 // convertAuthPolicy stored.
 func writeAuth(body *hclwrite.Body, a *reconciler.AuthPolicy) {
 	if a == nil {

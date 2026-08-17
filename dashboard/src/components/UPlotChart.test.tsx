@@ -30,7 +30,7 @@ describe('UPlotChart', () => {
     // one that matters.
     const live = Fake.instances.filter((i) => !i.destroyed)
     expect(live).toHaveLength(1)
-    // Values are display-smoothed, but a gap survives smoothing untouched —
+    // Values are display-smoothed, but a gap survives smoothing untouched:
     // and gap-adjacent points average only their own side, so this data is
     // its own fixed point.
     expect(live[0]?.data).toEqual([

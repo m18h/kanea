@@ -5,7 +5,7 @@
 // a cgo input: go/build reads build constraints in .c files too.)
 
 /*
- * kanea.c — the Kanea datapath (PRD v1.36 §5.2.5, dual-stack since v1.41):
+ * kanea.c; the Kanea datapath (PRD v1.36 §5.2.5, dual-stack since v1.41):
  * four programs, one compile unit.
  *
  *   kanea_connect4       cgroup/connect4  connect-time service LB
@@ -15,14 +15,14 @@
  *
  * IP is identity: kanead allocates every address and writes identity_v4 /
  * identity_v6 itself, so there is no identity protocol and no settle
- * window. Policy is SYN-gated and stateless — non-SYN TCP passes so
+ * window. Policy is SYN-gated and stateless: non-SYN TCP passes so
  * cross-project allow_from replies flow without a conntrack. Established
  * connections never consult a map; backend sets change by generation flip
  * (see dpmap.FlipPlan).
  *
  * The v6 maps are separate rather than widened v4 maps (v1.41): widening a
  * pinned map's key changes its ABI, and ErrMapIncompatible would wipe every
- * node's pins at upgrade — v4-only nodes included. When v6 is not
+ * node's pins at upgrade; v4-only nodes included. When v6 is not
  * configured (config6's mask is all-zero, an ARRAY map's birth state), the
  * tc programs DROP ETH_P_IPV6 outright: the kernel assigns link-locals
  * regardless, and unpoliced IPv6 between a container and a host service
@@ -104,7 +104,7 @@ struct dp_config {
 	__be32 service_cidr_mask;
 }; /* 8 bytes */
 
-/* One prefix as net+mask — cluster_v4's value (v1.65). Its own struct
+/* One prefix as net+mask: cluster_v4's value (v1.65). Its own struct
  * rather than a widened dp_config: widening a pinned map's value changes
  * its ABI, and ErrMapIncompatible would wipe every node's pins at upgrade
  * (the v1.41 rule). */
@@ -208,7 +208,7 @@ struct {
 } config SEC(".maps");
 
 /* The cluster CIDR (v1.65): what to_container treats as internal. A source
- * inside it with no identity is an alloc mid-teardown — fail closed. One
+ * inside it with no identity is an alloc mid-teardown: fail closed. One
  * outside it is the world answering an egress connection the host un-NATed,
  * and passes. The all-zero birth state reads as "no cluster configured",
  * which drops: a program ahead of its configuration keeps the pre-v1.65
@@ -407,7 +407,7 @@ int kanea_connect4(struct bpf_sock_addr *ctx)
 	struct svc_val *svc = bpf_map_lookup_elem(&svc_v4, &key);
 
 	if (!svc)
-		return 1; /* not a VIP — plain connect */
+		return 1; /* not a VIP: plain connect */
 
 	__u32 count = svc->count;
 
@@ -436,7 +436,7 @@ int kanea_connect4(struct bpf_sock_addr *ctx)
 }
 
 /* connect6 exists for two reasons, and the second is not obvious: native v6
- * VIPs, and v4-mapped destinations (::ffff:a.b.c.d) — a dual-stack client
+ * VIPs, and v4-mapped destinations (::ffff:a.b.c.d); a dual-stack client
  * dialling a v4 VIP through an AF_INET6 socket bypasses the connect4 hook
  * entirely and would meet the blackhole route (v1.41). */
 SEC("cgroup/connect6")
@@ -499,7 +499,7 @@ int kanea_connect6(struct bpf_sock_addr *ctx)
 	struct svc_val *svc = bpf_map_lookup_elem(&svc_v6, &key);
 
 	if (!svc)
-		return 1; /* not a VIP — plain connect */
+		return 1; /* not a VIP: plain connect */
 
 	__u32 count = svc->count;
 
@@ -540,7 +540,7 @@ int kanea_connect6(struct bpf_sock_addr *ctx)
 
 /* v6_enabled: config6's mask doubles as the enable switch. An unwritten
  * ARRAY entry is all-zero, so a node whose kanead never configured v6 reads
- * disabled — and the tc programs then drop ETH_P_IPV6 outright, closing the
+ * disabled, and the tc programs then drop ETH_P_IPV6 outright, closing the
  * unpoliced side channel the pre-v1.41 pass-through left open. */
 static __always_inline int v6_enabled(void)
 {
@@ -555,7 +555,7 @@ static __always_inline int v6_enabled(void)
 /* The v6 half of kanea_to_container. Same shape as the v4 policy: dst then
  * src identity, host flag / same project / allow edge, SYN gate. The one
  * v6-specific restriction is deliberate: the TCP header is read only when
- * it sits directly behind the fixed 40-byte v6 header — no extension-header
+ * it sits directly behind the fixed 40-byte v6 header; no extension-header
  * walk. Both endpoints are Linux stacks kanead configured, extension
  * headers do not legitimately occur there, and a nexthdr this does not
  * recognise falls through to the deny-closed branch (PRD v1.41). */
@@ -585,7 +585,7 @@ static __always_inline int to_container_v6(struct __sk_buff *skb, void *data,
 		/* The v4 rule's twin (v1.65): a source outside cluster_v6 has no
 		 * identity by construction and passes; inside it, fail closed.
 		 * Allocs have no v6 default route (no NAT66), so this is LAN v6
-		 * an operator routed, not internet return traffic — the same
+		 * an operator routed, not internet return traffic: the same
 		 * grant either way. */
 		__u32 czero = 0;
 		struct dp_cidr6 *cluster =
@@ -631,7 +631,7 @@ static __always_inline int to_container_v6(struct __sk_buff *skb, void *data,
 			goto pass;
 	}
 
-	/* A cross-project SYN with no allow rule — and any nexthdr that is
+	/* A cross-project SYN with no allow rule, and any nexthdr that is
 	 * not plain TCP (ICMPv6, an extension header): with static neighbors
 	 * and NODAD there is no ND to carry, host-originated ICMPv6 already
 	 * passed on the host flag, and cross-project ICMPv6 is denied like
@@ -665,7 +665,7 @@ int kanea_to_container(struct __sk_buff *skb)
 		return TC_ACT_SHOT; /* claimed IPv4, truncated: fail closed */
 
 	/* On this veth's egress the destination IS our pod. An identity miss
-	 * means the entry is gone mid-teardown — drop is the fail-closed
+	 * means the entry is gone mid-teardown: drop is the fail-closed
 	 * answer, and it is what makes the attach order deny-closed by
 	 * construction. */
 	struct identity *dst = bpf_map_lookup_elem(&identity_v4, &ip->daddr);
@@ -678,8 +678,8 @@ int kanea_to_container(struct __sk_buff *skb)
 	struct identity *src = bpf_map_lookup_elem(&identity_v4, &ip->saddr);
 
 	if (!src) {
-		/* No identity: a cluster-internal source is an alloc mid-teardown
-		 * — fail closed, exactly the deny the attach order relies on. One
+		/* No identity: a cluster-internal source is an alloc mid-teardown;
+		 * fail closed, exactly the deny the attach order relies on. One
 		 * from OUTSIDE the cluster is the world answering a connection an
 		 * alloc opened (conntrack un-NATed it on the way in) and passes:
 		 * kanead's allocator writes every identity, so an external address
@@ -725,7 +725,7 @@ int kanea_to_container(struct __sk_buff *skb)
 			goto pass;
 	}
 
-	/* A cross-project SYN with no allow rule — and non-TCP (UDP/ICMP)
+	/* A cross-project SYN with no allow rule, and non-TCP (UDP/ICMP)
 	 * that reached here: DNS goes to kanea0, not pod-to-pod, and
 	 * cross-project ICMP is denied (same-project/host/allowed ICMP
 	 * already passed above). */
@@ -740,7 +740,7 @@ pass:
 /* ---- egress guard: veth ingress from the alloc ------------------------- */
 
 /* The v6 half of kanea_from_container: link-local and multicast never leave
- * an alloc (fe80::/10, ff00::/8 — MLD reports, stray RS/NS), the AWS
+ * an alloc (fe80::/10, ff00::/8; MLD reports, stray RS/NS), the AWS
  * metadata ULA fd00:ec2::254 is §14 A10's v6 half, and a service-CIDR6
  * destination that escaped connect-time rewrite is refused like its v4
  * sibling. */
@@ -771,7 +771,7 @@ static __always_inline int from_container_v6(struct __sk_buff *skb, void *data,
 		return TC_ACT_SHOT;
 	}
 
-	/* fd00:ec2::254 — the AWS IMDS ULA (§14 A10). Exact match: it is one
+	/* fd00:ec2::254: the AWS IMDS ULA (§14 A10). Exact match: it is one
 	 * address, not a range. */
 	if (ip6->daddr.s6_addr32[0] == __bpf_htonl(0xFD000EC2) &&
 	    ip6->daddr.s6_addr32[1] == 0 && ip6->daddr.s6_addr32[2] == 0 &&
@@ -847,7 +847,7 @@ int kanea_from_container(struct __sk_buff *skb)
 	}
 
 	/* Anti-spoof (v1.65): an alloc's packets carry its own cluster
-	 * address, and nothing else — a forged EXTERNAL source would ride the
+	 * address, and nothing else; a forged EXTERNAL source would ride the
 	 * return-traffic pass in to_container straight past policy
 	 * (IP_FREEBIND needs no capability, so dropping CAP_NET_RAW does not
 	 * close this). Inside-the-cluster spoofing is the SYN-gate-grade

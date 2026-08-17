@@ -130,7 +130,7 @@ func runBackupVerify(args []string) error {
 // runRestore is `kanea restore`.
 //
 // Two shapes, and the difference matters. With --from it works offline: it
-// talks to a bucket directly, needs no daemon, and writes a state file — which
+// talks to a bucket directly, needs no daemon, and writes a state file, which
 // is the §15.3 procedure for a node that has lost its disk. Without it, it asks
 // the running daemon to stage a restore for the next start, which is the
 // procedure for a node that is up and wrong.
@@ -277,13 +277,13 @@ func (refusingSnapshotter) Snapshot(context.Context, string) (uint64, error) {
 // readSecretFile reads a credential from a file, never from an argument.
 //
 // Everything in argv is world-readable through /proc/<pid>/cmdline and lands in
-// shell history — the same reasoning that keeps mount credentials and secret
+// shell history: the same reasoning that keeps mount credentials and secret
 // values out of it.
 func readSecretFile(path string) string {
 	if path == "" {
 		return ""
 	}
-	body, err := os.ReadFile(path) // #nosec G304 — an operator-supplied path
+	body, err := os.ReadFile(path) // #nosec G304: an operator-supplied path
 	if err != nil {
 		return ""
 	}

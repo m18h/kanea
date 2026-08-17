@@ -19,7 +19,7 @@ const testTSIGKey = "kanea-update."
 // randomSecret mints a TSIG secret for one test.
 //
 // Generated rather than written down: a base64 literal in a repository is
-// indistinguishable from a real leaked key to anything scanning for one — to
+// indistinguishable from a real leaked key to anything scanning for one; to
 // gitleaks in CI, and to a person reading the diff. Nothing here needs the
 // value to be stable.
 func randomSecret(t *testing.T) string {
@@ -33,7 +33,7 @@ func randomSecret(t *testing.T) string {
 
 // updateServer is a nameserver that accepts TSIG-signed dynamic updates and
 // records them. It exists because the interesting part of the solver is what
-// goes on the wire — a mocked client would assert the code against itself.
+// goes on the wire: a mocked client would assert the code against itself.
 type updateServer struct {
 	addr string
 	// secret is what this server accepts, minted per test.
@@ -62,7 +62,7 @@ func newUpdateServer(t *testing.T) *updateServer {
 		TsigSecret: map[string]string{testTSIGKey: s.secret},
 		Handler:    dns.HandlerFunc(s.handle),
 		// miekg/dns refuses UPDATE with NOTIMP by default, which is the right
-		// default for a resolver — Kanea's own (§7.1) keeps it, so nobody can
+		// default for a resolver; Kanea's own (§7.1) keeps it, so nobody can
 		// write records into the internal zone. A nameserver that accepts
 		// dynamic updates has to opt in, and so does this stand-in for one.
 		MsgAcceptFunc: func(dh dns.Header) dns.MsgAcceptAction {
@@ -187,7 +187,7 @@ func TestDNS01WildcardUsesTheParentName(t *testing.T) {
 	server := newUpdateServer(t)
 	solver := newSolver(t, server)
 
-	// A wildcard's challenge lives at the parent's `_acme-challenge` name —
+	// A wildcard's challenge lives at the parent's `_acme-challenge` name:
 	// the same place the bare name's does, which is why one authorization
 	// covers both and why the star must not reach the record name.
 	if err := solver.Present("*.shop.apps.example.com", "token", "key-auth"); err != nil {
@@ -225,7 +225,7 @@ func TestDNS01CleanUpRemovesTheRecord(t *testing.T) {
 
 func TestDNS01ReportsARefusal(t *testing.T) {
 	server := newUpdateServer(t)
-	// REFUSED is what a server answers for a zone it does not serve — the
+	// REFUSED is what a server answers for a zone it does not serve: the
 	// second most common misconfiguration after a key that is not permitted.
 	server.rcode = dns.RcodeRefused
 	solver := newSolver(t, server)

@@ -22,7 +22,7 @@ import (
 //
 // The unit tests in s3_test.go establish that the sink drives the protocol
 // correctly and that the signature depends on the request. They cannot
-// establish that the signature is one a *service* accepts — a fake server that
+// establish that the signature is one a *service* accepts: a fake server that
 // does not verify signatures accepts a broken signer just as happily as a
 // correct one, and the signature is precisely the part a hand-written client
 // gets wrong.
@@ -43,7 +43,7 @@ import (
 //	KANEA_S3_ENDPOINT            required; absent means skip
 //	KANEA_S3_ACCESS_KEY          default kaneatest
 //	KANEA_S3_SECRET_KEY          default kaneatestsecret
-//	KANEA_S3_REGION              default us-east-1 — set it for a real provider,
+//	KANEA_S3_REGION              default us-east-1; set it for a real provider,
 //	                             or the signature is scoped to the wrong region
 //	KANEA_S3_BUCKET              default kanea-test
 //	KANEA_S3_PATH_STYLE          "false" selects virtual-hosted addressing
@@ -84,7 +84,7 @@ func envOr(name, fallback string) string {
 // It defaults to path-style, which is what MinIO wants and what every release
 // before this knob existed exercised. The other branch is not cosmetic: in
 // virtual-hosted style the bucket moves into the *host* header, and the host
-// header is signed — so it is a different signature over a different canonical
+// header is signed, so it is a different signature over a different canonical
 // request, and it is the style AWS prefers. Leaving it untested meant the
 // addressing half of what Archiver.Probe claims to prove had never run against
 // a service that verifies.
@@ -96,8 +96,8 @@ func livePathStyle() bool {
 //
 // The suite used to write under fixed prefixes ("sig", "page") and delete
 // everything beneath them, which is safe only while exactly one run exists.
-// Against a shared cloud bucket — two providers in a matrix, a re-run of a job
-// whose predecessor is still finishing — that cleanup deletes another run's
+// Against a shared cloud bucket (two providers in a matrix, a re-run of a job
+// whose predecessor is still finishing) that cleanup deletes another run's
 // objects and the failure looks like the object store losing data. A unique
 // prefix makes concurrent runs disjoint, and makes a leaked one identifiable.
 var runPrefix = sync.OnceValue(func() string {
@@ -119,8 +119,8 @@ var runPrefix = sync.OnceValue(func() string {
 // KANEA_S3_SKIP_BUCKET_CREATE turns it off for a bucket that is provisioned
 // out of band, which every real provider needs: the bare `PUT /<bucket>` below
 // carries no CreateBucketConfiguration, so AWS refuses it outside us-east-1,
-// and a key scoped to one existing bucket — the right way to hand credentials
-// to CI — cannot create anything anywhere. Skipping loses nothing: the first
+// and a key scoped to one existing bucket (the right way to hand credentials
+// to CI) cannot create anything anywhere. Skipping loses nothing: the first
 // Put still proves the signature, which is what this call was standing in for.
 // It is an explicit switch rather than blanket 403 tolerance on purpose, since
 // a 403 against MinIO means the signer is wrong and must stay fatal.

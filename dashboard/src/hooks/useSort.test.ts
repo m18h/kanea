@@ -13,7 +13,7 @@ describe('useSort', () => {
     act(() => result.current.toggle('name'))
     expect(result.current).toMatchObject({ key: 'name', dir: 'desc' })
 
-    // The third click restores the order the server chose — the only way back
+    // The third click restores the order the server chose: the only way back
     // that is not "reload the page".
     act(() => result.current.toggle('name'))
     expect(result.current.key).toBeNull()

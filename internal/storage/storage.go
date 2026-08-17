@@ -2,7 +2,7 @@
 // declare (PRD §8).
 //
 // The design is shaped almost entirely by one M0 spike ③ finding: a FUSE mount
-// whose backing store has gone away does not fail — it *blocks*, for 40 s to
+// whose backing store has gone away does not fail; it *blocks*, for 40 s to
 // over 2 minutes, uninterruptibly. A syscall in that state cannot be cancelled
 // by a context, because the goroutine is stuck in the kernel. Every function
 // here that touches a mount path therefore runs the touch on a goroutine it is
@@ -11,7 +11,7 @@
 // The second finding is why the supervisor exists at all: after an object-store
 // outage, s3fs keeps serving ENOENT for objects that are verifiably still in
 // the bucket, and it never recovers on its own. Only a remount fixes it. So
-// "mount it and hope" is not an option — supervision and remount are part of
+// "mount it and hope" is not an option: supervision and remount are part of
 // the driver, not an optional extra.
 package storage
 
@@ -54,7 +54,7 @@ var (
 	// ErrCredentialsUnavailable means the resource needs credentials that
 	// cannot be resolved yet.
 	ErrCredentialsUnavailable = errors.New("storage: credentials unavailable")
-	// ErrTimeout means an operation on a mount did not return in time — almost
+	// ErrTimeout means an operation on a mount did not return in time; almost
 	// always a wedged FUSE mount rather than a slow one.
 	ErrTimeout = errors.New("storage: timed out")
 )
@@ -85,7 +85,7 @@ type Resource struct {
 //
 // Local and host volumes do not: both are already directories on this node, so
 // the alloc's own bind mount is the whole mechanism. They differ only in who
-// chose the directory — Kanea derives a local one, an operator owns a host one.
+// chose the directory: Kanea derives a local one, an operator owns a host one.
 func (r Resource) NeedsMount() bool {
 	switch r.Type {
 	case "", TypeLocal, TypeHost:
@@ -111,7 +111,7 @@ type Request struct {
 	// storage resource already get distinct targets, so they may legitimately
 	// see it owned differently.
 	//
-	// Note Resource.Mode is a different thing entirely — it selects the S3
+	// Note Resource.Mode is a different thing entirely: it selects the S3
 	// driver, ro or rw. Do not conflate them.
 	UID  *uint32
 	GID  *uint32
@@ -123,7 +123,7 @@ type Request struct {
 // jobspec refuses these at `plan`, which is where an operator should meet them.
 // This copy is the backstop for a record that reached the Store another way,
 // and it is small and static enough that the duplication is cheaper than a
-// dependency from storage to jobspec — which would point the wrong way.
+// dependency from storage to jobspec, which would point the wrong way.
 var ownershipRefusedBy = map[string]string{
 	TypeHost: "a host volume is the operator's own directory, which Kanea neither creates " +
 		"nor changes (R15)",
@@ -177,7 +177,7 @@ type execRunner struct{}
 //
 // This is not a nicety. `mount` forks `mount.nfs`, which inherits stdout and
 // stderr; when the context expires, CommandContext kills `mount` but the
-// grandchild survives and holds those pipes open — and CombinedOutput waits for
+// grandchild survives and holds those pipes open, and CombinedOutput waits for
 // *every* writer to close them. Without WaitDelay the mount timeout kills the
 // process and the call still blocks indefinitely, which is precisely the
 // failure this package exists to prevent. Observed against an unreachable NFS
@@ -185,8 +185,8 @@ type execRunner struct{}
 const waitDelay = 2 * time.Second
 
 func (execRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	// Arguments are always an array — never a shell string (PRD §14, A03).
-	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 — fixed argv, no shell
+	// Arguments are always an array, never a shell string (PRD §14, A03).
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204: fixed argv, no shell
 	cmd.WaitDelay = waitDelay
 	out, err := cmd.CombinedOutput()
 	return out, err
@@ -229,8 +229,8 @@ type Config struct {
 	//
 	// Before this existed the supervisor could remount a failed volume three
 	// times in an afternoon and tell nobody: the whole recovery story was in
-	// the daemon log. Constraint #8 governs the call — Publish never blocks and
-	// never returns an error — which is what makes it safe to emit from inside
+	// the daemon log. Constraint #8 governs the call (Publish never blocks and
+	// never returns an error) which is what makes it safe to emit from inside
 	// a mount's own lock.
 	Emit func(notify.Event)
 }
@@ -247,7 +247,7 @@ type mountPath = string
 func isMountPoint(path string) (bool, error) {
 	raw, err := os.ReadFile(procMounts)
 	if errors.Is(err, os.ErrNotExist) {
-		// No mount table means nothing can be mounted — the case on a
+		// No mount table means nothing can be mounted: the case on a
 		// non-Linux host, where this package does no real work anyway.
 		return false, nil
 	}
@@ -281,7 +281,7 @@ func unescapeMountPath(s string) string {
 			var v int
 			// Three octal digits cannot exceed 0o777, and the kernel only emits
 			// escapes below 0o200; anything larger is not an escape we wrote.
-			// #nosec G115 — bounded to a byte on the line above.
+			// #nosec G115: bounded to a byte on the line above.
 			if _, err := fmt.Sscanf(s[i+1:i+4], "%3o", &v); err == nil && v >= 0 && v <= 0xFF {
 				b.WriteByte(byte(v))
 				i += 3

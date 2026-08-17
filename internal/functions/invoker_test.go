@@ -145,7 +145,7 @@ func TestEventTriggerInvokesWithTheEventBody(t *testing.T) {
 	}
 }
 
-// An event that matches no trigger invokes nothing — and a function.* event
+// An event that matches no trigger invokes nothing, and a function.* event
 // invokes nothing whatever the filters say (R26's runtime half).
 func TestLoopGuardSkipsFunctionEvents(t *testing.T) {
 	captured, url := newCapture(t)
@@ -178,7 +178,7 @@ func TestLoopGuardSkipsFunctionEvents(t *testing.T) {
 	}
 }
 
-// Retries are bounded, and exhausting them emits function.invoke_failed — the
+// Retries are bounded, and exhausting them emits function.invoke_failed: the
 // error event, not one per attempt.
 func TestExhaustedRetriesEmitInvokeFailed(t *testing.T) {
 	captured, url := newCapture(t)
@@ -252,7 +252,7 @@ func TestRecordIsNonBlockingAndCountsDrops(t *testing.T) {
 	}
 }
 
-// A cron whose time has come fires once and re-arms from now — a tick the
+// A cron whose time has come fires once and re-arms from now: a tick the
 // daemon slept through is skipped, never replayed.
 func TestCronFiresAndSkipsMissedTicks(t *testing.T) {
 	captured, url := newCapture(t)
@@ -301,7 +301,7 @@ func TestCronFiresAndSkipsMissedTicks(t *testing.T) {
 	// Wait out any stragglers, then confirm a single delivery.
 	time.Sleep(50 * time.Millisecond)
 	if captured.count() != 1 {
-		t.Fatalf("hits = %d, want 1 — missed ticks are skipped, not replayed", captured.count())
+		t.Fatalf("hits = %d, want 1: missed ticks are skipped, not replayed", captured.count())
 	}
 
 	// The schedule re-armed against the new now, so an immediate re-check
@@ -360,7 +360,7 @@ func (f fakeResolver) Resolve(context.Context, string) ([]byte, error) {
 }
 
 // A signed invocation carries the webhook wire format, and the signature
-// verifies over the exact body sent — a function verifies it the same way it
+// verifies over the exact body sent: a function verifies it the same way it
 // verifies a Kanea webhook.
 func TestSignedInvocation(t *testing.T) {
 	captured, url := newCapture(t)

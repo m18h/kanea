@@ -91,7 +91,7 @@ func runLifecycle(ctx context.Context) error {
 	check("alloc -> bridge gateway", code == 0, "10.200.0.1")
 
 	// Raw TCP connect is authoritative: no DNS anywhere (bridge conf has no
-	// dns{} section — M2 owns DNS). 1.1.1.1:80 answers SYN; wget would chase
+	// dns{} section; M2 owns DNS). 1.1.1.1:80 answers SYN; wget would chase
 	// a 301 to a DNS name and fail for the wrong reason.
 	_, code, _ = execIn(ctx, t1, "x4", "nc", "-z", "-w", "3", "1.1.1.1", "80")
 	check("north-south: alloc -> internet (ipMasq, TCP)", code == 0, "1.1.1.1:80")

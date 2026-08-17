@@ -12,7 +12,7 @@ import (
 
 // specRenderer implements api.SpecRenderer for the dashboard's editor
 // (v1.38): the same jobspec.ParseContents the GitOps sync uses, then the same
-// toDesired the CLI uses, with the node's own base domain — so a spec means
+// toDesired the CLI uses, with the node's own base domain, so a spec means
 // exactly one thing whether it arrives from a repository, a terminal or a
 // textarea.
 type specRenderer struct {
@@ -28,7 +28,7 @@ func (r specRenderer) Render(files map[string][]byte) (api.RenderResult, error) 
 
 	desired, err := toDesired(spec)
 	if err != nil {
-		// toDesired's refusals are spec problems, not server failures — the
+		// toDesired's refusals are spec problems, not server failures: the
 		// editor should see them beside the parser's, just without positions.
 		out.Diagnostics = append(out.Diagnostics, api.SpecDiagnostic{
 			Severity: "error", Summary: err.Error(),

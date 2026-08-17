@@ -17,9 +17,9 @@ describe('LogViewer', () => {
   })
 
   it('virtualizes: a huge buffer does not land in the DOM wholesale', () => {
-    const { container } = render(<LogViewer lines={makeLines(10_000)} live emptyText="—" />)
-    // jsdom has no layout, so the virtualizer renders its estimate + overscan
-    // — the point is the order of magnitude, not the exact count.
+    const { container } = render(<LogViewer lines={makeLines(10_000)} live emptyText="-" />)
+    // jsdom has no layout, so the virtualizer renders its estimate + overscan;
+    // the point is the order of magnitude, not the exact count.
     const rows = container.querySelectorAll('[data-index]')
     expect(rows.length).toBeGreaterThan(0)
     expect(rows.length).toBeLessThan(500)
@@ -30,7 +30,7 @@ describe('LogViewer', () => {
       <LogViewer
         lines={[{ key: 'a', prefix: '·0', text: 'hello' }]}
         live
-        emptyText="—"
+        emptyText="-"
       />,
     )
     expect(screen.getByText('·0')).toBeTruthy()
@@ -47,7 +47,7 @@ describe('LogViewer', () => {
         ]}
         live={false}
         tintSeverity
-        emptyText="—"
+        emptyText="-"
       />,
     )
     expect(container.querySelectorAll('.text-status-error')).toHaveLength(1)
@@ -68,7 +68,7 @@ describe('LogViewer', () => {
         ]}
         live
         toolbar={{ copy: true }}
-        emptyText="—"
+        emptyText="-"
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Copy log' }))
@@ -94,7 +94,7 @@ describe('LogViewer', () => {
         lines={makeLines(2)}
         live
         toolbar={{ download: { filename: 'shop-web.log' } }}
-        emptyText="—"
+        emptyText="-"
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Download log' }))
@@ -103,26 +103,26 @@ describe('LogViewer', () => {
   })
 
   it('hides the toolbar while the buffer is empty', () => {
-    render(<LogViewer lines={[]} live toolbar={{ copy: true }} emptyText="—" />)
+    render(<LogViewer lines={[]} live toolbar={{ copy: true }} emptyText="-" />)
     expect(screen.queryByRole('button', { name: 'Copy log' })).toBeNull()
   })
 
   describe('expand', () => {
     it('is absent unless the caller asks for it', () => {
-      render(<LogViewer lines={makeLines(3)} live emptyText="—" toolbar={{ copy: true }} />)
+      render(<LogViewer lines={makeLines(3)} live emptyText="-" toolbar={{ copy: true }} />)
       expect(screen.queryByRole('button', { name: 'Expand log' })).toBeNull()
     })
 
     it('opens the buffer in a dialog and closes again', () => {
       render(
-        <LogViewer lines={makeLines(3)} live emptyText="—" toolbar={{ expand: true }} title="shop/web — logs" />,
+        <LogViewer lines={makeLines(3)} live emptyText="-" toolbar={{ expand: true }} title="shop/web; logs" />,
       )
       expect(screen.queryByRole('dialog')).toBeNull()
 
       fireEvent.click(screen.getByRole('button', { name: 'Expand log' }))
       const dialog = screen.getByRole('dialog')
       expect(dialog).toBeTruthy()
-      expect(screen.getByText('shop/web — logs')).toBeTruthy()
+      expect(screen.getByText('shop/web; logs')).toBeTruthy()
       // The lines moved into the dialog rather than being rendered twice.
       expect(dialog.querySelectorAll('[data-index]').length).toBeGreaterThan(0)
 
@@ -132,7 +132,7 @@ describe('LogViewer', () => {
     })
 
     it('closes on Escape', () => {
-      render(<LogViewer lines={makeLines(3)} live emptyText="—" toolbar={{ expand: true }} />)
+      render(<LogViewer lines={makeLines(3)} live emptyText="-" toolbar={{ expand: true }} />)
       fireEvent.click(screen.getByRole('button', { name: 'Expand log' }))
       fireEvent.keyDown(document, { key: 'Escape' })
       expect(screen.queryByRole('dialog')).toBeNull()
@@ -153,7 +153,7 @@ describe('LogViewer', () => {
         <LogViewer
           lines={makeLines(3)}
           live
-          emptyText="—"
+          emptyText="-"
           toolbar={{ expand: true }}
           controls={<button type="button">Follow</button>}
         />,
@@ -166,7 +166,7 @@ describe('LogViewer', () => {
 
     it('holds the card space while the viewer is in the dialog', () => {
       const { container } = render(
-        <LogViewer lines={makeLines(3)} live emptyText="—" toolbar={{ expand: true }} />,
+        <LogViewer lines={makeLines(3)} live emptyText="-" toolbar={{ expand: true }} />,
       )
       fireEvent.click(screen.getByRole('button', { name: 'Expand log' }))
       // The placeholder keeps the layout from collapsing behind the backdrop,
@@ -179,7 +179,7 @@ describe('LogViewer', () => {
   // pinned check entirely, so scrolling up on the service page was ignored.
   describe('scroll drives follow', () => {
     // jsdom has no layout, so the scroll container's metrics are stubbed
-    // directly — the component reads exactly these three numbers.
+    // directly: the component reads exactly these three numbers.
     function scrollTo(el: Element, { top, height, client }: Record<string, number>) {
       Object.defineProperty(el, 'scrollTop', { value: top, configurable: true })
       Object.defineProperty(el, 'scrollHeight', { value: height, configurable: true })
@@ -196,7 +196,7 @@ describe('LogViewer', () => {
     it('reports false when the reader scrolls away from the tail', () => {
       const onFollowChange = vi.fn()
       const { container } = render(
-        <LogViewer lines={makeLines(50)} live follow onFollowChange={onFollowChange} emptyText="—" />,
+        <LogViewer lines={makeLines(50)} live follow onFollowChange={onFollowChange} emptyText="-" />,
       )
       scrollTo(scroller(container), { top: 0, height: 1000, client: 200 })
       expect(onFollowChange).toHaveBeenCalledWith(false)
@@ -210,7 +210,7 @@ describe('LogViewer', () => {
           live
           follow={false}
           onFollowChange={onFollowChange}
-          emptyText="—"
+          emptyText="-"
         />,
       )
       const el = scroller(container)
@@ -224,7 +224,7 @@ describe('LogViewer', () => {
     it('does not report a position it has not moved away from', () => {
       const onFollowChange = vi.fn()
       const { container } = render(
-        <LogViewer lines={makeLines(50)} live follow onFollowChange={onFollowChange} emptyText="—" />,
+        <LogViewer lines={makeLines(50)} live follow onFollowChange={onFollowChange} emptyText="-" />,
       )
       const el = scroller(container)
       // Already at the tail, which is where it starts: nothing changed.
@@ -240,7 +240,7 @@ describe('LogViewer', () => {
           live
           follow={false}
           onFollowChange={onFollowChange}
-          emptyText="—"
+          emptyText="-"
         />,
       )
       const el = scroller(container)
@@ -253,7 +253,7 @@ describe('LogViewer', () => {
           live
           follow={false}
           onFollowChange={onFollowChange}
-          emptyText="—"
+          emptyText="-"
         />,
       )
       expect(onFollowChange).not.toHaveBeenCalled()

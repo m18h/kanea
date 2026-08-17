@@ -22,7 +22,7 @@ func TestTheUnitListensWhereBuildkitSocketPoints(t *testing.T) {
 
 // gitops.DefaultBuildkitSocket is the deliberate duplicate (the
 // ownershipRefusedBy pattern): gitops must not import provision, so the
-// default is restated there and pinned here. Drift is the bug this fixes —
+// default is restated there and pinned here. Drift is the bug this fixes:
 // the constant once predated the installer and named a socket under /run.
 func TestTheDefaultSocketIsTheProvisionedDaemons(t *testing.T) {
 	if got, want := gitops.DefaultBuildkitSocket, BuildkitSocket(DefaultLayout()); got != want {

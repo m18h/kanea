@@ -13,7 +13,7 @@ import (
 // CloseWrite the peer waits for input that will never come and the session
 // hangs with no error anywhere.
 func TestRelayHalfClose(t *testing.T) {
-	// The far side reads to EOF, then answers. It cannot answer before EOF —
+	// The far side reads to EOF, then answers. It cannot answer before EOF:
 	// that is the whole point of the test.
 	upstream, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -155,7 +155,7 @@ func upstreamListener(t *testing.T, ln net.Listener) fakeUpstream {
 	return splitUpstream(t, ln.Addr().String())
 }
 
-// Published ports had no counters at all before v1.35 — ErrTooManyConns
+// Published ports had no counters at all before v1.35: ErrTooManyConns
 // carried a comment saying it existed "so the refusal is countable" while
 // nothing counted it (PRD §9.1.1, §7.2.2).
 
@@ -254,7 +254,7 @@ func TestRelayCountsBytesInBothDirections(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if in != "8" {
-		t.Errorf("bytes in = %s, want %d — the counts come from io.Copy's own return, "+
+		t.Errorf("bytes in = %s, want %d: the counts come from io.Copy's own return, "+
 			"so a wrapper that broke the splice fast path would also break this", in, len(payload))
 	}
 }

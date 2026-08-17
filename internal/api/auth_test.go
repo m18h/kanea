@@ -210,7 +210,7 @@ func TestSocketCallerIsLocalAdmin(t *testing.T) {
 		t.Errorf("role = %q, want admin", session.Role)
 	}
 	if session.Via != string(auth.MethodSocket) {
-		t.Errorf("via = %q, want socket — an audit entry must not claim a user that did not authenticate", session.Via)
+		t.Errorf("via = %q, want socket; an audit entry must not claim a user that did not authenticate", session.Via)
 	}
 }
 
@@ -391,7 +391,7 @@ func TestCookieMutationRequiresACSRFToken(t *testing.T) {
 
 func TestTheSubprotocolCarrierIsIgnoredOffWebsocket(t *testing.T) {
 	// The v1.64 carrier exists only on an Upgrade request. Off one, a
-	// Sec-WebSocket-Protocol header is just a header any client can set — so a
+	// Sec-WebSocket-Protocol header is just a header any client can set, so a
 	// mutation carrying the *valid* token there, without Upgrade, must still be
 	// refused, or the carrier would have weakened CSRF for every cookie-auth
 	// route rather than moved the envelope for websockets.
@@ -420,7 +420,7 @@ func TestCookieReadsNeedNoCSRFToken(t *testing.T) {
 func TestBearerMutationNeedsNoCSRFToken(t *testing.T) {
 	h := newAuthHarness(t)
 	// A token is not attached by a browser, so there is nothing to ride and
-	// nothing to prove — demanding a header would only break every CI client.
+	// nothing to prove: demanding a header would only break every CI client.
 	req := h.request(t, http.MethodPut, api.PathServices,
 		api.ApplyRequest{})
 	req.Header.Set("Authorization", "Bearer "+h.token(t, auth.RoleAdmin))
@@ -456,7 +456,7 @@ func TestViewerMayLogOut(t *testing.T) {
 	req.AddCookie(cookie)
 	req.Header.Set(api.CSRFHeader, csrf)
 	if resp, body := h.do(t, req); resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("viewer logout = %d, want 204 — logging out is not an admin action: %s",
+		t.Fatalf("viewer logout = %d, want 204; logging out is not an admin action: %s",
 			resp.StatusCode, body)
 	}
 }
@@ -602,7 +602,7 @@ func TestRejectedCredentialsAreAudited(t *testing.T) {
 		t.Fatalf("list audit: %v", err)
 	}
 	if len(page.Entries) != 1 {
-		t.Fatalf("entries = %d, want 1 — a rejected credential is a security event", len(page.Entries))
+		t.Fatalf("entries = %d, want 1; a rejected credential is a security event", len(page.Entries))
 	}
 	if strings.Contains(page.Entries[0].Detail, "wrongsecret") {
 		t.Errorf("the presented secret reached the log: %q", page.Entries[0].Detail)
@@ -741,7 +741,7 @@ func TestContentSecurityPolicyIsSetWhenTheDashboardIsServed(t *testing.T) {
 
 	// Exactly one header: browsers intersect multiple CSPs on a response, so
 	// a stricter duplicate from the middleware would silently win over the
-	// policy the dashboard was written against — that broke xterm's runtime
+	// policy the dashboard was written against; that broke xterm's runtime
 	// style attributes on every terminal.
 	csp := resp.Header.Values("Content-Security-Policy")
 	if len(csp) != 1 {

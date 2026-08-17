@@ -194,7 +194,7 @@ func (s *EdgeScraper) parse(body io.Reader, at time.Time) (int, error) {
 		service := labelValue(labels, "service")
 
 		// The structured view is folded in the same pass, from the labelled
-		// families. It feeds /v1/stats, which the dashboard and the CLI read —
+		// families. It feeds /v1/stats, which the dashboard and the CLI read:
 		// neither should have to parse an exposition to show a code breakdown.
 		if s.exposition != nil {
 			byService.observe(string(name), service, labelValue(labels, "code"), value)
@@ -276,7 +276,7 @@ func (s *EdgeScraper) record(service string, sample *edgeSample, at time.Time) b
 	if requests < 0 {
 		// The edge restarted and its counters began again. There is no rate
 		// across that, and reporting one would show a service that has been
-		// idle as suddenly busy — or the reverse.
+		// idle as suddenly busy, or the reverse.
 		return false
 	}
 
@@ -343,7 +343,7 @@ func quantileOf(buckets []bound, quantile float64) (float64, bool) {
 	}
 	total := buckets[len(buckets)-1].count
 	if total <= 0 {
-		// No requests in this interval. Not a latency of zero — no latency.
+		// No requests in this interval. Not a latency of zero: no latency.
 		return 0, false
 	}
 

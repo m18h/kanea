@@ -13,7 +13,7 @@ import (
 //
 // The v1.51/v1.61 all-halves probe-skip is retired (v1.63): the variables
 // stanza is a file-only half with no flag, so a version that reads it must
-// probe the file even when every flagged half is flagged — skipping would
+// probe the file even when every flagged half is flagged; skipping would
 // silently drop the node's variables. `--config off` remains the whole-file
 // switch for a node that never wanted the file read.
 func serverConfigForRun(configFlag, wellKnown string) (*nodeconfig.Config, error) {
@@ -30,7 +30,7 @@ func serverConfigForRun(configFlag, wellKnown string) (*nodeconfig.Config, error
 
 // resolveHostPaths picks the R15 allowlist source: the flag when set ("off"
 // disables), the server config's storage stanza otherwise. source is for the
-// startup log — where a security policy came from should never need guessing.
+// startup log: where a security policy came from should never need guessing.
 func resolveHostPaths(flagValue string, cfg *nodeconfig.Config) (paths []string, source string) {
 	switch flagValue = strings.TrimSpace(flagValue); flagValue {
 	case "off":
@@ -42,7 +42,7 @@ func resolveHostPaths(flagValue string, cfg *nodeconfig.Config) (paths []string,
 	}
 }
 
-// listenNone is --listen's explicit socket-only spelling (v1.61) — init's own
+// listenNone is --listen's explicit socket-only spelling (v1.61): init's own
 // prompt vocabulary, chosen over the other flags' "off" because "none" is what
 // that prompt has always accepted.
 const listenNone = "none"
@@ -51,7 +51,7 @@ const listenNone = "none"
 // v1.61): where it binds and which of R20's modes secures it.
 type apiListener struct {
 	addr string
-	// mode is a nodeconfig.TLS* constant, or "" — the flags' pre-v1.61
+	// mode is a nodeconfig.TLS* constant, or "": the flags' pre-v1.61
 	// vocabulary, where a pair means TLS and a bare non-loopback address is
 	// refused at the daemon's listener construction.
 	mode      string
@@ -67,13 +67,13 @@ func (l apiListener) tlsEnabled() bool {
 
 // resolveAPIListen picks the listener source: the --listen flag when set
 // ("none" is the explicit socket-only), the server config's bind stanza
-// otherwise. The half is atomic — whichever source supplies the address
+// otherwise. The half is atomic: whichever source supplies the address
 // supplies its TLS story, because a listener assembled from two sources is a
 // misconfiguration wearing a merge's name. Neither source means socket-only,
 // today's posture byte for byte.
 //
 // An unset bind.api_tls resolves here: a declared pair means provided, and
-// everything else keeps the flags' semantics — loopback serves plaintext,
+// everything else keeps the flags' semantics; loopback serves plaintext,
 // beyond loopback is refused at the daemon's listener construction. The
 // self-signed certificate name falls back to the address's host; parse
 // already refused the unspecified-host case with no api_domain.
@@ -110,7 +110,7 @@ func resolveAPIListen(listenFlag, certFlag, keyFlag string, cfg *nodeconfig.Conf
 
 // resolvePassthroughPath picks the file the R17/R18 grants are parsed from:
 // the flag's file when set ("off" disables), the server config itself
-// otherwise — internal/passthrough decodes its blocks straight out of
+// otherwise; internal/passthrough decodes its blocks straight out of
 // kanea.hcl. An explicitly flagged file gets the same trust check the probed
 // one got in nodeconfig.Load: the boundary claim does not weaken because the
 // path arrived by argv.

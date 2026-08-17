@@ -87,7 +87,7 @@ func parseS3URL(raw string) (bucket, prefix string, err error) {
 //
 // It is a thin adapter and stays one: the API asks four questions, and none of
 // the answers involve logic the archiver does not already own. What it adds is
-// the one thing the API cannot do for itself — refusing to restore in place,
+// the one thing the API cannot do for itself: refusing to restore in place,
 // and staging the request instead.
 type backupService struct {
 	archiver   *backup.Archiver
@@ -183,7 +183,7 @@ func storeCounts(st store.Store, log *slog.Logger) func(context.Context) map[str
 // countKind counts a bucket's records, paginated.
 //
 // Paginated because bbolt holds a read transaction open for the duration of a
-// List, and a long one pins pages against the single writer (AGENTS.md #2) —
+// List, and a long one pins pages against the single writer (AGENTS.md #2):
 // even here, where the caller is a background snapshot nobody is waiting on.
 func countKind(ctx context.Context, st store.Store, kind store.Kind) (int, error) {
 	count := 0

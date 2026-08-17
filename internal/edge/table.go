@@ -16,8 +16,8 @@ import (
 type Table struct {
 	byHost map[string]compiled
 	// listeners travel with the table because they arrive in the same file. The
-	// edge applies them separately — a bind failure must not reject a snapshot
-	// — but they are one atomic swap as far as the watcher is concerned.
+	// edge applies them separately (a bind failure must not reject a snapshot)
+	// but they are one atomic swap as far as the watcher is concerned.
 	listeners []Listener
 	// functions is the functions-port dispatch table (§7.2.3), carried for the
 	// same reason listeners are.
@@ -53,7 +53,7 @@ func NewTable(snap Snapshot) (*Table, error) {
 }
 
 // EmptyTable routes nothing. It is what the edge starts with, and what it uses
-// when no snapshot exists yet — every request 404s, which is the correct answer
+// when no snapshot exists yet: every request 404s, which is the correct answer
 // to "which service is this host?" when the answer is none.
 func EmptyTable() *Table { return &Table{byHost: map[string]compiled{}} }
 
@@ -79,7 +79,7 @@ func (t *Table) lookup(host string) (compiled, bool) {
 func (t *Table) Len() int { return len(t.byHost) }
 
 // Services lists the distinct services this table routes to, which is the
-// bound on anything keyed by service — the L7 metrics collector, for one.
+// bound on anything keyed by service: the L7 metrics collector, for one.
 func (t *Table) Services() []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(t.byHost))
@@ -110,7 +110,7 @@ func (t *Table) Hosts() []string {
 // NormalizeHost reduces a Host header to the form the table is keyed by.
 //
 // Three things get stripped, and each of them is a way an attacker gets two
-// spellings of one host: the port (":443" — a Host header carries one when the
+// spellings of one host: the port (":443"; a Host header carries one when the
 // listener is on a non-default port, and clients may send it regardless), the
 // case (DNS is case-insensitive, so "SHOP.example.com" is the same host), and
 // the trailing dot of the fully qualified form ("shop.example.com."). Without

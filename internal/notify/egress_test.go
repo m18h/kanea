@@ -48,7 +48,7 @@ func TestAllowedIPRefusesEverythingNotPubliclyRoutable(t *testing.T) {
 				t.Fatalf("cannot parse %q", tc.addr)
 			}
 			if got := notify.AllowedIP(ip); got != tc.allow {
-				t.Fatalf("AllowedIP(%s) = %v, want %v — %s", tc.addr, got, tc.allow, tc.why)
+				t.Fatalf("AllowedIP(%s) = %v, want %v: %s", tc.addr, got, tc.allow, tc.why)
 			}
 		})
 	}
@@ -79,7 +79,7 @@ func TestCheckURLRequiresHTTPS(t *testing.T) {
 }
 
 func TestClientRefusesToDialAPrivateAddress(t *testing.T) {
-	// httptest listens on loopback, which is precisely what the policy blocks —
+	// httptest listens on loopback, which is precisely what the policy blocks:
 	// so this both tests the block and proves it happens at dial time rather
 	// than on the hostname.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

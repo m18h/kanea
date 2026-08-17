@@ -20,7 +20,7 @@ const MaxPort = 65535
 // keeps them honest lives where both are visible.
 //
 // This is not the whole of R22. Which *other* ports may be claimed is the
-// node's decision, enforced at the API — a spec that could claim 22 on this
+// node's decision, enforced at the API: a spec that could claim 22 on this
 // node's address would be deciding something that belongs to whoever owns the
 // machine, and a plan-time list could not know what the operator allowed.
 var ReservedPorts = map[int]string{
@@ -41,7 +41,7 @@ func validatePublish(svc *Service) hcl.Diagnostics {
 	}
 	var diags hcl.Diagnostics
 	// Keyed per L4 family (v1.42): one host port may carry one http/tcp
-	// listener and one udp listener at once — 53 over both is the DNS shape —
+	// listener and one udp listener at once; 53 over both is the DNS shape;
 	// because a stream socket and a datagram socket do not contend.
 	type hostKey struct {
 		udp  bool
@@ -74,7 +74,7 @@ func validatePublish(svc *Service) hcl.Diagnostics {
 		}
 
 		// The middleware the mode can actually honour. ip_restriction works on
-		// all three — it is checked at accept time (session-create time, for
+		// all three: it is checked at accept time (session-create time, for
 		// udp), before a byte is forwarded, and on a tcp or udp listener it is
 		// the *only* mitigation there is, because the upstream sees the edge's
 		// address rather than the client's.
@@ -90,7 +90,7 @@ func validatePublish(svc *Service) hcl.Diagnostics {
 
 // validatePublishProtocol enforces v1.42's family agreement: a udp listener
 // may only front a udp port, and a stream listener only a tcp one. Either
-// mismatch is a listener that black-holes by construction — a datagram relay
+// mismatch is a listener that black-holes by construction: a datagram relay
 // in front of a TCP socket delivers nothing, and nothing says so.
 func validatePublishProtocol(svc *Service, p *Publish, mode, where string, rng hcl.Range) hcl.Diagnostics {
 	port := declaredPort(svc, p.Port)
@@ -226,7 +226,7 @@ func validatePublishMode(p *Publish, where string, rng hcl.Range) (string, hcl.D
 			Summary:  "max_conns on an http listener",
 			Detail: fmt.Sprintf("%s is mode = %q and sets max_conns. Connections are pooled "+
 				"and reused by HTTP clients, so a connection ceiling there does not bound "+
-				"work — the edge's own limits do. It is a tcp setting.",
+				"work: the edge's own limits do. It is a tcp setting.",
 				where, PublishHTTP),
 			Subject: rng.Ptr(),
 		})

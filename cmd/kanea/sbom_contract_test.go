@@ -61,7 +61,7 @@ func sbomNames(t *testing.T, version string, archives []string) []string {
 // a file the installer never downloaded and fails the installation. The leading
 // space in that pattern is what bounds the hazard: a merely similar name
 // ("sbom-<archive>") cannot match, so what this guards against is an SBOM
-// *duplicating* an archive's name — writing the document over the archive's own
+// *duplicating* an archive's name; writing the document over the archive's own
 // path, or naming it identically alongside.
 func TestSBOMNamesCannotCollideWithArchiveNames(t *testing.T) {
 	const version = "1.2.3"
@@ -141,7 +141,7 @@ func TestChecksumForIgnoresSBOMLines(t *testing.T) {
 			continue
 		}
 		if got != hashFor(archive) {
-			t.Errorf("checksumFor(%s) = %s, want %s — it matched the wrong line",
+			t.Errorf("checksumFor(%s) = %s, want %s: it matched the wrong line",
 				archive, got, hashFor(archive))
 		}
 	}

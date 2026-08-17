@@ -10,7 +10,7 @@ import (
 	"github.com/m18h/kanea/internal/reconciler"
 )
 
-// PRD v1.57: on the plan/run command line, existence wins — an argument that
+// PRD v1.57: on the plan/run command line, existence wins; an argument that
 // names a file on disk is a spec file even when it would also parse as a
 // selector.
 func TestAnExistingFileIsNeverReadAsASelector(t *testing.T) {
@@ -55,8 +55,8 @@ func TestSelectorsSplitFromSpecFiles(t *testing.T) {
 	}
 }
 
-// A typo'd filename cannot be a selector — a dot cannot appear in a DNS-1123
-// label — so it is refused by name rather than silently selecting nothing.
+// A typo'd filename cannot be a selector (a dot cannot appear in a DNS-1123
+// label) so it is refused by name rather than silently selecting nothing.
 func TestAnArgThatIsNeitherFileNorSelectorIsRefusedByName(t *testing.T) {
 	for _, arg := range []string{"app.hlc", "Shop/Web", "shop/web/extra", "shop/", "/web"} {
 		if _, _, err := splitFilesAndSelectors([]string{arg}); err == nil {
@@ -145,7 +145,7 @@ func TestASelectorThatMatchesNothingIsRefusedWithWhatExists(t *testing.T) {
 
 // The v1.57 hazard regression: the server replaces a project's Builds
 // wholesale on apply, so the pipeline config a scoped apply sends must be
-// derived from the unfiltered spec — selecting one service must not delete
+// derived from the unfiltered spec; selecting one service must not delete
 // its siblings' build entries.
 func TestPipelineBuildsSurviveASelectorScopedApply(t *testing.T) {
 	src := `

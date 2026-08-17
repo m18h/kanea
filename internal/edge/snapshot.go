@@ -14,7 +14,7 @@ import (
 // DefaultSnapshotPath is where kanead projects the edge's state.
 //
 // Deliberately not under data_dir. The state directory is 0750 and holds the
-// database, so an unprivileged kanea-edge user cannot even traverse into it —
+// database, so an unprivileged kanea-edge user cannot even traverse into it:
 // and widening it to hand one file over would be the wrong trade. This is
 // derived, node-local state that is rebuilt from the Store on every start
 // (constraint #9), which is what /run is for; it sits in /run rather than
@@ -26,13 +26,13 @@ const SnapshotName = "routes.json"
 
 // tempSuffix is used for the write-then-rename. It deliberately does not end in
 // ".json": a reader that globs the directory must never pick up a half-written
-// file (the write-then-rename discipline — PRD §5.2.6).
+// file (the write-then-rename discipline; PRD §5.2.6).
 const tempSuffix = ".tmp"
 
 // Snapshot is everything kanea-edge needs to serve traffic.
 //
 // It exists because the edge cannot read the Store. bbolt locks the whole
-// database file, so a second process opening state.db — even read-only —
+// database file, so a second process opening state.db: even read-only;
 // blocks until kanead exits rather than returning stale data. The Store stays
 // the source of truth and kanead stays its only opener; what the edge gets is
 // this projection of it (PRD §5.2.6).
@@ -55,8 +55,8 @@ type Snapshot struct {
 	// edge parses it unchanged and no golden test moves.
 	//
 	// One file, not two. Two projections describing one service would raise an
-	// ordering question — which one does the edge apply first, and what does it
-	// serve in between — for no gain over one rename.
+	// ordering question (which one does the edge apply first, and what does it
+	// serve in between) for no gain over one rename.
 	Listeners []Listener `json:"listeners,omitempty"`
 	// Functions is the functions-port dispatch table (PRD §7.2.3): functions
 	// with an http trigger on a node with no base domain, reached as
@@ -74,12 +74,12 @@ const (
 	// ListenerHTTP is an alternate-port HTTP listener. The edge reads requests
 	// on it, so the whole §7.2.1 middleware chain applies.
 	ListenerHTTP = "http"
-	// ListenerTCP relays bytes. Only IPRestriction survives — there is nothing
+	// ListenerTCP relays bytes. Only IPRestriction survives: there is nothing
 	// else in a stream to apply a rule to.
 	ListenerTCP = "tcp"
 	// ListenerUDP relays datagrams as sessions (v1.42). It dials backends
-	// directly rather than the VIP — connect-time LB has no hook an
-	// unconnected sendto ever calls — so it is the one listener kind that
+	// directly rather than the VIP (connect-time LB has no hook an
+	// unconnected sendto ever calls) so it is the one listener kind that
 	// carries a backend list.
 	ListenerUDP = "udp"
 )
@@ -92,8 +92,8 @@ const (
 //
 // On a tcp listener the upstream sees the edge's address, not the client's.
 // pg_hba.conf host rules and application-level IP bans stop meaning anything
-// behind one, and IPRestriction — checked at accept time, before the upstream
-// is dialled — is the whole mitigation.
+// behind one, and IPRestriction (checked at accept time, before the upstream
+// is dialled) is the whole mitigation.
 type Listener struct {
 	Project string `json:"project"`
 	Service string `json:"service"`
@@ -106,7 +106,7 @@ type Listener struct {
 	// listener leaves Upstream empty and uses Backends instead.
 	Upstream     string `json:"upstream,omitempty"`
 	UpstreamPort int    `json:"upstream_port"`
-	// Backends are the alloc addresses a udp listener relays to (v1.42) — the
+	// Backends are the alloc addresses a udp listener relays to (v1.42): the
 	// LB cannot front datagrams, so this is the one place the backend list the
 	// VIP design avoids reappears, bounded to udp. Sorted; a change here is a
 	// change to the snapshot, so backend churn republishes it.
@@ -153,21 +153,21 @@ type Route struct {
 	Domains []string `json:"domains"`
 	// Upstream is the service's VIP (§7.1), not an alloc address. The eBPF LB
 	// does the balancing, so the edge holds one address per service and never a
-	// backend list — a scale event changes nothing here.
+	// backend list: a scale event changes nothing here.
 	Upstream string `json:"upstream"`
 	// Port is the frontend port, chosen by the R16 rule: the port named "http",
 	// or the only one declared.
 	Port int `json:"port"`
 	// IPRestriction, RateLimit and Headers are the per-service ingress chain
 	// (§7.2.1), applied in that order. Nil means the middleware is not
-	// configured for this service — which is not the same as configured to
+	// configured for this service, which is not the same as configured to
 	// allow everything, and the distinction matters when server-level defaults
 	// (§15.1 `edge`) fill in the gaps.
 	IPRestriction *IPRestriction `json:"ip_restriction,omitempty"`
 	RateLimit     *RateLimit     `json:"rate_limit,omitempty"`
 	Headers       *Headers       `json:"headers,omitempty"`
 	// AuthRequired marks the route as authenticated (R27, v1.40). Only the
-	// marker travels here — this file is world-readable, and the verifier
+	// marker travels here: this file is world-readable, and the verifier
 	// material arrives in the restricted bundle. Fail closed: a marked route
 	// with no material answers 503, never open.
 	AuthRequired bool `json:"auth,omitempty"`
@@ -184,7 +184,7 @@ const RouteProtocolGRPC = "grpc"
 //
 // It is a Route whose "domain" is a path prefix: /<project>/<function>. The
 // middleware is the function's own http-trigger chain, applied by the same
-// code — the dispatcher converts to a Route and compiles it, so there is no
+// code: the dispatcher converts to a Route and compiles it, so there is no
 // second middleware implementation to drift.
 type FunctionRoute struct {
 	Project  string `json:"project"`
@@ -303,7 +303,7 @@ func (s Snapshot) Validate() error {
 		// Middleware is checked by compiling it, so the writer cannot publish a
 		// rule the reader will refuse. A snapshot that passes here and fails at
 		// the edge would freeze routing at the last good table while kanead
-		// reports success — the worst of both.
+		// reports success: the worst of both.
 		if _, err := compile(r); err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalidSnapshot, err)
 		}
@@ -372,7 +372,7 @@ func (s Snapshot) validateListeners() error {
 		}
 		// Refused, not dropped. A snapshot that carried a rate limit onto a
 		// listener that cannot count requests would leave the spec claiming a
-		// control nothing is applying — R16's rule, in the reader.
+		// control nothing is applying: R16's rule, in the reader.
 		if l.Mode == ListenerTCP || l.Mode == ListenerUDP {
 			if l.RateLimit != nil {
 				return fmt.Errorf("%w: %s is a %s listener carrying a rate limit, which it cannot apply",
@@ -453,12 +453,12 @@ func Publish(path string, snap Snapshot) error {
 
 	// The directory and the file are world-readable, which is the point rather
 	// than an oversight: kanea-edge runs as its own unprivileged user (§5.2.6)
-	// and cannot read this otherwise. Nothing here is a secret — the domains
-	// are in public DNS and the upstreams are node-local addresses — and the
+	// and cannot read this otherwise. Nothing here is a secret (the domains
+	// are in public DNS and the upstreams are node-local addresses) and the
 	// alternative, a shared group, is a `kanea init` prerequisite this cannot
 	// assume exists.
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil { // #nosec G301 — see above
+	if err := os.MkdirAll(dir, 0o755); err != nil { // #nosec G301; see above
 		return fmt.Errorf("edge dir: %w", err)
 	}
 
@@ -473,7 +473,7 @@ func Publish(path string, snap Snapshot) error {
 	defer func() {
 		// A no-op once the rename succeeded. A failure to clean up after a
 		// failed publish would leave a temp file behind, which is untidy but
-		// harmless — the name does not end in .json.
+		// harmless: the name does not end in .json.
 		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
 			slog.Default().Debug("cannot remove temp snapshot", "path", tmpName, "error", err)
 		}
@@ -504,7 +504,7 @@ func writeSnapshotFile(tmp *os.File, name string, body []byte) error {
 	if err := tmp.Sync(); err != nil {
 		return fmt.Errorf("sync snapshot: %w", err)
 	}
-	if err := tmp.Chmod(0o644); err != nil { // #nosec G302 — readable by the edge user
+	if err := tmp.Chmod(0o644); err != nil { // #nosec G302; readable by the edge user
 		return fmt.Errorf("chmod snapshot: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -515,7 +515,7 @@ func writeSnapshotFile(tmp *os.File, name string, body []byte) error {
 
 // Load reads a published snapshot.
 func Load(path string) (Snapshot, error) {
-	body, err := os.ReadFile(path) // #nosec G304 — the path is operator configuration
+	body, err := os.ReadFile(path) // #nosec G304; the path is operator configuration
 	if err != nil {
 		return Snapshot{}, err
 	}

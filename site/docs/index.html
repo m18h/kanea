@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Documentation — Kanea</title>
+<title>Documentation; Kanea</title>
 <meta name="description" content="Kanea documentation: concepts, architecture, the complete job spec reference, sample stacks, every CLI command, and troubleshooting.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
 <link rel="stylesheet" href="../style.css">
@@ -48,8 +48,8 @@
     <a class="sub" href="#arch-shape">The shape</a>
     <a class="sub" href="#arch-processes">Two processes, one binary</a>
     <a class="sub" href="#arch-store">The Store</a>
-    <a class="sub" href="#arch-runtime">Runtime driver — containerd</a>
-    <a class="sub" href="#arch-network">Network driver — eBPF datapath</a>
+    <a class="sub" href="#arch-runtime">Runtime driver (containerd</a>
+    <a class="sub" href="#arch-network">Network driver) eBPF datapath</a>
     <a class="sub" href="#arch-edge">The edge</a>
     <a class="sub" href="#arch-isolation">Resource isolation</a>
     <a class="sub" href="#arch-metrics">Metrics and autoscaling</a>
@@ -107,7 +107,7 @@
     <!--<p>
       Everything on one page: what the concepts are, how the system is put together, the
       complete job spec reference, and every CLI command. The contents on the left track
-      where you are — and the whole thing is one document, so your browser's find works
+      where you are, and the whole thing is one document, so your browser's find works
       across all of it.
     </p>-->
 
@@ -141,16 +141,16 @@
           <tr><td><b>Node</b></td><td>Client + server agent</td><td>Node + control plane</td><td>One machine running <code>kanea agent</code>. In v1 there is exactly one.</td></tr>
           <tr><td><b>Project</b></td><td>Namespace</td><td>Namespace</td><td>A named group of services, and the isolation boundary: network policy, secrets, containerd namespace and DNS all key off it.</td></tr>
           <tr><td><b>Service</b></td><td>Job + group</td><td>Deployment + Service</td><td>A declarative long-running workload with <code>count</code> replicas.</td></tr>
-          <tr><td><b>Task</b></td><td>Task</td><td>Container</td><td>The container inside a service. <b>Exactly one per service in v1</b> — sidecars are a v1.1 concept.</td></tr>
+          <tr><td><b>Task</b></td><td>Task</td><td>Container</td><td>The container inside a service. <b>Exactly one per service in v1</b>: sidecars are a v1.1 concept.</td></tr>
           <tr><td><b>Alloc</b></td><td>Allocation</td><td>Pod</td><td>One running instance of a service. <code>count = 3</code> means three allocs.</td></tr>
-          <tr><td><b>Storage</b></td><td>CSI volume</td><td>PV / PVC</td><td>A named volume backend — <code>local</code>, <code>host</code>, <code>nfs</code>, <code>smb</code> or <code>s3</code> — that services mount by name.</td></tr>
-          <tr><td><b>Pipeline</b></td><td>—</td><td>Tekton / CI job</td><td>A build run producing an image, from a <code>build</code> block or a git push.</td></tr>
+          <tr><td><b>Storage</b></td><td>CSI volume</td><td>PV / PVC</td><td>A named volume backend (<code>local</code>, <code>host</code>, <code>nfs</code>, <code>smb</code> or <code>s3</code>) that services mount by name.</td></tr>
+          <tr><td><b>Pipeline</b></td><td>-</td><td>Tekton / CI job</td><td>A build run producing an image, from a <code>build</code> block or a git push.</td></tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      The one that surprises people is <b>project</b>. It is not a label — it is a boundary
+      The one that surprises people is <b>project</b>. It is not a label: it is a boundary
       that four subsystems enforce independently. A service in project <code>shop</code>
       cannot reach a service in <code>analytics</code> unless somebody wrote that down, it
       cannot read <code>analytics</code>' secrets even by naming them, its containers live in
@@ -172,7 +172,7 @@
     <div class="callout">
       <b class="label">Where the prose goes</b>
       <p>
-        Every project and service takes a <code>description</code> — free text, up to 512
+        Every project and service takes a <code>description</code>: free text, up to 512
         characters, shown in the dashboard. That is where the human-readable detail belongs;
         the name stays a label.
       </p>
@@ -181,7 +181,7 @@
     <h3 id="overview-lifecycle">Lifecycle</h3>
     <p>
       Nothing in Kanea is applied directly to the runtime. A spec becomes desired state in
-      the Store, and a reconciler converges the world toward it — continuously, not once.
+      the Store, and a reconciler converges the world toward it: continuously, not once.
     </p>
 
 <pre class="diagram">Job spec (HCL) ──parse/validate──▶ Desired state (Store)
@@ -207,8 +207,8 @@
         with backoff, and <code>never</code>.</li>
       <li><b>Updates are rolling</b> by default, health-gated, bounded by
         <code>max_parallel</code>.</li>
-      <li><b>Dependencies start first.</b> A <code>depends_on</code> edge — or any
-        <code>${service.…}</code> reference, which creates one implicitly — means the
+      <li><b>Dependencies start first.</b> A <code>depends_on</code> edge (or any
+        <code>${service.…}</code> reference, which creates one implicitly) means the
         dependent does not start until its dependency is healthy. If the dependency degrades
         later, dependents keep running: no cascading stops, just events.</li>
       <li><b>Storms are capped.</b> Per-service restart rate limits plus a node-wide circuit
@@ -232,13 +232,13 @@
       <b class="label">Two things about rolling updates</b>
       <p>
         <code>max_parallel</code> bounds <b>allocs that are down</b>, not replacements in
-        flight. Anything already unavailable spends the budget first — so a deploy that
+        flight. Anything already unavailable spends the budget first, so a deploy that
         starts going wrong stops, instead of walking through every replica.
       </p>
       <p>
         <code>min_healthy</code> applies only to allocs the current deploy has already
         replaced, and health means a probe said so. A service with no
-        <code>health_check</code> block never reports healthy for any alloc — which is fine,
+        <code>health_check</code> block never reports healthy for any alloc, which is fine,
         and is why the update logic asks whether a check is configured before it asks whether
         it passed.
       </p>
@@ -258,7 +258,7 @@
     <ul>
       <li><b>References are project-scoped at validation time.</b> A service in
         <code>shop</code> may name <code>secret:shop/…</code> or <code>secret:shared/…</code>
-        and nothing else. A spec reaching for another project's secret fails to parse — it
+        and nothing else. A spec reaching for another project's secret fails to parse: it
         does not fail at runtime, where the failure would be a log line nobody reads.</li>
       <li><b>The default injection is a tmpfs file</b>, at
         <code>/run/kanea/secrets/&lt;alloc&gt;/&lt;name&gt;</code>. Environment variables work
@@ -267,7 +267,7 @@
         process.</li>
     </ul>
     <p>
-      The API and the MCP server are write-only for secrets. There is no <code>get</code> —
+      The API and the MCP server are write-only for secrets. There is no <code>get</code>,
       not for an operator, not for an agent, at any permission tier.
     </p>
 
@@ -280,7 +280,7 @@ kanea ps -p demo
 kanea logs -f demo/web</pre>
     <p>
       When you want it written down, the same deployment as a spec is three lines plus a
-      wrapper — and from there every block in the
+      wrapper, and from there every block in the
       <a href="#spec">job spec reference</a> is additive. Run
       <code>kanea plan</code> first; it prints the create/change/destroy diff, and it is
       where every validation rule fires.
@@ -292,9 +292,9 @@ kanea logs -f demo/web</pre>
 
 <p>
       One binary produces two long-running processes and a CLI. The datapath that networks
-      your services is not one of them — it is a set of eBPF programs compiled into the binary
+      your services is not one of them: it is a set of eBPF programs compiled into the binary
       and loaded into the kernel, not a daemon Kanea drives. Everything else on the node
-      — containerd, buildkitd — is software Kanea drives rather than
+      (containerd, buildkitd) is software Kanea drives rather than
       software it contains, but it is no longer software you have to find: <code>kanea
       init</code> installs each of them at a version pinned by SHA-256 in the binary, under
       Kanea's own prefix and on Kanea's own sockets, so nothing already on the node changes.
@@ -346,8 +346,8 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <div class="callout">
       <b class="label">How the edge learns anything</b>
       <p>
-        bbolt takes a lock on the whole database file, so a second process opening it —
-        even read-only — would block until <code>kanead</code> exits. So the edge does not
+        bbolt takes a lock on the whole database file, so a second process opening it
+        (even read-only) would block until <code>kanead</code> exits. So the edge does not
         open it. <code>kanead</code> <b>projects</b> what the edge needs into
         <code>/run/kanea-edge/</code>: <code>routes.json</code> (0644, host → service
         frontend; nothing secret, the domains are in public DNS) and
@@ -381,15 +381,15 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
         call sites.</li>
       <li><b>Metrics and logs never touch it.</b> Time series live in a bounded in-memory
         ring; logs go to file pipelines with non-blocking drains. This is a hard constraint,
-        not a performance preference — a metrics write that contends with the reconciler's
+        not a performance preference: a metrics write that contends with the reconciler's
         writer would make observability and convergence share a failure mode.</li>
       <li><b>Migrations are explicit.</b> The Store does not migrate itself at open. A
         migration rewrites state in place, and the copy that makes a bad migration survivable
-        needs the database open and the migration not yet started — exactly one window,
+        needs the database open and the migration not yet started: exactly one window,
         between <code>Open</code> and <code>Migrate</code>.</li>
     </ul>
 
-    <h3 id="arch-runtime">Runtime driver — containerd</h3>
+    <h3 id="arch-runtime">Runtime driver: containerd</h3>
     <ul>
       <li>Driven over its socket with the official Go client. <b>One containerd namespace per
         project</b> (<code>kanea-&lt;project&gt;</code>), which makes image and container
@@ -397,29 +397,29 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <li>Responsibilities: image pull (credentials from the secrets store, digest pinning
         supported), task lifecycle, per-alloc netns setup, cgroup metrics sampling, and
         stdout/stderr capture.</li>
-      <li><b>Hardening is not opt-in.</b> Every alloc starts from a baseline capability set
-        — the uid-switching grants PUID-style images need to chown a volume, drop to their
+      <li><b>Hardening is not opt-in.</b> Every alloc starts from a baseline capability set;
+        the uid-switching grants PUID-style images need to chown a volume, drop to their
         configured user and bind a low port, and nothing more (<code>CAP_NET_RAW</code> is
-        deliberately excluded) — plus <code>no-new-privileges</code>, the default seccomp
+        deliberately excluded); plus <code>no-new-privileges</code>, the default seccomp
         profile, and its own PID and IPC namespaces. <code>capabilities = ["none"]</code>
         drops to nothing; a capability a workload genuinely needs beyond the baseline is
         named in the spec and drawn from a permitted set; the privilege-equivalent ones are
-        rejected when the spec is parsed. <b>No job spec can lift any of it on its own</b> —
+        rejected when the spec is parsed. <b>No job spec can lift any of it on its own</b>:
         there is no <code>privileged</code> field. The one way past these defaults is a host device or
         socket the operator granted on the node (R17, R18), which a spec requests by name
         and can never define.</li>
       <li><b>Disk hygiene is part of the driver.</b> Image GC, build-cache caps across
-        <i>both</i> content stores — containerd's and the rootless buildkitd user's — per-service
+        <i>both</i> content stores (containerd's and the rootless buildkitd user's) per-service
         log caps, and watermark alerts at 80% and 90%. One disk holds images, logs, state and
         volumes; pressure must never surprise the control plane.</li>
     </ul>
 
-    <h3 id="arch-network">Network driver — eBPF datapath</h3>
+    <h3 id="arch-network">Network driver; eBPF datapath</h3>
     <p>
       The datapath is Kanea's own: three small eBPF programs, a handful of pinned maps and
       plain netlink plumbing, all loaded and written by <code>kanead</code> from one object
       compiled into the binary. There is no network agent, no kvstore and no CNI. The loader
-      is the standalone <code>github.com/cilium/ebpf</code> library — importing
+      is the standalone <code>github.com/cilium/ebpf</code> library: importing
       <code>github.com/cilium/cilium</code> would pull the Kubernetes client graph, which is
       the one dependency the project does not have. The programs are compiled ahead of time
       and committed, so <code>go build</code> needs no clang and the node needs no BTF: they
@@ -430,8 +430,8 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <p>
       <code>kanead</code> allocates every alloc address from the node CIDR and every service
       VIP from the service CIDR, durably in the Store. Because the platform that hands out
-      addresses is the same one that writes the kernel's maps, the identity map — <code>alloc
-      IP → {project, service}</code> — is written by the allocator itself. There is no
+      addresses is the same one that writes the kernel's maps, the identity map (<code>alloc
+      IP → {project, service}</code>) is written by the allocator itself. There is no
       identity-allocation protocol, no label race and no settle window. The numeric project
       and service ids behind the maps are Store-allocated, monotonic and <b>never reused</b>,
       which is what keeps a pinned map meaningful across a <code>kanead</code> restart.
@@ -444,7 +444,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       host <code>/32</code> route last.</b> The first moment a packet can reach or leave the
       alloc, policy is already enforcing and identity is already resolved; a skipped step
       fails closed, because an identity miss is a drop. The deny-by-default guarantee is
-      <b>structural, not temporal</b> — there is no unlabelled window to hold shut with
+      <b>structural, not temporal</b>: there is no unlabelled window to hold shut with
       retries, the way the previous design held its <code>reserved:init</code> state closed.
       Attach has no wait loop and completes in milliseconds.
     </p>
@@ -453,11 +453,11 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <p>
       One cgroup <code>connect4</code> program at the root cgroup, held by a pinned
       <code>bpf_link</code>, rewrites <code>VIP:port → backend</code> at
-      <code>connect(2)</code> — for host processes and containers alike, which is the one
+      <code>connect(2)</code>; for host processes and containers alike, which is the one
       property the edge depends on: it dials a VIP with a plain dialer. There is no per-packet
       NAT and no conntrack entry per flow, and <b>an established connection never consults a
       map</b>: <code>kanead</code> can restart, or recreate every map, without touching live
-      traffic. Backends update by <b>generation flip</b> — the new set is written under the
+      traffic. Backends update by <b>generation flip</b>: the new set is written under the
       next generation and one atomic map update commits it, so a concurrent
       <code>connect()</code> sees a complete old set or a complete new one, never a torn one.
       A VIP with no backends refuses at <code>connect()</code> rather than black-holing into a
@@ -468,10 +468,10 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <p>
       The tc program on each alloc's host-side veth admits a source carrying the host identity
       (the edge's upstream dials, <code>kanead</code>'s DNS replies and probes), a source in
-      the same project, or a source named by an <code>allow_from</code> edge (R14) — and drops
+      the same project, or a source named by an <code>allow_from</code> edge (R14), and drops
       every <i>cluster-internal</i> source the identity map does not know. A source outside
-      the cluster CIDR carries no identity by construction — it is the internet answering a
-      connection the alloc opened, un-NATed by conntrack on the way back in — and passes
+      the cluster CIDR carries no identity by construction: it is the internet answering a
+      connection the alloc opened, un-NATed by conntrack on the way back in, and passes
       (v1.65); nothing unsolicited arrives that way, because the pod CIDR is unroutable from
       off-node and published ports terminate at the edge. The mirror-image rule guards the
       other direction: a packet <i>leaving</i> an alloc must carry a cluster source, so a
@@ -485,18 +485,18 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <p>
         Enforcement is per connection attempt: TCP that is not a SYN passes, which is what
         lets cross-project replies flow without a conntrack. That is deliberately weaker than
-        stateful tracking — an in-node ACK probe traverses the filter and is stopped only by
-        the receiving stack's RST — and it is stated in the threat model rather than hidden.
+        stateful tracking: an in-node ACK probe traverses the filter and is stopped only by
+        the receiving stack's RST, and it is stated in the threat model rather than hidden.
         The upgrade to an LRU conntrack map is additive.
       </p>
     </div>
     <p>
       A second, small egress program is load-bearing for A10: it drops the cloud-metadata
-      range <code>169.254.0.0/16</code> in the kernel with a per-alloc drop counter — not
-      asserted in a policy file — along with any service-CIDR destination that escaped
+      range <code>169.254.0.0/16</code> in the kernel with a per-alloc drop counter (not
+      asserted in a policy file) along with any service-CIDR destination that escaped
       connect-time rewrite, and it counts per-endpoint traffic. Masquerade for routed pod
       traffic is one nftables rule in an owned <code>kanea</code> table, and since v1.65 the
-      rule and <code>net.ipv4.ip_forward</code> are <b>re-asserted every thirty seconds</b> —
+      rule and <code>net.ipv4.ip_forward</code> are <b>re-asserted every thirty seconds</b>:
       a firewall reload that flushes the ruleset costs seconds, not a daemon restart. A
       FORWARD-drop policy another tool installs can still eat that traffic, and
       <code>kanea doctor</code> detects and names it, along with a missing
@@ -518,7 +518,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
   <span class="k">upstreams</span> = [<span class="s">"1.1.1.1"</span>, <span class="s">"10.0.0.53:5353"</span>]  <span class="c"># a bare address gets :53</span>
 }</code></pre>
     <p>
-      Entries are validated when the file parses; an empty list is refused by name — a
+      Entries are validated when the file parses; an empty list is refused by name; a
       stanza that meant "no upstreams" would silently turn external resolution into
       SERVFAIL. An explicit <code>--dns-upstream</code> wins over the stanza and the daemon
       says so in its log, the same precedence every half of the server config follows.
@@ -527,7 +527,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       Datapath state is <b>derived state</b>. Programs, maps and the cgroup link are pinned
       under <code>/sys/fs/bpf/kanea</code> with a schema stamp; a <code>kanead</code> restart
       leaves the dataplane untouched, and a stamp mismatch recreates and repopulates the maps
-      inside the first reconcile pass — safe precisely because established flows bypass them.
+      inside the first reconcile pass: safe precisely because established flows bypass them.
       Nothing under the pin root is ever backed up.
     </p>
 
@@ -547,7 +547,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       Hardening is mandatory rather than tunable: read/header/idle timeouts and header size
       caps against slowloris, per-route upstream timeouts, bounded connection pools,
       client-supplied <code>X-Forwarded-*</code> stripped, and an unknown <code>Host</code>
-      answered with 404 — which is also the DNS-rebinding defence for the co-hosted API.
+      answered with 404, which is also the DNS-rebinding defence for the co-hosted API.
     </p>
     <p>
       Because it already sits in the request path, the edge is the <b>primary source of L7
@@ -555,7 +555,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       extra data-plane cost. The datapath's own map counters cover east-west.
     </p>
     <p>
-      ACME runs in <code>kanead</code>, never in the edge — obtaining a certificate means
+      ACME runs in <code>kanead</code>, never in the edge: obtaining a certificate means
       writing one, and the edge does not write.
     </p>
 
@@ -582,7 +582,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <p>
         Calling <code>mlockall</code> on a Go control plane is rejected outright: the GC grows
         the heap unpredictably and <code>RLIMIT_MEMLOCK</code> turns pin overflow into hard
-        allocation failure — the lock itself could crash <code>kanead</code>. The guarantee
+        allocation failure; the lock itself could crash <code>kanead</code>. The guarantee
         comes from <code>memory.min</code> (the kernel refuses to reclaim the floor under
         pressure), the OOM score, and no swap in the slice.
       </p>
@@ -590,7 +590,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <p>
       Per-alloc limits are <b>enforced where declared</b>. Omit <code>resources</code>
       (or a field of it) and the alloc is unbounded: all cores, all allocatable memory,
-      capped only by the workload parent's collective ceiling — which, with the
+      capped only by the workload parent's collective ceiling, which, with the
       control-plane floor, is the isolation that actually protects the platform. A
       default <code>pids.max</code> still applies to every alloc. Declared resources are
       also the admission units: <code>kanea plan</code> renders the workload budget and
@@ -609,19 +609,19 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <b class="label">"No data" is never zero</b>
       <p>
         A missing metric and an idle service lead to opposite decisions, so the distinction is
-        preserved end to end — in the time series, in the evaluator, in the Prometheus
+        preserved end to end: in the time series, in the evaluator, in the Prometheus
         exporter and in the dashboard. Each layer has a test asserting it.
       </p>
     </div>
     <p>
       The evaluator applies the <code>scaling</code> block with guardrails and a circuit
       breaker, and the budget is <b>20 seconds from a sustained breach</b> to a decision: a
-      15-second averaging window — three samples at the 5-second scrape resolution — plus one
+      15-second averaging window (three samples at the 5-second scrape resolution) plus one
       evaluation tick. A large spike decides sooner.
     </p>
     <p>
-      <b>The autoscaler is not a second scheduler.</b> It writes one number — the desired
-      count — and the reconciler converges. <code>kanea scale</code> uses the same route,
+      <b>The autoscaler is not a second scheduler.</b> It writes one number (the desired
+      count) and the reconciler converges. <code>kanea scale</code> uses the same route,
       which is why manual and automatic scaling cannot disagree about mechanism.
     </p>
 
@@ -629,21 +629,21 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <ul>
       <li><b>Change data capture.</b> Store mutations produce change segments; snapshots and
         segments are replicated to any S3-compatible bucket. The client is hand-written
-        against the REST API — SigV4 and four verbs — and CI exercises it against MinIO in
+        against the REST API (SigV4 and four verbs) and CI exercises it against MinIO in
         both addressing styles, path-style and virtual-hosted.</li>
       <li><b>Archives are chunked AEAD</b>, with keys HKDF-derived from the master key rather
         than being it. <b>The last chunk is sealed under different additional data</b>, which
         is the only thing standing between a truncated snapshot and a restore that decrypts
         cleanly into half a platform.</li>
       <li><b>Manifests are unencrypted and hashes are over the ciphertext</b>, so someone
-        holding the bucket and no key can still see what is there and whether it is intact —
+        holding the bucket and no key can still see what is there and whether it is intact,
         which is the question you ask <i>before</i> going to find the escrowed key.</li>
       <li><b>Restore is staged, never performed in place.</b> It can be requested over the
         API, and the daemon performs it at the next start, before anything opens the Store.
-        The API has no method that restores — that is the interface, not a check.</li>
+        The API has no method that restores; that is the interface, not a check.</li>
       <li>The replication cursor is <b>derived from the sink</b>, never stored: writing it to
         the Store would emit a change that needs shipping, which would write it again.</li>
-      <li><b>The destination can change at runtime</b> — the dashboard's Settings page, or
+      <li><b>The destination can change at runtime</b>; the dashboard's Settings page, or
         <code>PUT /v1/settings/backup</code>. A new destination is <b>probed with a real
         test write before anything commits</b>, so a typo is a refusal with the old
         replication untouched; the old destination receives one final segment ship, the new
@@ -652,21 +652,21 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     </ul>
     <p>
       The master key is generated by <code>kanea init</code>, shown once, and must be typed
-      back — it is discarded if that fails. Without it, every archive is unreadable. The
+      back; it is discarded if that fails. Without it, every archive is unreadable. The
       <a href="https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md">DR runbook</a> is
       worth reading before you need it.
     </p>
 
     <h3 id="arch-mcp">API, dashboard and MCP</h3>
     <p>
-      The API is REST plus one multiplexed WebSocket, and <b>every route is deny-by-default</b>
-      — including the WebSocket and every MCP route. The exceptions are enumerable:
+      The API is REST plus one multiplexed WebSocket, and <b>every route is deny-by-default</b>:
+      including the WebSocket and every MCP route. The exceptions are enumerable:
       <code>/login</code>, the ACME challenge path, and <code>/healthz</code>.
     </p>
     <p>
       There is exactly one authentication mechanism that is not the §13 one: the git webhook
       route, which uses a per-project HMAC over the raw body, rejects replays, and is audited.
-      It never deploys from the request — it marks the project, and the sync loop re-reads the
+      It never deploys from the request: it marks the project, and the sync loop re-reads the
       source over Kanea's own credential.
     </p>
     <p>
@@ -674,13 +674,13 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       by the daemon. A service page charts CPU, memory, request rate and p95 over a real
       time axis, streams logs live (virtualized, filterable, copy, download, and a
       full-screen view that keeps your place in the buffer across the toggle), shows a
-      restart or deploy as rollout progress — the same spec-hash rule the planner uses,
-      served on the wire since v1.64 — and gives an admin a <b>shell into any running
+      restart or deploy as rollout progress (the same spec-hash rule the planner uses,
+      served on the wire since v1.64) and gives an admin a <b>shell into any running
       alloc</b>, over the same exec websocket the CLI uses: the CSRF token rides the
       handshake as a subprotocol, since a browser cannot set the header there. Its Settings
       page shows the node's configuration and lets an admin change
-      what changes at runtime — the backup destination and the notification channels
-      (node-wide defaults and per-project, each with a test button) — plus accounts, API
+      what changes at runtime: the backup destination and the notification channels
+      (node-wide defaults and per-project, each with a test button); plus accounts, API
       tokens and the audit log, one tab each; what belongs to the unit (listen address,
       subnets, DNS, the
       port policy) is shown read-only with a note saying so. The MCP server exposes 20 tools
@@ -691,7 +691,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <p>
         Every tool reaches the platform by making an HTTP request against the API's own
         handler. A tool's only verb is "send this request", so it can never be more privileged
-        than the credential its caller presented — nothing in the MCP package may hold a Store,
+        than the credential its caller presented: nothing in the MCP package may hold a Store,
         a secrets store, or an auth store. That is what makes "no side channels" structural
         rather than a rule somebody has to remember.
       </p>
@@ -706,12 +706,12 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <p>
       The API and the dashboard are one listener: the dashboard is served by
       <code>kanead</code> on the same address the REST API, the WebSocket and the MCP
-      HTTP transport bind, in front of <code>kanea-edge</code> entirely — neither is a
+      HTTP transport bind, in front of <code>kanea-edge</code> entirely; neither is a
       service, and neither takes an <code>expose</code> block. Exposing them means
       setting where that listener binds, and there are two ways: the
       <code>--listen</code>/<code>--listen-cert</code>/<code>--listen-key</code> flags
       (asked by <a href="#cli-setup"><code>kanea init</code></a> and rendered into the
-      unit), or — since v1.61 — a <code>bind</code> stanza in the server config, which
+      unit), or (since v1.61) a <code>bind</code> stanza in the server config, which
       survives re-runs and makes moving the listener later an edit plus
       <code>systemctl restart kanead</code>, never a re-init:
     </p>
@@ -720,17 +720,17 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
   <span class="k">api_addr</span>   = <span class="s">"192.168.1.10:8600"</span>
   <span class="k">api_tls</span>    = <span class="s">"self-signed"</span>       <span class="c"># acme | self-signed | provided | plaintext</span>
   <span class="c"># api_domain = "kanea.home.example"  # required by acme; names a self-signed cert</span>
-  <span class="c"># api_cert   = "/etc/kanea/api.pem"  # provided only — always with api_key</span>
+  <span class="c"># api_cert   = "/etc/kanea/api.pem"  # provided only; always with api_key</span>
   <span class="c"># api_key    = "/etc/kanea/api.key"</span>
 }</code></pre>
     <div class="tablewrap">
       <table>
         <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>api_addr</code></td><td>string</td><td>The <code>host:port</code> the API and dashboard bind. Required by every other field in the stanza — TLS with nothing to serve it on is a parse error.</td></tr>
-          <tr><td><code>api_tls</code></td><td>string</td><td><code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code> — the same mode vocabulary services use. Unset resolves at the daemon: a declared pair means <code>provided</code>, loopback means plaintext, and anything beyond loopback refuses there.</td></tr>
-          <tr><td><code>api_domain</code></td><td>string</td><td>Required by <code>acme</code> (an IP cannot hold an ACME certificate). For <code>self-signed</code> it names the certificate, and it is required when <code>api_addr</code> binds every interface (<code>":8600"</code>, <code>0.0.0.0</code>) — otherwise the certificate would have no name at all.</td></tr>
-          <tr><td><code>api_cert</code>, <code>api_key</code></td><td>string</td><td>Your own PEM pair, for <code>provided</code> only. Always together, and refused beside a managed mode or <code>plaintext</code> — a control that cannot act is refused, never silently dropped.</td></tr>
+          <tr><td><code>api_addr</code></td><td>string</td><td>The <code>host:port</code> the API and dashboard bind. Required by every other field in the stanza: TLS with nothing to serve it on is a parse error.</td></tr>
+          <tr><td><code>api_tls</code></td><td>string</td><td><code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code>; the same mode vocabulary services use. Unset resolves at the daemon: a declared pair means <code>provided</code>, loopback means plaintext, and anything beyond loopback refuses there.</td></tr>
+          <tr><td><code>api_domain</code></td><td>string</td><td>Required by <code>acme</code> (an IP cannot hold an ACME certificate). For <code>self-signed</code> it names the certificate, and it is required when <code>api_addr</code> binds every interface (<code>":8600"</code>, <code>0.0.0.0</code>): otherwise the certificate would have no name at all.</td></tr>
+          <tr><td><code>api_cert</code>, <code>api_key</code></td><td>string</td><td>Your own PEM pair, for <code>provided</code> only. Always together, and refused beside a managed mode or <code>plaintext</code>; a control that cannot act is refused, never silently dropped.</td></tr>
         </tbody>
       </table>
     </div>
@@ -738,32 +738,32 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       What each mode gives you:
     </p>
     <ul>
-      <li><b><code>self-signed</code></b> — a certificate from the node's own CA, the one
+      <li><b><code>self-signed</code></b>; a certificate from the node's own CA, the one
         <code>kanea ca show</code> installs on your devices, with a real IP SAN when the
         address is bare. Renewed automatically. The right default on a home network.</li>
-      <li><b><code>acme</code></b> — a Let's Encrypt certificate for
+      <li><b><code>acme</code></b>: a Let's Encrypt certificate for
         <code>api_domain</code>, issued and renewed by the same account and pass that
         serve your services. Needs <code>--acme-email</code> configured on the daemon,
         refused at startup without it.</li>
-      <li><b><code>provided</code></b> — your own <code>api_cert</code>/<code>api_key</code>
+      <li><b><code>provided</code></b>: your own <code>api_cert</code>/<code>api_key</code>
         pair, for a certificate something else manages.</li>
-      <li><b><code>plaintext</code></b> — explicit HTTP. Allowed beyond loopback
+      <li><b><code>plaintext</code></b>; explicit HTTP. Allowed beyond loopback
         <i>because you typed it</i>, logged loudly, and it implies the insecure-cookie
-        posture — a Secure cookie over plain HTTP is a login that silently fails.</li>
+        posture; a Secure cookie over plain HTTP is a login that silently fails.</li>
     </ul>
     <p>
       Precedence: an explicit <code>--listen</code> always beats the stanza, and
       <code>--listen none</code> keeps the node socket-only regardless of the file. When
       the stanza is declared and <code>--listen</code> was not passed,
       <code>kanea init</code> skips the listen question and renders no listen flags into
-      the unit — the file owns the listener. On the flags path, a non-loopback
+      the unit: the file owns the listener. On the flags path, a non-loopback
       <code>--listen</code> requires the <code>--listen-cert</code>/<code>--listen-key</code>
       pair and is refused up front without it.
     </p>
     <p>
       One consequence worth knowing when adopting the stanza on an existing node: an init
       run from before it existed rendered <code>--listen 127.0.0.1:8600</code> into the
-      kanead unit, and that flag shadows the file — the stanza appears to do nothing.
+      kanead unit, and that flag shadows the file; the stanza appears to do nothing.
       Remove the flag from the unit's <code>ExecStart</code>, then
       <code>systemctl daemon-reload</code> and restart; the
       <a href="#troubleshoot-common">troubleshooting page</a> has the steps.
@@ -776,7 +776,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
 <p>
       Specs are HCL v2. If you have written Nomad job files the shape will be familiar,
       though the vocabulary is Kanea's. Every rule below is enforced when the file is parsed
-      — errors carry file, line and column — and <code>kanea plan</code> is where you see
+      (errors carry file, line and column) and <code>kanea plan</code> is where you see
       them.
     </p>
 
@@ -801,7 +801,7 @@ service "web" {
       A spec file contains <code>spec_version</code> and any number of
       <code>project</code>, <code>service</code> and <code>storage</code> blocks, plus an
       optional <code>variables</code> block of shared values. Multiple
-      files applied together are parsed as one set, and <b>file order is irrelevant</b> — a
+      files applied together are parsed as one set, and <b>file order is irrelevant</b>: a
       service may reference a project declared in another file.
     </p>
     <div class="tablewrap">
@@ -819,7 +819,7 @@ service "web" {
 
     <h3 id="spec-variables">variables</h3>
     <p>
-      Declare a value once, reference it anywhere as <code>${name}</code> — or as a bare
+      Declare a value once, reference it anywhere as <code>${name}</code>, or as a bare
       identifier where HCL takes an expression, like <code>count</code>. The node may
       supply defaults from a <code>variables</code> stanza in its own
       <code>/etc/kanea/kanea.hcl</code>; the spec's block wins on a collision, and
@@ -838,11 +838,11 @@ service "web" {
   }
 }</code></pre>
     <p>
-      Values are strings, numbers or bools — a list or object is refused by name, and so
+      Values are strings, numbers or bools: a list or object is refused by name, and so
       is redeclaring a name or shadowing a built-in. A variable's value may reference node
       variables and built-ins, never another spec variable. <b>Variables are not
       secrets</b>: the node's stanza is served to any signed-in caller over
-      <code>GET /v1/vars</code>, so a secret stays a <code>secret:</code> reference — a
+      <code>GET /v1/vars</code>, so a secret stays a <code>secret:</code> reference; a
       variable whose value <i>contains</i> one is fine.
     </p>
 
@@ -883,25 +883,25 @@ service "web" {
       </p>
       <p>
         The webhook never deploys from the request either. It marks the project as dirty and
-        the sync loop re-reads the source over Kanea's own credential — so a forged body can
+        the sync loop re-reads the source over Kanea's own credential, so a forged body can
         at most cause a legitimate sync to happen sooner.
       </p>
     </div>
 
     <h4><code>notifications</code></h4>
     <p>
-      Up to five channel blocks — <code>telegram</code>, <code>slack</code> (Discord accepts
+      Up to five channel blocks; <code>telegram</code>, <code>slack</code> (Discord accepts
       the same shape on its <code>/slack</code> endpoint), <code>ntfy</code>,
-      <code>smtp</code>, <code>webhook</code> — plus filters:
+      <code>smtp</code>, <code>webhook</code>; plus filters:
     </p>
     <div class="tablewrap">
       <table>
         <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>on</code></td><td>list(string)</td><td>Event globs, e.g. <code>["deploy.failed", "scale.*"]</code>. Validated against the known event vocabulary at parse time — a filter that could never match is a spec error, not a silence.</td></tr>
+          <tr><td><code>on</code></td><td>list(string)</td><td>Event globs, e.g. <code>["deploy.failed", "scale.*"]</code>. Validated against the known event vocabulary at parse time; a filter that could never match is a spec error, not a silence.</td></tr>
           <tr><td><code>severity</code></td><td>string</td><td>Floor: <code>info</code>, <code>warning</code>, <code>error</code>. Composes with <code>on</code> as an AND.</td></tr>
           <tr><td><code>telegram</code></td><td>block</td><td><code>chat_id</code>, <code>token_ref</code></td></tr>
-          <tr><td><code>slack</code></td><td>block</td><td><code>url_ref</code> — an incoming-webhook URL is a credential in path form, so it is referenced, never inlined</td></tr>
+          <tr><td><code>slack</code></td><td>block</td><td><code>url_ref</code>: an incoming-webhook URL is a credential in path form, so it is referenced, never inlined</td></tr>
           <tr><td><code>ntfy</code></td><td>block</td><td><code>url</code>, <code>token_ref</code></td></tr>
           <tr><td><code>smtp</code></td><td>block</td><td><code>host</code>, <code>port</code>, <code>from</code>, <code>to</code>, <code>username</code>, <code>password_ref</code></td></tr>
           <tr><td><code>webhook</code></td><td>block</td><td><code>url</code>, <code>secret_ref</code> (HMAC signature over the body)</td></tr>
@@ -922,8 +922,8 @@ service "web" {
       <table>
         <thead><tr><th><code>type</code></th><th>Fields</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>local</code></td><td>—</td><td>A directory on the node, managed by Kanea.</td></tr>
-          <tr><td><code>host</code></td><td><code>path</code>, <code>create</code></td><td>A directory the operator already owns — or, with <code>create = true</code>, one Kanea creates inside an allowed prefix. See R15 — it does nothing until an operator allowlists its parent in <code>/etc/kanea/kanea.hcl</code>'s <code>storage { allowed_host_paths = […] }</code> stanza (or <code>--allowed-host-paths</code>, which wins).</td></tr>
+          <tr><td><code>local</code></td><td>-</td><td>A directory on the node, managed by Kanea.</td></tr>
+          <tr><td><code>host</code></td><td><code>path</code>, <code>create</code></td><td>A directory the operator already owns, or, with <code>create = true</code>, one Kanea creates inside an allowed prefix. See R15: it does nothing until an operator allowlists its parent in <code>/etc/kanea/kanea.hcl</code>'s <code>storage { allowed_host_paths = […] }</code> stanza (or <code>--allowed-host-paths</code>, which wins).</td></tr>
           <tr><td><code>nfs</code></td><td><code>server</code>, <code>export</code>, <code>options</code></td><td></td></tr>
           <tr><td><code>smb</code></td><td><code>server</code>, <code>share</code>, <code>auth_ref</code>, <code>options</code></td><td></td></tr>
           <tr><td><code>s3</code></td><td><code>bucket</code>, <code>endpoint</code>, <code>auth_ref</code>, <code>mode</code></td><td><code>mode = "ro"</code> selects mountpoint-s3, <code>"rw"</code> selects s3fs.</td></tr>
@@ -933,7 +933,7 @@ service "web" {
     <div class="callout warn">
       <b class="label">S3 volumes are not a filesystem</b>
       <p>
-        Every file operation costs an object-store round trip — around 30 ms. Listing or
+        Every file operation costs an object-store round trip; around 30 ms. Listing or
         creating a 200-file directory takes tens of seconds, no driver implements
         <code>truncate</code> (s3fs silently no-ops it), and a FUSE call against a dead
         backend blocks uninterruptibly for tens of seconds. Use them for bulk, read-mostly
@@ -946,17 +946,17 @@ service "web" {
       <table>
         <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>project</code></td><td>string</td><td>—</td><td>The owning project.</td></tr>
-          <tr><td><code>description</code></td><td>string</td><td>—</td><td>Free text, ≤ 512 chars.</td></tr>
+          <tr><td><code>project</code></td><td>string</td><td>-</td><td>The owning project.</td></tr>
+          <tr><td><code>description</code></td><td>string</td><td>-</td><td>Free text, ≤ 512 chars.</td></tr>
           <tr><td><code>count</code></td><td>number</td><td><code>1</code></td><td>Replicas. Must sit inside <code>scaling</code>'s min/max if that block is present.</td></tr>
-          <tr><td><code>depends_on</code></td><td>list(string)</td><td>—</td><td>Start ordering. See R10.</td></tr>
-          <tr><td><code>task</code></td><td>block</td><td>—</td><td>Exactly one in v1.</td></tr>
-          <tr><td><code>build</code></td><td>block</td><td>—</td><td>Build from source instead of pulling.</td></tr>
-          <tr><td><code>network</code></td><td>block</td><td>—</td><td>Ports and ingress policy.</td></tr>
-          <tr><td><code>expose</code></td><td>block</td><td>—</td><td>Public exposure and middleware.</td></tr>
-          <tr><td><code>health_check</code></td><td>block</td><td>—</td><td>Zero or more, each labelled.</td></tr>
-          <tr><td><code>volume</code></td><td>block</td><td>—</td><td>Zero or more mounts.</td></tr>
-          <tr><td><code>scaling</code></td><td>block</td><td>—</td><td>Autoscaling policy.</td></tr>
+          <tr><td><code>depends_on</code></td><td>list(string)</td><td>-</td><td>Start ordering. See R10.</td></tr>
+          <tr><td><code>task</code></td><td>block</td><td>-</td><td>Exactly one in v1.</td></tr>
+          <tr><td><code>build</code></td><td>block</td><td>-</td><td>Build from source instead of pulling.</td></tr>
+          <tr><td><code>network</code></td><td>block</td><td>-</td><td>Ports and ingress policy.</td></tr>
+          <tr><td><code>expose</code></td><td>block</td><td>-</td><td>Public exposure and middleware.</td></tr>
+          <tr><td><code>health_check</code></td><td>block</td><td>-</td><td>Zero or more, each labelled.</td></tr>
+          <tr><td><code>volume</code></td><td>block</td><td>-</td><td>Zero or more mounts.</td></tr>
+          <tr><td><code>scaling</code></td><td>block</td><td>-</td><td>Autoscaling policy.</td></tr>
           <tr><td><code>update</code></td><td>block</td><td>rolling</td><td>Rollout strategy.</td></tr>
           <tr><td><code>restart</code></td><td>block</td><td>always</td><td>Restart policy.</td></tr>
         </tbody>
@@ -986,7 +986,7 @@ service "web" {
       a watchtower-style updater. Both blocks name a <b>grant</b> and never a
       path: the operator defines grants on the node, and the spec asks for one
       by name. There is no field to write a device path into, which is the
-      property the whole model rests on — a spec cannot request
+      property the whole model rests on: a spec cannot request
       <code>/dev/mem</code> because there is nowhere to say it.
     </p>
     <pre><code><span class="k">service</span> <span class="s">"jellyfin"</span> {
@@ -1021,19 +1021,19 @@ service "web" {
     </div>
     <p>
       The operator side lives in the node's server config,
-      <code>/etc/kanea/kanea.hcl</code>, probed automatically at daemon start —
+      <code>/etc/kanea/kanea.hcl</code>, probed automatically at daemon start:
       no flag, no unit editing, and a <code>kanea init</code> re-run never
-      touches it. The default is that the file does not exist — a spec asking
+      touches it. The default is that the file does not exist: a spec asking
       for a grant on a node with none fails its alloc rather than starting
       without it. Grants name the projects that may claim them:
     </p>
-    <pre><code><span class="c"># /etc/kanea/kanea.hcl — the node's, never the repository's</span>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl; the node's, never the repository's</span>
 <span class="k">bind</span> {                                  <span class="c"># the API/dashboard listener (v1.61)</span>
   <span class="k">api_addr</span> = <span class="s">"192.168.1.10:8600"</span>
   <span class="k">api_tls</span>  = <span class="s">"self-signed"</span>              <span class="c"># acme | self-signed | provided | plaintext</span>
 }
 
-<span class="k">variables</span> {                             <span class="c"># node-wide spec-variable defaults (v1.63) — never secrets</span>
+<span class="k">variables</span> {                             <span class="c"># node-wide spec-variable defaults (v1.63), never secrets</span>
   <span class="k">domain</span> = <span class="s">"home.lan"</span>
 }
 
@@ -1052,11 +1052,11 @@ service "web" {
     <ol>
       <li>Create the file (init already made the directory):
         <code>sudo install -o root -g root -m 0644 /dev/null /etc/kanea/kanea.hcl</code>,
-        then write the grant blocks above — and, if you use host volumes, the
+        then write the grant blocks above, and, if you use host volumes, the
         <a href="#spec-storage"><code>storage</code> allowlist stanza</a> in the
         same file. It must stay root-owned and writable only by its owner;
         kanead refuses a group- or world-writable policy file.</li>
-      <li><code>sudo systemctl restart kanead</code> — the file is read once, at
+      <li><code>sudo systemctl restart kanead</code>; the file is read once, at
         startup, never polled.</li>
       <li>Verify: the startup log carries <code>server config loaded</code> with
         the path, and a <code>warn</code> line naming the passthrough
@@ -1084,15 +1084,15 @@ service "web" {
   policy { allow_from = ["analytics/collector"] }
 }</pre>
     <ul>
-      <li><code>port "&lt;name&gt;"</code> — <code>container</code> is the port inside the
+      <li><code>port "&lt;name&gt;"</code>: <code>container</code> is the port inside the
         container. The name is what <code>expose</code> and <code>health_check</code> refer
         to, and what <code>${service.x.port.&lt;name&gt;}</code> resolves.</li>
-      <li><code>publish "&lt;port name&gt;"</code> — a node port the edge binds for this
+      <li><code>publish "&lt;port name&gt;"</code>: a node port the edge binds for this
         service, with or without a domain. The label names the <code>port</code> above;
         there is deliberately no field for a container port number, so a published
         port can never forward somewhere the service did not declare. See R21.</li>
       <li><code>mode = "tcp"</code> relays bytes for Postgres, a game server, or anything
-        that is not HTTP. It keeps <code>ip_restriction</code> and nothing else — a
+        that is not HTTP. It keeps <code>ip_restriction</code> and nothing else: a
         <code>rate_limit</code> or <code>headers</code> block on one is a plan error rather
         than a control that is silently dropped. On a tcp listener the upstream sees the
         edge's address, not the client's, so <code>ip_restriction</code> is the whole
@@ -1100,7 +1100,7 @@ service "web" {
       <li>Which node ports a spec may claim belongs to the node, not the spec
         (<code>--publish-ports</code>, unprivileged by default). A repository anyone can
         push to must not be able to take :22. See R22.</li>
-      <li><code>policy.allow_from</code> — fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>
+      <li><code>policy.allow_from</code>: fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>
         peers permitted to reach this service. See R14.</li>
     </ul>
 
@@ -1116,8 +1116,8 @@ service "web" {
         <tbody>
           <tr><td><code>domains</code></td><td>list(string)</td><td>Omitted → <code>&lt;service&gt;.&lt;project&gt;.&lt;base_domain&gt;</code>. No two services may claim the same domain, counting generated ones.</td></tr>
           <tr><td><code>port</code></td><td>string</td><td>Which declared <code>network { port }</code> the route proxies to. Omitted → the port named <code>http</code>, or the sole declared port. Explicit beats every convention; naming an undeclared or <code>udp</code> port is a plan error.</td></tr>
-          <tr><td><code>tls</code></td><td>block</td><td><code>mode</code> — <code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code>; <code>name</code> selects one of the node's <code>provided</code> grants. Omit the block and the node's <code>--tls-default</code> decides. A mode names a source, never a path.</td></tr>
-          <tr><td><code>ip_restriction</code></td><td>block</td><td><code>allow</code>, <code>deny</code> — lists of CIDRs. Empty <code>allow</code> means the world; <b>deny wins</b>.</td></tr>
+          <tr><td><code>tls</code></td><td>block</td><td><code>mode</code>: <code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code>; <code>name</code> selects one of the node's <code>provided</code> grants. Omit the block and the node's <code>--tls-default</code> decides. A mode names a source, never a path.</td></tr>
+          <tr><td><code>ip_restriction</code></td><td>block</td><td><code>allow</code>, <code>deny</code>: lists of CIDRs. Empty <code>allow</code> means the world; <b>deny wins</b>.</td></tr>
           <tr><td><code>rate_limit</code></td><td>block</td><td><code>requests</code>, <code>window</code>, <code>per</code>, <code>burst</code>. <code>per</code> is <code>ip</code>, <code>service</code>, or <code>header:&lt;name&gt;</code>.</td></tr>
           <tr><td><code>headers</code></td><td>block</td><td><code>request_set</code>, <code>request_remove</code>, <code>response_set</code>, <code>response_remove</code>.</td></tr>
         </tbody>
@@ -1130,7 +1130,7 @@ service "web" {
       <p>
         The <code>headers</code> block rejects any attempt to set or remove the
         <code>X-Forwarded-*</code> set, or the hop-by-hop headers. Those carry the client
-        identity that IP restriction, rate limiting and the audit log are all keyed on — a
+        identity that IP restriction, rate limiting and the audit log are all keyed on: a
         spec able to rewrite <code>X-Forwarded-For</code> would be forging the thing every
         other control trusts.
       </p>
@@ -1147,7 +1147,7 @@ service "web" {
 }</pre>
     <p>
       An <code>exec</code> check runs inside the task's container and takes
-      <code>command</code> as an <b>argument array, never a shell string</b> — the same rule
+      <code>command</code> as an <b>argument array, never a shell string</b>: the same rule
       as <code>task.command</code>, for the same reason.
     </p>
     <div class="callout">
@@ -1155,7 +1155,7 @@ service "web" {
       <p>
         Alloc health is only ever written by a probe. A service without a
         <code>health_check</code> block has every alloc unhealthy forever, and that is
-        correct — Kanea asks whether a check is configured before it asks whether one passed.
+        correct: Kanea asks whether a check is configured before it asks whether one passed.
         It matters because <code>min_healthy</code> in the <code>update</code> block is
         meaningless without one.
       </p>
@@ -1166,18 +1166,18 @@ service "web" {
   storage    = "local-ssd"    # a declared storage block
   mount_path = "/var/lib/data"
   read_only  = false
-  size       = "10GiB"        # a budget, not a quota — see below
+  size       = "10GiB"        # a budget, not a quota: see below
 }</pre>
     <p>Mount failures fail the alloc loudly. A volume that silently is not there is worse than one that stops the deploy.</p>
     <p>
       <code>size</code> declares a <b>budget</b> (R31). Kanea measures what the volume
       actually uses on a slow background schedule, shows it in
       <code>kanea volume list</code>, and emits <code>volume.over_budget</code> when it
-      is crossed — and <code>volume.under_budget</code> when it comes back. It is
+      is crossed, and <code>volume.under_budget</code> when it comes back. It is
       deliberately <b>not</b> a quota and nothing enforces it: no filesystem quota
       mechanism exists on the node, and <code>nfs</code>, <code>smb</code> and
       <code>s3</code> could not carry one if it did. Declaring it on an <code>s3</code>
-      volume is a plan error, because that driver is never walked — one request per
+      volume is a plan error, because that driver is never walked: one request per
       directory, on a schedule, is not a measurement worth taking. Changing a
       <code>size</code> never redeploys the service: a budget is not baked into a
       container.
@@ -1194,7 +1194,7 @@ service "web" {
 }</pre>
     <ul>
       <li><code>cpu</code> comes from containerd cgroup metrics and is a percentage of the
-        alloc's <i>declared</i> limit — the number the workload can actually use.</li>
+        alloc's <i>declared</i> limit: the number the workload can actually use.</li>
       <li><code>rps</code> and <code>p95_latency_ms</code> come from the edge for exposed
         services, and from the datapath's own map counters for east-west traffic.</li>
       <li><code>count</code> must fall inside <code>[min, max]</code>, otherwise the
@@ -1218,14 +1218,14 @@ restart {
 }</pre>
     <p>
       <code>max_parallel</code> bounds allocs that are <b>down</b>, not replacements in
-      flight — anything already unavailable spends the budget first, so a failing deploy
+      flight: anything already unavailable spends the budget first, so a failing deploy
       halts rather than marching through every replica. <code>min_healthy</code> applies only
       to allocs this deploy has already replaced.
     </p>
     <p>
       <b><code>auto</code> is the watchtower feature, as policy rather than as a container
       holding your runtime socket.</b> Kanea re-resolves the tag the service already
-      declares, and when the digest behind it moves it pins the new one — the tag stays in
+      declares, and when the digest behind it moves it pins the new one: the tag stays in
       the spec, the digest is what runs. That is an ordinary deploy nobody typed: it rolls
       with <code>max_parallel</code>, waits <code>min_healthy</code> and is gated by the
       service's health check, because it goes through the same machinery every other deploy
@@ -1268,10 +1268,10 @@ restart {
         <thead><tr><th>Form</th><th>Resolved</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td><code>${VAR}</code></td><td>Parse time</td><td>From the spec's <a href="#spec-variables"><code>variables</code> block</a>, the node's <code>variables</code> stanza in <code>/etc/kanea/kanea.hcl</code>, and built-ins such as <code>KANEA_PROJECT</code>. Node under spec under caller (R30).</td></tr>
-          <tr><td><code>${GIT_SHA_SHORT}</code></td><td>Checkout time</td><td>Survives parsing as a literal reference — its value does not exist until a commit is checked out.</td></tr>
+          <tr><td><code>${GIT_SHA_SHORT}</code></td><td>Checkout time</td><td>Survives parsing as a literal reference: its value does not exist until a commit is checked out.</td></tr>
           <tr><td><code>${service.&lt;n&gt;.host}</code></td><td>Alloc start</td><td>Becomes <code>&lt;n&gt;.&lt;project&gt;.kanea</code>. Validated at plan time; resolved as a <b>DNS name, never an IP</b>, so load-balancer reprogramming cannot break it.</td></tr>
           <tr><td><code>${service.&lt;n&gt;.port.&lt;p&gt;}</code></td><td>Alloc start</td><td>The named port's frontend port.</td></tr>
-          <tr><td><code>secret:&lt;path&gt;</code></td><td>Alloc start</td><td>Not interpolation — a reference the reconciler resolves. Project-scoped (R5).</td></tr>
+          <tr><td><code>secret:&lt;path&gt;</code></td><td>Alloc start</td><td>Not interpolation: a reference the reconciler resolves. Project-scoped (R5).</td></tr>
         </tbody>
       </table>
     </div>
@@ -1283,24 +1283,24 @@ restart {
     </p>
 
     <div class="rule"><b>R1</b><div><p><b>Names are DNS-1123 labels.</b> Project and service names: lowercase alphanumeric and <code>-</code>, alphanumeric at both ends, ≤ 63 characters. Parse errors abort the run.</p></div></div>
-    <div class="rule"><b>R2</b><div><p><b>Variables.</b> Flat <code>${VAR}</code> interpolation in any attribute, from the spec's <code>variables</code> block, the node's <code>variables</code> stanza and built-ins — node under spec under caller. Reserved names (the built-ins, <code>service</code>) cannot be declared, values are primitives, and a definition never references a sibling.</p></div></div>
+    <div class="rule"><b>R2</b><div><p><b>Variables.</b> Flat <code>${VAR}</code> interpolation in any attribute, from the spec's <code>variables</code> block, the node's <code>variables</code> stanza and built-ins: node under spec under caller. Reserved names (the built-ins, <code>service</code>) cannot be declared, values are primitives, and a definition never references a sibling.</p></div></div>
     <div class="rule"><b>R3</b><div><p><b>Secrets are referenced, never inlined.</b> Resolved at alloc start. Primary injection is a tmpfs file at <code>/run/kanea/secrets/&lt;alloc&gt;/&lt;name&gt;</code>; env vars are supported and documented as weaker.</p></div></div>
     <div class="rule"><b>R4</b><div><p><b><code>kanea plan</code> is a real dry run</b> and shows the create/change/destroy diff before anything is applied.</p></div></div>
     <div class="rule"><b>R5</b><div><p><b>Secret references are project-scoped.</b> A service may name <code>secret:&lt;own-project&gt;/…</code> or <code>secret:shared/…</code> and nothing else. Cross-project references are rejected. Git, registry, storage and notification credentials follow the same scoping.</p></div></div>
     <div class="rule"><b>R6</b><div><p><b><code>spec_version = 1</code></b> is declared by every file; future revisions are gated on it.</p></div></div>
-    <div class="rule"><b>R7</b><div><p><b>Health check types</b> are <code>http</code>, <code>tcp</code> and <code>exec</code>. <code>exec</code> runs inside the container and takes an argument array — never a shell string.</p></div></div>
+    <div class="rule"><b>R7</b><div><p><b>Health check types</b> are <code>http</code>, <code>tcp</code> and <code>exec</code>. <code>exec</code> runs inside the container and takes an argument array, never a shell string.</p></div></div>
     <div class="rule"><b>R8</b><div><p><b>The minimal service is image-only.</b> At least one of <code>task.image</code> or <code>build</code> must be present. When both are, the pipeline-built digest wins and <code>task.image</code> is the pre-first-build value.</p></div></div>
-    <div class="rule"><b>R9</b><div><p><b>Service references are same-project in v1</b>, validated at plan against the whole applied set — the referenced service and port must exist, and file order is irrelevant. Resolved as DNS names, never IPs. <b>Cycles are rejected</b>, with the cycle shown in the diagnostic.</p></div></div>
-    <div class="rule"><b>R10</b><div><p><b>Dependencies gate starts, not stops.</b> <code>depends_on</code> and every implicit reference edge mean a dependent will not start until its dependencies are healthy. If a dependency degrades afterwards, dependents keep running and events are emitted — no cascading stops.</p></div></div>
-    <div class="rule"><b>R11</b><div><p><b>A declared limit is enforced; an omitted one is the node's capacity.</b> Omit <code>resources</code> and the alloc gets all cores and all allocatable memory, bounded by the workload parent cgroup — not by a per-alloc number nobody typed. A default <code>pids.max</code> applies regardless. A declared <code>memory.max</code> breach OOM-kills the alloc, emits an event, and the restart policy applies. Scaling on <code>cpu</code> or <code>memory</code> (percent-of-limit) requires the corresponding limit and is refused at plan without it. Declared values are the admission units counted against the node's workload budget. Functions keep small defaults (<code>cpu = 100</code>, <code>memory = 64</code>) — the wasm sandbox's caps are promises.</p></div></div>
-    <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully — <code>redis-server --save ""</code> is how you disable snapshots.</p></div></div>
-    <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> adds to a baseline, and <code>"none"</code> takes the baseline away.</b> Every runc alloc starts from the baseline set — <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>NET_BIND_SERVICE</code>, <code>SETGID</code>, <code>SETUID</code> — so PUID-style images start without a capability line. The effective grant is the union of baseline and declared list; <code>["none"]</code> is the full drop-ALL posture, <code>["none", "CAP_NET_RAW"]</code> exactly one grant. Declarable beyond the baseline: <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_RAW</code> (never baseline — the datapath's identity is the IP), <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. Privilege-equivalent ones — <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends — are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Effective capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
-    <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; the datapath's ingress rules only ever union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b> — <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
-    <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time — but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config <code>/etc/kanea/kanea.hcl</code> (or <code>--allowed-host-paths</code>, which wins when set), <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist &mdash; <b>unless the storage block sets <code>create = true</code></b>, which makes Kanea create it. The default has not moved: without that flag a missing path is still refused, because creating one on demand turns a typo into a volume that is silently empty. Creation is allowlist-gated first &mdash; the nearest <i>existing</i> parent is resolved and checked before anything is written &mdash; so a <code>create</code> outside a permitted prefix leaves no directory behind. Creating a directory is not owning it: Kanea still never chowns a host volume.</p></div></div>
-    <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous — declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
-    <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device — checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
+    <div class="rule"><b>R9</b><div><p><b>Service references are same-project in v1</b>, validated at plan against the whole applied set: the referenced service and port must exist, and file order is irrelevant. Resolved as DNS names, never IPs. <b>Cycles are rejected</b>, with the cycle shown in the diagnostic.</p></div></div>
+    <div class="rule"><b>R10</b><div><p><b>Dependencies gate starts, not stops.</b> <code>depends_on</code> and every implicit reference edge mean a dependent will not start until its dependencies are healthy. If a dependency degrades afterwards, dependents keep running and events are emitted: no cascading stops.</p></div></div>
+    <div class="rule"><b>R11</b><div><p><b>A declared limit is enforced; an omitted one is the node's capacity.</b> Omit <code>resources</code> and the alloc gets all cores and all allocatable memory, bounded by the workload parent cgroup, not by a per-alloc number nobody typed. A default <code>pids.max</code> applies regardless. A declared <code>memory.max</code> breach OOM-kills the alloc, emits an event, and the restart policy applies. Scaling on <code>cpu</code> or <code>memory</code> (percent-of-limit) requires the corresponding limit and is refused at plan without it. Declared values are the admission units counted against the node's workload budget. Functions keep small defaults (<code>cpu = 100</code>, <code>memory = 64</code>): the wasm sandbox's caps are promises.</p></div></div>
+    <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully; <code>redis-server --save ""</code> is how you disable snapshots.</p></div></div>
+    <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> adds to a baseline, and <code>"none"</code> takes the baseline away.</b> Every runc alloc starts from the baseline set; <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>NET_BIND_SERVICE</code>, <code>SETGID</code>, <code>SETUID</code>, so PUID-style images start without a capability line. The effective grant is the union of baseline and declared list; <code>["none"]</code> is the full drop-ALL posture, <code>["none", "CAP_NET_RAW"]</code> exactly one grant. Declarable beyond the baseline: <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_RAW</code> (never baseline; the datapath's identity is the IP), <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. Privilege-equivalent ones; <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends; are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Effective capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
+    <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; the datapath's ingress rules only ever union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b>: <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
+    <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time, but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config <code>/etc/kanea/kanea.hcl</code> (or <code>--allowed-host-paths</code>, which wins when set), <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist &mdash; <b>unless the storage block sets <code>create = true</code></b>, which makes Kanea create it. The default has not moved: without that flag a missing path is still refused, because creating one on demand turns a typo into a volume that is silently empty. Creation is allowlist-gated first &mdash; the nearest <i>existing</i> parent is resolved and checked before anything is written &mdash; so a <code>create</code> outside a permitted prefix leaves no directory behind. Creating a directory is not owning it: Kanea still never chowns a host volume.</p></div></div>
+    <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous; declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
+    <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device: checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
     <div class="rule"><b>R18</b><div><p><b><code>task.socket</code> is R17 for unix sockets, and is privilege delegation.</b> <code>mount_path</code> is validated as absolute, clean and <code>..</code>-free, may not sit under <code>/dev</code>, <code>/proc</code> or <code>/sys</code>, and may not collide with another socket or a volume. The bind carries <code>nosuid</code>, <code>noexec</code> and <code>nodev</code>. <b>None of that makes it safe and none of it is meant to</b>: a container holding the container runtime's socket can create containers without the hardening defaults, so the grant is equivalent to root on the node. The server config is the only control over it, which is why it is project-scoped and empty by default.</p></div></div>
-    <div class="rule"><b>R19</b><div><p><b><code>update.auto</code> follows the tag the service declares.</b> Off by default. Kanea re-resolves <code>task.image</code>'s tag every <code>interval</code> (default 6h, minimum 5m) and pins the digest behind it when it moves; the declared tag is never overwritten, because it is what the next poll re-reads. The pinned digest is server-owned and survives <code>kanea apply</code> — except when you edit <code>image</code> or turn <code>auto</code> off, which both hand authority back to the spec. <b>A failed update reverts</b> to the digest that was running if the new one has not converged within <code>deadline</code>: converged means healthy where a <code>check</code> block exists, and running without crash-looping where it does not. Refused on a digest-pinned image and on a service with a <code>build</code> block.</p></div></div>
+    <div class="rule"><b>R19</b><div><p><b><code>update.auto</code> follows the tag the service declares.</b> Off by default. Kanea re-resolves <code>task.image</code>'s tag every <code>interval</code> (default 6h, minimum 5m) and pins the digest behind it when it moves; the declared tag is never overwritten, because it is what the next poll re-reads. The pinned digest is server-owned and survives <code>kanea apply</code>: except when you edit <code>image</code> or turn <code>auto</code> off, which both hand authority back to the spec. <b>A failed update reverts</b> to the digest that was running if the new one has not converged within <code>deadline</code>: converged means healthy where a <code>check</code> block exists, and running without crash-looping where it does not. Refused on a digest-pinned image and on a service with a <code>build</code> block.</p></div></div>
 
     <h3 id="spec-example">Full example</h3>
     <p>
@@ -1309,7 +1309,7 @@ restart {
 
     <div class="window">
       <div class="bar"><i></i><i></i><i></i><span>shop.hcl</span></div>
-<pre><span class="c"># shop.hcl — everything for one project</span>
+<pre><span class="c"># shop.hcl: everything for one project</span>
 spec_version = 1
 
 <span class="k">project</span> <span class="s">"shop"</span> {
@@ -1453,7 +1453,7 @@ spec_version = 1
 
     <p>
       Five complete stacks, from a static site to a Kafka cluster. Every one parses and
-      validates against Kanea's own parser — copy the file, change the names and domains,
+      validates against Kanea's own parser: copy the file, change the names and domains,
       and start with <code>kanea plan</code>, which will tell you about anything the copy
       broke before anything runs.
     </p>
@@ -1461,7 +1461,7 @@ spec_version = 1
     <h3 id="stacks-site">A static site</h3>
     <p>
       The smallest production-shaped thing: two replicas behind Let's Encrypt, with a
-      health check. The check is not decoration — it is what a rolling deploy waits on
+      health check. The check is not decoration: it is what a rolling deploy waits on
       (<code>min_healthy</code> has nothing to measure without one), what anything
       declaring <code>depends_on</code> this service waits for, and the difference
       between a replica that stops answering showing up in <code>kanea status</code>
@@ -1509,7 +1509,7 @@ spec_version = 1
 
     <p>
       This works the moment <code>example.com</code> resolves to the node and ports 80/443
-      reach it — the ACME HTTP-01 flow needs nothing else. From here the natural next step
+      reach it: the ACME HTTP-01 flow needs nothing else. From here the natural next step
       is replacing the stock image with your own: add a <a href="#spec-build"><code>build</code></a>
       block and the pipeline builds and pins a digest on every push.
     </p>
@@ -1521,8 +1521,8 @@ kanea status web/site</pre>
     <p>
       A frontend and an API sharing PostgreSQL and Redis. This is the shape most
       multi-service deployments take, and it exercises the machinery that matters:
-      <code>depends_on</code> gates the apps until their backends are <i>healthy</i> —
-      which is why postgres and redis have checks — and the
+      <code>depends_on</code> gates the apps until their backends are <i>healthy</i>
+      (which is why postgres and redis have checks) and the
       <code>${service.…}</code> references resolve to internal DNS names at alloc start,
       so nothing here hard-codes an address. One secret, referenced from two services,
       never written in the file.
@@ -1683,12 +1683,12 @@ kanea status web/site</pre>
 }</pre>
     </div>
 
-    <p>Create the secret first, then deploy — order within the file never matters:</p>
+    <p>Create the secret first, then deploy; order within the file never matters:</p>
     <pre class="plain">kanea secret put paste/db-password     # value on stdin
 kanea run paste.hcl --wait=90s</pre>
     <p>
       Details worth stealing: <code>redis-server --save ""</code> is a command as an
-      argument array with a meaningfully empty argument (R12 — a shell string could not
+      argument array with a meaningfully empty argument (R12; a shell string could not
       say that); the rate limit lives only on the API route, because the frontend serving
       assets at API rates would be rate-limiting your own pages; and postgres and redis
       declare no <code>expose</code> and no <code>publish</code>, so they are reachable
@@ -1699,7 +1699,7 @@ kanea run paste.hcl --wait=90s</pre>
     <p>
       A media server is the stack where the node itself gets a say: the library is a
       directory the operator already owns, and hardware transcoding needs a GPU device.
-      Both cross the line a job spec cannot cross alone — a <code>host</code> volume does
+      Both cross the line a job spec cannot cross alone: a <code>host</code> volume does
       nothing until its path is allowlisted on the node (R15), and the <code>device</code>
       block names a grant, never a path (R17).
     </p>
@@ -1766,8 +1766,8 @@ kanea run paste.hcl --wait=90s</pre>
 }</pre>
     </div>
 
-    <p>The node's half, in the server config — without it the spec is valid and the alloc fails, loudly:</p>
-    <pre><code><span class="c"># /etc/kanea/kanea.hcl — the node's, never the repository's</span>
+    <p>The node's half, in the server config: without it the spec is valid and the alloc fails, loudly:</p>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl; the node's, never the repository's</span>
 <span class="k">storage</span> {
   <span class="k">allowed_host_paths</span> = [<span class="s">"/srv/media"</span>]
 }
@@ -1779,8 +1779,8 @@ kanea run paste.hcl --wait=90s</pre>
     <p>
       A failed grant fails the alloc rather than starting without the GPU, because a
       transcoder silently falling back to software looks healthy and does the wrong thing.
-      The library is mounted <code>read_only</code> — a media server has no business
-      writing to it — while <code>/config</code> is an ordinary local volume Kanea
+      The library is mounted <code>read_only</code> (a media server has no business
+      writing to it) while <code>/config</code> is an ordinary local volume Kanea
       manages. The <code>publish</code> block binds :8096 on the node for the LAN, with
       the edge enforcing the CIDR allowlist; for access from outside, add an
       <a href="#spec-expose"><code>expose</code></a> block with a domain instead of
@@ -1791,8 +1791,8 @@ kanea run paste.hcl --wait=90s</pre>
     <p>
       The same <code>volume</code> block, backed by things that are not on the node: a
       file browser over a NAS share and a read-only bucket. The credential for either
-      driver is one secret whose value is <code>&lt;user&gt;:&lt;secret&gt;</code> —
-      username and password for SMB, access key and secret key for S3 — resolved at mount
+      driver is one secret whose value is <code>&lt;user&gt;:&lt;secret&gt;</code>
+      (username and password for SMB, access key and secret key for S3) resolved at mount
       time into a <code>0600</code> file, never onto a command line. Omit
       <code>auth_ref</code> entirely for a public bucket or an open share.
     </p>
@@ -1874,7 +1874,7 @@ kanea secret put files/archive      # access-key:secret-key
 kanea run files.hcl</pre>
     <p>
       The <code>user</code> block does double duty here (R23, R24): the process runs as
-      <code>1000:1000</code>, and the volumes <b>inherit</b> that ownership — no
+      <code>1000:1000</code>, and the volumes <b>inherit</b> that ownership; no
       <code>uid</code>/<code>gid</code> on the volume needed. On a mounted filesystem
       there is nothing to <code>chown</code>, so the ownership travels in the mount
       options instead, which is exactly why it works on a share the NAS controls. The
@@ -1884,8 +1884,8 @@ kanea run files.hcl</pre>
       error, and inheritance skips them.)
     </p>
     <p>
-      <code>mode</code> on the S3 storage selects the driver — <code>"ro"</code> is
-      mountpoint-s3 and the default, <code>"rw"</code> is s3fs — and the
+      <code>mode</code> on the S3 storage selects the driver (<code>"ro"</code> is
+      mountpoint-s3 and the default, <code>"rw"</code> is s3fs) and the
       <a href="#spec-storage">storage reference</a>'s warning applies in full: an object
       store is not a filesystem, so keep it for bulk, read-mostly data. A custom
       <code>endpoint</code> points at MinIO or any S3-compatible store; omit it for AWS.
@@ -1900,8 +1900,8 @@ kanea run files.hcl</pre>
     <p>
       Three brokers, no ZooKeeper. Each broker is its own <code>count&nbsp;=&nbsp;1</code>
       service rather than one service with <code>count&nbsp;=&nbsp;3</code>, and that is
-      the load-bearing decision: a Kafka broker has an identity — a node id and an
-      advertised name that must be stable across restarts — and replicas of one service
+      the load-bearing decision: a Kafka broker has an identity (a node id and an
+      advertised name that must be stable across restarts) and replicas of one service
       are deliberately interchangeable. Three services give each broker its own DNS name,
       its own data volume, and its own line in the quorum.
     </p>
@@ -2048,7 +2048,7 @@ kanea run files.hcl</pre>
     <p>
       The quorum voters and advertised listeners are written as <b>literal internal DNS
       names</b> (<code>&lt;service&gt;.&lt;project&gt;.kanea</code>), not
-      <code>${service.…}</code> references — deliberately. A reference is also a start
+      <code>${service.…}</code> references: deliberately. A reference is also a start
       dependency (R10), and three brokers referencing each other is a cycle
       <code>kanea plan</code> rejects (R9). Kafka's quorum is <i>designed</i> to form as
       the peers come up, so the ordering edge is not wanted; the literal names are exactly
@@ -2057,11 +2057,11 @@ kanea run files.hcl</pre>
       directory beneath it, so the brokers never share a log dir.
     </p>
     <p>
-      A client in the same project bootstraps with all three names —
+      A client in the same project bootstraps with all three names:
       <code>kafka-1.kafka.kanea:9092,kafka-2.kafka.kanea:9092,kafka-3.kafka.kanea:9092</code>;
       a service in another project also needs <code>allow_from</code> naming it on each
       broker (R14). The cluster is deliberately not exposed north-south: Kafka's protocol
-      hands clients the advertised names to dial, and those resolve only inside the node —
+      hands clients the advertised names to dial, and those resolve only inside the node;
       publishing :9092 would let an external client connect once and then fail on
       redirect. Generate your own <code>CLUSTER_ID</code>
       (<code>kafka-storage.sh random-uuid</code>) rather than shipping the example's.
@@ -2076,11 +2076,11 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
 
 <p>
       One binary, one command tree. The CLI talks to <code>kanead</code> over a unix socket
-      — <code>--socket</code> overrides it on every client command — and the daemon commands
+      (<code>--socket</code> overrides it on every client command) and the daemon commands
       are the ones systemd runs for you.
     </p>
     <p>
-      The socket is root-owned, so client commands run under <code>sudo</code> — or without
+      The socket is root-owned, so client commands run under <code>sudo</code>, or without
       it, after joining the <code>kanea</code> group <code>init</code> creates and logging in
       again: <code>sudo usermod -aG kanea &lt;user&gt;</code>. Membership is root-equivalent,
       exactly like docker's group, and is never granted by Kanea itself.
@@ -2093,7 +2093,7 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
       The CLI also installs through <a href="../#install">Homebrew</a>, on Linux and on
       macOS. A Mac gets the authoring half: <code>kanea plan</code> parses and validates a
       job spec with file-and-line diagnostics before anything dials a socket, so no daemon
-      is needed — the platform itself, and everything above that needs the socket, runs on
+      is needed; the platform itself, and everything above that needs the socket, runs on
       Linux.
     </p>
 
@@ -2102,10 +2102,10 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
     <h4><code>kanea init</code></h4>
     <p>
       Interactive first install: preflight checks, configuration, the master-key ceremony,
-      the systemd units — and, since v0.5, the rest of the way to a working platform: it
+      the systemd units, and, since v0.5, the rest of the way to a working platform: it
       asks for the dashboard's listen address (loopback by default; <code>none</code> keeps
       the API socket-only), starts <code>kanead</code>, creates the first admin account over
-      the local socket, and ends with a summary of what it built — the dashboard URL, your
+      the local socket, and ends with a summary of what it built; the dashboard URL, your
       account, the internal DNS address and the subnet layout. Run it once, as root.
     </p>
     <pre class="plain">sudo kanea init [--data-dir=/var/lib/kanea] [--log-dir=…] [--unit-dir=/etc/systemd/system]
@@ -2114,7 +2114,7 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
                 [--admin-user=…] [--no-start] [--skip-checks] [--skip-units]</pre>
     <p>
       A non-loopback <code>--listen</code> requires the TLS pair and is refused up front
-      otherwise — the same refusal the daemon would make, moved in front of you.
+      otherwise: the same refusal the daemon would make, moved in front of you.
       <code>--admin-user</code> plus a piped password makes it scriptable;
       <code>--no-start</code> writes the files and stops, which is the pre-v0.5 behaviour.
       Re-running is safe: an existing master key and an existing account are left alone.
@@ -2124,10 +2124,10 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
       <code>bind { api_addr = …  api_tls = … }</code> stanza in
       <code>/etc/kanea/kanea.hcl</code>, where <code>api_tls</code> is
       <code>acme</code>, <code>self-signed</code>, <code>provided</code> or
-      <code>plaintext</code> — the same modes services use (the full field set is in
+      <code>plaintext</code>; the same modes services use (the full field set is in
       <a href="#arch-dashboard">Exposing the API and dashboard</a>). When it is
       declared and <code>--listen</code> was not passed, init skips the listen question
-      and renders no listen flags into the unit — the file owns the listener, and moving
+      and renders no listen flags into the unit: the file owns the listener, and moving
       the API and dashboard later is an edit to the file plus
       <code>systemctl restart kanead</code>, never a re-init.
     </p>
@@ -2151,9 +2151,9 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
     <pre class="plain">kanea upgrade [--check] [--version vX.Y.Z] [--no-fetch] [--skip-backup] [--dry-run] [--timeout=2m]</pre>
     <p>
       One command, both halves: it fetches the latest release (or <code>--version</code>),
-      verifies it — sha256 against the release's <code>checksums.txt</code> always, the
+      verifies it; sha256 against the release's <code>checksums.txt</code> always, the
       cosign keyless signature over that file when cosign is installed, a loud note when
-      it is not — installs it atomically over its own path, then takes a pre-upgrade
+      it is not; installs it atomically over its own path, then takes a pre-upgrade
       backup, restarts <code>kanea-edge</code> and then <code>kanead</code> in that order,
       runs any state migrations, and waits for health. Already at the target version means
       nothing to download, so running it twice is safe by construction.
@@ -2161,16 +2161,16 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
     <div class="callout">
       <b class="label">Owned by a package manager?</b>
       <p>
-        <code>--no-fetch</code> restarts onto whatever binary is already installed —
-        the orchestration half alone — and <code>--check</code> only reports the running,
+        <code>--no-fetch</code> restarts onto whatever binary is already installed
+        (the orchestration half alone) and <code>--check</code> only reports the running,
         installed and latest versions. Air-gapped nodes get their binary from the
         offline bundle flow; the fetch refuses with that pointer rather than hanging.
       </p>
     </div>
     <p>
       One thing it deliberately never does: rewrite systemd units. When release notes
-      say the units changed, re-run <code>sudo kanea init</code> after upgrading —
-      idempotent: the master key, accounts and settings are kept — then
+      say the units changed, re-run <code>sudo kanea init</code> after upgrading
+      (idempotent: the master key, accounts and settings are kept) then
       <code>sudo systemctl daemon-reload</code>.
     </p>
 
@@ -2190,18 +2190,18 @@ kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <pre class="plain">kanea run app.hcl [more.hcl …] [selector …] [--wait=60s]
 kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
-      Applies the spec. <code>kanea apply</code> is an alias — same flags, same
+      Applies the spec. <code>kanea apply</code> is an alias: same flags, same
       behaviour. <code>--wait</code> is how long to wait for allocs to reach running
       before returning; <code>0</code> returns immediately. Running it twice with an
-      unchanged spec does nothing — a deploy is a spec-hash mismatch, not an invocation.
+      unchanged spec does nothing: a deploy is a spec-hash mismatch, not an invocation.
     </p>
     <p>
       A <b>selector</b> scopes both commands to part of the file: <code>kanea run
       app.hcl shop/web</code> applies one service, <code>shop</code> alone a whole
       project, and several selectors union. An argument that exists on disk is a spec
       file; only a non-existent one is read as a selector, and one that is neither is
-      refused by name. The whole file is still parsed and validated — a selector never
-      changes what a spec means, only how much of it is sent — and every selector must
+      refused by name. The whole file is still parsed and validated (a selector never
+      changes what a spec means, only how much of it is sent) and every selector must
       match at least one service in the file. An apply is additive either way: services
       not in the request are never touched, so a scoped run cannot delete anything.
     </p>
@@ -2217,7 +2217,7 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <pre class="plain">kanea start [--project=p] &lt;[project/]service&gt; [count]</pre>
     <p>
       <code>stop</code>'s counterpart: scales a stopped service back up. The daemon does
-      not remember the pre-stop count — a stopped record says zero — so it starts one
+      not remember the pre-stop count (a stopped record says zero) so it starts one
       replica unless a count is given, or an autoscaled service's own floor (the scale
       route refuses a count outside the declared bounds). A service already running is
       left exactly as it is: <code>start</code> is idempotent, never a second spelling
@@ -2227,7 +2227,7 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <h4><code>kanea restart</code></h4>
     <pre class="plain">kanea restart [--project=p] &lt;[project/]service&gt;</pre>
     <p>
-      Rolls the service's allocs through its update policy — a generation bump, the same
+      Rolls the service's allocs through its update policy: a generation bump, the same
       route the dashboard uses, not a second path into the runtime. It is also the way
       out of an exhausted crash-restart budget: the bump is a new spec hash, and the
       restart count belongs to the hash that spent it.
@@ -2240,7 +2240,7 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
       The alloc table: id, service, state, health, restarts, age, address.
       A removed alloc leaves no record (only failed-and-still-declared ones
-      persist to explain themselves), so a stopped service is invisible here —
+      persist to explain themselves), so a stopped service is invisible here;
       <code>-a</code> adds what is declared but not running: services scaled to
       zero (<code>stopped</code>) and slots the reconciler has not created yet
       (<code>pending</code>).
@@ -2249,7 +2249,7 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <h4><code>kanea describe</code></h4>
     <pre class="plain">kanea describe [--project=p] &lt;[project/]service&gt;</pre>
     <p>
-      One service in full: the declared spec beside what is actually true —
+      One service in full: the declared spec beside what is actually true;
       image and its pinned digest under auto-update, routes from every
       <code>expose</code> block and published port, volumes and grants, the
       alloc table with health verdicts, a stats snapshot, and the service's
@@ -2258,13 +2258,13 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     </p>
     <p>
       The alloc table's <code>REASON</code> column says why each alloc last
-      stopped — <code>OOMKilled</code>, <code>Signalled</code>,
-      <code>Error</code>, <code>Completed</code> — or why one that never ran did
+      stopped; <code>OOMKilled</code>, <code>Signalled</code>,
+      <code>Error</code>, <code>Completed</code>, or why one that never ran did
       not: <code>ImageFailed</code>, <code>VolumeFailed</code>,
       <code>GrantFailed</code>, <code>NetworkFailed</code>,
       <code>CreateFailed</code>, <code>StartFailed</code>. An OOM kill is read
-      from the alloc's cgroup, never guessed from the exit code — a forced stop
-      exits 137 exactly like a memory kill does — so a stop reports as
+      from the alloc's cgroup, never guessed from the exit code (a forced stop
+      exits 137 exactly like a memory kill does) so a stop reports as
       <code>Signalled</code>, and a kill against a service that declared no
       memory limit names the node's collective ceiling rather than a number
       nobody typed. The reason shows whatever the alloc's current state is: a
@@ -2281,7 +2281,7 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
       Merged across allocs by default; <code>--alloc</code> narrows to one.
       <code>--tail</code> shows the last N lines before following. Log drains are
-      non-blocking with drop counters — a slow reader can never stall a workload's
+      non-blocking with drop counters: a slow reader can never stall a workload's
       <code>write()</code>.
     </p>
 
@@ -2289,7 +2289,7 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <pre class="plain">kanea exec [--project=p] [--alloc=ID] [--user=UID] [-it] &lt;[project/]service&gt; -- &lt;command…&gt;</pre>
     <p>
       A debug shell inside an alloc. <b>Admin-only, and audited whether or not the session
-      establishes</b> — "someone tried to open a shell on production" is worth keeping either
+      establishes</b>: "someone tried to open a shell on production" is worth keeping either
       way, so the attempt and the requested command are both recorded.
     </p>
     <ul>
@@ -2320,7 +2320,7 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <pre class="plain">kanea build [--project=p] &lt;[project/]service&gt; [--deploy=true] [--follow=true]</pre>
     <p>
       Triggers the service's build pipeline. <code>--deploy</code> rolls the built digest out
-      on success; <code>--follow</code> streams the build log. Builds are serialised — a
+      on success; <code>--follow</code> streams the build log. Builds are serialised: a
       second one is <code>queued</code>, and refused rather than blocked when the queue is
       full.
     </p>
@@ -2379,7 +2379,7 @@ kanea token rm &lt;id&gt;</pre>
       Accounts live in the Store, not in a config file. Tokens default to never expiring;
       <code>--expires-in</code> takes a Go duration. The first admin is created by
       <code>kanea init</code> itself; OIDC and LDAP identities never appear in
-      <code>user ls</code> — they are ephemeral, a session and nothing else.
+      <code>user ls</code>: they are ephemeral, a session and nothing else.
     </p>
 
     <h3 id="cli-backup">Backup and restore</h3>
@@ -2392,14 +2392,14 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
               [--master-key=path] [--data-dir=…]</pre>
     <p>
       <code>verify</code> reads the archive and checks its hashes and authentication tags
-      without restoring anything — an archive that cannot be verified is one you find out
+      without restoring anything: an archive that cannot be verified is one you find out
       about now rather than during an outage.
     </p>
     <div class="callout warn">
       <b class="label">A restore is staged, never performed in place</b>
       <p>
         The command stages the restore; it is performed at the next daemon start, before
-        anything opens the Store. That is the interface rather than a safety check — the API
+        anything opens the Store. That is the interface rather than a safety check: the API
         has no method that restores at all, and there is no restore button in the dashboard,
         because a restore replaces everything on the node and belongs at a terminal.
       </p>
@@ -2429,7 +2429,7 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
     </p>
     <p>
       <code>--ldap-url</code> enables directory logins beside local accounts and OIDC:
-      <code>ldaps://</code> (or <code>ldap://</code> with StartTLS forced — there is no
+      <code>ldaps://</code> (or <code>ldap://</code> with StartTLS forced; there is no
       insecure option), a user search under <code>--ldap-user-base-dn</code> with
       <code>--ldap-user-filter</code>, and group-to-role mapping through
       <code>--ldap-admin-groups</code>/<code>--ldap-viewer-groups</code>, deny-by-default.
@@ -2441,20 +2441,20 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
       <code>/etc/kanea/kanea.hcl</code>: which directories <code>host</code> volumes may
       come from (R15, a <code>storage { allowed_host_paths = […] }</code> stanza), which
       devices and sockets are granted to projects (R17, R18,
-      <code>device</code>/<code>socket</code> blocks), and — since v1.61 — where the
+      <code>device</code>/<code>socket</code> blocks), and (since v1.61) where the
       API and dashboard listen (a <code>bind</code> stanza: <code>api_addr</code>, with
-      <code>api_tls</code> choosing among <code>acme</code> — a Let's Encrypt certificate
+      <code>api_tls</code> choosing among <code>acme</code>; a Let's Encrypt certificate
       for <code>api_domain</code>, issued and renewed by the same pass that serves your
-      services; <code>self-signed</code> — the node CA, with a real IP SAN when the
-      address is bare; <code>provided</code> — your own
-      <code>api_cert</code>/<code>api_key</code> pair; and <code>plaintext</code> —
+      services; <code>self-signed</code> (the node CA, with a real IP SAN when the
+      address is bare; <code>provided</code>) your own
+      <code>api_cert</code>/<code>api_key</code> pair; and <code>plaintext</code>;
       explicit HTTP, allowed beyond loopback because it was typed and logged loudly;
       the full field set is in <a href="#arch-dashboard">Exposing the API and
       dashboard</a>).
       The file is probed once at
       startup when it exists; absent means every setting's zero value. It must be a
       regular file, owned by root (or the daemon's uid), and writable
-      only by its owner — anything else refuses startup, as does a file that does not
+      only by its owner: anything else refuses startup, as does a file that does not
       parse. Stanzas from the fuller PRD §15.1 sketch that this version does not read are
       warned by name at startup, never silently ignored.
     </p>
@@ -2463,10 +2463,10 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
       <code>--listen</code> remain as
       explicit overrides: setting one means the corresponding half of the file is not
       consulted (<code>--passthrough-config</code> names a separate grants file with the
-      same trust check), <code>off</code> on the first two — or <code>--listen none</code> —
+      same trust check), <code>off</code> on the first two, or <code>--listen none</code>;
       disables that half regardless of the
       file, and <code>--config</code> moves or (<code>--config off</code>) disables the
-      file itself. Either way this is deliberately node configuration — a job spec can
+      file itself. Either way this is deliberately node configuration: a job spec can
       reference what it permits and can never add to it.
     </p>
 
@@ -2474,7 +2474,7 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
     <pre class="plain">kanea edge [--routes=/run/kanea-edge/routes.json] [--certs=…] [--http=:80]
            [--poll=…] [--drain=…] [--memory-limit=128MiB] [--log-level=info]</pre>
     <p>
-      Its own process and its own systemd unit, with no <code>After=kanead.service</code> —
+      Its own process and its own systemd unit, with no <code>After=kanead.service</code>:
       north-south traffic surviving a control-plane restart is the entire reason it is
       separate. <code>--drain</code> is how long in-flight requests get on shutdown.
     </p>
@@ -2482,7 +2482,7 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
     <h3 id="cli-agents">MCP</h3>
     <pre class="plain">kanea mcp [--verbose]</pre>
     <p>
-      A stdio MCP server for a local AI agent — 20 tools in read, mutate and destructive
+      A stdio MCP server for a local AI agent: 20 tools in read, mutate and destructive
       tiers. The same server is available over streamable HTTP on the API listener for remote
       agents.
     </p>
@@ -2507,15 +2507,15 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
 
     <h3 id="troubleshoot-services">Checking services</h3>
     <p>Start with what Kanea believes is true:</p>
-    <pre class="plain">kanea ps -a                  # every alloc — including stopped services and pending slots
+    <pre class="plain">kanea ps -a                  # every alloc; including stopped services and pending slots
 kanea status shop/web        # health, recent events, current vs desired counts
 kanea describe shop/web      # the full picture: spec, routes, volumes, allocs, stats, events</pre>
     <p>
       Three columns in <code>ps</code> carry most of the signal. <b>State</b>:
-      <code>pending</code> means the reconciler has not created the slot yet — usually an
+      <code>pending</code> means the reconciler has not created the slot yet; usually an
       image still pulling, or a dependency that is not healthy. <b>Health</b>: a
       <code>-</code> means the service declares no health check, which is a different fact
-      than failing one — a check-free service is never reported unhealthy, only running or
+      than failing one; a check-free service is never reported unhealthy, only running or
       not. <b>Restarts</b>: a climbing count is a crash loop; when it stops climbing the
       restart budget is exhausted and the alloc has been failed and left alone
       (see <a href="#troubleshoot-common">below</a> for the way out).
@@ -2523,23 +2523,23 @@ kanea describe shop/web      # the full picture: spec, routes, volumes, allocs, 
     <p>Then the processes underneath. A standard install runs four units:</p>
     <pre class="plain">systemctl status kanead kanea-edge kanea-containerd kanea-buildkit</pre>
     <ul>
-      <li><code>kanead</code> — the control plane. Workloads and north-south traffic both
+      <li><code>kanead</code>: the control plane. Workloads and north-south traffic both
         survive it being down; what stops is <i>change</i>: deploys, scaling, certificate
         renewal, the API and dashboard.</li>
-      <li><code>kanea-edge</code> — the ingress proxy. Deliberately independent of
+      <li><code>kanea-edge</code>; the ingress proxy. Deliberately independent of
         <code>kanead</code> (no <code>After=</code> in either direction): it serves the last
         route snapshot it read from disk whether or not the control plane is up.</li>
-      <li><code>kanea-containerd</code> — Kanea's own containerd, socket at
+      <li><code>kanea-containerd</code>; Kanea's own containerd, socket at
         <code>/run/kanea/containerd.sock</code>. Restarting it does not stop running
-        containers (<code>KillMode=process</code> — shims outlive it), but nothing can be
+        containers (<code>KillMode=process</code>: shims outlive it), but nothing can be
         created or probed while it is down. Absent when the node adopted an existing
         daemon with <code>--containerd external</code>.</li>
-      <li><code>kanea-buildkit</code> — the rootless build daemon. Only builds need it.</li>
+      <li><code>kanea-buildkit</code>: the rootless build daemon. Only builds need it.</li>
     </ul>
     <p>
       Finally the node itself: <code>kanea doctor</code> verifies dependencies and their
       pinned versions, the containerd socket, bpffs and the cgroup2 mount, slice placement
-      and the effective memory floor, the build socket, disk headroom and clock sync — and
+      and the effective memory floor, the build socket, disk headroom and clock sync, and
       it names known interference, like a firewall FORWARD-drop policy (docker, ufw) eating
       east-west traffic. Safe to run any time.
     </p>
@@ -2553,7 +2553,7 @@ kanea logs shop/web --alloc=&lt;id&gt;     # one alloc only (ids from kanea ps)<
       On disk they are one file per alloc under <code>/var/log/kanea/allocs/</code>
       (<code>&lt;alloc-id&gt;.log</code>); a replaced alloc starts a fresh file under its new
       id. Drains are non-blocking with drop counters, so a burst of logging can be dropped
-      but can never stall the workload's <code>write()</code> — if lines are missing under
+      but can never stall the workload's <code>write()</code>: if lines are missing under
       load, that is the drop counter doing its job, not a lost file.
     </p>
     <p>
@@ -2580,8 +2580,8 @@ journalctl -u kanead -f --since "15 min ago"</pre>
     <p>
       Everything Kanea runs sits in one of two cgroup slices, and that split is the
       resource-isolation story (<a href="#arch-isolation">architecture</a>):
-      <code>kanea.slice</code> holds the control plane — all four units above — with a
-      kernel-guaranteed memory <i>floor</i> (<code>MemoryMin</code>, default 256&nbsp;MiB —
+      <code>kanea.slice</code> holds the control plane (all four units above) with a
+      kernel-guaranteed memory <i>floor</i> (<code>MemoryMin</code>, default 256&nbsp;MiB;
       raise it with <code>kanea init --reserve</code> on a node that runs builds), and
       <code>kanea-workloads.slice</code> holds every alloc under a collective
       <i>ceiling</i> of total RAM minus that reserve.
@@ -2591,8 +2591,8 @@ systemctl status kanea-workloads.slice   # every alloc as a child cgroup
 systemd-cgls kanea-workloads.slice       # the tree, one cgroup per alloc
 systemd-cgtop                            # live CPU/memory per slice</pre>
     <p>
-      The ceiling is computed and applied by <code>kanead</code> at startup — it depends on
-      how much memory the node has, which a unit file cannot know — so read it from the
+      The ceiling is computed and applied by <code>kanead</code> at startup (it depends on
+      how much memory the node has, which a unit file cannot know) so read it from the
       cgroup filesystem, which is the ground truth either way:
     </p>
     <pre class="plain">cat /sys/fs/cgroup/kanea.slice/memory.min             # the floor
@@ -2603,14 +2603,14 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
       (<code>/sys/fs/cgroup/kanea-workloads.slice/&lt;alloc&gt;/</code>) with their own
       <code>memory.max</code>, <code>memory.current</code> and <code>cpu.max</code>. A
       declared <code>resources</code> limit is enforced exactly there; an omitted one reads
-      as <code>max</code> — unbounded within the collective ceiling, by design, never a
+      as <code>max</code>: unbounded within the collective ceiling, by design, never a
       filled-in default.
     </p>
     <div class="callout">
       <b class="label">If kanead was OOM-killed, the slices are the first suspect</b>
       <p>
-        The floor and the OOM score adjustments live in the unit files, not in the Go code
-        — a Kanea started outside its units runs without the guarantee, and the first time
+        The floor and the OOM score adjustments live in the unit files, not in the Go code:
+        a Kanea started outside its units runs without the guarantee, and the first time
         the node is under memory pressure the kernel picks whatever is largest, which is
         usually <code>kanead</code>. <code>kanea doctor</code> checks slice placement and
         the effective floor for exactly this reason; <code>journalctl -k | grep -i
@@ -2623,53 +2623,53 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
       <li>
         <b>A service is crash-looping.</b> <code>kanea logs</code> for why. Once the
         <code>restart</code> budget is exhausted the alloc is failed and left alone on
-        purpose — <code>kanea restart shop/web</code> clears it, because the restart count
+        purpose: <code>kanea restart shop/web</code> clears it, because the restart count
         belongs to the spec hash that spent it and a restart is a new one. So does
         deploying a fix.
       </li>
       <li>
         <b>A deploy did nothing.</b> A deploy is a spec-hash mismatch, not an invocation:
         re-running an unchanged spec is a no-op by design. <code>kanea plan</code> shows
-        the diff the daemon would see — an empty one means the spec really is what is
+        the diff the daemon would see: an empty one means the spec really is what is
         running.
       </li>
       <li>
         <b>The site is unreachable but the service is healthy.</b> Work outward:
         <code>kanea describe</code> shows the routes the service declares, then
-        <code>systemctl status kanea-edge</code>. The edge reads its world from two files —
-        <code>/run/kanea-edge/routes.json</code> and its certificate bundle — so a route
+        <code>systemctl status kanea-edge</code>. The edge reads its world from two files
+        (<code>/run/kanea-edge/routes.json</code> and its certificate bundle) so a route
         missing from that snapshot is a publishing problem in <code>kanead</code>'s
         journal, and a route present in it is a proxying problem in the edge's.
       </li>
       <li>
         <b>Browsers show a certificate error.</b> Deliberate fail-closed behaviour, not
         breakage: a domain whose certificate is not issued yet refuses the handshake, and a
-        <code>provided</code> certificate that stops resolving serves plaintext — neither
+        <code>provided</code> certificate that stops resolving serves plaintext; neither
         ever silently falls back to a weaker certificate. <code>kanead</code>'s journal
         has the ACME or resolution failure.
       </li>
       <li>
         <b>Containers cannot reach each other.</b> <code>kanea doctor</code> first: a
         foreign FORWARD-drop firewall policy (docker, ufw) is a finding it names. Then
-        remember policy is deny-by-default — a cross-project call needs
+        remember policy is deny-by-default: a cross-project call needs
         <code>allow_from</code> on the callee.
       </li>
       <li>
-        <b>The <code>bind</code> stanza is ignored — the dashboard stays on
+        <b>The <code>bind</code> stanza is ignored: the dashboard stays on
         localhost.</b> An explicit <code>--listen</code> always beats the file, and an
         init run from before the stanza existed rendered
         <code>--listen 127.0.0.1:8600</code> into the kanead unit.
         <code>systemctl cat kanead | grep -- --listen</code> confirms it; remove the
         flag (and <code>--listen-cert</code>/<code>--listen-key</code> if present) from
         <code>ExecStart</code>, then <code>systemctl daemon-reload</code> and restart.
-        A re-run of <code>kanea init</code> will not put it back — with
+        A re-run of <code>kanea init</code> will not put it back, with
         <code>bind.api_addr</code> declared it renders no listen flags at all.
       </li>
       <li>
         <b>The autoscaler stopped scaling.</b> Its circuit breaker trips on purpose after
         repeated failed actions, and says so in the journal, on the dashboard, and as
         <code>kanea_circuit_breaker_open</code> in <code>/v1/metrics</code>. The trip
-        survives a daemon restart by design — restarting <code>kanead</code> is not a way
+        survives a daemon restart by design: restarting <code>kanead</code> is not a way
         around it; fixing the cause is. <code>kanea scale</code> still works meanwhile:
         the breaker pauses the automatic decisions, not the route they travel.
       </li>
@@ -2682,7 +2682,7 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
 
 <footer>
   <div class="wrap">
-    <span>Kanea — Apache-2.0</span>
+    <span>Kanea: Apache-2.0</span>
     <a href="https://github.com/m18h/kanea">GitHub</a>
     <a href="https://github.com/m18h/kanea/releases">Releases</a>
     <a href="https://github.com/m18h/kanea/security/policy">Security</a>

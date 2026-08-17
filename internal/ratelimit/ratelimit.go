@@ -2,7 +2,7 @@
 // use: the edge's per-route `rate_limit` middleware (PRD §7.2.1) and the
 // control API's global limits (§14, A07).
 //
-// It lives on its own because the hard part is not the token bucket — it is the
+// It lives on its own because the hard part is not the token bucket: it is the
 // bound on how many buckets exist, and getting that wrong the same way twice is
 // how one of the two surfaces ends up with an OOM nobody tested for.
 package ratelimit
@@ -18,7 +18,7 @@ import (
 //
 // This is the whole design problem. A limit keyed by client address needs one
 // bucket per address, and the set of addresses is chosen by whoever is sending
-// traffic — so an unbounded map is a memory exhaustion vector reachable by
+// traffic, so an unbounded map is a memory exhaustion vector reachable by
 // anyone who can open connections. 64k buckets is well past any real audience
 // on a single node and costs a few megabytes.
 const DefaultCapacity = 1 << 16
@@ -30,8 +30,8 @@ const idleFactor = 2
 
 // Spec is a validated limit: Requests per Window, with an optional Burst on top.
 //
-// It carries no notion of what is being limited. The caller decides the key —
-// an address, a route, a header value — and two callers with different ideas
+// It carries no notion of what is being limited. The caller decides the key
+// (an address, a route, a header value) and two callers with different ideas
 // about that produce different keys rather than needing different limiters.
 type Spec struct {
 	Requests int
@@ -70,8 +70,8 @@ func (s Spec) Equal(other Spec) bool {
 //
 // Eviction is least-recently-used. That has a consequence worth being explicit
 // about: a client that sprays enough distinct keys can push others out, and an
-// evicted bucket starts full. It cannot be used to deny anyone — losing your
-// bucket gives you *more* allowance, not less — and it cannot be driven by a
+// evicted bucket starts full. It cannot be used to deny anyone (losing your
+// bucket gives you *more* allowance, not less) and it cannot be driven by a
 // forged address, because completing a TCP handshake requires the address to be
 // real. The alternative, an unbounded map, trades that for an OOM.
 type Limiter struct {

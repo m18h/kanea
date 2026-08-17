@@ -15,13 +15,13 @@ import (
 
 // Transport hygiene (PRD §5.2.13, §14 A10).
 //
-// Provider endpoints are operator-written node config — the same trust class
-// as the replication S3 endpoint — so the notification egress guard is
+// Provider endpoints are operator-written node config (the same trust class
+// as the replication S3 endpoint) so the notification egress guard is
 // deliberately not consulted: it exists for attacker-influencable text, and
 // Vault legitimately answers on RFC1918. What is kept regardless: redirects
 // are refused (a 302 to the metadata service is the classic residual risk),
 // response bodies are read under a hard cap, every dial carries a short
-// timeout, and error bodies are decoded into typed shapes or dropped — an
+// timeout, and error bodies are decoded into typed shapes or dropped; an
 // error string must never be able to carry a value.
 
 // maxResponseBytes bounds every provider response. Secrets Manager caps a
@@ -47,7 +47,7 @@ func DefaultHTTPClient() *http.Client {
 // behind a private CA. The system pool stays: an extra root is additive, not
 // a replacement.
 func clientWithCA(base *http.Client, caFile string) (*http.Client, error) {
-	pem, err := os.ReadFile(caFile) // #nosec G304 — operator-supplied config path
+	pem, err := os.ReadFile(caFile) // #nosec G304; operator-supplied config path
 	if err != nil {
 		return nil, fmt.Errorf("secretsource: read ca_file: %w", err)
 	}
@@ -84,7 +84,7 @@ func readAndClose(resp *http.Response) ([]byte, error) {
 
 // httpStatusError renders a non-2xx response as an error, closing its body
 // without echoing it. Providers wrap a JSON message shape around their
-// errors; anything that parses as one is quoted, anything else is dropped — a
+// errors; anything that parses as one is quoted, anything else is dropped: a
 // raw body echoed into an error is a path for a value to reach a log line.
 func httpStatusError(resp *http.Response) error {
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -129,7 +129,7 @@ func errorMessage(body []byte) string {
 }
 
 // readCredentialFile loads a provider credential, refusing a file another
-// user could read — master.key's exact rule (§14 A02), because both files
+// user could read: master.key's exact rule (§14 A02), because both files
 // unlock the same class of thing. One trailing newline is trimmed, the
 // `kanea secret put` stdin rule: `echo token > file` should mean the token.
 func readCredentialFile(path string) ([]byte, error) {
@@ -140,9 +140,9 @@ func readCredentialFile(path string) ([]byte, error) {
 	if mode := info.Mode().Perm(); mode&0o077 != 0 {
 		return nil, fmt.Errorf(
 			"secretsource: credential file %s has mode %04o; refusing a credential another "+
-				"user can read — chmod 600 it", path, mode)
+				"user can read; chmod 600 it", path, mode)
 	}
-	body, err := os.ReadFile(path) // #nosec G304 — operator-supplied config path
+	body, err := os.ReadFile(path) // #nosec G304; operator-supplied config path
 	if err != nil {
 		return nil, fmt.Errorf("secretsource: credential file: %w", err)
 	}
@@ -153,7 +153,7 @@ func readCredentialFile(path string) ([]byte, error) {
 	return body, nil
 }
 
-// failAll marks every mapping failed with one cause — the shape for a
+// failAll marks every mapping failed with one cause: the shape for a
 // provider-level failure (unreadable credential, unreachable endpoint) where
 // per-mapping detail would be the same line repeated.
 func failAll(mappings []syncMapping, refFn func(syncMapping) string, err error) Result {

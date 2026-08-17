@@ -17,7 +17,7 @@ describe('seedFromHistory', () => {
     const seed = seedFromHistory(
       history([
         { at: '2026-08-09T14:05:00Z', value: 42 },
-        // Two slots earlier — the slot between was never written.
+        // Two slots earlier; the slot between was never written.
         { at: '2026-08-09T14:04:50Z', value: 40 },
       ]),
       'cpu',

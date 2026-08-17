@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils'
 
 /**
  * Thin styled wrappers over table markup, so five pages don't drift apart.
- * No sorting, no virtualisation — pagination bounds every list already.
+ * No sorting, no virtualisation: pagination bounds every list already.
  */
 
 export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTableElement>) {

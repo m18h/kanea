@@ -1,4 +1,4 @@
-# Check H — the M11 exit criterion, as a spec (PRD §20 M11, v1.39).
+# Check H: the M11 exit criterion, as a spec (PRD §20 M11, v1.39).
 #
 # The criterion is: "a wasi-http function deploys from a spec, serves through
 # the edge (FQDN and functions-port modes), fires on a matching event and a
@@ -14,7 +14,7 @@
 #            entirely, and §9.1 counts a connect to the VIP as an invocation
 #            however it arrived.
 #   tripwire a service that exists only to be deployed, because deploying it
-#            emits deploy.succeeded — the event `hello` triggers on. Firing a
+#            emits deploy.succeeded: the event `hello` triggers on. Firing a
 #            real event beats POSTing a synthetic one: the criterion says
 #            "fires on a matching event", and a test event would prove the
 #            dispatcher, not the vocabulary.
@@ -24,7 +24,7 @@
 spec_version = 1
 
 project "checkh" {
-  description = "M11 check H — functions end to end on a real node"
+  description = "M11 check H: functions end to end on a real node"
 }
 
 function "hello" {
@@ -33,7 +33,7 @@ function "hello" {
   # Built by ../modules/hello-http and packaged by ./mkimage.sh, which imports
   # it straight into kanead's own containerd namespace. EnsureImage returns
   # early when an image is present locally, so this ref never has to resolve
-  # against a registry — which is what makes the check runnable on a node with
+  # against a registry, which is what makes the check runnable on a node with
   # no registry at all.
   module = "registry.local/checkh/hello-http:1"
 
@@ -49,7 +49,7 @@ function "hello" {
   }
 
   # The cron path. Every minute, so the check waits ~60s rather than parking
-  # until 03:00 — the criterion is that a tick fires, not when.
+  # until 03:00: the criterion is that a tick fires, not when.
   trigger "cron" {
     schedule = "* * * * *"
   }
@@ -70,7 +70,7 @@ service "caller" {
   task "loop" {
     image = "docker.io/library/busybox:1.37"
     # One connect per second against the function's VIP, by its internal name
-    # (<service>.<project>.kanea — internal/network/dns.go). Each connect is an
+    # (<service>.<project>.kanea: internal/network/dns.go). Each connect is an
     # invocation by §9.1's definition, and none of them touch the edge.
     command = [
       "sh", "-c",

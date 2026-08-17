@@ -7,14 +7,14 @@
 # into arguments:
 #
 #   the architecture, which was hard-coded arm64. It must be the NODE's, not
-#   the module's — REPORT.md finding 2: a module ships as a host-platform
+#   the module's; REPORT.md finding 2: a module ships as a host-platform
 #   (linux/<arch>) image, never wasm/wasip2, because containerd's default
 #   matcher (which EnsureImage uses, with no special case) will not unpack a
 #   wasm-platform image.
 #
 #   the namespace, which was the spike's own. For a real kanead run it has to
 #   be the per-project namespace runtime.Namespace(project) computes, because
-#   that is where EnsureImage looks — and EnsureImage returns early when the
+#   that is where EnsureImage looks, and EnsureImage returns early when the
 #   image is already present, so importing here means the registry.local ref
 #   never has to resolve. That is what makes check H runnable on a node with
 #   no registry.
@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -f "$WASM" ] || die "no module at ${WASM} — build one first (see ../modules/README.md)"
+[ -f "$WASM" ] || die "no module at ${WASM}: build one first (see ../modules/README.md)"
 [ -n "$PROJECT" ] || [ -n "$NS" ] || die "need --project (or an explicit --namespace)"
 
 # runtime.Namespace(project) is "kanea-<project>"; restated rather than

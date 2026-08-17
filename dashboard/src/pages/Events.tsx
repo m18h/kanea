@@ -40,13 +40,13 @@ const severityVariant: Record<KaneaEvent['severity'], 'info' | 'warn' | 'error'>
  *
  * The same events that go to Telegram and Slack, in the order they happened.
  * It is the page an operator opens when something is wrong and they do not yet
- * know what — so it is deliberately not filtered down to errors by default: a
+ * know what, so it is deliberately not filtered down to errors by default: a
  * deploy two minutes before a crash is the most useful line on the page, and
  * hiding it behind a severity filter is how a feed becomes a log nobody reads.
  *
  * The audit chip is a different feed at the same table: §13.3's append-only
  * log of authenticated mutations, which has no severity because it is not a
- * judgment — it is a record.
+ * judgment; it is a record.
  */
 export function Events() {
   const [filter, setFilter] = useState<Filter>('all')
@@ -69,7 +69,7 @@ export function Events() {
   })
 
   // Channel names per project, for the "→ slack" routing hint. This is "the
-  // project has channels", not "this event was delivered" — delivery is not
+  // project has channels", not "this event was delivered": delivery is not
   // recorded per event, and the title on the hint says so.
   const projects = useQuery({
     queryKey: ['projects'],
@@ -271,12 +271,12 @@ function AuditTable({
                 </time>
               </TD>
               <TD className="font-mono text-xs">
-                {entry.actor ?? '—'}
+                {entry.actor ?? '-'}
                 {entry.via ? <span className="text-muted-foreground"> · {entry.via}</span> : null}
               </TD>
               <TD className="font-mono text-xs">{entry.action}</TD>
               <TD className="break-all font-mono text-xs text-muted-foreground">
-                {entry.target ?? '—'}
+                {entry.target ?? '-'}
               </TD>
               <TD>
                 <Badge

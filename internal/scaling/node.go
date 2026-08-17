@@ -16,10 +16,10 @@ import (
 // Node stats from procfs (PRD §17).
 //
 // The one metrics source that is not about a workload. It answers "is the node
-// itself in trouble" — which is the question behind a service that is slow for
+// itself in trouble", which is the question behind a service that is slow for
 // no reason its own metrics explain, and the question an operator asks first.
 //
-// The point-in-time reading does not go through the time series — these are
+// The point-in-time reading does not go through the time series: these are
 // numbers read on demand from files that are already the kernel's own
 // aggregation. Since v1.38 exactly two series *are* recorded (RecordNode),
 // because a dashboard sparkline needs the history procfs does not keep: CPU
@@ -48,7 +48,7 @@ type NodeStats struct {
 	MemoryTotal     *uint64  `json:"memory_total_bytes,omitempty"`
 	MemoryAvailable *uint64  `json:"memory_available_bytes,omitempty"`
 	MemoryPercent   *float64 `json:"memory_percent,omitempty"`
-	// GPUs are the node's visible GPUs (v1.42) — absent on a node without
+	// GPUs are the node's visible GPUs (v1.42): absent on a node without
 	// any, never an empty placeholder.
 	GPUs []GPUStats `json:"gpus,omitempty"`
 	// GPUVRAMPercent aggregates VRAM use across every GPU that reports both
@@ -87,7 +87,7 @@ func NewNodeReader(procRoot string) *NodeReader {
 }
 
 // NewNodeReaderWithGPU is NewNodeReader with the GPU half pointed somewhere
-// specific — fixtures in tests. Production uses NewNodeReader, whose defaults
+// specific: fixtures in tests. Production uses NewNodeReader, whose defaults
 // are the real /sys and the real nvidia-smi.
 func NewNodeReaderWithGPU(procRoot string, gpu *GPUReader) *NodeReader {
 	if procRoot == "" {
@@ -166,7 +166,7 @@ func (r *NodeReader) Read() NodeStats {
 
 // memory reads MemTotal and MemAvailable from /proc/meminfo.
 func (r *NodeReader) memory() (total, available uint64, err error) {
-	file, err := os.Open(r.procRoot + "/meminfo") // #nosec G304 — procfs, or a test fixture
+	file, err := os.Open(r.procRoot + "/meminfo") // #nosec G304: procfs, or a test fixture
 	if err != nil {
 		return 0, 0, err
 	}
@@ -216,7 +216,7 @@ func parseKiB(field string) uint64 {
 
 // loadAverage reads /proc/loadavg.
 func (r *NodeReader) loadAverage() (one, five, fifteen float64, err error) {
-	body, err := os.ReadFile(r.procRoot + "/loadavg") // #nosec G304 — procfs, or a test fixture
+	body, err := os.ReadFile(r.procRoot + "/loadavg") // #nosec G304; procfs, or a test fixture
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -269,7 +269,7 @@ func (r *NodeReader) cpu() (float64, bool) {
 
 // readCPU parses the aggregate "cpu" line of /proc/stat.
 func (r *NodeReader) readCPU() (_ nodeCPUSample, err error) {
-	file, err := os.Open(r.procRoot + "/stat") // #nosec G304 — procfs, or a test fixture
+	file, err := os.Open(r.procRoot + "/stat") // #nosec G304: procfs, or a test fixture
 	if err != nil {
 		return nodeCPUSample{}, err
 	}

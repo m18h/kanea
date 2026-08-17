@@ -18,14 +18,14 @@ import (
 
 // Change segments (PRD §15.3).
 //
-// bbolt has no write-ahead log — it is a copy-on-write B+tree that rewrites
-// pages in place — so Litestream-style log shipping is impossible. What Kanea
+// bbolt has no write-ahead log (it is a copy-on-write B+tree that rewrites
+// pages in place) so Litestream-style log shipping is impossible. What Kanea
 // ships instead is the Store's own CDC record: every mutation carries the
 // monotonic index it was stamped with (§15.2), and a segment is a contiguous
 // run of them.
 //
 // Segments are what makes the RPO five minutes rather than the snapshot
-// interval. A snapshot is expensive — it copies the whole database — and taking
+// interval. A snapshot is expensive (it copies the whole database) and taking
 // one every five minutes on a node with real state would spend more time
 // snapshotting than serving.
 
@@ -41,7 +41,7 @@ type Segment struct {
 	To   uint64
 	Name string
 	Size int64
-	// Modified is when the sink received the segment — upload time, not
+	// Modified is when the sink received the segment: upload time, not
 	// mutation time, which is exactly what "when did replication last
 	// succeed" asks for.
 	Modified time.Time
@@ -78,7 +78,7 @@ func parseSegmentName(name string) (Segment, error) {
 //
 // One object per line rather than one array, so a segment can be read
 // incrementally and a partially-decrypted one still yields the changes it did
-// contain — though that never happens in practice, because the AEAD refuses a
+// contain, though that never happens in practice, because the AEAD refuses a
 // truncated stream outright. The real reason is that it is readable: an
 // operator debugging a restore can decrypt a segment and see what is in it.
 func encodeChanges(w io.Writer, changes []store.Change) error {
@@ -95,8 +95,8 @@ func encodeChanges(w io.Writer, changes []store.Change) error {
 func decodeChanges(r io.Reader) ([]store.Change, error) {
 	var out []store.Change
 	scanner := bufio.NewScanner(r)
-	// A change's value is a whole record — a service spec with an environment
-	// and a middleware chain — so the default 64 KiB line limit is too small.
+	// A change's value is a whole record (a service spec with an environment
+	// and a middleware chain) so the default 64 KiB line limit is too small.
 	scanner.Buffer(make([]byte, 0, 64<<10), maxChangeBytes)
 
 	for scanner.Scan() {
@@ -192,7 +192,7 @@ func (a *Archiver) GetSegment(ctx context.Context, segment Segment) (_ []store.C
 //
 // Derived from the sink rather than remembered locally, deliberately. A cursor
 // kept in the Store would be state, and writing it would emit a change, which
-// would need shipping, which would write the cursor again — a loop that never
+// would need shipping, which would write the cursor again: a loop that never
 // goes quiet. A cursor in a local file would be one more thing to lose in
 // exactly the failure this subsystem exists for. The bucket already knows what
 // is in it.
@@ -205,7 +205,7 @@ func (a *Archiver) ShippedTo(ctx context.Context) (uint64, error) {
 // highest shipped index, when the last segment landed, and when the last
 // snapshot was taken (v1.37).
 //
-// The timestamps follow the cursor's rule for the cursor's reason — a
+// The timestamps follow the cursor's rule for the cursor's reason: a
 // last-shipped time stored anywhere Kanea writes would be state whose update
 // emits a change that needs shipping. A segment's Modified is the sink's
 // upload time, possibly from a previous process, which is the point: Status

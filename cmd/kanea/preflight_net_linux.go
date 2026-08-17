@@ -12,7 +12,7 @@ import (
 	"github.com/m18h/kanea/internal/datapath"
 )
 
-// The network egress findings (PRD v1.65) — promised by v1.36's text and
+// The network egress findings (PRD v1.65): promised by v1.36's text and
 // implemented here. Each is a warning, never a failure: kanead asserts all
 // of this itself at startup and re-ensures it while running, so a finding
 // means either "kanead has not run yet" (fine) or "something on this node
@@ -29,7 +29,7 @@ func networkEgressChecks() []checkResult {
 
 // checkIPForward reports v4 forwarding. kanead sets it at startup (v1.65);
 // before that it was inherited from "the node's existing configuration",
-// which usually meant docker's — and broke on the first node to drop docker.
+// which usually meant docker's, and broke on the first node to drop docker.
 func checkIPForward() checkResult {
 	raw, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
 	if err != nil {
@@ -38,12 +38,12 @@ func checkIPForward() checkResult {
 	if strings.TrimSpace(string(raw)) == "1" {
 		return pass("ip_forward", "net.ipv4.ip_forward is on")
 	}
-	return warn("ip_forward", "net.ipv4.ip_forward is 0 — container egress cannot be routed",
+	return warn("ip_forward", "net.ipv4.ip_forward is 0; container egress cannot be routed",
 		"kanead sets this at startup; if it reads 0 while kanead runs, something on the "+
 			"node keeps resetting it (check sysctl.d)")
 }
 
-// checkForwardPolicy looks for a foreign drop policy on the forward hook —
+// checkForwardPolicy looks for a foreign drop policy on the forward hook:
 // docker's and ufw's default posture, and the one thing the spike measured
 // killing pod traffic that the datapath deliberately does not fight.
 func checkForwardPolicy() checkResult {
@@ -69,7 +69,7 @@ func checkForwardPolicy() checkResult {
 	// Legacy x_tables does not surface through nftables netlink; ask the
 	// binary when one exists.
 	if path, err := exec.LookPath("iptables"); err == nil {
-		out, err := exec.Command(path, "-S", "FORWARD", "-w").Output() // #nosec G204 — a fixed argv on a resolved binary
+		out, err := exec.Command(path, "-S", "FORWARD", "-w").Output() // #nosec G204: a fixed argv on a resolved binary
 		if err == nil {
 			if strings.HasPrefix(strings.TrimSpace(string(out)), "-P FORWARD DROP") {
 				return warn("forward policy", "iptables FORWARD policy is DROP",
@@ -82,7 +82,7 @@ func checkForwardPolicy() checkResult {
 }
 
 // checkKaneaTable reports whether the owned nftables table exists. kanead
-// installs it at startup and, since v1.65, re-ensures it every 30 seconds —
+// installs it at startup and, since v1.65, re-ensures it every 30 seconds:
 // so a missing table beside a running kanead means a firewall manager is
 // flushing the ruleset faster than that, and egress NAT dies with it.
 func checkKaneaTable() checkResult {
@@ -99,7 +99,7 @@ func checkKaneaTable() checkResult {
 			return pass("nft table", "the "+datapath.NFTableName+" table is installed (masquerade lives here)")
 		}
 	}
-	return warn("nft table", "the "+datapath.NFTableName+" nftables table is absent — egress NAT is not installed",
+	return warn("nft table", "the "+datapath.NFTableName+" nftables table is absent; egress NAT is not installed",
 		"kanead installs and re-ensures it while running; absent beside a running kanead "+
 			"means a firewall manager keeps flushing the ruleset")
 }

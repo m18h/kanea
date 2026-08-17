@@ -12,7 +12,7 @@ import (
 //
 // Forward-only, one transaction each, and never automatic in the sense that
 // matters: the caller decides when, because the thing that has to happen first
-// — a copy of the database as it was — is not something this package can do for
+// (a copy of the database as it was) is not something this package can do for
 // itself while holding the write lock.
 //
 // A migration that fails leaves the schema version where it was, so the next
@@ -91,11 +91,11 @@ func PendingMigration(ctx context.Context, s Store) (Pending, error) {
 func planMigration(have uint64) (Pending, error) {
 	switch {
 	case have > schemaVersion:
-		// Unreachable through Open, which refuses this — and checked again
+		// Unreachable through Open, which refuses this, and checked again
 		// because "unreachable" is a claim about today's call sites, and this
 		// is the one that would rewrite a newer database with older code.
 		return Pending{}, fmt.Errorf(
-			"%w: on-disk schema v%d is newer than this binary's v%d — upgrade kanea",
+			"%w: on-disk schema v%d is newer than this binary's v%d; upgrade kanea",
 			ErrInvalid, have, schemaVersion)
 	case have == schemaVersion:
 		return Pending{From: have, To: have}, nil

@@ -3,9 +3,9 @@
 // from them.
 //
 // The generated kanea_bpfel.* / kanea_bpfeb.* artifacts are produced under a
-// digest-pinned toolchain container by `make bpf` — never by `go generate`,
+// digest-pinned toolchain container by `make bpf`, never by `go generate`,
 // and never by hand. `go build` needs no clang; the target node needs no BTF
-// (no CO-RE, no vmlinux.h — the programs read only UAPI context types). The
+// (no CO-RE, no vmlinux.h: the programs read only UAPI context types). The
 // `bpf-verify` CI job regenerates and diffs, so editing a generated file by
 // hand is a CI failure, not a code path.
 //
@@ -22,7 +22,7 @@ const (
 	ProgConnect4 = "kanea_connect4"
 	// ProgConnect6 is the v6 LB twin (v1.41). It also rewrites v4-mapped
 	// destinations, so it is part of the v4 story on any node whose clients
-	// open AF_INET6 sockets — but its pinned link is created only when v6 is
+	// open AF_INET6 sockets, but its pinned link is created only when v6 is
 	// configured.
 	ProgConnect6      = "kanea_connect6"
 	ProgToContainer   = "kanea_to_container"

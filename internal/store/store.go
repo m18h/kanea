@@ -1,13 +1,13 @@
 // Package store defines the Store interface and its bbolt implementation.
 // All state mutations go through Store with monotonic indexes (Raft-FSM-
 // compatible, PRD §18). Metrics and logs NEVER touch the Store. Read
-// transactions must be bounded/paginated — bbolt is single-writer.
+// transactions must be bounded/paginated: bbolt is single-writer.
 // (PRD §5.2.3, §15.2.)
 //
 // The interface is deliberately narrow and byte-oriented: one atomic Apply for
 // every mutation, plus bounded reads. That shape is what makes a Raft-backed
-// implementation a drop-in later (PRD §5.2.3) — an Apply batch is exactly an
-// FSM command — and what makes Store-level CDC possible at all: bbolt has no
+// implementation a drop-in later (PRD §5.2.3) (an Apply batch is exactly an
+// FSM command) and what makes Store-level CDC possible at all: bbolt has no
 // WAL, so replication ships the change records emitted here (PRD §15.3).
 //
 // Callers work with typed values through the generic helpers in codec.go
@@ -107,8 +107,8 @@ type Record struct {
 // Preconditions make optimistic concurrency explicit; the reconciler needs it
 // to avoid clobbering a concurrent API write:
 //
-//	PrevIndex > 0        — the record must currently be at exactly that index
-//	ExpectAbsent == true — the record must not exist (create-only)
+//	PrevIndex > 0 (the record must currently be at exactly that index
+//	ExpectAbsent == true) the record must not exist (create-only)
 //
 // Both unset means an unconditional upsert.
 type Mutation struct {
@@ -160,7 +160,7 @@ type ListOptions struct {
 	// Limit caps returned records. Zero means DefaultListLimit; values above
 	// MaxListLimit are clamped rather than rejected.
 	Limit int
-	// KeysOnly omits values — cheap existence scans and key enumeration.
+	// KeysOnly omits values: cheap existence scans and key enumeration.
 	KeysOnly bool
 	// Reverse walks keys from the highest down. It exists for time-ordered
 	// buckets whose readers want the newest first (the audit log, §14 A09):
@@ -217,7 +217,7 @@ type Store interface {
 	// Index reports the latest allocated index.
 	Index(ctx context.Context) (uint64, error)
 	// Changes returns CDC records with Index > since, oldest first, bounded by
-	// limit — the replicator's read path (PRD §15.3).
+	// limit: the replicator's read path (PRD §15.3).
 	Changes(ctx context.Context, since uint64, limit int) ([]Change, error)
 	// PruneChanges drops CDC records with Index <= upto, once the replicator
 	// has durably shipped them. Without it the change log grows forever.

@@ -12,7 +12,7 @@ import (
 )
 
 // The group's absence is the default and must read as "root-only", never as an
-// error — while a present group with an unusable gid must fall back the same
+// error, while a present group with an unusable gid must fall back the same
 // way, because deny-closed is the rule on this surface (PRD v1.48, §13.1).
 func TestSocketGroupIDDecidesDenyClosed(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -60,7 +60,7 @@ func TestSocketGroupIDDecidesDenyClosed(t *testing.T) {
 }
 
 // EACCES on the socket is working as designed, and the error must carry the
-// remedy — sudo or the kanea group — not a bare errno on a path most people
+// remedy (sudo or the kanea group) not a bare errno on a path most people
 // have never seen.
 func TestDialErrorNamesTheRemedyForPermissionDenied(t *testing.T) {
 	c := NewClient("")

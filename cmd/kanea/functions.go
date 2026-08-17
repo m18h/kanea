@@ -20,7 +20,7 @@ import (
 
 // functionTargets implements functions.Source over the Store: desired records
 // with triggers, joined with the VIP the allocator assigned. Every URL is
-// derived here — the spec has no field for one (R26), which is the whole SSRF
+// derived here; the spec has no field for one (R26), which is the whole SSRF
 // story: reaching an address requires writing the VIP allocator.
 type functionTargets struct {
 	store store.Store
@@ -45,7 +45,7 @@ func (f functionTargets) Targets(ctx context.Context) ([]functions.Target, error
 		vip, _, err := store.GetValue[string](ctx, f.store, store.KindKV,
 			reconciler.VIPKey(d.Project, d.Service))
 		if err != nil || vip == "" {
-			// No frontend yet — the reconciler has not converged this service.
+			// No frontend yet; the reconciler has not converged this service.
 			// The next wake reloads; skipping beats dialling nothing.
 			continue
 		}
@@ -98,7 +98,7 @@ func listDesired(ctx context.Context, st store.Store) ([]reconciler.Desired, err
 
 // teeSink fans the dispatcher's feed to a second consumer. The feed is the
 // record and comes first, always; the invoker is attached after construction
-// and before the dispatcher's goroutine starts, so no lock is needed — the
+// and before the dispatcher's goroutine starts, so no lock is needed: the
 // goroutine start is the happens-before.
 type teeSink struct {
 	primary   notify.Sink

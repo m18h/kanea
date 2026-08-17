@@ -16,8 +16,8 @@ import (
 // environment, and produces whatever metadata the test asks for.
 //
 // A fake binary rather than an interface seam: what is under test is the exact
-// invocation M0 spike ④ validated — `--opt filename=`, the output string, the
-// metadata file — and an interface would let that drift while the tests stayed
+// invocation M0 spike ④ validated (`--opt filename=`, the output string, the
+// metadata file) and an interface would let that drift while the tests stayed
 // green. This runs the real exec path, so the argv asserted below is the argv
 // buildkitd would receive.
 func fakeBuildctl(t *testing.T, script string) (binary, argsFile, envFile string) {
@@ -31,7 +31,7 @@ func fakeBuildctl(t *testing.T, script string) (binary, argsFile, envFile string
 		"printf '%s\\n' \"$@\" > " + argsFile + "\n" +
 		"env > " + envFile + "\n" +
 		script + "\n"
-	if err := os.WriteFile(binary, []byte(body), 0o700); err != nil { // #nosec G306 — an executable a test runs
+	if err := os.WriteFile(binary, []byte(body), 0o700); err != nil { // #nosec G306; an executable a test runs
 		t.Fatalf("write fake buildctl: %v", err)
 	}
 	return binary, argsFile, envFile
@@ -77,7 +77,7 @@ func newBuilder(t *testing.T, binary string) *gitops.Builder {
 // args reads the recorded argv.
 func args(t *testing.T, path string) []string {
 	t.Helper()
-	body, err := os.ReadFile(path) // #nosec G304 — a path this test created
+	body, err := os.ReadFile(path) // #nosec G304; a path this test created
 	if err != nil {
 		t.Fatalf("read args: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestRegistryCredentialsGoOutsideTheContext(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	env, err := os.ReadFile(envFile) // #nosec G304 — a path this test created
+	env, err := os.ReadFile(envFile) // #nosec G304; a path this test created
 	if err != nil {
 		t.Fatalf("read env: %v", err)
 	}

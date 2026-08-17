@@ -22,7 +22,7 @@ const (
 // selector. A clusterwide policy gets "k8s:io.kubernetes.pod.namespace Exists"
 // injected ("only match Cilium-managed k8s endpoints"), and a namespaced policy
 // gets "k8s:io.kubernetes.pod.namespace=<ns>". Endpoints without that label
-// therefore match no peer selector at all — every rule silently denies. Mapping
+// therefore match no peer selector at all: every rule silently denies. Mapping
 // project -> namespace label makes Kanea's projects work with the same policy
 // semantics every Cilium user already relies on.
 func projectLabels(project, service string) []string {

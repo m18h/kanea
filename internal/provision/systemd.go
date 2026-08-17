@@ -30,7 +30,7 @@ const systemctlTimeout = 2 * time.Minute
 
 // SystemdAvailable reports whether systemd is running this machine.
 //
-// /run/systemd/system is systemd's own marker for "I am PID 1 here" — the one
+// /run/systemd/system is systemd's own marker for "I am PID 1 here": the one
 // documented way to ask, and true inside a systemd-managed container as well.
 func SystemdAvailable() bool {
 	info, err := os.Stat("/run/systemd/system")
@@ -44,7 +44,7 @@ func (Systemd) run(ctx context.Context, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, systemctlTimeout)
 	defer cancel()
 
-	// #nosec G204 — every argument is a constant or a unit name this package
+	// #nosec G204: every argument is a constant or a unit name this package
 	// composed from a validated component name.
 	cmd := exec.CommandContext(ctx, "systemctl", args...)
 	out, err := cmd.CombinedOutput()
@@ -55,7 +55,7 @@ func (Systemd) run(ctx context.Context, args ...string) error {
 	if detail == "" {
 		return fmt.Errorf("systemctl %s: %w", strings.Join(args, " "), err)
 	}
-	// systemctl's own message is the useful part — "Job for X failed because
+	// systemctl's own message is the useful part; "Job for X failed because
 	// the control process exited" plus the journalctl line to run next.
 	return fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, detail)
 }
@@ -92,7 +92,7 @@ var ErrSocketTimeout = errors.New("the socket did not appear")
 // WaitForSocket blocks until a unix socket accepts a connection.
 //
 // Dialled rather than stat'ed: a socket file left behind by a crashed daemon
-// looks identical to a live one until something connects — the same reason
+// looks identical to a live one until something connects; the same reason
 // cmd/kanea/preflight.go dials rather than stats.
 func WaitForSocket(ctx context.Context, path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)

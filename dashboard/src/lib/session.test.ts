@@ -101,7 +101,7 @@ describe('login', () => {
   })
 
   // A refused login is an answer for the form, not a signal that the app's
-  // session went away — the app has no session yet.
+  // session went away: the app has no session yet.
   it('does not broadcast an unauthorized event', async () => {
     stubFetch({ status: 401 })
     const heard = vi.fn()

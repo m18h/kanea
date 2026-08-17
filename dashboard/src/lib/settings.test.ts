@@ -72,7 +72,7 @@ describe('channel forms', () => {
     expect(built.channels.SMTP?.To).toEqual(['ops@example.com', 'dev@example.com'])
     expect(built.channels.On).toEqual(['deploy.*', '*.failed'])
     expect(built.channels.Severity).toBe('warning')
-    // Disabled channels never appear in the body at all — a null would read
+    // Disabled channels never appear in the body at all; a null would read
     // as an explicit clear, and an absent key is the honest shape.
     expect('Telegram' in built.channels).toBe(false)
   })
@@ -87,7 +87,7 @@ describe('channel forms', () => {
     expect('error' in built && built.error).toMatch(/at least one channel/)
   })
 
-  it('refuses a channel with no on filter — silent channels are the v1.24 bug', () => {
+  it('refuses a channel with no on filter; silent channels are the v1.24 bug', () => {
     const forms = emptyChannelForms()
     forms.slack = { enabled: true, urlRef: 'secret:shared/slack' }
     const built = channelFormsToWire(forms)

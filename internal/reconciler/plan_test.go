@@ -612,7 +612,7 @@ func TestPlanDoesNotBlockOnAnUndeclaredDependency(t *testing.T) {
 }
 
 // Waiting has to be visible. An alloc that silently never appears is the worst
-// possible operator experience — `kanea plan` must say what it is waiting for.
+// possible operator experience: `kanea plan` must say what it is waiting for.
 func TestWaitActionExplainsWhat(t *testing.T) {
 	db := desired(1)
 	db.Service = "postgres"

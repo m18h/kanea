@@ -14,7 +14,7 @@ import (
 // entry, missing edges added, stale edges removed.
 //
 // Only these edges live in the map. Project isolation, the host pass and the
-// SYN gate are the BPF program's own logic over identity_v4 — there is no
+// SYN gate are the BPF program's own logic over identity_v4: there is no
 // "default deny" entry to manage, so an empty desired set empties the map.
 func (d *Datapath) SyncPolicies(ctx context.Context, projects []network.ProjectPolicy) error {
 	desired := make(map[dpmap.AllowKey]struct{})

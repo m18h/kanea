@@ -21,10 +21,10 @@ var ErrKeyUnusable = errors.New("secrets: master key is unusable")
 //
 // The key is the whole of the encryption at rest: every secret in the Store is
 // unreadable without it, and every secret is readable with it. Two consequences
-// are enforced here rather than documented and hoped for — the file must not be
+// are enforced here rather than documented and hoped for: the file must not be
 // readable by anyone else, and a key that exists is never silently replaced.
 func loadOrCreateKey(path string) ([]byte, bool, error) {
-	body, err := os.ReadFile(path) // #nosec G304 — the path is operator configuration
+	body, err := os.ReadFile(path) // #nosec G304; the path is operator configuration
 	switch {
 	case err == nil:
 		if err := checkKeyPermissions(path); err != nil {
@@ -61,7 +61,7 @@ func generateKey(path string) ([]byte, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("%w: key directory: %w", ErrKeyUnusable, err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 — operator configuration
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304; operator configuration
 	if err != nil {
 		return nil, fmt.Errorf("%w: create %s: %w", ErrKeyUnusable, path, err)
 	}
@@ -92,7 +92,7 @@ func generateKey(path string) ([]byte, error) {
 // checkKeyPermissions refuses a key file others can read.
 //
 // A master key at 0644 is not encryption at rest; it is a file everyone on the
-// node can decrypt every secret with. Refusing to start is the right answer —
+// node can decrypt every secret with. Refusing to start is the right answer:
 // continuing would mean the platform reports secrets as encrypted while they
 // are effectively public.
 func checkKeyPermissions(path string) error {
@@ -112,12 +112,12 @@ func checkKeyPermissions(path string) error {
 // The distinction from loadOrCreateKey matters at exactly one moment: a restore
 // on a fresh node. Creating a key there would succeed, encrypt nothing, and
 // leave the operator holding a node that cannot read a single one of its own
-// backups — with no error to tell them why. So this refuses, and the message
+// backups, with no error to tell them why. So this refuses, and the message
 // points at the ceremony that produced the key they need to put back.
 func LoadKey(path string) ([]byte, error) {
-	body, err := os.ReadFile(path) // #nosec G304 — the path is operator configuration
+	body, err := os.ReadFile(path) // #nosec G304; the path is operator configuration
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("%w: no master key at %s — restore the one escrowed by "+
+		return nil, fmt.Errorf("%w: no master key at %s; restore the one escrowed by "+
 			"`kanea init` before continuing (docs/DR_RUNBOOK.md starts with this step)",
 			ErrKeyUnusable, path)
 	}

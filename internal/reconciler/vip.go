@@ -20,7 +20,7 @@ const DefaultServiceCIDR = "10.201.0.0/16"
 const vipKeyPrefix = "lb/vip/"
 
 // vip6KeyPrefix namespaces the v6 twins (v1.41). A separate key space, so
-// the lb/vip/ records stay byte-identical — a rollback, or a replicated
+// the lb/vip/ records stay byte-identical: a rollback, or a replicated
 // Store read by a v4-only node, parses unchanged.
 const vip6KeyPrefix = "lb/vip6/"
 
@@ -34,7 +34,7 @@ func VIP6Key(project, service string) string { return vip6KeyPrefix + project + 
 //
 // The assignment is durable, and that is not an optimisation. A VIP is the
 // address DNS answers with and clients cache, so it has to outlive the thing
-// that programs it — the agent's LB state is rebuilt from scratch after a
+// that programs it: the agent's LB state is rebuilt from scratch after a
 // restart, and a service whose frontend moved would have every existing client
 // pointing at nothing. Constraint #9 says datapath state must be rebuildable
 // from the Store; that only works if the Store is where the assignment lives.
@@ -42,7 +42,7 @@ type vipAllocator struct {
 	store  Store
 	prefix netip.Prefix
 	// prefix6 is the v6 twin pool (v1.41); invalid means v4-only. With v6
-	// off, the lb/vip6/ key space is left exactly as it is — stale twins
+	// off, the lb/vip6/ key space is left exactly as it is: stale twins
 	// from a formerly-enabled node are released only when v6 is enabled
 	// again, never silently deleted.
 	prefix6 netip.Prefix
@@ -120,7 +120,7 @@ func (a *vipAllocator) Sync(ctx context.Context, services []serviceRef) (map[str
 	}
 
 	// Allocate in a stable order so the same set of new services always lands
-	// on the same addresses — a test, and a rebuild, should be reproducible.
+	// on the same addresses: a test, and a rebuild, should be reproducible.
 	for _, svc := range sortedRefs(services) {
 		key := svc.key()
 		if _, ok := assigned[key]; !ok {

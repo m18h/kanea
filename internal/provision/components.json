@@ -1,12 +1,12 @@
 {
   "_comment": [
     "The host-component manifest (PRD §5.2.12). This file IS the §15.4 version",
-    "matrix — there is no second copy to drift from it.",
+    "matrix: there is no second copy to drift from it.",
     "",
     "Every hash here is compiled into the binary by go:embed and is the only",
     "authority on what an artefact must contain. Hashes are never fetched: one",
     "downloaded from beside the artefact proves only that the two agree. The",
-    "consequence is deliberate — bumping a component is a change to this file,",
+    "consequence is deliberate: bumping a component is a change to this file,",
     "which goes through review and the §14 gates.",
     "",
     "Versions are the ones M0 validated. Changing one means re-running the",
@@ -53,11 +53,11 @@
       "name": "wasmtime-shim",
       "version": "0.6.1",
       "kind": "archive",
-      "summary": "wasmtime containerd shim — functions (PRD v1.39, §6.2 R25)",
+      "summary": "wasmtime containerd shim; functions (PRD v1.39, §6.2 R25)",
       "_url": [
         "runwasi tags carry a slash (containerd-shim-wasmtime/vX.Y.Z), hence the",
         "%2F. Release artefacts are named by uname arch (x86_64/aarch64), not",
-        "GOARCH — {{.UnameArch}} is that mapping. Hashes verified against the",
+        "GOARCH: {{.UnameArch}} is that mapping. Hashes verified against the",
         "release's SHA256SUMS and independently against the downloaded bytes."
       ],
       "url": "https://github.com/containerd/runwasi/releases/download/containerd-shim-wasmtime%2Fv{{.Version}}/containerd-shim-wasmtime-{{.UnameArch}}-linux-musl.tar.gz",
@@ -77,7 +77,7 @@
       "image": "docker.io/moby/buildkit",
       "tag": "v{{.Version}}-rootless",
       "digest": "sha256:40615b4a00f9a791b6fd1d6c41ebfc690e4f4b2e3710240bdd043b4467bc4d7a",
-      "_files": "These extract cleanly and run on the host — PRD §23.2 specified it that way.",
+      "_files": "These extract cleanly and run on the host; PRD §23.2 specified it that way.",
       "files": [
         {"from": "usr/bin/buildkitd", "to": "bin/buildkitd", "mode": "0755"},
         {"from": "usr/bin/buildctl", "to": "bin/buildctl", "mode": "0755"},

@@ -92,8 +92,8 @@ func CoversHost(domains []string, host string) bool {
 // certificateFor resolves an SNI name.
 //
 // Exact match first, then a wildcard over the immediate parent. A wildcard
-// covers one label — "*.shop.example.com" matches "web.shop.example.com" and
-// not "a.b.shop.example.com" — because that is what the certificate actually
+// covers one label ("*.shop.example.com" matches "web.shop.example.com" and
+// not "a.b.shop.example.com") because that is what the certificate actually
 // asserts, and being looser here would present a certificate the client is
 // right to reject.
 //

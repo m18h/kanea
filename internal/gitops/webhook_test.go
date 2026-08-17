@@ -73,8 +73,8 @@ func TestATamperedBodyIsRefused(t *testing.T) {
 	w := newWebhooks(t, "s3cret", c)
 	header, _ := githubPush("s3cret", "delivery-1", pushBody)
 
-	// The signature covers the raw body. Changing one byte of it — here, the
-	// commit that would be deployed — must invalidate the delivery.
+	// The signature covers the raw body. Changing one byte of it (here, the
+	// commit that would be deployed) must invalidate the delivery.
 	tampered := []byte(strings.Replace(pushBody, "abc123def456", "deadbeefcafe", 1))
 
 	if _, err := w.Verify(context.Background(), "shop", webhookSecretRef, header, tampered); !errors.Is(err, gitops.ErrBadSignature) {
@@ -115,7 +115,7 @@ func TestAReplayedDeliveryIsRefused(t *testing.T) {
 	if _, err := w.Verify(context.Background(), "shop", webhookSecretRef, header, body); err != nil {
 		t.Fatalf("first delivery: %v", err)
 	}
-	// A replayed push redeploys whatever that commit contained — which, after
+	// A replayed push redeploys whatever that commit contained, which, after
 	// a revert, is exactly what someone deliberately took out of production.
 	_, err := w.Verify(context.Background(), "shop", webhookSecretRef, header, body)
 	if !errors.Is(err, gitops.ErrReplayedWebhook) {
@@ -132,7 +132,7 @@ func TestADeliveryIsAcceptedAgainOnceForgotten(t *testing.T) {
 		t.Fatalf("first delivery: %v", err)
 	}
 	// The window is longer than any provider's retry schedule, so a genuine
-	// retry is still recognised — but it is not forever.
+	// retry is still recognised, but it is not forever.
 	c.advance(gitops.DefaultWebhookMemory + time.Minute)
 	if _, err := w.Verify(context.Background(), "shop", webhookSecretRef, header, body); err != nil {
 		t.Fatalf("delivery after the memory window: %v", err)
@@ -314,7 +314,7 @@ func TestTheReplayCacheIsBounded(t *testing.T) {
 	w := newWebhooks(t, "s3cret", c)
 
 	// Reaching this needs the secret, but a cache whose keys come from the
-	// network is bounded on principle — the same rule the rate limiter and the
+	// network is bounded on principle: the same rule the rate limiter and the
 	// metrics store follow.
 	for i := range 6000 {
 		header, body := githubPush("s3cret", string(rune(i))+"-delivery", pushBody)
@@ -323,5 +323,5 @@ func TestTheReplayCacheIsBounded(t *testing.T) {
 		}
 	}
 	// The oldest entries are evicted, so an old delivery becomes acceptable
-	// again — which is the trade a bound buys, and it is the right way round.
+	// again, which is the trade a bound buys, and it is the right way round.
 }

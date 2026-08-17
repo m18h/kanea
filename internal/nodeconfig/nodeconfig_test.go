@@ -147,7 +147,7 @@ func TestParseRefusesATLSPairWithNoAddrInBind(t *testing.T) {
 	}
 }
 
-// bindHCL renders a bind stanza one attribute per line — HCL's single-line
+// bindHCL renders a bind stanza one attribute per line: HCL's single-line
 // block form takes at most one attribute, so a compact literal would fail on
 // syntax and vacuously "pass" a refusal test for the wrong reason.
 func bindHCL(attrs ...string) string {
@@ -155,8 +155,8 @@ func bindHCL(attrs ...string) string {
 }
 
 // Every bind contradiction parse can see is refused with the file named
-// (PRD v1.61). What resolution decides — an unset mode on a non-loopback
-// address — deliberately parses clean; the daemon refuses that one.
+// (PRD v1.61). What resolution decides (an unset mode on a non-loopback
+// address) deliberately parses clean; the daemon refuses that one.
 func TestParseRefusesBindContradictions(t *testing.T) {
 	tests := []struct {
 		name string
@@ -237,7 +237,7 @@ func TestParseRefusesAnUnknownAttributeInsideBind(t *testing.T) {
 }
 
 // The sketch halves of a read stanza: edge_http/edge_https are §15.1's own
-// example, so they load — and land in Ignored by their dotted names, because
+// example, so they load, and land in Ignored by their dotted names, because
 // accepted-but-unread without a warning is exactly the silently-swallowed trap.
 func TestParseNamesTheBindSketchHalvesAsIgnored(t *testing.T) {
 	cfg, err := Parse("kanea.hcl", []byte(`
@@ -307,8 +307,8 @@ socket "containerd" {
 			t.Fatalf("Ignored = %v, want %v", cfg.Ignored, want)
 		}
 	}
-	// device and socket are read — by internal/passthrough, over the same
-	// bytes — and must never show up as ignored.
+	// device and socket are read (by internal/passthrough, over the same
+	// bytes) and must never show up as ignored.
 	for _, name := range cfg.Ignored {
 		if name == "device" || name == "socket" || name == "storage" {
 			t.Fatalf("%q is a read stanza and must not be reported ignored", name)
@@ -474,7 +474,7 @@ func TestParseRefusesADNSUpstreamThatIsNotAnAddress(t *testing.T) {
 }
 
 // An empty list configures nothing: a stanza that meant "no upstreams" would
-// silently turn external resolution into SERVFAIL — the R21 dropped control.
+// silently turn external resolution into SERVFAIL; the R21 dropped control.
 func TestParseRefusesAnEmptyDNSUpstreamList(t *testing.T) {
 	for _, src := range []string{
 		`dns { upstreams = [] }`,

@@ -42,7 +42,7 @@ const statusRank: Record<string, number> = { trapping: 0, active: 1, idle: 2, st
 type SortKey = 'function' | 'invocations' | 'memory' | 'status'
 
 /**
- * Functions (v1.39): wasm functions — services underneath, so detail, restart
+ * Functions (v1.39): wasm functions; services underneath, so detail, restart
  * and scale all live on the service pages; this page is what makes them
  * findable as what they are. The invocation rate is the datapath's connect
  * counter (§9.1): it sees east-west calls and invoker POSTs the edge never
@@ -99,7 +99,7 @@ export function Functions() {
       <div className="grid gap-3 sm:grid-cols-3">
         <StatTile
           label="Invocations / min"
-          value={measured.length > 0 ? Math.round(totalRate).toLocaleString() : '—'}
+          value={measured.length > 0 ? Math.round(totalRate).toLocaleString() : '-'}
           sub={
             measured.length > 0
               ? `across ${measured.length} measured function${measured.length === 1 ? '' : 's'}`
@@ -127,7 +127,7 @@ export function Functions() {
       ) : list.length === 0 ? (
         <Card className="p-4 text-sm text-muted-foreground">
           No functions yet. A <code className="font-mono">function</code> block in a job spec
-          declares one — a wasm module the platform runs for you.
+          declares one: a wasm module the platform runs for you.
         </Card>
       ) : (
         <>
@@ -186,7 +186,7 @@ export function Functions() {
 
       <p className="text-xs text-muted-foreground">
         Functions run on the wasmtime shim in a deny-by-default sandbox: filesystem, devices and
-        host sockets are refused at the spec (R25). Memory caps are cgroup limits — real, not
+        host sockets are refused at the spec (R25). Memory caps are cgroup limits: real, not
         advisory.
       </p>
     </div>
@@ -217,7 +217,7 @@ function FunctionRow({ fn }: { fn: FunctionView }) {
         <TriggerChips fn={fn} />
       </TD>
       <TD className="font-mono tabular-nums">
-        {fn.invocations_per_minute === undefined ? '—' : Math.round(fn.invocations_per_minute)}
+        {fn.invocations_per_minute === undefined ? '-' : Math.round(fn.invocations_per_minute)}
       </TD>
       <P95Cell project={fn.project} service={fn.service} />
       <TD className="font-mono tabular-nums">{formatBytes(fn.memory_bytes)}</TD>
@@ -236,7 +236,7 @@ function TriggerChips({ fn }: { fn: FunctionView }) {
   }
   for (const ev of fn.events ?? []) chips.push(`event · ${ev.on.join(', ')}`)
   for (const cr of fn.crons ?? []) chips.push(`cron · ${cr.schedule}`)
-  if (chips.length === 0) return <span className="font-mono text-xs text-muted-foreground">—</span>
+  if (chips.length === 0) return <span className="font-mono text-xs text-muted-foreground">-</span>
   return (
     <div className="flex flex-wrap gap-1">
       {chips.map((chip) => (
@@ -248,14 +248,14 @@ function TriggerChips({ fn }: { fn: FunctionView }) {
   )
 }
 
-/** P95Cell rides the same stats topic the Services page uses — a function is a
+/** P95Cell rides the same stats topic the Services page uses: a function is a
  * service, so its latency series already exists. */
 function P95Cell({ project, service }: { project: string; service: string }) {
   const stats = useLiveTopic({ topic: Topic.Stats, project, service }, statsSampleSchema)
   const p95 = stats.data?.p95_latency_ms
   return (
     <TD className="font-mono tabular-nums">
-      {p95 === undefined ? '—' : formatMetric(p95, ' ms')}
+      {p95 === undefined ? '-' : formatMetric(p95, ' ms')}
     </TD>
   )
 }

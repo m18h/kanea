@@ -1,6 +1,6 @@
 /**
- * The mock daemon's state and simulation: the PRD §6.1 sample — the shop
- * e-commerce stack — behaving: services with allocs, wandering metrics,
+ * The mock daemon's state and simulation: the PRD §6.1 sample (the shop
+ * e-commerce stack) behaving: services with allocs, wandering metrics,
  * chatty logs, and rollouts that actually roll when you press Restart.
  * Shapes match src/lib's zod schemas; a field the schemas would reject is
  * a bug here, not there.
@@ -120,7 +120,7 @@ for (const svc of services) {
       healthy: true,
       spec_hash: specHash(svc),
       created_at: new Date(startedAt - (36 + i) * 3600 * 1000).toISOString(),
-      // The alloc that restarted carries why (PRD v1.68) — running now, and
+      // The alloc that restarted carries why (PRD v1.68); running now, and
       // OOM-killed last time, which is the case the column exists for.
       ...(svc.service === 'api'
         ? {
@@ -191,7 +191,7 @@ pushEvent({ name: 'alloc.restarted', severity: 'warning', project: 'shop', servi
 
 // ---- metrics ----
 
-/** A wandering value inside [min, max]: two sines and a whisper of noise —
+/** A wandering value inside [min, max]: two sines and a whisper of noise;
  * time-coherent, because a real scrape does not teleport between samples. */
 function wander(base: number, spread: number, min: number, max: number, phase: number): number {
   const t = Date.now() / 1000
@@ -471,7 +471,7 @@ export function uptimeSeconds(): number {
 
 /**
  * One build slot, serialised (§10.2): the shop/web pipeline runs back to
- * back, a 168 s cycle — sync 6 s, build 144 s, deploy 18 s. A second push
+ * back, a 168 s cycle; sync 6 s, build 144 s, deploy 18 s. A second push
  * mid-build becomes a queued run that takes the slot the moment it frees
  * (same run id and commit: the queued run IS the next running one). All of
  * it is derived from the wall clock, so a reload lands mid-build and the

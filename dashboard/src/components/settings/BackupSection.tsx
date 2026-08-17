@@ -23,7 +23,7 @@ import {
  * BackupSection edits the `settings/backup` record (PRD v1.46).
  *
  * The daemon probes a new destination before committing anything, so a Save
- * that fails leaves the old replication untouched — the 400's own message says
+ * that fails leaves the old replication untouched: the 400's own message says
  * so and is shown verbatim. Revert deletes the record and the unit flags win
  * again, which is destructive enough to earn the two-click confirm the
  * Backups page uses for staging a restore.
@@ -99,7 +99,7 @@ export function BackupSection({
           </CardHeader>
           <CardContent>
             <KeyValue label="Sink" mono>
-              {status.sink || '—'}
+              {status.sink || '-'}
             </KeyValue>
             <KeyValue label="Last segment" mono>
               {status.last_segment_at
@@ -220,7 +220,7 @@ export function BackupSection({
                     onChange={(e) => set({ secretKeyRef: e.target.value })}
                   />
                   <p className="text-xs text-muted-foreground">
-                    A <code className="font-mono">secret:</code> reference — never the key itself.
+                    A <code className="font-mono">secret:</code> reference, never the key itself.
                   </p>
                 </div>
                 <label className="flex items-center gap-2 text-sm">

@@ -205,7 +205,7 @@ func TestDryRunFailsOnAHashMismatch(t *testing.T) {
 }
 
 // An image component with no containerd yet is a skip with a reason, not a
-// failure — the install bootstraps in one direction.
+// failure: the install bootstraps in one direction.
 func TestImageComponentSkipsWithoutAPuller(t *testing.T) {
 	inst, _, _ := testInstall(t)
 	img := &Component{

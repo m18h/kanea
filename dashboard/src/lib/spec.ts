@@ -4,7 +4,7 @@ import { apiFetch, csrfHeader, requestTimeout } from './session'
 /**
  * The spec editor's wire surface (PRD §12.2, v1.38).
  *
- * Render is validate: HCL in, diagnostics with file/line out — no side
+ * Render is validate: HCL in, diagnostics with file/line out; no side
  * effects. Apply renders the same bytes server-side and applies through the
  * same path `PUT /v1/services` uses, so a validated preview cannot drift from
  * what is applied. Source is generated HCL for the current desired state.
@@ -68,7 +68,7 @@ export async function renderSpec(
 
 /**
  * Apply a spec. A 422 carries the diagnostics as its body, so a validation
- * failure surfaces as a positioned list rather than a thrown string — the
+ * failure surfaces as a positioned list rather than a thrown string: the
  * result type covers both outcomes.
  */
 export async function applySpec(
@@ -107,7 +107,7 @@ export async function applySpec(
 }
 
 /** Fetch generated HCL for a service. Null when the daemon refuses (a field
- * the generator cannot express) — the editor then starts from the template. */
+ * the generator cannot express): the editor then starts from the template. */
 export async function fetchSpecSource(
   project: string,
   service: string,

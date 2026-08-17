@@ -101,7 +101,7 @@ func TestRestoreRecoversSnapshotPlusSegments(t *testing.T) {
 		t.Fatalf("snapshot: %v", err)
 	}
 
-	// State that exists only in the changes after it — this is the part a
+	// State that exists only in the changes after it: this is the part a
 	// snapshot-only restore would lose, and the reason segments exist.
 	put(t, src, store.KindService, "shop/web", "after")
 	put(t, src, store.KindService, "shop/worker", "new")
@@ -179,7 +179,7 @@ func TestReplayPreservesTheIndexNumbering(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 	if result.Index != final {
-		t.Errorf("restored index = %d, want %d — replay drifted the counter",
+		t.Errorf("restored index = %d, want %d; replay drifted the counter",
 			result.Index, final)
 	}
 
@@ -360,7 +360,7 @@ func TestRestoreRefusesToOverwriteExistingState(t *testing.T) {
 	if err == nil {
 		t.Fatal("a restore overwrote an existing state file")
 	}
-	body, readErr := os.ReadFile(target) // #nosec G304 — a test path
+	body, readErr := os.ReadFile(target) // #nosec G304; a test path
 	if readErr != nil {
 		t.Fatalf("read: %v", readErr)
 	}

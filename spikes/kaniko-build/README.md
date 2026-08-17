@@ -1,4 +1,4 @@
-# Spike ④ — image builds as containerd tasks
+# Spike ④: image builds as containerd tasks
 
 Throwaway M0 validation code (PRD §20). **Nothing here ships.** M7 implements the
 chosen driver in `internal/gitops`.
@@ -6,13 +6,13 @@ chosen driver in `internal/gitops`.
 ## Questions this spike answers
 
 1. **Does it work at all?** Build a Dockerfile and push it to an authenticated
-   registry from a short-lived containerd task — no Docker daemon, no socket mount.
+   registry from a short-lived containerd task: no Docker daemon, no socket mount.
 2. **Which driver?** PRD §10.2 names kaniko and defers the decision ("alternatives
    `buildah`, `img` noted; decision after M0 spike"). kaniko's upstream is now
    **archived**, so this spike compares it against two maintained alternatives.
 3. **How much privilege?** Kanea's workload default is drop-ALL-caps +
    no-new-privileges (AGENTS.md #6). What does each builder actually require?
-4. **Cache, limits, failures** — remote layer cache (PRD §10.2), builds under cgroup
+4. **Cache, limits, failures**: remote layer cache (PRD §10.2), builds under cgroup
    caps so they can't starve workloads, and failures that surface a usable error.
 
 5. **Which shape?** BuildKit as a one-shot task needs a privileged container; as a

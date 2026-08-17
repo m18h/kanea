@@ -20,7 +20,7 @@ type buildReq struct {
 type builder struct {
 	Name   string
 	Image  string
-	Status string // upstream maintenance status — a first-class selection criterion
+	Status string // upstream maintenance status: a first-class selection criterion
 
 	// argv returns the process arguments inside the container.
 	argv func(r buildReq) []string

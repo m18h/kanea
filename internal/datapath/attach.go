@@ -13,7 +13,7 @@ import (
 )
 
 // hostDevName derives the host-side veth name from the alloc id: "kn" plus
-// 11 hex characters of its SHA-256, 13 characters total — inside IFNAMSIZ,
+// 11 hex characters of its SHA-256, 13 characters total; inside IFNAMSIZ,
 // collision-safe at any plausible alloc count, and stable so a re-attach and a
 // detach find the same device without remembering anything.
 func hostDevName(allocID string) string {
@@ -34,7 +34,7 @@ func peerDevName(allocID string) string {
 //	peer addresses/routes/neigh → host neigh + up → the host /32 route LAST
 //
 // A skipped step fails closed, because an identity miss in the tc program is a
-// drop and an absent route is unreachability — there is no wait loop, no
+// drop and an absent route is unreachability; there is no wait loop, no
 // readiness poll and nothing to retry. Idempotent: an alloc whose marked link
 // already exists with its identity in place returns nil without touching the
 // node.
@@ -142,7 +142,7 @@ func (d *Datapath) plumb(spec runtime.AllocSpec, host string, ip, ip6 netip.Addr
 }
 
 // RepairIdentity re-writes the identity entries for an attachment that exists
-// but is not Ready — the state a pinned-map schema wipe leaves behind at
+// but is not Ready: the state a pinned-map schema wipe leaves behind at
 // upgrade (§15.4, PRD v1.65). Map-only, deliberately: the veth, netns,
 // addresses and routes are untouched, because re-plumbing a live workload's
 // interface is a teardown wearing a repair's name. The reconciler calls this
@@ -192,9 +192,9 @@ func (d *Datapath) RepairIdentity(ctx context.Context, spec runtime.AllocSpec) e
 }
 
 // reuseExisting handles the retry case: a marked link that already exists. A
-// matching alias with the v4 identity present means the attach completed —
+// matching alias with the v4 identity present means the attach completed:
 // InstallRoute is the last step, so an existing *complete* attach is exactly
-// "return nil". Anything else — foreign alias, missing identity — is stale
+// "return nil". Anything else (foreign alias, missing identity) is stale
 // state from an interrupted attempt; it is torn down and the attach redone,
 // because a half-plumbed link that is left standing looks attached and passes
 // nothing.
@@ -270,7 +270,7 @@ func (d *Datapath) teardownPartial(allocID, host string, ip, ip6 netip.Addr) {
 }
 
 // Detach removes the alloc from the datapath: veth, identity, reservation,
-// netns — the attach in reverse, tolerant of absence at every step, because
+// netns; the attach in reverse, tolerant of absence at every step, because
 // teardown runs on paths where part of it already happened. An empty alloc id
 // is a silent no-op, matching the previous driver's contract.
 func (d *Datapath) Detach(ctx context.Context, spec runtime.AllocSpec) error {
@@ -292,9 +292,9 @@ func (d *Datapath) Detach(ctx context.Context, spec runtime.AllocSpec) error {
 	}
 	if !known {
 		// A restart lost the in-memory reservation; the link's alias is the
-		// durable copy — and it carries both families, so a dual-stack
+		// durable copy, and it carries both families, so a dual-stack
 		// attachment's v6 identity is deleted even when v6 has since been
-		// turned off (ipam6 nil). List failing is not fatal — the identity
+		// turned off (ipam6 nil). List failing is not fatal: the identity
 		// delete is then skipped, and an identity without an interface denies
 		// traffic rather than passing it.
 		if links, err := d.nl.List(); err == nil {
@@ -354,7 +354,7 @@ func validateAttach(spec runtime.AllocSpec) error {
 	return validateName("service", spec.Service)
 }
 
-// validateName is the last-line assertion project/service names get — they are
+// validateName is the last-line assertion project/service names get: they are
 // DNS-1123 labels by the time they reach here (jobspec R1), but a bad one
 // would corrupt id keys and aliases, which fails silently and denies traffic.
 func validateName(kind, value string) error {

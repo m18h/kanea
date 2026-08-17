@@ -9,7 +9,7 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
-// check7 — strict rp_filter and PERMANENT neighbors. With
+// check7: strict rp_filter and PERMANENT neighbors. With
 // net.ipv4.conf.all.rp_filter=1, does masqueraded return traffic and
 // pod<->pod routing still work, and do the static neighbors function.
 func check7(e *env) error {
@@ -33,7 +33,7 @@ func check7(e *env) error {
 	// masqueraded egress still counts (return path passes rp_filter). The
 	// target routes OUT the uplink (TEST-NET-3 via the default route), not the
 	// uplink's own IP, which is delivered locally and never traverses the SNAT
-	// hook — the same distinction check 4e draws.
+	// hook: the same distinction check 4e draws.
 	p0, _, _ := masqCounter(e)
 	_, _, _, _, _ = podConnect(e, "p1", "203.0.113.9:9", 1200*time.Millisecond, false)
 	time.Sleep(150 * time.Millisecond)
@@ -65,7 +65,7 @@ func neighborsPermanent(e *env, podID string) (bool, string) {
 	return false, "no host-side neighbor entry for the pod"
 }
 
-// check8 — measurements.
+// check8: measurements.
 func check8(e *env) error {
 	// Program load + verify time (captured at load).
 	info("8 program load+verify time", e.loadTime.Round(time.Microsecond).String())

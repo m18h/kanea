@@ -56,7 +56,7 @@ func restoreAtStart(ctx context.Context, opts bootRestoreOptions) error {
 
 	switch {
 	case request != nil:
-		// Explicitly asked for. This one proceeds even over live state — that
+		// Explicitly asked for. This one proceeds even over live state: that
 		// is what staging it meant.
 	case !stateExists && opts.autoRestore && opts.sink.configured():
 		opts.log.Warn("no state on this node and a backup destination is configured",
@@ -93,7 +93,7 @@ func restoreAtStart(ctx context.Context, opts bootRestoreOptions) error {
 	}
 
 	// The existing state is moved aside, never deleted. If the restore turns
-	// out to be the wrong archive — or the right archive of the wrong node —
+	// out to be the wrong archive, or the right archive of the wrong node:
 	// the thing that was there is still there.
 	if stateExists {
 		aside := opts.statePath + ".before-restore-" + time.Now().UTC().Format("20060102T150405Z")
@@ -112,7 +112,7 @@ func restoreAtStart(ctx context.Context, opts bootRestoreOptions) error {
 	if err != nil {
 		// The request is deliberately left in place. A restore that failed
 		// half-way is a node an operator has to look at, and clearing the
-		// marker would let the next start come up on whatever is there — which,
+		// marker would let the next start come up on whatever is there, which,
 		// after the rename above, is nothing.
 		return fmt.Errorf("restore failed; the request is still staged and the previous "+
 			"state was moved aside: %w", err)
@@ -138,7 +138,7 @@ func restoreAtStart(ctx context.Context, opts bootRestoreOptions) error {
 // The ordering is the whole point and it is why the Store does not migrate
 // itself at Open: a migration rewrites state in place, and the only way back
 // from one that goes wrong is a copy of what was there. That copy needs the
-// database open, and the migration must not have started — which leaves exactly
+// database open, and the migration must not have started, which leaves exactly
 // this window.
 func migrateAtStart(ctx context.Context, st store.Store, dataDir string, log *slog.Logger) error {
 	pending, err := store.PendingMigration(ctx, st)
@@ -153,7 +153,7 @@ func migrateAtStart(ctx context.Context, st store.Store, dataDir string, log *sl
 		fmt.Sprintf("%s.pre-v%d-%s", stateFile, pending.To, time.Now().UTC().Format("20060102T150405Z")))
 	// A local file copy, not an archive: it needs no key, no bucket and no
 	// network, and the operator putting it back is a `mv`. The replicator's own
-	// snapshot happens too, when one is configured — but a migration must not
+	// snapshot happens too, when one is configured, but a migration must not
 	// depend on a bucket being reachable to be safe.
 	if err := store.Compact(ctx, st, copyPath); err != nil {
 		return fmt.Errorf("cannot take the pre-migration copy: %w", err)
@@ -164,7 +164,7 @@ func migrateAtStart(ctx context.Context, st store.Store, dataDir string, log *sl
 			filepath.Join(dataDir, stateFile)+", and run the previous binary")
 
 	if _, err := store.Migrate(ctx, st); err != nil {
-		return fmt.Errorf("%w — the pre-migration copy is at %s", err, copyPath)
+		return fmt.Errorf("%w: the pre-migration copy is at %s", err, copyPath)
 	}
 	log.Info("state schema migrated", "to", pending.To, "copy", copyPath,
 		"detail", "delete the copy once the upgrade is confirmed good")

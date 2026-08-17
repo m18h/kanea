@@ -48,7 +48,7 @@ func runClean(ctx context.Context) error {
 	os.Remove(cniConfPath)
 
 	// GC stale CNI iptables chains: bridge DEL against a dead netns skips
-	// ipMasq teardown (finding #2 for the report — M1 uses persistent netns
+	// ipMasq teardown (finding #2 for the report; M1 uses persistent netns
 	// + DEL-before-kill to avoid this entirely).
 	// Delete jump rules by number (full-spec -D chokes on quoted comments).
 	if out, err := exec.Command("iptables", "-t", "nat", "-L", "POSTROUTING", "-n", "--line-numbers").Output(); err == nil {

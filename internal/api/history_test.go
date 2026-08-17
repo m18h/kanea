@@ -58,7 +58,7 @@ func TestHistoryServesAServiceRange(t *testing.T) {
 
 func TestHistoryServesAGapAsAbsentNeverZero(t *testing.T) {
 	// Two samples two slots apart: the slot between them was never written,
-	// and the response must simply not contain it — a zero there would be a
+	// and the response must simply not contain it; a zero there would be a
 	// claim that the service went idle for five seconds.
 	now := time.Now()
 	h := newAuthHarness(t, withMetrics(func(m *scaling.Metrics) {

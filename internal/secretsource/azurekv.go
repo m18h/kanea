@@ -13,7 +13,7 @@ import (
 )
 
 // azureKVProvider fetches from Azure Key Vault over an OAuth2
-// client-credentials token — a service principal's app registration, static
+// client-credentials token: a service principal's app registration, static
 // credentials in files (§5.2.13; managed identity means the IMDS, which is
 // out by design).
 //

@@ -51,8 +51,8 @@ func TestAttachmentsReportsOnlyProvablyKaneaInterfaces(t *testing.T) {
 
 func TestAttachmentsWithoutIdentityIsNotReady(t *testing.T) {
 	// The interface exists but its identity is gone: traffic is dropped (the
-	// tc program fails closed), so the attachment is reported — the reaper
-	// must see it to reclaim it — but never as fit for traffic.
+	// tc program fails closed), so the attachment is reported (the reaper
+	// must see it to reclaim it) but never as fit for traffic.
 	f := newFixture(t)
 	f.nl.addLink(hostDevName("shop-web-0"), aliasFor("shop-web-0", netip.MustParseAddr("10.200.0.2"), netip.Addr{}))
 

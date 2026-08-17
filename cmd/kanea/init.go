@@ -38,7 +38,7 @@ func runInit(args []string) error {
 	skipChecks := fs.Bool("skip-checks", false, "run the ceremony without the preflight checks")
 	skipUnits := fs.Bool("skip-units", false, "do not write systemd units")
 	noInstall := fs.Bool("no-install", false,
-		"do not install the host components (PRD §5.2.12) — assume they are already there")
+		"do not install the host components (PRD §5.2.12); assume they are already there")
 	bundlePath := fs.String("bundle", "", "install the host components from an offline bundle")
 	prefix := fs.String("prefix", provision.DefaultPrefix, "where component binaries are installed")
 	nodeCIDR := fs.String("node-cidr", provision.DefaultNodeCIDR,
@@ -64,7 +64,7 @@ func runInit(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	// Prompted only when not passed — detected here, so a script that sets the
+	// Prompted only when not passed; detected here, so a script that sets the
 	// flag (to anything, including the default) never consumes a stdin line.
 	explicitListen := false
 	fs.Visit(func(f *flag.Flag) {
@@ -86,10 +86,10 @@ func runInit(args []string) error {
 	}
 
 	o := newOut()
-	o.printf("kanea init — %s\n\n", version)
+	o.printf("kanea init: %s\n\n", version)
 
 	// One reader for every prompt in this run. A second bufio.Reader over
-	// os.Stdin would buffer ahead and swallow lines meant for a later prompt —
+	// os.Stdin would buffer ahead and swallow lines meant for a later prompt:
 	// invisible on a terminal, fatal for a piped init.
 	reader := bufio.NewReader(os.Stdin)
 
@@ -98,7 +98,7 @@ func runInit(args []string) error {
 	//
 	// The §15.1 server config is consulted before the prompt (v1.61): a
 	// bind.api_addr in kanea.hcl with no explicit --listen means the file owns
-	// the listener — the question is not asked and no listen flags are
+	// the listener; the question is not asked and no listen flags are
 	// rendered into the unit, because a unit that repeated the file's answer
 	// would turn the file off. An explicit --listen wins, as everywhere.
 	nodeCfg, err := nodeconfig.Probe(nodeconfig.DefaultPath)
@@ -145,7 +145,7 @@ func runInit(args []string) error {
 	}
 
 	// The platform checks gate, and only they do. They are the things no
-	// installer can supply — a kernel, cgroups v2, a clock — so failing one
+	// installer can supply (a kernel, cgroups v2, a clock) so failing one
 	// means this node cannot run Kanea however much software is placed on it.
 	// The component checks come after the install, where they verify rather
 	// than admit: running them first would fail every fresh node on the
@@ -237,7 +237,7 @@ func runInit(args []string) error {
 const defaultUnitDir = "/etc/systemd/system"
 
 // defaultReserve is the control plane's memory floor (PRD §5.2.11, v1.62).
-// It covers a control plane that does not build — a node running pipelines
+// It covers a control plane that does not build: a node running pipelines
 // raises --reserve, because buildkitd alone holds ~157 MiB resident.
 const defaultReserve = "256M"
 
@@ -246,7 +246,7 @@ func createLayout(o *out, dataDir, logDir, confDir string) error {
 	// 0750 on the data directory: it holds the master key, the secrets bucket
 	// and every certificate. 0750 on logs: workload output can carry anything a
 	// workload printed. 0755 on the config directory: kanea.hcl is policy, not
-	// a secret, and no example file is written — the default is that the
+	// a secret, and no example file is written; the default is that the
 	// server config does not exist (PRD §15.1).
 	for _, dir := range []struct {
 		path string
@@ -273,7 +273,7 @@ func createLayout(o *out, dataDir, logDir, confDir string) error {
 // keyCeremony generates and escrows the master key (PRD §15.3).
 //
 // The ceremony exists because of one asymmetry: losing this key costs every
-// secret and every backup, and there is no recovery path at all — while the
+// secret and every backup, and there is no recovery path at all, while the
 // cost of writing it down is thirty seconds. Left to a warning in a log nobody
 // reads, that trade gets made the wrong way, every time, and the consequence
 // arrives months later during an incident.
@@ -282,14 +282,14 @@ func createLayout(o *out, dataDir, logDir, confDir string) error {
 // prompt: the point is to prove they actually recorded it, and "press y to
 // confirm you have done a thing" proves nothing.
 //
-// The reader is the caller's shared stdin reader — the ceremony must not wrap
+// The reader is the caller's shared stdin reader: the ceremony must not wrap
 // os.Stdin itself, because a private bufio.Reader buffers ahead and would
 // swallow the lines a later prompt (the first admin's, v1.45) is waiting for.
 func keyCeremony(o *out, path string, reader *bufio.Reader) error {
 	if _, err := os.Stat(path); err == nil {
 		// Never regenerated. A second key would leave every existing secret and
 		// every existing archive unreadable, silently.
-		o.printf("Master key already present at %s — leaving it alone.\n", path)
+		o.printf("Master key already present at %s; leaving it alone.\n", path)
 		o.println("  If you have not backed it up, do that now: without it every")
 		o.println("  stored secret and every encrypted backup is unrecoverable.")
 		return nil
@@ -305,7 +305,7 @@ func keyCeremony(o *out, path string, reader *bufio.Reader) error {
 
 	o.println()
 	o.println("═══════════════════════════════════════════════════════════════════")
-	o.println("  MASTER KEY — write this down now. It is shown once.")
+	o.println("  MASTER KEY: write this down now. It is shown once.")
 	o.println()
 	o.printf("      %s\n", encoded)
 	o.println()
@@ -329,7 +329,7 @@ func keyCeremony(o *out, path string, reader *bufio.Reader) error {
 	if !matched {
 		// The key is discarded rather than written. An operator who could not
 		// type it back does not have it, and writing it anyway would produce
-		// exactly the situation this ceremony exists to prevent — with the
+		// exactly the situation this ceremony exists to prevent, with the
 		// added insult of having asked.
 		return errors.New("that does not match; nothing was written. " +
 			"Re-run `kanea init` when you have somewhere to put the key")
@@ -340,7 +340,7 @@ func keyCeremony(o *out, path string, reader *bufio.Reader) error {
 	}
 	// O_EXCL: the check above is not a lock, and two inits racing must not each
 	// think they wrote the key.
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 — operator input
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304; operator input
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
@@ -363,7 +363,7 @@ func keyCeremony(o *out, path string, reader *bufio.Reader) error {
 	}
 	o.println()
 	o.printf("Master key written to %s (mode 0600).\n", path)
-	o.printf("Its backup fingerprint is %s — every archive manifest carries this,\n", keys.ID)
+	o.printf("Its backup fingerprint is %s: every archive manifest carries this,\n", keys.ID)
 	o.println("so you can tell which key an archive needs without decrypting it.")
 	return nil
 }
@@ -406,14 +406,14 @@ func runDoctor(args []string) error {
 	containerdSocket := fset.String("containerd", runtime.DefaultSocket, "containerd socket")
 	buildkitSocket := fset.String("buildkit", gitops.DefaultBuildkitSocket, "buildkitd address")
 	prefix := fset.String("prefix", provision.DefaultPrefix, "component install prefix")
-	// Exactly one check reaches the network — whether component artefacts are
+	// Exactly one check reaches the network; whether component artefacts are
 	// fetchable, which is what tells an operator if an upgrade needs a bundle
 	// carried in. On an air-gapped node the answer is known and the probe is
 	// just a five-second wait, and a `doctor` that pauses on every run is a
 	// `doctor` that stops being run.
 	offline := fset.Bool("offline", false, "skip the upstream reachability probe (air-gapped nodes)")
 	// The two halves of the overlap check. They live on different commands in
-	// real life — one at install, one on kanead — so doctor has to be told
+	// real life (one at install, one on kanead) so doctor has to be told
 	// both to notice a collision neither side can see alone.
 	docNodeCIDR := fset.String("node-cidr", provision.DefaultNodeCIDR, "this node's container subnet")
 	docClusterCIDR := fset.String("cluster-cidr", provision.DefaultClusterCIDR, "the native routing CIDR")
@@ -427,7 +427,7 @@ func runDoctor(args []string) error {
 	}
 
 	o := newOut()
-	o.printf("kanea doctor — %s\n\n", version)
+	o.printf("kanea doctor; %s\n\n", version)
 	ok := renderChecks(o, preflight(preflightOptions{
 		dataDir: *dataDir, containerdSocket: *containerdSocket,
 		networkMode:    *networkMode,

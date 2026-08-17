@@ -6,7 +6,7 @@
 *.out
 coverage.*
 # Anchored: an unanchored `dist/` matches every directory of that name, and git
-# cannot re-include a file inside an excluded *directory* — which silently
+# cannot re-include a file inside an excluded *directory*, which silently
 # dropped the committed placeholder internal/dashboard needs to compile.
 /dist/
 # Locally-built spike binaries. The spike *sources* are committed as the M0
@@ -32,7 +32,7 @@ dashboard/dist/
 internal/dashboard/dist/*
 !internal/dashboard/dist/placeholder.html
 
-# Secrets & env — never commit (gitleaks enforces)
+# Secrets & env, never commit (gitleaks enforces)
 .env
 .env.*
 *.key

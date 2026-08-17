@@ -9,7 +9,7 @@ import (
 )
 
 // The zero value permits nothing. A host volume must do nothing at all until an
-// operator has named a directory — the driver being available is not consent.
+// operator has named a directory: the driver being available is not consent.
 func TestHostPathPolicyIsClosedByDefault(t *testing.T) {
 	var policy HostPathPolicy
 
@@ -96,7 +96,7 @@ func TestHostPathPolicyFollowsSymlinksBeforeChecking(t *testing.T) {
 }
 
 // Creating the directory on demand turns a typo into a volume that is silently
-// empty — the failure PRD §8 spends most of its words on.
+// empty: the failure PRD §8 spends most of its words on.
 func TestHostPathPolicyRefusesAMissingDirectory(t *testing.T) {
 	root := t.TempDir()
 	policy, err := NewHostPathPolicy([]string{root})
@@ -117,8 +117,8 @@ func TestHostPathPolicyRefusesAMissingDirectory(t *testing.T) {
 	}
 }
 
-// Bind-mounting a socket — /run/containerd/containerd.sock being the one that
-// matters — is a full node takeover, so only directories are accepted.
+// Bind-mounting a socket (/run/containerd/containerd.sock being the one that
+// matters) is a full node takeover, so only directories are accepted.
 func TestHostPathPolicyRefusesNonDirectories(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "containerd.sock")
@@ -239,7 +239,7 @@ func TestResolveOrCreateRefusesOutsideThePrefixWithoutCreating(t *testing.T) {
 }
 
 // A symlinked ancestor pointing out of the allowlist is the escape the
-// resolution order exists to close — and it has to be closed on the create
+// resolution order exists to close, and it has to be closed on the create
 // path too, where the target itself cannot be resolved because it is absent.
 func TestResolveOrCreateRefusesASymlinkedAncestor(t *testing.T) {
 	root := t.TempDir()

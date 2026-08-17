@@ -9,7 +9,7 @@ import (
 // "start from nothing". It is stored in Desired.Capabilities exactly as
 // declared (jobspec canonicalizes it to this lowercase form), because
 // declaring it changes what runs and must therefore change the spec hash.
-// It never reaches an AllocSpec — effectiveCapabilities strips it, and the
+// It never reaches an AllocSpec: effectiveCapabilities strips it, and the
 // runtime driver refuses any non-CAP_ token as a second line of defence,
 // since runc fails the whole task on an unknown capability name.
 const CapabilityNone = "none"
@@ -40,13 +40,13 @@ var BaselineCapabilities = []string{
 //
 // This is projection-time on purpose, and the placement is load-bearing (the
 // R23 lesson): Desired.Capabilities is SpecHash material, so writing the
-// baseline into the record would re-hash — and roll — every capability-less
+// baseline into the record would re-hash (and roll) every capability-less
 // service on the node the moment kanead was upgraded. Applied here, an
 // existing alloc keeps the set it was created with until its next roll, and
 // the baseline arrives with the next deploy.
 //
 // A non-default runtime passes through verbatim: R25 gives a function's spec
-// no way to declare capabilities, so its list is empty and stays empty — and
+// no way to declare capabilities, so its list is empty and stays empty, and
 // a hand-crafted record that somehow carries one is preserved for the
 // generate layer to refuse by name rather than silently swallowed here.
 func effectiveCapabilities(d Desired) []string {

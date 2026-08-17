@@ -34,7 +34,7 @@ const (
 
 	hubbleMetricsURL = "http://127.0.0.1:9965/metrics"
 
-	// Service frontend ("ClusterIP") — deliberately outside the endpoint
+	// Service frontend ("ClusterIP"): deliberately outside the endpoint
 	// allocation CIDR (10.200.1.0/24), like Kanea's future service CIDR.
 	serviceVIP  = "10.201.0.1"
 	servicePort = 80

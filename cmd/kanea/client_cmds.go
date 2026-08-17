@@ -35,7 +35,7 @@ func socketFlag(fs *flag.FlagSet) *string {
 // one-service spec from the --image/--name/--project flags. PRD §6 calls the
 // image-only path first-class: `kanea run --image=nginx --name web` must work
 // with no file at all. Selectors (PRD v1.57) narrow the converted desired
-// state to a project or a service — after parsing and validation, so the
+// state to a project or a service: after parsing and validation, so the
 // filter can never change what the spec means, only how much of it is sent.
 func loadSpec(
 	files []string, sels []selector, image, name, project string, count int,
@@ -54,7 +54,7 @@ func loadSpec(
 			Service: name,
 			Count:   count,
 			Image:   image,
-			// CPU and memory stay zero — unbounded, like a spec with no
+			// CPU and memory stay zero; unbounded, like a spec with no
 			// resources block (R11, v1.58). Pids keeps its cap everywhere.
 			Resources: runtime.Resources{PidsLimit: DefaultPidsLimit},
 		}}, nil, nil
@@ -75,7 +75,7 @@ func loadSpec(
 			return nil, nil, werr
 		}
 		// An unknown variable after a failed vars fetch may just be the
-		// daemon being unreachable — say so instead of leaving the two
+		// daemon being unreachable: say so instead of leaving the two
 		// failures indistinguishable (R30).
 		if nodeVars.err != nil && hasUnknownVariable(diags) {
 			fmt.Fprintf(os.Stderr,
@@ -100,15 +100,15 @@ func loadSpec(
 
 // nodeVarsResult is a best-effort GET /v1/vars: the map when the daemon
 // answered, the error when it did not. A fetch failure is never fatal on its
-// own — a spec whose variables all resolve locally parses exactly as offline
-// as it did before v1.63 — but it is remembered, so an unknown-variable
+// own: a spec whose variables all resolve locally parses exactly as offline
+// as it did before v1.63, but it is remembered, so an unknown-variable
 // diagnostic can say the defaults were missing rather than wrong.
 type nodeVarsResult struct {
 	vars map[string]string
 	err  error
 }
 
-// fetchNodeVars reads the node's shared variables (R30), best-effort — the
+// fetchNodeVars reads the node's shared variables (R30), best-effort; the
 // checkPublishedPorts discipline: an older daemon without the route, or no
 // daemon at all, degrades the parse rather than failing it.
 func fetchNodeVars(ctx context.Context, client *api.Client) nodeVarsResult {
@@ -117,7 +117,7 @@ func fetchNodeVars(ctx context.Context, client *api.Client) nodeVarsResult {
 }
 
 // hasUnknownVariable reports whether any diagnostic is HCL's unknown-variable
-// error — the one a missing node default presents as.
+// error: the one a missing node default presents as.
 func hasUnknownVariable(diags hcl.Diagnostics) bool {
 	for _, d := range diags {
 		if d.Summary == "Unknown variable" {
@@ -197,7 +197,7 @@ func runRun(args []string) error {
 // waitForRunning polls until every desired alloc is running, so `kanea run`
 // exits meaning "it is up" rather than "it was requested". Progress is
 // reported as state transitions, and on failure or timeout the stragglers are
-// listed by name with the detail `kanea ps` would give — the answer the user
+// listed by name with the detail `kanea ps` would give: the answer the user
 // would otherwise have to go fetch.
 func waitForRunning(ctx context.Context, client *api.Client, desired []reconciler.Desired, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
@@ -264,7 +264,7 @@ func waitForRunning(ctx context.Context, client *api.Client, desired []reconcile
 }
 
 // printStragglers lists every desired slot that is not up, with the state
-// detail `kanea ps` would show — including declared slots the reconciler has
+// detail `kanea ps` would show: including declared slots the reconciler has
 // not created yet, which have no record to explain themselves with.
 func printStragglers(o *out, desired []reconciler.Desired, allocs []reconciler.AllocRecord) {
 	byID := map[string]reconciler.AllocRecord{}
@@ -420,8 +420,8 @@ func runPs(args []string) error {
 }
 
 // allocStateLabel renders an alloc's state with the detail a status line
-// needs: a failed or backing-off alloc must explain itself — `ps` and the
-// `run` wait are where a user looks first when something is not running —
+// needs: a failed or backing-off alloc must explain itself; `ps` and the
+// `run` wait are where a user looks first when something is not running;
 // and a running-but-failing alloc is the case that most needs distinguishing:
 // the process is up, so "running" alone is misleading, and it is why anything
 // depending on it has not started.
@@ -446,7 +446,7 @@ type psGhost struct {
 }
 
 // declaredButAbsent derives the -a rows: a service scaled to zero is one
-// "stopped" row, and a declared slot with no record is "pending" — the
+// "stopped" row, and a declared slot with no record is "pending"; the
 // reconciler simply has not created it yet.
 func declaredButAbsent(
 	services []reconciler.Desired, allocs []reconciler.AllocRecord,
@@ -589,13 +589,13 @@ func runStatus(args []string) error {
 	if unhealthy == 0 {
 		tail.println("All services healthy.")
 	} else {
-		tail.printf("%d service(s) need attention — see `kanea ps` and `kanea logs <service>`.\n", unhealthy)
+		tail.printf("%d service(s) need attention: see `kanea ps` and `kanea logs <service>`.\n", unhealthy)
 	}
 	return tail.Err()
 }
 
 // visibleServices narrows the status table to a project, a single service, or
-// neither. It filters what is *displayed* only — the caller keeps the full
+// neither. It filters what is *displayed* only: the caller keeps the full
 // list for the dependency reasoning, because "waiting for db" is an answer a
 // scoped view still owes even when db's own row is not shown.
 func visibleServices(services []reconciler.Desired, project, service string) []reconciler.Desired {
@@ -615,7 +615,7 @@ func visibleServices(services []reconciler.Desired, project, service string) []r
 // tallyAllocs groups alloc records by service and by state.
 //
 // Shared by the table and the --json form so the two cannot disagree about
-// whether a service is healthy — which is exactly the sort of drift a second
+// whether a service is healthy, which is exactly the sort of drift a second
 // copy of this loop would introduce.
 func tallyAllocs(allocs []reconciler.AllocRecord) map[string]*tally {
 	counts := map[string]*tally{}
@@ -706,7 +706,7 @@ func printTraffic(ctx context.Context, client *api.Client,
 // it under a million 200s.
 func formatCodes(codes map[string]float64) string {
 	if len(codes) == 0 {
-		return "—"
+		return "-"
 	}
 	keys := make([]string, 0, len(codes))
 	for code := range codes {
@@ -804,7 +804,7 @@ func writeStatusJSON(ctx context.Context, client *api.Client, health api.Health,
 
 // serviceHealth summarises one service for `kanea status`, and reports whether
 // it has settled. "Settled" means running exactly matches desired with nothing
-// failed or restarting — running *more* than desired is mid-convergence (a
+// failed or restarting: running *more* than desired is mid-convergence (a
 // scale-in or a stop still draining), not health.
 func serviceHealth(desiredCount, running, backoff, failed, unhealthy int) (string, bool) {
 	switch {
@@ -855,8 +855,8 @@ func runLogs(args []string) error {
 	client := api.NewClient(*socket)
 
 	// A service name resolves like every other service-targeting command
-	// (v1.56): `media/plex` used to be passed through as a literal — a name
-	// no service can have — and matched nothing.
+	// (v1.56): `media/plex` used to be passed through as a literal (a name
+	// no service can have) and matched nothing.
 	proj := *project
 	if service != "" {
 		services, err := client.Services(ctx)
@@ -923,7 +923,7 @@ func runStop(args []string) error {
 	return o.Err()
 }
 
-// runStart implements `kanea start`: scale a stopped service back up — stop's
+// runStart implements `kanea start`: scale a stopped service back up; stop's
 // counterpart, through the same scale route. The daemon does not remember the
 // pre-stop count (a stopped record says zero, PRD v1.54), so the default is
 // one replica; and a service already running is left exactly as it is,
@@ -993,7 +993,7 @@ func runStart(args []string) error {
 }
 
 // runRestart implements `kanea restart`: ask the server to bump the service's
-// generation, which rolls its allocs through the update policy — the same
+// generation, which rolls its allocs through the update policy; the same
 // route the dashboard and MCP's restart_service have always used. It is also
 // the way out of an exhausted restart budget: the bump is a new spec hash,
 // and R29 ties the crash-restart count to the hash that spent it.
@@ -1080,7 +1080,7 @@ func runScale(args []string) error {
 // findService resolves a service name, requiring --project only when the name
 // is ambiguous across projects. The documented `project/service` form (PRD
 // §16.2: `kanea stop shop/web`) is resolved here, so every command that looks
-// a service up accepts it — a service name is a DNS-1123 label and can never
+// a service up accepts it; a service name is a DNS-1123 label and can never
 // contain a slash, so the split is unambiguous.
 func findService(services []reconciler.Desired, project, name string) (reconciler.Desired, error) {
 	if p, s, ok := strings.Cut(name, "/"); ok {
@@ -1120,7 +1120,7 @@ func findService(services []reconciler.Desired, project, name string) (reconcile
 }
 
 // out is the CLI's stdout writer. It records the first write error so a command
-// can report it once at the end rather than checking every call — the usual
+// can report it once at the end rather than checking every call: the usual
 // cause is a closed pipe (`kanea ps | head`), and the repo's lint policy
 // (errcheck check-blank) rightly refuses to let those be discarded silently.
 type out struct {

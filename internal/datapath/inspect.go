@@ -11,7 +11,7 @@ import (
 
 // Attachments lists every attachment the datapath owns, keyed by alloc id.
 //
-// This is the authoritative source of alloc IPs — a live query, never
+// This is the authoritative source of alloc IPs: a live query, never
 // something the Store remembers (constraint #9). It is also what the reaper
 // deletes from, so the filter is the safety property: an interface is reported
 // only when it carries both ownership marks, the "kn" name prefix AND an alias

@@ -13,8 +13,8 @@ import (
 
 // DNSSolver publishes a DNS-01 challenge record.
 //
-// The shape matches lego's provider interface — no context, because lego's does
-// not have one — and it is deliberately the same two calls as the HTTP-01
+// The shape matches lego's provider interface (no context, because lego's does
+// not have one) and it is deliberately the same two calls as the HTTP-01
 // Solver: publish, then withdraw.
 type DNSSolver interface {
 	Present(domain, token, keyAuth string) error
@@ -25,7 +25,7 @@ type DNSSolver interface {
 //
 // RFC 2136 rather than a hosted provider's SDK: it is what BIND, Knot and
 // PowerDNS all speak, it needs no vendor library, and the TSIG signing is in
-// miekg/dns — which Kanea already carries for its own resolver (§7.1). lego's
+// miekg/dns, which Kanea already carries for its own resolver (§7.1). lego's
 // own rfc2136 provider would have worked and pulls in a Kerberos stack for the
 // GSS-TSIG case Kanea does not use; a hundred lines here costs less than that
 // dependency tail. Hosted providers are a curated list to be added one at a
@@ -124,7 +124,7 @@ func (s *RFC2136Solver) Present(domain, _, keyAuth string) error {
 //
 // A failure here is reported but is not fatal to issuance: the certificate is
 // already obtained by this point, and a stale challenge record is untidy rather
-// than dangerous — it authorises nothing on its own.
+// than dangerous; it authorises nothing on its own.
 func (s *RFC2136Solver) CleanUp(domain, _, keyAuth string) error {
 	name, value := challengeRecord(domain, keyAuth)
 	record, err := s.txtRecord(name, value)
@@ -193,7 +193,7 @@ func (s *RFC2136Solver) zoneFor(name string) string {
 	}
 	// Without a configured zone, assume the challenge name's parent: for
 	// `_acme-challenge.web.shop.example.com.` that is `web.shop.example.com.`,
-	// which is right when each name is its own zone and wrong otherwise —
+	// which is right when each name is its own zone and wrong otherwise;
 	// hence the configuration option, and hence this being the fallback.
 	if _, after, found := strings.Cut(name, "."); found {
 		return dns.Fqdn(after)
@@ -205,7 +205,7 @@ func (s *RFC2136Solver) zoneFor(name string) string {
 //
 // Both come from lego rather than being recomputed here: the value is a
 // specific digest of the key authorization, and the name follows any CNAME the
-// operator has delegated the challenge through — a common setup, and one that
+// operator has delegated the challenge through; a common setup, and one that
 // silently fails if the record is published at the un-followed name.
 //
 // Wildcards land in the same place: the challenge for `*.shop.example.com` is
@@ -213,7 +213,7 @@ func (s *RFC2136Solver) zoneFor(name string) string {
 // name, which is why a wildcard and its parent share one authorization.
 func challengeRecord(domain, keyAuth string) (name, value string) {
 	// The star is stripped here rather than trusted to be absent. A CA strips
-	// it before it names the authorization, so lego never passes one — but a
+	// it before it names the authorization, so lego never passes one, but a
 	// solver that would publish `_acme-challenge.*.shop.example.com` if it did
 	// is one wrong caller away from writing a record no resolver serves and no
 	// validation finds.

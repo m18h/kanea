@@ -4,8 +4,8 @@ package reconciler
 // the verifier material the edge is handed.
 //
 // This runs in the reconciler because the reconciler already holds the two
-// things the projection needs — the desired-state view and the secret
-// resolver — and because the shape mirrors syncEdgeRoutes exactly: derived
+// things the projection needs (the desired-state view and the secret
+// resolver) and because the shape mirrors syncEdgeRoutes exactly: derived
 // state, rebuilt every pass, deduplicated at the write. What leaves here is
 // deliberately less than what was resolved: bcrypt lines pass through as the
 // verifier material they are, bearer tokens are reduced to SHA-256 hashes,
@@ -33,14 +33,14 @@ type AuthSink interface {
 //
 // The publisher that receives the material is built after the reconciler in
 // cmd/kanea (it needs the ACME plumbing), so this is set once, before Run
-// starts a reconcile pass — the same before-Run window the certificate loop
+// starts a reconcile pass: the same before-Run window the certificate loop
 // is wired in. Not in Config only because of that ordering.
 func (r *Reconciler) SetAuthSink(sink AuthSink) { r.authSink = sink }
 
 // syncEdgeAuth publishes the R27 verifier material for every authenticated
 // route.
 //
-// A reference that fails to resolve — or material that fails validation —
+// A reference that fails to resolve, or material that fails validation;
 // skips the entry with the reason logged: the route stays marked in
 // routes.json, and marked-without-material is a 503 at the edge. Fail closed
 // costs an outage on the one service that is misconfigured; fail open would
@@ -75,7 +75,7 @@ func (r *Reconciler) buildAuthEntries(ctx context.Context, w World) []edge.AuthE
 
 // serviceAuth is the service's one auth config: the first route that declares
 // one stands for all of them, because R16 (v1.50) refuses blocks that
-// disagree — the verifier bundle is keyed per service (v1.40's invariant).
+// disagree; the verifier bundle is keyed per service (v1.40's invariant).
 func serviceAuth(d Desired) *AuthPolicy {
 	for _, e := range d.AllExposes() {
 		if e.Auth != nil {
@@ -98,7 +98,7 @@ func (r *Reconciler) resolveAuthEntry(ctx context.Context, d Desired, a *AuthPol
 		for _, line := range nonEmptyLines(string(raw)) {
 			// bcrypt only (R27): a plaintext password in the "hash" secret is
 			// a credential pretending to be verifier material, and publishing
-			// it — even to a 0640 file — would make the mistake durable.
+			// it (even to a 0640 file) would make the mistake durable.
 			if _, hash, ok := strings.Cut(line, ":"); !ok || !strings.HasPrefix(hash, "$2") {
 				return entry, errAuthNotBcrypt
 			}

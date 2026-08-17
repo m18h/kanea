@@ -44,7 +44,7 @@ func TestDeclaredButAbsentDerivesTheGhostRows(t *testing.T) {
 }
 
 // Health renders absent as absent (§9.2): a check-free service must read "-",
-// never "failing" — AllocRecord.Healthy is only ever written by a probe.
+// never "failing"; AllocRecord.Healthy is only ever written by a probe.
 func TestDescribeAllocsRendersUnprobedHealthAsAbsent(t *testing.T) {
 	var b strings.Builder
 	o := &out{w: &b}
@@ -97,7 +97,7 @@ func TestAllocReasonRendersTheTerminationCause(t *testing.T) {
 				LastExitReason:  reconciler.ExitOOMKilled,
 				LastExitMessage: "exceeded its 256 MiB memory limit",
 			},
-			want: "OOMKilled — exceeded its 256 MiB memory limit",
+			want: "OOMKilled: exceeded its 256 MiB memory limit",
 		},
 		{
 			name: "a start failure reads as one",
@@ -105,7 +105,7 @@ func TestAllocReasonRendersTheTerminationCause(t *testing.T) {
 				LastExitReason:  reconciler.ExitImageFailed,
 				LastExitMessage: "pull access denied",
 			},
-			want: "ImageFailed — pull access denied",
+			want: "ImageFailed: pull access denied",
 		},
 		{
 			// A record written before v1.68 has a code and no reason. It must
@@ -121,8 +121,8 @@ func TestAllocReasonRendersTheTerminationCause(t *testing.T) {
 			want:   "-",
 		},
 		{
-			// A reason this binary does not know about — a record written by a
-			// newer kanead — renders as itself rather than vanishing.
+			// A reason this binary does not know about (a record written by a
+			// newer kanead) renders as itself rather than vanishing.
 			name:   "an unknown reason renders verbatim",
 			record: reconciler.AllocRecord{LastExitReason: "evicted"},
 			want:   "evicted",
@@ -140,7 +140,7 @@ func TestAllocReasonRendersTheTerminationCause(t *testing.T) {
 
 // Every reason the reconciler can produce has a label here. A missing entry
 // falls back to the raw snake_case value, which is legible but not what the
-// column is for — and it is the kind of gap that only shows up on the one
+// column is for, and it is the kind of gap that only shows up on the one
 // failure nobody tested.
 func TestEveryExitReasonHasALabel(t *testing.T) {
 	all := []reconciler.ExitReason{

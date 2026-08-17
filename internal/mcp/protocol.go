@@ -18,7 +18,7 @@ const ProtocolVersion = "2025-06-18"
 
 // supportedVersions are the revisions a client may ask for and get. A client
 // that asks for something else is answered with ProtocolVersion and decides for
-// itself whether it can proceed — which is what the specification says to do,
+// itself whether it can proceed, which is what the specification says to do,
 // and is better than refusing a client that would have worked.
 var supportedVersions = map[string]bool{
 	"2025-06-18": true,
@@ -43,7 +43,7 @@ const (
 
 // JSON-RPC 2.0 error codes. The first five are the specification's; the MCP
 // layer adds none of its own, because a tool that ran and failed reports that
-// in its *result* rather than as a protocol error — see callResult.
+// in its *result* rather than as a protocol error: see callResult.
 const (
 	codeParseError     = -32700
 	codeInvalidRequest = -32600
@@ -55,7 +55,7 @@ const (
 // request is one incoming JSON-RPC message.
 //
 // ID is raw because JSON-RPC allows a string, a number or null, and a response
-// has to echo back exactly what it was sent — normalising it to a Go type would
+// has to echo back exactly what it was sent: normalising it to a Go type would
 // turn 1 into "1" for a client that cares.
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -136,7 +136,7 @@ type serverCapabilities struct {
 type toolsCapability struct{}
 
 // resourcesCapability likewise declares neither subscribe nor listChanged. A
-// resource's *contents* change constantly — that is what makes it a resource —
+// resource's *contents* change constantly: that is what makes it a resource;
 // but the list does not, and Kanea has a websocket for the live case.
 type resourcesCapability struct{}
 
@@ -166,7 +166,7 @@ type toolDescriptor struct {
 
 // hints are MCP's tool annotations: advisory statements about what a tool does,
 // which a client uses to decide what to confirm with a human. They are hints in
-// the strict sense — nothing here is enforcement, and the daemon does not read
+// the strict sense: nothing here is enforcement, and the daemon does not read
 // them.
 type hints struct {
 	Title           string `json:"title,omitempty"`
@@ -205,8 +205,8 @@ type callToolParams struct {
 
 // callToolResult is a tool's answer.
 //
-// IsError carries a *tool* failure — the platform said no, the service does not
-// exist — as a successful JSON-RPC response. That is the specification's design
+// IsError carries a *tool* failure (the platform said no, the service does not
+// exist) as a successful JSON-RPC response. That is the specification's design
 // and it is the right one: the model is the one that has to react to "you may
 // not do that", and a protocol-level error is handled by the client library
 // before the model ever sees it.

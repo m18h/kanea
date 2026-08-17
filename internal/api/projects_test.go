@@ -82,7 +82,7 @@ func TestRestartBumpsTheGenerationRatherThanTouchingContainers(t *testing.T) {
 func TestServicesListCarriesTheComputedSpecHash(t *testing.T) {
 	// The served hash is a projection (v1.64): computed per response, never
 	// stored. Beside the hash alloc records carry, it is what lets a client
-	// see a deploy in flight — so it must match the planner's own computation
+	// see a deploy in flight, so it must match the planner's own computation
 	// exactly, and it must move when a restart bumps the generation.
 	h := newHarness(t)
 	h.putService(t, "shop", "web", 2)
@@ -150,7 +150,7 @@ func TestApplyPreservesTheRestartGeneration(t *testing.T) {
 
 // The pinned digest belongs to the watcher, not to the file (§6.2 R19). An
 // apply that reset it would unpin the service, redeploy it onto its bare tag,
-// and re-pin on the next poll — two deploys of a service nobody changed.
+// and re-pin on the next poll: two deploys of a service nobody changed.
 func TestApplyPreservesTheAutoUpdatePin(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
@@ -182,7 +182,7 @@ func TestApplyPreservesTheAutoUpdatePin(t *testing.T) {
 }
 
 // Editing the declared tag is the operator saying which tag to follow. Carrying
-// the old pin over would leave the service running the previous tag's digest —
+// the old pin over would leave the service running the previous tag's digest:
 // the spec edited and ignored.
 func TestApplyDropsThePinWhenTheImageChanges(t *testing.T) {
 	ctx := context.Background()
@@ -249,7 +249,7 @@ func TestNodeStatsCountsWhatIsRunning(t *testing.T) {
 	if stats.Projects != 1 || stats.Services != 1 {
 		t.Errorf("projects/services = %d/%d, want 1/1", stats.Projects, stats.Services)
 	}
-	// Nothing has been reconciled, so nothing is running — and the field says
+	// Nothing has been reconciled, so nothing is running, and the field says
 	// zero rather than being absent, because zero running is a real answer.
 	if stats.Running != 0 {
 		t.Errorf("running = %d, want 0", stats.Running)

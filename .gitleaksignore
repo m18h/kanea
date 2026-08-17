@@ -1,7 +1,7 @@
 # Historical false positives, by fingerprint (commit:path:rule:line).
 #
 # gitleaks scans history, so a finding stays findable after the code is fixed.
-# Each entry here must say what the value was and why it was never a secret —
+# Each entry here must say what the value was and why it was never a secret:
 # an allowlist nobody can audit is worse than the finding it silences.
 
 # Two base64 TSIG secrets in the DNS-01 solver's tests. They were test-only

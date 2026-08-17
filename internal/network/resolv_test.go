@@ -22,7 +22,7 @@ func TestResolvConfFor(t *testing.T) {
 		t.Errorf("missing search list:\n%s", got)
 	}
 	// ndots:5 (the Kubernetes default) sends every dotted name through the
-	// whole search list first — four wasted round trips on api.github.com.
+	// whole search list first: four wasted round trips on api.github.com.
 	if !strings.Contains(got, "ndots:1") {
 		t.Errorf("want ndots:1:\n%s", got)
 	}
@@ -55,7 +55,7 @@ func TestWriteResolvConf(t *testing.T) {
 	// The file is bind-mounted into containers that may run as any uid, and it
 	// holds no secret.
 	if perm := info.Mode().Perm(); perm != 0o644 {
-		t.Errorf("mode = %o, want 644 — containers run as arbitrary uids", perm)
+		t.Errorf("mode = %o, want 644: containers run as arbitrary uids", perm)
 	}
 
 	raw, err := os.ReadFile(path)

@@ -37,7 +37,7 @@ func TestSecretsHaveNoReadRoute(t *testing.T) {
 	}
 }
 
-// A mistyped or removed API route must be a 404, not the SPA with 200 — a
+// A mistyped or removed API route must be a 404, not the SPA with 200: a
 // client would otherwise see success and fail to decode it somewhere else.
 func TestUnmatchedAPIRoutesAreNotTheDashboard(t *testing.T) {
 	h := newHarness(t, withSecrets)
@@ -101,8 +101,8 @@ func TestSecretsUnavailableWithoutAStore(t *testing.T) {
 	}
 }
 
-// The sync status surface (PRD §5.2.13): metadata only, and absent — with a
-// pointer at the flag — on a node with no providers configured.
+// The sync status surface (PRD §5.2.13): metadata only, and absent (with a
+// pointer at the flag) on a node with no providers configured.
 func TestSecretProvidersStatus(t *testing.T) {
 	status := []secretsource.ProviderStatus{{
 		Kind: secretsource.KindDoppler, Name: "ci", Mappings: 1,

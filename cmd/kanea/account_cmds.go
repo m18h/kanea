@@ -20,7 +20,7 @@ import (
 // runUser is `kanea user <add|ls|rm>`.
 //
 // Accounts live in the Store and are managed at runtime over the API (PRD
-// v1.18, §13.2), so this is a client command like every other — not an editor
+// v1.18, §13.2), so this is a client command like every other, not an editor
 // for a config stanza the daemon would have to be restarted to notice.
 func runUser(args []string) error {
 	if len(args) == 0 {
@@ -42,7 +42,7 @@ func runUser(args []string) error {
 //
 // The password is read from a terminal prompt or stdin, never from a flag:
 // argv is world-readable through /proc/<pid>/cmdline and lands in shell
-// history — the same reasoning that keeps secret values out of argv.
+// history; the same reasoning that keeps secret values out of argv.
 func runUserAdd(args []string) error {
 	fs := flag.NewFlagSet("user add", flag.ContinueOnError)
 	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
@@ -84,7 +84,7 @@ func runUserList(args []string) error {
 	if len(users) == 0 {
 		// Worth saying plainly: with no account, the API is socket-only (§13.1).
 		_, err := fmt.Fprintln(os.Stdout,
-			"no accounts — the API accepts only local socket callers until one exists")
+			"no accounts: the API accepts only local socket callers until one exists")
 		return err
 	}
 
@@ -166,7 +166,7 @@ func runTokenCreate(args []string) error {
 	}
 	if resp.Token.Expires.IsZero() {
 		if _, err := fmt.Fprintln(os.Stderr,
-			"warning: this token never expires — revoke it with `kanea token rm "+resp.Token.ID+"`"); err != nil {
+			"warning: this token never expires; revoke it with `kanea token rm "+resp.Token.ID+"`"); err != nil {
 			return err
 		}
 	}
@@ -239,7 +239,7 @@ func expiry(at time.Time) string {
 
 // readPassword prompts without echoing, or reads one line from a pipe.
 //
-// The pipe case is what makes `kanea user add` scriptable — CI needs it — and
+// The pipe case is what makes `kanea user add` scriptable (CI needs it) and
 // the terminal case is what keeps a password off the screen and out of the
 // scrollback of anyone typing it by hand. `kanea init` uses readPasswordFrom
 // instead: its prompts share one buffered reader, and a second reader over
@@ -257,8 +257,8 @@ func readPassword(prompt string) (string, error) {
 }
 
 // readPasswordFrom is readPassword for a caller that owns a shared stdin
-// reader. On a terminal the buffered reader is not involved — term.ReadPassword
-// works on the fd — so the two paths differ only in where a piped line comes
+// reader. On a terminal the buffered reader is not involved (term.ReadPassword
+// works on the fd) so the two paths differ only in where a piped line comes
 // from: the shared buffer, which may already hold it.
 func readPasswordFrom(reader *bufio.Reader, prompt string) (string, error) {
 	fd := int(os.Stdin.Fd())

@@ -15,7 +15,7 @@ import (
 // SMTP email (PRD §11).
 //
 // The one channel that is not HTTP, so the egress policy's dialer does not
-// apply — but the reasoning does, and the same address check runs before the
+// apply, but the reasoning does, and the same address check runs before the
 // connection. A mail server on 169.254.169.254 is no more legitimate a
 // destination than a webhook there.
 
@@ -64,8 +64,8 @@ func NewSMTP(ctx context.Context, cfg SMTPConfig, secrets Resolver) (*SMTPChanne
 		return nil, errors.New("notify: an smtp channel needs at least one recipient")
 	}
 	// Addresses are validated here rather than at send time. A malformed one is
-	// a configuration mistake, and finding it on the first alert — which is by
-	// definition when something else is already wrong — is the worst moment.
+	// a configuration mistake, and finding it on the first alert (which is by
+	// definition when something else is already wrong) is the worst moment.
 	if err := validateAddresses(append([]string{cfg.From}, cfg.To...)); err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func NewSMTP(ctx context.Context, cfg SMTPConfig, secrets Resolver) (*SMTPChanne
 			return nil, fmt.Errorf("notify: resolve %s: %w", cfg.PasswordRef, err)
 		}
 		// PlainAuth refuses to send credentials over an unencrypted connection
-		// unless the server is localhost — a property of the stdlib worth
+		// unless the server is localhost; a property of the stdlib worth
 		// keeping rather than working around.
 		ch.auth = smtp.PlainAuth("", cfg.Username, strings.TrimSpace(string(password)), cfg.Host)
 	}
@@ -193,7 +193,7 @@ func (c *SMTPChannel) message(events []Event) []byte {
 	b.WriteString("\r\nSubject: ")
 	// Encoded, not merely stripped. A subject carries a service name and an
 	// error string, both of which can hold a newline, and a newline in a header
-	// is a second header — the classic SMTP header injection, which turns an
+	// is a second header: the classic SMTP header injection, which turns an
 	// alert into a way to add recipients (§14 A03).
 	b.WriteString(mime.QEncoding.Encode("utf-8", oneLine(title(events))))
 	b.WriteString("\r\nDate: ")

@@ -27,15 +27,15 @@ security releases: fixes ship in the next tag.
 
 ## Scope
 
-In scope — anything that crosses a boundary the platform claims to hold:
+In scope is anything that crosses a boundary the platform claims to hold:
 
 - Authentication or authorisation bypass on any API, websocket or MCP route
   (every one of them is deny-by-default; a route that is not is a bug).
-- Anything that reveals a secret value — over the API, the MCP server, the
-  dashboard, the audit log, or a log line.
+- Anything that reveals a secret value, whether over the API, the MCP server,
+  the dashboard, the audit log, or a log line.
 - Escaping a workload's isolation: capabilities, seccomp, namespaces, the cgroup
   ceiling, or a volume mount reaching outside its storage.
-- Crossing a project boundary — a spec, a synced repository, or a webhook that
+- Crossing a project boundary: a spec, a synced repository, or a webhook that
   reaches another project's services, secrets or network.
 - Breaking the release chain: the installer, the checksums, the Sigstore
   signature, or the archive encryption and its restore path.
@@ -43,8 +43,8 @@ In scope — anything that crosses a boundary the platform claims to hold:
 
 Out of scope:
 
-- Anything requiring an operator to already hold the master key or a root shell on
-  the node — that is the trust the design starts from.
+- Anything requiring an operator to already hold the master key or a root shell
+  on the node. That is the trust the design starts from.
 - Findings in containerd, BuildKit or the kernel. Report those upstream;
   tell us if Kanea's defaults make them materially worse.
 - Automated scanner output with no demonstrated impact.
@@ -53,5 +53,5 @@ Out of scope:
 
 [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) documents the boundaries, the
 adversaries considered, and the OWASP Top 10 mapping as built. Reading it first
-will tell you which assumptions are load-bearing — and a report that breaks one of
-them is exactly the report worth sending.
+will tell you which assumptions are load-bearing, and a report that breaks one
+of them is exactly the report worth sending.

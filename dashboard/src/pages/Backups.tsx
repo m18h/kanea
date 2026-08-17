@@ -26,13 +26,13 @@ type VerifyVerdict = { state: 'checking' } | { state: 'ok' } | { state: 'failed'
  *
  * The page leads with replication health rather than with the archive list,
  * because "when did this last succeed" is the number that decides whether a
- * backup strategy is real — and the one an operator normally does not have
+ * backup strategy is real, and the one an operator normally does not have
  * until the restore, at which point it is too late to be useful.
  *
  * Integrity is verify-on-demand: a verify decrypts and reads the whole
  * archive, so a column that auto-verified thirty of them on page load would be
  * a self-inflicted denial of service. The verdict is remembered for the
- * session, no longer — nothing persists it.
+ * session, no longer: nothing persists it.
  *
  * "Stage" writes a restore request the daemon acts on at its next start; an
  * in-place restore deliberately does not exist (§15.3). The offline path is
@@ -92,7 +92,7 @@ export function Backups() {
         <PageHeader title="Backups" />
         <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
           No backup destination is configured on this daemon. Its state exists only on
-          its own disk — a disk failure would lose all of it. Set{' '}
+          its own disk: a disk failure would lose all of it. Set{' '}
           <code className="font-mono text-xs">--backup-dir</code> or{' '}
           <code className="font-mono text-xs">--backup-s3</code>, then read{' '}
           <code className="font-mono text-xs">docs/DR_RUNBOOK.md</code>.
@@ -137,7 +137,7 @@ export function Backups() {
               (replication?.failures ?? 0) > 0
                 ? `${replication?.failures} failure(s)`
                 : stale
-                  ? 'stale — RPO target is five minutes'
+                  ? 'stale; RPO target is five minutes'
                   : `shipped to index ${replication?.shipped_to ?? 0}`
             }
           />
@@ -218,14 +218,14 @@ export function Backups() {
       {staged ? (
         <p className="rounded-md border border-status-warn/40 bg-status-warn/10 px-3 py-2 text-sm">
           <span className="font-mono">{staged}</span> is staged. Nothing has been restored
-          yet — the daemon performs it at its next start, before anything opens the Store.
+          yet: the daemon performs it at its next start, before anything opens the Store.
         </p>
       ) : null}
 
       <p className="text-xs text-muted-foreground">
         A staged restore is applied at the next daemon start. For an offline or
         disaster-recovery restore, use <code className="font-mono">kanea restore</code> at a
-        terminal — see <code className="font-mono">docs/DR_RUNBOOK.md</code>.
+        terminal: see <code className="font-mono">docs/DR_RUNBOOK.md</code>.
       </p>
     </section>
   )

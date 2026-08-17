@@ -1,6 +1,6 @@
 // Command spike is throwaway M0 validation code (PRD §20, spike ④).
 // It answers whether Kanea can build images on the node, inside containerd,
-// without a Docker daemon and without a privileged container — and which build
+// without a Docker daemon and without a privileged container, and which build
 // driver it should ship (PRD §10.2 defers that decision to this spike).
 //
 // Candidates: kaniko v1.24.0 (the PRD's incumbent, upstream ARCHIVED),

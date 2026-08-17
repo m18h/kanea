@@ -16,7 +16,7 @@ import (
 // There is deliberately **no read route**. Secrets are write-only over the API
 // (PRD §13.3, §16.3): an operator sets a value and sees that it exists, and
 // nothing outside the daemon can read one back. Enforced by the route not
-// existing rather than by a permission check that could be misconfigured — a
+// existing rather than by a permission check that could be misconfigured: a
 // missing handler cannot be granted to the wrong role.
 const PathSecrets = "/v1/secrets"
 

@@ -79,7 +79,7 @@ func (d *driver) mount() error {
 		return err
 	}
 	argv := d.args(d)
-	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204 — spike
+	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput() // #nosec G204; spike
 	if err != nil {
 		return fmt.Errorf("%s: %w (%s)", strings.Join(argv, " "), err, bytes.TrimSpace(out))
 	}
@@ -119,12 +119,12 @@ func (d *driver) path(elem ...string) string {
 	return filepath.Join(append([]string{d.Mount}, elem...)...)
 }
 
-// mc runs the MinIO client against the bucket — the "out of band" writer used to
+// mc runs the MinIO client against the bucket: the "out of band" writer used to
 // test whether a mount sees objects it did not create itself. The alias is
 // passed through the environment so the spike does not depend on whose $HOME
 // holds an `mc alias set` config (root's does not).
 func mc(args ...string) (string, error) {
-	cmd := exec.Command("mc", args...) // #nosec G204 — spike
+	cmd := exec.Command("mc", args...) // #nosec G204; spike
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("MC_HOST_kaneaspike=http://%s:%s@127.0.0.1:9000", accessKey, secretKey))
 	out, err := cmd.CombinedOutput()
@@ -145,7 +145,7 @@ func resetBucket() error {
 }
 
 func systemctl(action, unit string) error {
-	out, err := exec.Command("systemctl", action, unit).CombinedOutput() // #nosec G204 — spike
+	out, err := exec.Command("systemctl", action, unit).CombinedOutput() // #nosec G204; spike
 	if err != nil {
 		return fmt.Errorf("systemctl %s %s: %w (%s)", action, unit, err, bytes.TrimSpace(out))
 	}

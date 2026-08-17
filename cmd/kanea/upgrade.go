@@ -18,7 +18,7 @@ import (
 // Since v1.59 it fetches the release it is about to become: resolve latest
 // (or --version), verify sha256 + cosign-when-present against the signed
 // checksums.txt, and install atomically over its own path. The fetch is
-// idempotent — already at the target version means nothing to download — so
+// idempotent (already at the target version means nothing to download) so
 // the command is safe to run twice, which is what unblocked folding the two
 // halves together. --no-fetch keeps the pre-v1.59 behaviour for a node whose
 // binary a package manager owns.
@@ -28,7 +28,7 @@ import (
 // carrying traffic and it comes back in seconds; kanead goes last because it
 // is the thing that will migrate the schema, and a migration should happen
 // once every other moving part has already settled. Running allocs are
-// untouched throughout — that is what KillMode=process in the unit is for.
+// untouched throughout: that is what KillMode=process in the unit is for.
 // The orchestration runs under the old process image while the daemons
 // restart into the new one; if a future release changes the order, its own
 // release notes win.
@@ -126,7 +126,7 @@ func runUpgrade(args []string) error {
 			o.printf("  archive %s at index %d\n", manifest.ID, manifest.Index)
 		case isNotConfigured(err):
 			// Said clearly rather than swallowed. The schema migration takes its
-			// own local copy, so this is not fatal — but an operator upgrading a
+			// own local copy, so this is not fatal, but an operator upgrading a
 			// node with no backup destination should know that is what they are
 			// doing.
 			o.println("  no backup destination is configured on this daemon.")
@@ -169,14 +169,14 @@ func runUpgrade(args []string) error {
 	o.println("\nWaiting for the control plane…")
 	health, err := waitForDaemon(ctx, client, *timeout)
 	if err != nil {
-		return fmt.Errorf("%w — check `journalctl -u kanead`; if a schema migration "+
+		return fmt.Errorf("%w: check `journalctl -u kanead`; if a schema migration "+
 			"failed, its pre-migration copy is named in the log", err)
 	}
 	o.printf("kanead is up at %s\n", health.Version)
 
 	o.println()
 	o.println("Running allocs were not touched. If a schema migration ran, its")
-	o.println("pre-migration copy is in the data directory — delete it once this")
+	o.println("pre-migration copy is in the data directory: delete it once this")
 	o.println("upgrade is confirmed good.")
 	return o.Err()
 }
@@ -218,7 +218,7 @@ func isNotConfigured(err error) bool {
 	return errors.As(err, &status) && status.Status == 503
 }
 
-// runUI prints — and optionally opens — the dashboard URL.
+// runUI prints (and optionally opens) the dashboard URL.
 //
 // It prints by default rather than opening. `kanea ui` is most often run over
 // SSH on the node itself, where "open a browser" means either nothing or an
@@ -279,9 +279,9 @@ func openBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url) // #nosec G204 — a URL this process built
+		cmd = exec.Command("open", url) // #nosec G204; a URL this process built
 	case "linux":
-		cmd = exec.Command("xdg-open", url) // #nosec G204 — same
+		cmd = exec.Command("xdg-open", url) // #nosec G204; same
 	default:
 		return fmt.Errorf("cannot open a browser on %s; the URL is above", runtime.GOOS)
 	}

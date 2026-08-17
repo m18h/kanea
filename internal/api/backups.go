@@ -56,7 +56,7 @@ type RestoreRequest struct {
 type RestoreResponse struct {
 	Archive backup.Manifest `json:"archive"`
 	// Staged is always true: nothing has been restored yet. The field exists so
-	// a caller cannot read this response as "done" — the daemon has to restart,
+	// a caller cannot read this response as "done": the daemon has to restart,
 	// and that is the operator's decision, not this route's.
 	Staged  bool      `json:"staged"`
 	Message string    `json:"message"`
@@ -71,8 +71,8 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	}
 	manifests, err := s.backups.List(r.Context())
 	if errors.Is(err, backup.ErrNotConfigured) {
-		// The manager form of "no destination" (v1.46): the subsystem exists —
-		// it can be configured at runtime now — but nothing is behind it,
+		// The manager form of "no destination" (v1.46): the subsystem exists
+		// (it can be configured at runtime now) but nothing is behind it,
 		// which is the same 503 an absent one always answered.
 		writeError(w, http.StatusServiceUnavailable, err)
 		return
@@ -107,7 +107,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Bounded independently of the request. A snapshot copies the whole
-	// database and a client that hangs up must not cancel it half-written —
+	// database and a client that hangs up must not cancel it half-written:
 	// though the archive would be invisible either way, since the manifest is
 	// what makes it real.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), backupTimeout)
@@ -146,7 +146,7 @@ func (s *Server) handleVerifyBackup(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusNotFound
 		case errors.Is(err, backup.ErrCorrupt):
 			// The archive is intact or it is not, and a damaged one is not this
-			// server's error to report as a 500 — it is a fact about the bucket
+			// server's error to report as a 500; it is a fact about the bucket
 			// that the caller asked for.
 			status = http.StatusUnprocessableEntity
 		}
@@ -158,9 +158,9 @@ func (s *Server) handleVerifyBackup(w http.ResponseWriter, r *http.Request) {
 
 // handleRestore stages a restore for the next start.
 //
-// It does not restore. §15.3 puts a restore on a stopped node — the daemon
+// It does not restore. §15.3 puts a restore on a stopped node: the daemon
 // holds the database open, and swapping it under a running reconciler is not
-// something to attempt — so this verifies the archive, writes the request, and
+// something to attempt, so this verifies the archive, writes the request, and
 // says plainly that a restart is what applies it.
 func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 	if s.backups == nil {

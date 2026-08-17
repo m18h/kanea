@@ -69,7 +69,7 @@ func (f Filter) Floor() Severity { return f.floor }
 //
 // One table, one matcher. Two implementations of "is this a known event" drift,
 // and the way they drift is that a spec passes `kanea plan` and then matches
-// nothing at runtime — which is the silent-channel failure this all exists to
+// nothing at runtime, which is the silent-channel failure this all exists to
 // prevent.
 func ValidatePattern(p string) error { return validatePattern(p) }
 
@@ -77,7 +77,7 @@ func ValidatePattern(p string) error { return validatePattern(p) }
 //
 // Checked at configuration time, in front of the person who wrote it. A pattern
 // with a typo silently matches nothing, and a notification channel that is
-// silent looks exactly like a system with nothing to report — which is the one
+// silent looks exactly like a system with nothing to report, which is the one
 // failure this whole subsystem exists to prevent.
 func validatePattern(p string) error {
 	if p == "*" {

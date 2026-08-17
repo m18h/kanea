@@ -59,7 +59,7 @@ func runCAShow(args []string) error {
 		// 0644: a CA certificate is presented in every handshake to every
 		// client that trusts it. It is not secret, and making it unreadable
 		// would only obstruct the one thing it exists for.
-		if err := os.WriteFile(*out, pem, 0o644); err != nil { // #nosec G306 — a public certificate
+		if err := os.WriteFile(*out, pem, 0o644); err != nil { // #nosec G306; a public certificate
 			return fmt.Errorf("write %s: %w", *out, err)
 		}
 		if _, err := fmt.Fprintf(os.Stderr, "Wrote %s\n", *out); err != nil {
@@ -129,7 +129,7 @@ func runCAInfo(args []string) error {
 	for _, line := range []string{
 		"Subject:     " + info.Subject,
 		// SHA-256, colon-separated and upper case, because that is the form a
-		// device's trust dialog shows — comparing the two by eye is the only
+		// device's trust dialog shows; comparing the two by eye is the only
 		// verification an operator can actually perform.
 		"Fingerprint: " + info.Fingerprint,
 		"Valid from:  " + info.NotBefore.Format(time.DateOnly),

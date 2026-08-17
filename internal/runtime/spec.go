@@ -70,7 +70,7 @@ func (s AllocSpec) Validate() error {
 	// runc refuses an unknown capability name at task create, which fails
 	// every alloc of the service with an error nobody can attribute. The
 	// reconciler's projection strips jobspec's "none" token and only ever
-	// emits real names — this catches the caller that forgot to project.
+	// emits real names: this catches the caller that forgot to project.
 	for _, c := range s.Capabilities {
 		if !strings.HasPrefix(c, "CAP_") {
 			return fmt.Errorf("%w: alloc %s capability %q is not a capability name; "+
@@ -90,7 +90,7 @@ func (s AllocSpec) Validate() error {
 				ErrInvalidSpec, s.ID, d.Path)
 		}
 		// A device with no permissions is a node the container can see and
-		// cannot open — almost certainly a caller that forgot the field rather
+		// cannot open; almost certainly a caller that forgot the field rather
 		// than an operator who meant it.
 		if d.Perms == "" {
 			return fmt.Errorf("%w: alloc %s device %q has no cgroup permissions",
@@ -145,12 +145,12 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 		}
 
 		// Drop ALL capabilities, then grant back exactly what the spec
-		// carries. The driver has no default of its own: the R13 baseline —
-		// and the union with a service's declared grants — is the
+		// carries. The driver has no default of its own: the R13 baseline
+		// (and the union with a service's declared grants) is the
 		// reconciler's projection (effectiveCapabilities), so what arrives
 		// here is already the effective, validated set.
 		//
-		// Bounding, effective and permitted — never inheritable or ambient: a
+		// Bounding, effective and permitted, never inheritable or ambient: a
 		// granted capability must not survive into a child that re-execs, which
 		// is how a capability turns into a persistent foothold.
 		granted := append([]string(nil), spec.Capabilities...)
@@ -165,7 +165,7 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 		s.Process.NoNewPrivileges = true
 
 		// Run as the declared uid/gid (PRD §6.2 R23), overriding the image's
-		// USER — this runs after oci.WithImageConfig, which is what makes the
+		// USER: this runs after oci.WithImageConfig, which is what makes the
 		// override work. A nil user leaves the image's own choice alone; it is
 		// not a request to run as root.
 		//
@@ -187,7 +187,7 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 
 		// Per-alloc PID and IPC namespaces: one alloc must not see or signal
 		// another's processes, nor share its shared memory. The cgroup namespace
-		// matters twice over — it hides the host's cgroup tree, and it puts the
+		// matters twice over: it hides the host's cgroup tree, and it puts the
 		// alloc's own cgroup at /sys/fs/cgroup, which is where a workload (and
 		// any runtime that reads its own limits) expects to find it.
 		s.Linux.Namespaces = ensureNamespaces(s.Linux.Namespaces,
@@ -208,7 +208,7 @@ func withHardening(spec AllocSpec) oci.SpecOpts {
 		s.Linux.ReadonlyPaths = readonlyPaths()
 
 		// containerd's default spec leaves /sys/fs/cgroup unmounted, so a
-		// workload cannot read its own limits — and container-aware runtimes
+		// workload cannot read its own limits, and container-aware runtimes
 		// (JVM, Node, Go's GOMEMLIMIT tooling) size themselves from exactly
 		// that. Mount it read-only: with the cgroup namespace above, the alloc
 		// sees its own cgroup at the root and cannot rewrite its limits.
@@ -229,7 +229,7 @@ func withResources(spec AllocSpec) oci.SpecOpts {
 			s.Linux.Resources = &specs.LinuxResources{}
 		}
 
-		// A zero limit is unbounded (R11, v1.58): no memory.max, no cpu.max —
+		// A zero limit is unbounded (R11, v1.58): no memory.max, no cpu.max;
 		// the workload parent cgroup is the ceiling. Swap is capped to the
 		// memory limit only when one exists, so a limited alloc cannot spill
 		// its pressure sideways.
@@ -341,7 +341,7 @@ func ociMounts(mounts []Mount) []specs.Mount {
 			options = append(options, "rw")
 		}
 		// Caller-supplied options come last so they cannot be silently dropped,
-		// and are appended rather than replacing: rbind is not negotiable — a
+		// and are appended rather than replacing: rbind is not negotiable; a
 		// host path may carry submounts, and a plain bind would hide them.
 		options = append(options, m.Options...)
 		out = append(out, specs.Mount{

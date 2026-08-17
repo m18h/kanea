@@ -6,8 +6,8 @@ body:
     attributes:
       value: |
         Thanks for the report. Two things before you file:
-        - **Security issue?** Do not open it here — see [SECURITY.md](https://github.com/m18h/kanea/blob/main/SECURITY.md) for private reporting.
-        - Some apparent gaps are decisions — check the *Deliberately not built* list in [AGENTS.md](https://github.com/m18h/kanea/blob/main/AGENTS.md) if the bug is "feature X is missing".
+        - **Security issue?** Do not open it here; see [SECURITY.md](https://github.com/m18h/kanea/blob/main/SECURITY.md) for private reporting.
+        - Some apparent gaps are decisions: check the *Deliberately not built* list in [AGENTS.md](https://github.com/m18h/kanea/blob/main/AGENTS.md) if the bug is "feature X is missing".
   - type: input
     id: version
     attributes:
@@ -53,7 +53,7 @@ body:
     id: repro
     attributes:
       label: How to reproduce
-      description: Minimal steps — a job spec snippet if one is involved.
+      description: Minimal steps; a job spec snippet if one is involved.
       placeholder: |
         1. …
         2. …
@@ -68,5 +68,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Relevant lines from `journalctl -u kanead` / `-u kanea-edge`, or `kanea doctor` output. Redact anything sensitive — never paste secret values or the master key.
+      description: Relevant lines from `journalctl -u kanead` / `-u kanea-edge`, or `kanea doctor` output. Redact anything sensitive, never paste secret values or the master key.
       render: text

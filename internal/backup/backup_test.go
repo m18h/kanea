@@ -282,7 +282,7 @@ func TestArchiveRoundTrip(t *testing.T) {
 	if err := a.Fetch(ctx, m, out); err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	back, err := os.ReadFile(out) // #nosec G304 — a test path
+	back, err := os.ReadFile(out) // #nosec G304; a test path
 	if err != nil {
 		t.Fatalf("read restored: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestNoPlaintextSnapshotIsLeftBehind(t *testing.T) {
 
 func TestRestoreRefusesAnArchiveFromAnotherKey(t *testing.T) {
 	// The message an operator needs is "find the other key", not "these bytes
-	// are damaged" — the remedies are completely different.
+	// are damaged": the remedies are completely different.
 	ctx := context.Background()
 	sink, err := NewFileSink(t.TempDir(), nil)
 	if err != nil {
@@ -359,7 +359,7 @@ func TestVerifyCatchesADamagedSnapshot(t *testing.T) {
 
 	// Corrupt the object in place, the way a bad disk or a bad actor would.
 	path := filepath.Join(root, filepath.FromSlash(m.Snapshot.Name))
-	body, err := os.ReadFile(path) // #nosec G304 — a test path
+	body, err := os.ReadFile(path) // #nosec G304; a test path
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}

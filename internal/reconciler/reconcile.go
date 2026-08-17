@@ -55,7 +55,7 @@ type Network interface {
 // Two things need this. Reclaiming orphans: an attachment can outlive
 // everything that refers to it, because teardown detaches *after* the container
 // is removed, so a kanead that dies in that window leaves a namespace and an
-// endpoint with no container and no record — invisible to the planner, which
+// endpoint with no container and no record; invisible to the planner, which
 // reasons only about allocs it has heard of. And load balancing: backend
 // addresses are read live rather than remembered, because they are reassigned
 // whenever the datapath's maps are repopulated after a restart (constraint #9).
@@ -68,8 +68,8 @@ type NetworkInspector interface {
 // PolicySyncer is an optional Network capability: making the datapath's network
 // policies match the projects that currently exist.
 //
-// Policy is derived state — it follows from desired state and is rebuilt rather
-// than remembered (constraint #9) — so it belongs in the convergence loop
+// Policy is derived state (it follows from desired state and is rebuilt rather
+// than remembered (constraint #9)) so it belongs in the convergence loop
 // alongside everything else that has to agree with the Store.
 type PolicySyncer interface {
 	// SyncPolicies installs the default policy for each named project and
@@ -79,7 +79,7 @@ type PolicySyncer interface {
 
 // IdentityRepairer is an optional Network capability: re-writing the identity
 // entries an attachment depends on, map-only, for attachments that exist but
-// are not Ready — the state a pinned-map schema wipe leaves behind at upgrade
+// are not Ready; the state a pinned-map schema wipe leaves behind at upgrade
 // (PRD v1.65). Repair is deliberately not Attach: an existing veth under a
 // running workload is never re-plumbed.
 type IdentityRepairer interface {
@@ -101,7 +101,7 @@ type Mounter interface {
 	Ensure(ctx context.Context, req storage.Request) error
 	// ResolveHost checks a host volume against the operator's allowlist and
 	// returns the real directory to bind-mount (R15). The allowlist is node
-	// configuration, so only the agent can answer this — which is the point.
+	// configuration, so only the agent can answer this, which is the point.
 	//
 	// create is the spec's opt-in to making a missing directory (v1.69). It
 	// permits, it never widens: the allowlist still decides where.
@@ -118,7 +118,7 @@ type Mounter interface {
 // sampler's own background job, on its own schedule.
 //
 // It is push-only by design. The reconciler already walks desired state every
-// pass, so it is the cheapest place to learn what exists — and giving the
+// pass, so it is the cheapest place to learn what exists, and giving the
 // sampler a Store of its own would put a metric collector behind the state
 // interface, which constraint #2 exists to prevent.
 type VolumeUsage interface {
@@ -130,7 +130,7 @@ type VolumeUsage interface {
 //
 // It is the same seam Mounter's ResolveHost is: a grant is server configuration,
 // so only the agent can answer what one means, and a spec that could answer for
-// itself would not be a grant. A nil Passthrough permits nothing — a service
+// itself would not be a grant. A nil Passthrough permits nothing: a service
 // that asked for one fails, rather than starting without what it asked for.
 type Passthrough interface {
 	ResolveDevice(project, grant string) ([]passthrough.Device, error)
@@ -141,7 +141,7 @@ type Passthrough interface {
 //
 // The reconciler needs exactly one secret of its own: the registry credential
 // an image is pulled with (R19). It is resolved here, at alloc start, rather
-// than carried on the desired state — a resolved credential in the Store would
+// than carried on the desired state: a resolved credential in the Store would
 // be a secret at rest in the one place §15.3 replicates off the node.
 type SecretResolver interface {
 	Resolve(ctx context.Context, ref string) ([]byte, error)
@@ -165,7 +165,7 @@ type Config struct {
 	// disables it, which is what a test that is not about it wants.
 	Breaker *Breaker
 	// Interval is how often the loop runs without an external trigger.
-	// Defaults to 10s — PRD §21 requires drift to heal within 30s.
+	// Defaults to 10s: PRD §21 requires drift to heal within 30s.
 	Interval time.Duration
 	// StopGrace bounds SIGTERM before SIGKILL. Defaults to the driver's.
 	StopGrace time.Duration
@@ -179,7 +179,7 @@ type Config struct {
 	// ServiceCIDR is the pool service frontends are allocated from
 	// (PRD §15.1). Empty means DefaultServiceCIDR.
 	ServiceCIDR string
-	// ServiceCIDR6 is the v6 twin pool (v1.41). Empty means v4-only — there
+	// ServiceCIDR6 is the v6 twin pool (v1.41). Empty means v4-only; there
 	// is deliberately no default: dual-stack is opt-in.
 	ServiceCIDR6 string
 	// ResolvConfDir holds the generated per-project resolv.conf files.
@@ -200,7 +200,7 @@ type Config struct {
 	// the default: the grants come from a config file the operator writes.
 	Passthrough Passthrough
 	// Secrets resolves the registry credential a service names. Nil means a
-	// service that names one cannot start — which is the honest failure, since
+	// service that names one cannot start, which is the honest failure, since
 	// the alternative is pulling anonymously and reporting a confusing 401.
 	Secrets SecretResolver
 	// Auth receives the R27 verifier material for the restricted bundle
@@ -308,7 +308,7 @@ type Result struct {
 }
 
 // Run drives the loop until the context is cancelled. Trigger is an optional
-// channel that wakes the loop early — an apply, or a task exit, should not wait
+// channel that wakes the loop early: an apply, or a task exit, should not wait
 // out the full interval.
 func (r *Reconciler) Run(ctx context.Context, trigger <-chan struct{}) error {
 	ticker := time.NewTicker(r.interval)
@@ -343,8 +343,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 
 	// Policy before allocs, and fail the pass if it does not land.
 	//
-	// An endpoint with no policy selecting it has no ingress enforcement at all
-	// — it is reachable from every other workload on the node. So a project
+	// An endpoint with no policy selecting it has no ingress enforcement at all:
+	// it is reachable from every other workload on the node. So a project
 	// whose isolation policy could not be written must not get new allocs:
 	// convergence stalling is recoverable, a workload started unprotected is
 	// not. Allocs already running are unaffected; the next pass retries.
@@ -367,7 +367,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	world := World{Desired: desired, Records: records, Actual: actual, Now: r.now()}
 	// Tell the usage sampler what exists. Cheap (one slice build and a pointer
 	// store) and idempotent, so it rides the pass rather than needing a loop of
-	// its own — the sampler does the expensive part on its own schedule.
+	// its own: the sampler does the expensive part on its own schedule.
 	if r.volumeUsage != nil {
 		r.volumeUsage.SetTargets(volumeTargets(desired, r.volumeDir))
 	}
@@ -404,7 +404,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		// jobs, and a pure observer is what makes the planner testable.
 		//
 		// Backoff and Failed are exactly the transitions a crash produces, and
-		// *both* are counted — a node where every alloc dies on first start
+		// *both* are counted: a node where every alloc dies on first start
 		// never reaches a restart budget, which is precisely the case §4.3's
 		// breaker exists for.
 		r.recordFailures(changed)
@@ -438,7 +438,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 
 	// Everything below reasons about the world *after* the actions, so refresh
 	// the view when there were any. Without this a service deployed in this
-	// pass would have no backends until the next one — a full interval of a
+	// pass would have no backends until the next one: a full interval of a
 	// frontend that exists and answers nothing.
 	//
 	// Skipped when nothing was applied, which is the overwhelmingly common case:
@@ -464,7 +464,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	}
 
 	// Repair before the sweep and the backend sync: an attachment that exists
-	// but is not Ready is a running workload whose identity a pin wipe took —
+	// but is not Ready is a running workload whose identity a pin wipe took;
 	// re-writing the map entry brings it back without touching the veth, and
 	// the re-read makes it eligible as a backend in this same pass (v1.65).
 	if repaired := r.repairNetwork(ctx, world, attachments); repaired > 0 {
@@ -489,7 +489,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	r.syncEdgeRoutes(ctx, world, vips, attachments)
 	// Auth material after the routes for the same reason in reverse: a route
 	// marked auth answers 503 until its material lands, which is the fail-
-	// closed direction (R27) — never a window where it serves open.
+	// closed direction (R27), never a window where it serves open.
 	r.syncEdgeAuth(ctx, world)
 	return result, nil
 }
@@ -512,7 +512,7 @@ func (r *Reconciler) attachments(ctx context.Context) map[string]network.Attachm
 }
 
 // syncServices publishes each service's frontend and its live backends, and
-// returns the frontend addresses keyed by "project/service" — the edge route
+// returns the frontend addresses keyed by "project/service": the edge route
 // table needs the same mapping, and allocating it twice would be two sources of
 // truth for one fact.
 func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[string]network.Attachment) (map[string]string, error) {
@@ -529,7 +529,7 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 	// every later assignment along, which makes the pool harder to read and the
 	// numbering harder to explain. udp ports do not count (v1.42, §5.2.5):
 	// connect-time rewrite has no hook an unconnected sendto ever calls, so a
-	// udp frontend would be a VIP that silently black-holes — the published
+	// udp frontend would be a VIP that silently black-holes; the published
 	// udp listener reaches backends directly instead, and a udp-only service
 	// holds no address at all.
 	refs := make([]serviceRef, 0, len(w.Desired))
@@ -576,7 +576,7 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 
 // backendsFor picks the allocs of one service that should receive traffic.
 //
-// "Desired" is not the test — "serving right now" is. An alloc that is created
+// "Desired" is not the test: "serving right now" is. An alloc that is created
 // but not started, waiting out a restart backoff, or has exhausted its budget
 // may still hold an attachment, and routing real requests into it is a black
 // hole.
@@ -584,7 +584,7 @@ func (r *Reconciler) syncServices(ctx context.Context, w World, attachments map[
 // The two conditions are what the runtime reports and what the datapath
 // reports, deliberately not what the Store remembers. An alloc's record is
 // written at the end of the pass that changed it, so a just-restarted alloc
-// still reads `backoff` while containerd already reports it running — trusting
+// still reads `backoff` while containerd already reports it running: trusting
 // the record would drop a healthy backend for a full interval. Observed state
 // is the truth about whether traffic can be served; the record is the truth
 // about why, which is a different question.
@@ -631,7 +631,7 @@ func (r *Reconciler) resolvConfFor(project string) (string, error) {
 	return network.WriteResolvConf(r.resolvConfDir, project, r.nameserver)
 }
 
-// errNoInternalDNS marks a node with no embedded resolver configured — the
+// errNoInternalDNS marks a node with no embedded resolver configured: the
 // netns development mode, or an operator who turned DNS off.
 var errNoInternalDNS = errors.New("no internal resolver is configured")
 
@@ -642,7 +642,7 @@ func (r *Reconciler) syncPolicies(ctx context.Context, desired []Desired) error 
 		return nil
 	}
 	// One entry per project, carrying only the services that asked for extra
-	// ingress. Sorted so an unchanged spec produces an identical call — the
+	// ingress. Sorted so an unchanged spec produces an identical call: the
 	// writer skips unchanged files, and that only works if the input is stable.
 	byProject := map[string]*network.ProjectPolicy{}
 	for _, d := range desired {
@@ -676,7 +676,7 @@ func (r *Reconciler) syncPolicies(ctx context.Context, desired []Desired) error 
 
 // repairNetwork re-writes identities for attachments that exist but are not
 // Ready and whose alloc the Store still declares (v1.65). Only records the
-// planner keeps are repaired — an unknown attachment is the reaper's, and
+// planner keeps are repaired: an unknown attachment is the reaper's, and
 // repairing it would resurrect what a delete removed.
 func (r *Reconciler) repairNetwork(ctx context.Context, w World, attachments map[string]network.Attachment) int {
 	repairer, ok := r.network.(IdentityRepairer)
@@ -701,7 +701,7 @@ func (r *Reconciler) repairNetwork(ctx context.Context, w World, attachments map
 
 // reapNetwork detaches network attachments belonging to no known alloc.
 //
-// "Known" is deliberately generous — desired, recorded, or running. An alloc
+// "Known" is deliberately generous: desired, recorded, or running. An alloc
 // that is mid-create is desired but has no record yet, and detaching it would
 // cut the network out from under a workload that is about to start. Reclaiming
 // a leaked IP a pass later is free; taking down a live alloc is not.
@@ -755,7 +755,7 @@ func (r *Reconciler) recordFailures(changed map[string]AllocRecord) {
 		// The event name stays `service.crashed` whatever the cause, including
 		// an OOM (PRD v1.68). A new `service.oom_killed` would read better right
 		// up until it silently stopped matching every filter that already lists
-		// `service.crashed` by name — which is the failure the vocabulary is
+		// `service.crashed` by name, which is the failure the vocabulary is
 		// centralized to prevent (internal/notify/event.go). The cause goes in
 		// the message instead, where nothing has to opt in to see it.
 		r.emit(notify.NewEvent(notify.EventServiceCrashed,
@@ -768,8 +768,8 @@ func (r *Reconciler) recordFailures(changed map[string]AllocRecord) {
 // recordStartFailure writes the cause of a failed create onto the alloc's
 // record, so an alloc that never started can explain itself (PRD v1.68, §17).
 //
-// It records; it never decides. The retry stays exactly what it was — every
-// pass, budget untouched — because R29's restart budget is for a workload that
+// It records; it never decides. The retry stays exactly what it was (every
+// pass, budget untouched) because R29's restart budget is for a workload that
 // ran and crashed, and spending it on a registry outage would fail a service
 // permanently for something on the node's side of the line.
 func (r *Reconciler) recordStartFailure(ctx context.Context, action Action, cause error) {
@@ -783,7 +783,7 @@ func (r *Reconciler) recordStartFailure(ctx context.Context, action Action, caus
 	case errors.Is(err, store.ErrNotFound):
 		// The first create of this alloc, so there is nothing to annotate yet.
 		// State stays pending, which is what the planner already assumes for an
-		// alloc with no container — this record adds an explanation, not a
+		// alloc with no container: this record adds an explanation, not a
 		// decision.
 		record = AllocRecord{
 			ID: action.AllocID, Project: action.Project, Service: action.Service,
@@ -794,8 +794,8 @@ func (r *Reconciler) recordStartFailure(ctx context.Context, action Action, caus
 		return
 	}
 
-	// A create that fails fails again every pass — a missing image does not
-	// heal in five seconds — and rewriting an identical record each time would
+	// A create that fails fails again every pass (a missing image does not
+	// heal in five seconds) and rewriting an identical record each time would
 	// turn one typo into a steady stream of Store writes, CDC changes and S3
 	// uploads. Same rule as the secret syncer's: an unchanged value is not
 	// written (PRD v1.44).
@@ -834,7 +834,7 @@ func Observe(w World) map[string]AllocRecord {
 			// Adopt the spec of a record written before the field existed. Done
 			// here rather than by the planner because it is an observation, not
 			// a decision: this alloc is running, and what it is running is
-			// whatever was declared when it started — which, for a record that
+			// whatever was declared when it started, which, for a record that
 			// predates the field, is the best available answer and the only one
 			// that does not roll every alloc on the node after an upgrade.
 			if record.SpecHash == "" && isDesired {
@@ -911,7 +911,7 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 		// and a half-dead task would keep its cgroup and netns pinned.
 		//
 		// The two kinds do the same thing here and differ in what create makes
-		// of the record they leave behind — a crash spends the restart budget, a
+		// of the record they leave behind: a crash spends the restart budget, a
 		// deploy starts a new one.
 		if err := r.teardown(ctx, desired, action); err != nil {
 			return err
@@ -954,7 +954,7 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	}
 	// Volumes before the spec, not just before the task. Directories have to
 	// exist so the runtime does not create a bind-mount source as a root-owned
-	// directory at an unpredictable moment — and a host volume's real path is
+	// directory at an unpredictable moment, and a host volume's real path is
 	// only known once the allowlist has resolved it, so the spec cannot be
 	// built until that has happened.
 	if err := r.ensureVolumes(ctx, desired, action.Index); err != nil {
@@ -1006,7 +1006,7 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 			record.Restarts = existing.Restarts
 			record.LastExitCode = existing.LastExitCode
 			record.LastExitAt = existing.LastExitAt
-			// The explanation travels with the exit it explains — but only when
+			// The explanation travels with the exit it explains, but only when
 			// there was one. A record whose reason came from a *start* failure
 			// has no exit to carry, and this create is the moment that failure
 			// stopped being true: leaving the reason on would leave "image not
@@ -1027,7 +1027,7 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 //
 // It walks the service's volumes rather than the spec's mounts, because not
 // every mount is a volume. resolv.conf is bind-mounted from a *file*, and
-// running MkdirAll over the mount list would try to turn it into a directory —
+// running MkdirAll over the mount list would try to turn it into a directory:
 // which fails, and takes the whole alloc with it.
 //
 // A failure here fails the alloc, which is the point (PRD §8): a workload that
@@ -1041,7 +1041,7 @@ func (r *Reconciler) ensureVolumes(ctx context.Context, d Desired, index int) er
 		// against the allowlist and, unless the spec asked for it with
 		// `create = true`, never created: a host path that does not exist is a
 		// mistake to report, not a directory to invent (R15). Even when it is
-		// created it is not chowned — creating a directory does not change
+		// created it is not chowned: creating a directory does not change
 		// whose it is, which is why R24 still refuses ownership here.
 		if v.Resource.IsHost() {
 			if r.mounts == nil {
@@ -1134,7 +1134,7 @@ func (r *Reconciler) registryAuth(ctx context.Context, d Desired) ([]byte, error
 	}
 	auth, err := r.secrets.Resolve(ctx, d.RegistryAuthRef)
 	if err != nil {
-		// The reference is named, the value is not — quoting the ref is safe
+		// The reference is named, the value is not: quoting the ref is safe
 		// and is the only way to find the typo.
 		return nil, fmt.Errorf("registry credential %q: %w", d.RegistryAuthRef, err)
 	}
@@ -1147,7 +1147,7 @@ func (r *Reconciler) registryAuth(ctx context.Context, d Desired) ([]byte, error
 // Every failure here fails the alloc. There is deliberately no path on which a
 // container starts without a passthrough it asked for: a transcoder silently
 // running without its GPU is a service that looks healthy and does the wrong
-// thing slowly, and a socket that quietly did not appear is worse — the
+// thing slowly, and a socket that quietly did not appear is worse; the
 // workload's own error would be the first anyone hears of it.
 func (r *Reconciler) ensurePassthrough(d Desired) error {
 	if len(d.Devices) == 0 && len(d.Sockets) == 0 {
@@ -1213,7 +1213,7 @@ func (r *Reconciler) remove(ctx context.Context, w World, desired Desired, still
 	// An alloc that exhausted its restart budget keeps its record, marked
 	// failed: `kanea ps` must be able to explain why it is not running. The
 	// decision comes from the record and the policy, never from the reason
-	// string — that text is for humans.
+	// string: that text is for humans.
 	//
 	// But only while the service still exists. Once it is deleted, keeping the
 	// record would leave a permanent ghost in `kanea ps` that no command could
@@ -1316,7 +1316,7 @@ func (r *Reconciler) loadRecord(ctx context.Context, project, service string, in
 }
 
 // loadActual asks the driver about every project that appears in desired state
-// or in the records — the latter so an alloc whose service was deleted is still
+// or in the records: the latter so an alloc whose service was deleted is still
 // discovered and cleaned up.
 func (r *Reconciler) loadActual(ctx context.Context, desired []Desired, records map[string]AllocRecord) (map[string]runtime.Status, error) {
 	projects := map[string]struct{}{}
@@ -1369,7 +1369,7 @@ func sortedRecords(m map[string]AllocRecord) []AllocRecord {
 
 // NetnsNetwork is the dev/CI network: a persistent netns per alloc, no IPs, no
 // policy, no LB. The ebpf mode replaces it with the datapath behind the same
-// interface (internal/datapath) — the seam is why netns can stand in at all.
+// interface (internal/datapath): the seam is why netns can stand in at all.
 type NetnsNetwork struct{}
 
 // Attach creates the alloc's network namespace.
@@ -1386,7 +1386,7 @@ func (NetnsNetwork) Detach(_ context.Context, spec runtime.AllocSpec) error {
 // NetnsNetwork deliberately does not implement NetworkInspector. /run/netns is a
 // shared host resource and a bare namespace carries no mark of who made it, so
 // "everything I did not expect" would include namespaces belonging to other
-// tools — and reaping means deleting. The datapath driver can reap precisely
+// tools, and reaping means deleting. The datapath driver can reap precisely
 // because its veths carry an ownership alias (internal/datapath).
 
 // probeHealth runs due health checks and returns the records that changed.
@@ -1456,7 +1456,7 @@ func (r *Reconciler) probeHealth(ctx context.Context, w World, attachments map[s
 				changed[record.ID] = record
 				// Only the transition, not every failing probe. A service that
 				// is unhealthy for an hour is one event, not one every five
-				// seconds — the check interval must not become a message rate.
+				// seconds: the check interval must not become a message rate.
 				if record.Healthy != j.record.Healthy {
 					r.emitHealth(record)
 				}
@@ -1506,7 +1506,7 @@ func applyProbe(record AllocRecord, check HealthCheck, probeErr error, now time.
 	if record.Healthy != before.Healthy {
 		record.UpdatedAt = now
 	}
-	// LastProbeAt always moves, so the record is always worth writing — but only
+	// LastProbeAt always moves, so the record is always worth writing, but only
 	// report a change when something a reader cares about actually differs.
 	changed := record.Healthy != before.Healthy ||
 		record.HealthFailures != before.HealthFailures ||
@@ -1519,7 +1519,7 @@ func applyProbe(record AllocRecord, check HealthCheck, probeErr error, now time.
 //
 // It runs as a sweep, like the network reaper, rather than in teardown. A
 // network volume is shared by every alloc of its service, so the question is
-// never "is this alloc gone" but "does anything still want this mount" — and
+// never "is this alloc gone" but "does anything still want this mount", and
 // the answer only exists at the level of the whole desired state.
 func (r *Reconciler) pruneMounts(ctx context.Context, w World) {
 	if r.mounts == nil {

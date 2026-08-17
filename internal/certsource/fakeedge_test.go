@@ -63,8 +63,8 @@ func (s *servedBundle) start(t *testing.T, settle time.Duration) string {
 	return srv.URL
 }
 
-// testCertificate mints a usable certificate so the publisher's validation —
-// which parses the key pair — has something real to accept.
+// testCertificate mints a usable certificate so the publisher's validation
+// (which parses the key pair) has something real to accept.
 func testCertificate(t *testing.T, names ...string) Certificate {
 	name := names[0]
 	t.Helper()

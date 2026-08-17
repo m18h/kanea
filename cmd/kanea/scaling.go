@@ -20,7 +20,7 @@ import (
 // storeFleet is the autoscaler's view of desired state.
 //
 // It reads and writes the same `services` bucket the API writes, so a scale
-// decision is indistinguishable from an operator running `kanea scale` — which
+// decision is indistinguishable from an operator running `kanea scale`, which
 // is the point. The autoscaler is not a second scheduler; it moves one number
 // and the reconciler converges (§9.2).
 type storeFleet struct {
@@ -67,7 +67,7 @@ func (f storeFleet) SetCount(ctx context.Context, service string, count int) err
 	}
 	// The cooldown clock rides in the same batch (v1.37): the Store is being
 	// written anyway, so making the evaluator's last-change time durable costs
-	// no extra replication — and a daemon restarted mid-cooldown no longer
+	// no extra replication, and a daemon restarted mid-cooldown no longer
 	// forgets it and re-scales a service the running daemon would have held.
 	cool, err := store.PutMutation(store.KindKV, cooldownKey(service),
 		scaleCooldownRecord{At: time.Now()})
@@ -107,7 +107,7 @@ func (f storeFleet) SetCount(ctx context.Context, service string, count int) err
 //
 // One small record per service that ever autoscaled, written only inside a
 // scale action's own Apply batch. The stabilization history is deliberately
-// not persisted — that would be a metric stream through the Store (AGENTS.md
+// not persisted: that would be a metric stream through the Store (AGENTS.md
 // #2); the evaluator's warm-up guard covers what its loss would have cost.
 type scaleCooldownRecord struct {
 	At time.Time `json:"at"`
@@ -120,7 +120,7 @@ const cooldownKeyPrefix = "scaling/cooldown/"
 func cooldownKey(service string) string { return cooldownKeyPrefix + service }
 
 // seedCooldowns replays persisted cooldowns into a fresh evaluator, and reaps
-// records for services that no longer exist — the one moment the whole prefix
+// records for services that no longer exist: the one moment the whole prefix
 // is read anyway.
 func seedCooldowns(ctx context.Context, st store.Store, evaluator *scaling.Evaluator, log *slog.Logger) {
 	services, err := listAllServices(ctx, st)
@@ -298,10 +298,10 @@ func listAllAllocs(ctx context.Context, st store.Store) ([]reconciler.AllocRecor
 //
 // Connects already come back keyed by "project/service". Drops are keyed by
 // destination address and reason, and the address becomes a service through
-// the datapath's own attachment view — the same live query the reconciler
-// trusts, never the Store (constraint #2). Anything unattributable — a VIP
+// the datapath's own attachment view: the same live query the reconciler
+// trusts, never the Store (constraint #2). Anything unattributable; a VIP
 // with no backends, metadata-service egress, an alloc that detached between
-// the drop and this read — folds into the node subject rather than being
+// the drop and this read; folds into the node subject rather than being
 // lost: a number nobody can break down is still a number worth having.
 type datapathFlows struct {
 	source   *datapath.CounterSource
@@ -365,7 +365,7 @@ type metricsSettings struct {
 	// flows is the datapath's east-west counter view; nil in netns mode,
 	// which has no counters.
 	flows scaling.FlowSource
-	// node is the shared procfs reader — the same instance the API serves
+	// node is the shared procfs reader: the same instance the API serves
 	// point-in-time stats from, because CPU percent is a delta and two readers
 	// would split the sample history between them (v1.38).
 	node      *scaling.NodeReader
@@ -422,8 +422,8 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 
 	// East-west metrics come from the datapath's own per-CPU counters, on by
 	// default (PRD v1.36): reading a pinned map costs nothing per request,
-	// which is what lets this be a default where Hubble — 152.8 MiB of
-	// resident cilium-agent as M0 spike ① measured it — had to be opt-in.
+	// which is what lets this be a default where Hubble (152.8 MiB of
+	// resident cilium-agent as M0 spike ① measured it) had to be opt-in.
 	if cfg.flows != nil {
 		scraper, err := scaling.NewDatapathScraper(scaling.DatapathConfig{
 			Source: cfg.flows, Metrics: cfg.metrics, Logger: logger,
@@ -442,7 +442,7 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 
 	// Node CPU and memory history (v1.38): two series so the dashboard's
 	// utilisation sparklines can be seeded, recorded at the same cadence as
-	// every other scrape. A nil reading records nothing — a gap, never a zero.
+	// every other scrape. A nil reading records nothing: a gap, never a zero.
 	if cfg.node != nil {
 		go func() {
 			ticker := time.NewTicker(cfg.interval)

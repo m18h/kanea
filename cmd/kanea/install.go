@@ -14,7 +14,7 @@ import (
 	"github.com/m18h/kanea/internal/provision"
 )
 
-// `kanea install` — place the pinned host components (PRD §5.2.12).
+// `kanea install`: place the pinned host components (PRD §5.2.12).
 //
 // Separate from `kanea init` because it is re-runnable and inspectable, and
 // because upgrading a component on a node that has been running for a year is
@@ -116,12 +116,12 @@ func runInstall(args []string) error {
 
 	// Ctrl-C during a download should stop it, not leave a partial file the
 	// next run treats as installed. Stage writes to a temporary path and only
-	// renames after verification, so cancellation is safe by construction —
+	// renames after verification, so cancellation is safe by construction:
 	// this just makes it prompt.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	o.printf("kanea install — %s\n\n", version)
+	o.printf("kanea install; %s\n\n", version)
 	o.printf("Source: %s\n", source.Describe())
 	o.printf("Prefix: %s\n\n", layout.Prefix)
 
@@ -140,7 +140,7 @@ func runInstall(args []string) error {
 	}
 
 	// Phase one: the artefact components. containerd is among them, and
-	// nothing can pull an image until it is running — the install bootstraps
+	// nothing can pull an image until it is running: the install bootstraps
 	// itself in one direction (§5.2.12).
 	artefacts, imageComponents := splitByKind(components)
 
@@ -155,7 +155,7 @@ func runInstall(args []string) error {
 
 	if *dryRun {
 		// Image components are pinned by digest, so there is nothing a dry run
-		// could check that the manifest has not already fixed — and confirming
+		// could check that the manifest has not already fixed, and confirming
 		// it would need a containerd this machine may not have.
 		for _, c := range imageComponents {
 			o.printf("  %s\t%s\t%s\n", provision.ActionPlanned, c.Display(), c.Summary)
@@ -179,7 +179,7 @@ func runInstall(args []string) error {
 		}
 	}
 
-	// The FUSE stack (§8). Not a component — there is nothing to download,
+	// The FUSE stack (§8). Not a component: there is nothing to download,
 	// only host state internal/storage has always assumed and nothing has ever
 	// created. A failure here is reported rather than fatal: a node that never
 	// mounts an S3 volume should not fail its install over it.
@@ -288,7 +288,7 @@ func installImages(ctx context.Context, o *out, installer *provision.Installer,
 	defer func() { _ = imageClient.Close() }() //nolint:errcheck // cleanup path
 
 	// A bundle carries images as OCI archives. Loading them first means the
-	// pull below finds them locally and never reaches for a registry — which
+	// pull below finds them locally and never reaches for a registry, which
 	// is the property that has to hold, not merely be likely.
 	if bundle != nil {
 		for _, c := range imageComponents {
@@ -363,7 +363,7 @@ func requiredUnits(components []*provision.Component) []string {
 //
 // A bundle turns network fetching off entirely rather than becoming a
 // preference. An air-gapped install that silently reaches upstream for one
-// missing component fails later, on a node nobody can reach — which is worse
+// missing component fails later, on a node nobody can reach, which is worse
 // than failing here, where somebody is watching.
 func installSource(bundlePath string) (provision.Source, error) {
 	if bundlePath == "" {
@@ -407,7 +407,7 @@ func renderInstallResults(o *out, results []provision.Result) {
 // listComponents prints the version matrix (PRD §15.4). It is the manifest, so
 // there is one place to look and nothing to keep in step with it.
 func listComponents(o *out, m *provision.Manifest) error {
-	o.printf("Pinned host components — kanea %s\n\n", version)
+	o.printf("Pinned host components: kanea %s\n\n", version)
 	o.table()
 	o.println("  COMPONENT\tVERSION\tKIND\tPIN")
 	for _, c := range m.All() {
@@ -415,7 +415,7 @@ func listComponents(o *out, m *provision.Manifest) error {
 		if c.Kind != provision.KindImage {
 			h, err := c.Hash(provision.HostArch())
 			if err != nil {
-				// A host arch Kanea does not publish for — a developer laptop.
+				// A host arch Kanea does not publish for; a developer laptop.
 				// The versions are still worth printing.
 				h = "(not published for " + provision.HostArch() + ")"
 			} else {

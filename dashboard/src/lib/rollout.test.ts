@@ -45,7 +45,7 @@ describe('rolloutStatus', () => {
   })
 
   it('an empty-hash alloc is adopted, never stale', () => {
-    // The AGENTS.md rule: a record with an empty hash is adopted, not rolled —
+    // The AGENTS.md rule: a record with an empty hash is adopted, not rolled;
     // an upgrade of kanead must not read as a fleet-wide deploy.
     const r = rolloutStatus(svc(2, HASH), [alloc('running', ''), alloc('running', HASH)])
     expect(r.deploying).toBe(false)

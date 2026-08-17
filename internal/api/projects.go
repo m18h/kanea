@@ -18,7 +18,7 @@ import (
 // A project has no record of its own unless it has a pipeline: it is the
 // namespace a service declares itself into (§4.2), so the list is assembled
 // from what exists rather than read from a table. That is why there is no
-// create route — declaring a service in a project is how a project comes to be,
+// create route: declaring a service in a project is how a project comes to be,
 // and a second way to make one would be a second source of truth about which
 // projects exist.
 
@@ -32,7 +32,7 @@ type ProjectSummary struct {
 	// Running counts allocs the runtime reports as up.
 	Running int `json:"running"`
 	// Git describes the sync source, if the project has one. It carries the URL
-	// and branch and never the credential — auth_ref is a reference to a secret
+	// and branch and never the credential; auth_ref is a reference to a secret
 	// and safe to show, but it is omitted anyway: nothing reading this list
 	// needs to know which secret a project uses.
 	Git *ProjectGit `json:"git,omitempty"`
@@ -236,7 +236,7 @@ type TestNotificationResponse struct {
 // (PRD §11 "test action").
 //
 // It bypasses the filters on purpose. A test exists to answer "is this channel
-// wired up" — the credential, the URL, the egress rules, the network — and
+// wired up" (the credential, the URL, the egress rules, the network) and
 // routing it through the same `on` patterns would mean a channel configured for
 // `deploy.*` silently ignores the test and reports success either way.
 func (s *Server) handleTestNotification(w http.ResponseWriter, r *http.Request) {

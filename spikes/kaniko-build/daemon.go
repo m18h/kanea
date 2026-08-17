@@ -16,7 +16,7 @@ import (
 	"github.com/containerd/containerd/v2/pkg/oci"
 )
 
-// The daemon path: BuildKit in its native shape — a long-lived buildkitd running
+// The daemon path: BuildKit in its native shape; a long-lived buildkitd running
 // ROOTLESS as an unprivileged host user (via rootlesskit), driven by `buildctl`.
 //
 // This is the alternative to the privileged one-shot task the other phases
@@ -34,7 +34,7 @@ func buildctl(ctx context.Context, timeout time.Duration, args ...string) (strin
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	full := append([]string{"--addr", bkSocket}, args...)
-	cmd := exec.CommandContext(cctx, "buildctl", full...) // #nosec G204 — spike
+	cmd := exec.CommandContext(cctx, "buildctl", full...) // #nosec G204: spike
 	cmd.Env = append(os.Environ(), "DOCKER_CONFIG=/home/"+bkUser+"/.docker")
 	t0 := time.Now()
 	out, err := cmd.CombinedOutput()
@@ -78,7 +78,7 @@ func bkBuildArgs(contextDir, tag, metadataFile string, cache bool) []string {
 }
 
 // phaseDaemon validates every property the task-based phases check, but against
-// the rootless daemon — plus the two properties unique to the daemon shape:
+// the rootless daemon; plus the two properties unique to the daemon shape:
 // it must not run as root, and its resource cap is collective rather than
 // per build.
 func phaseDaemon(ctx context.Context, e *env) error {
@@ -182,7 +182,7 @@ func phaseDaemon(ctx context.Context, e *env) error {
 	cpuQuota := systemdProp(bkUnit, "CPUQuotaPerSecUSec")
 	capped := memMax != "" && memMax != "infinity"
 	check("daemon runs under a systemd resource cap",
-		capped, fmt.Sprintf("MemoryMax=%s CPUQuota=%s (COLLECTIVE — all builds share it)", memMax, cpuQuota))
+		capped, fmt.Sprintf("MemoryMax=%s CPUQuota=%s (COLLECTIVE: all builds share it)", memMax, cpuQuota))
 
 	current := systemdProp(bkUnit, "MemoryCurrent")
 	if n, cerr := strconv.ParseInt(current, 10, 64); cerr == nil {
@@ -194,7 +194,7 @@ func phaseDaemon(ctx context.Context, e *env) error {
 }
 
 func systemdProp(unit, prop string) string {
-	out, err := exec.Command("systemctl", "show", unit, "-p", prop, "--value").Output() // #nosec G204 — spike
+	out, err := exec.Command("systemctl", "show", unit, "-p", prop, "--value").Output() // #nosec G204: spike
 	if err != nil {
 		return ""
 	}
@@ -206,7 +206,7 @@ func systemdProp(unit, prop string) string {
 // output. This is also the deploy path: pull by ref, run, observe.
 func runBuiltImage(ctx context.Context, e *env, ref string) string {
 	// The spike registry requires auth and speaks plain HTTP, so the pull needs
-	// an explicit resolver — the same shape Kanea's runtime needs when pulling
+	// an explicit resolver: the same shape Kanea's runtime needs when pulling
 	// from a private registry with credentials from the secret store.
 	resolver := docker.NewResolver(docker.ResolverOptions{
 		Hosts: docker.ConfigureDefaultRegistries(

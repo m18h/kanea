@@ -3,7 +3,7 @@
 //
 // Hand-written rather than a dependency, the way the MCP server and the S3
 // sink are: the surface Kanea needs is five fields, `*`, lists, ranges and
-// steps — no macros, no seconds field, no time zones — and a library carrying
+// steps (no macros, no seconds field, no time zones) and a library carrying
 // all of those would be mostly code nobody here reviews. UTC is the only
 // clock, stated in R26 rather than configurable: a schedule that means a
 // different hour after a node reinstall picks a different /etc/localtime is a
@@ -123,7 +123,7 @@ func parseRange(s string, f field) (uint64, bool, error) {
 			}
 			hi = lo
 			if step > 1 {
-				// "5/15" is a vixie-cron oddity ("from 5 to max"); refuse it —
+				// "5/15" is a vixie-cron oddity ("from 5 to max"); refuse it;
 				// writing "5-59/15" says what it means.
 				return 0, false, fmt.Errorf("cron: %s %q has a step on a single value; write a range (e.g. %d-%d/%d)",
 					f.name, s, lo, f.max, step)

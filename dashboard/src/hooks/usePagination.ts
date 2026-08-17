@@ -14,7 +14,7 @@ export interface Pagination<T> {
   page: number
   pages: number
   total: number
-  /** start is the index of the first shown item, for "26–50 of 132". */
+  /** start is the index of the first shown item, for "26-50 of 132". */
   start: number
   setPage: (page: number) => void
   pageSize: number
@@ -31,8 +31,8 @@ export interface Pagination<T> {
  * backups), so the full list is in memory already and a server round-trip per
  * page would add latency to buy nothing.
  *
- * The clamp matters for live data: a list that shrinks under the reader — a
- * scale to zero, a pruned run — must not leave the page pointing past the end.
+ * The clamp matters for live data: a list that shrinks under the reader (a
+ * scale to zero, a pruned run) must not leave the page pointing past the end.
  * Clamping (rather than resetting) keeps the reader where they were for the
  * ordinary case of rows merely updating in place.
  */

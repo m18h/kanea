@@ -11,7 +11,7 @@ import (
 
 // The v1.46 startup precedence: a Store record wins over the unit's flags; a
 // record that cannot be used falls back to the flags *loudly* rather than
-// leaving the node silently unreplicated — "backups were never happening and
+// leaving the node silently unreplicated; "backups were never happening and
 // nothing said so" is the failure the whole subsystem exists to prevent.
 
 func TestBuildBackupsPrefersTheStoreRecordOverFlags(t *testing.T) {
@@ -34,7 +34,7 @@ func TestBuildBackupsPrefersTheStoreRecordOverFlags(t *testing.T) {
 		t.Fatalf("buildBackups: %v", err)
 	}
 	if got := m.Source(); got != sourceStore {
-		t.Errorf("Source = %q, want %q — the record, once written, wins", got, sourceStore)
+		t.Errorf("Source = %q, want %q; the record, once written, wins", got, sourceStore)
 	}
 	if !m.configured() {
 		t.Error("configured() = false with a valid record")
@@ -55,13 +55,13 @@ func TestBuildBackupsFallsBackToFlagsWithoutARecord(t *testing.T) {
 		t.Fatalf("buildBackups: %v", err)
 	}
 	if got := m.Source(); got != sourceFlags {
-		t.Errorf("Source = %q, want %q — no record means the flags are the seed", got, sourceFlags)
+		t.Errorf("Source = %q, want %q; no record means the flags are the seed", got, sourceFlags)
 	}
 }
 
 func TestBuildBackupsIsUnconfiguredWithNeither(t *testing.T) {
-	// No record and no flags is a legitimate state — a node that has never
-	// configured backups — and must build a working (refusing) manager rather
+	// No record and no flags is a legitimate state (a node that has never
+	// configured backups) and must build a working (refusing) manager rather
 	// than fail the daemon's start.
 	ctx := context.Background()
 	st := openScalingStore(t)
@@ -82,7 +82,7 @@ func TestBuildBackupsIsUnconfiguredWithNeither(t *testing.T) {
 func TestBuildBackupsFallsBackToFlagsOnABadRecord(t *testing.T) {
 	// A record the daemon cannot act on must not take replication down with it:
 	// the flags were running yesterday and keep running today, and the error is
-	// logged rather than returned — a startup that fails on a bad *record*
+	// logged rather than returned; a startup that fails on a bad *record*
 	// would leave the operator with no daemon to fix the record through.
 	for _, tc := range []struct {
 		name  string
@@ -103,7 +103,7 @@ func TestBuildBackupsFallsBackToFlagsOnABadRecord(t *testing.T) {
 		},
 		{
 			// JSON that parses and fails Validate: both destinations at once.
-			// SaveBackup does not validate — the API path does — so a record
+			// SaveBackup does not validate (the API path does) so a record
 			// like this can exist after a partial write or a schema change.
 			name: "record failing validation",
 			write: func(t *testing.T, ctx context.Context, st store.Store) {
@@ -132,7 +132,7 @@ func TestBuildBackupsFallsBackToFlagsOnABadRecord(t *testing.T) {
 				t.Fatalf("buildBackups returned an error for a bad record; it must fall back: %v", err)
 			}
 			if got := m.Source(); got != sourceFlags {
-				t.Errorf("Source = %q, want %q — a bad record falls back to the flags", got, sourceFlags)
+				t.Errorf("Source = %q, want %q; a bad record falls back to the flags", got, sourceFlags)
 			}
 		})
 	}

@@ -11,7 +11,7 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
-// check3 — tc clsact filters referencing pinned programs survive loader
+// check3: tc clsact filters referencing pinned programs survive loader
 // exit; NLM_F_REPLACE is atomic under traffic; deleting the veth removes
 // the filters cleanly.
 func check3(e *env) error {
@@ -117,7 +117,7 @@ func countBpfFilters(ifname string) (int, error) {
 	return n, nil
 }
 
-// check4 — the end-to-end matrix.
+// check4: the end-to-end matrix.
 func check4(e *env) error {
 	vip1Addr := fmt.Sprintf("%s:%d", vip1, vipPort)
 
@@ -155,7 +155,7 @@ func check4(e *env) error {
 
 	// pod -> off-node via masquerade. Reachability to the internet is not
 	// assumed; the masquerade counter incrementing is the assertion. The
-	// target must ROUTE OUT the uplink — an address on the default route, not
+	// target must ROUTE OUT the uplink: an address on the default route, not
 	// the uplink's own IP (that is delivered locally and never traverses
 	// POSTROUTING with oifname == uplink, so the SNAT rule cannot match).
 	// 203.0.113.9 is TEST-NET-3: it routes via the default gateway and the

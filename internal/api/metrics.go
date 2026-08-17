@@ -17,7 +17,7 @@ import (
 //
 // Authenticated like everything else. Request rates, replica counts and
 // per-service resource use describe how a business is doing, and §5.2.1's list
-// of unauthenticated routes has two entries on it — this is not one of them. A
+// of unauthenticated routes has two entries on it: this is not one of them. A
 // Prometheus server scrapes it with a viewer token.
 const PathMetrics = "/v1/metrics"
 
@@ -26,7 +26,7 @@ const PathMetrics = "/v1/metrics"
 type MetricsSource interface {
 	Subjects(metric string) []string
 	Latest(key scaling.Key) (scaling.Point, bool)
-	// Range serves /v1/stats/history (v1.38): sparse points, oldest first —
+	// Range serves /v1/stats/history (v1.38): sparse points, oldest first;
 	// an unwritten slot is simply not in the slice, never a zero.
 	Range(key scaling.Key, from, to time.Time) []scaling.Point
 	Len() int
@@ -96,7 +96,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			point, ok := s.metrics.Latest(scaling.Key{Subject: subject, Metric: series.metric})
 			// Omitted rather than exported as zero, and omitted once it is
 			// stale. Prometheus reads whatever is here as the current value, so
-			// a sample from three scrapes ago is not something to publish — and
+			// a sample from three scrapes ago is not something to publish, and
 			// a zero would be a claim that the service is idle rather than an
 			// admission that we do not know.
 			if !ok || time.Since(point.At) > metricStaleAfter {
@@ -149,8 +149,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 // writeEdgePassthrough republishes the edge's labelled families verbatim
 // (§9.1.1).
 //
-// Verbatim, and as counters. The gauges above are derived — a rate this process
-// computed from two readings — and are omitted once stale, because a rate from
+// Verbatim, and as counters. The gauges above are derived (a rate this process
+// computed from two readings) and are omitted once stale, because a rate from
 // three scrapes ago is not the current rate. A counter is the opposite: it is
 // true whenever it was read, `rate()` does the derivation, and a counter reset
 // is something Prometheus already understands. So a stale exposition is still
@@ -162,8 +162,8 @@ func (s *Server) writeEdgePassthrough(out *exposition) {
 	}
 
 	// Published unconditionally, including when no scrape has ever succeeded.
-	// A gap in kanea_edge_service_* has two causes — the edge is down, or
-	// nothing is exposed — and without this they are indistinguishable.
+	// A gap in kanea_edge_service_* has two causes (the edge is down, or
+	// nothing is exposed) and without this they are indistinguishable.
 	up := 0
 	if ok && time.Since(at) <= metricStaleAfter {
 		up = 1
@@ -181,7 +181,7 @@ func (s *Server) writeEdgePassthrough(out *exposition) {
 //
 // Only for allocs a probe has actually run against. AllocRecord.Healthy is
 // written solely by a probe, so a service with no `check` block has it false
-// for every alloc forever — publishing that would report every check-free
+// for every alloc forever: publishing that would report every check-free
 // service as entirely down. Probed() is the guard, and it is the same
 // distinction §9.2 draws with "no data is never zero": a missing probe and a
 // dead backend must not produce the same number.
@@ -233,7 +233,7 @@ func subjectLabels(subject string) string {
 }
 
 // exposition writes the response and holds the first failure, so the many
-// writes above do not each need checking — the header is already sent, so a
+// writes above do not each need checking: the header is already sent, so a
 // failure partway cannot become a status code either way.
 type exposition struct {
 	w   io.Writer

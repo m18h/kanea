@@ -1,6 +1,6 @@
 package main
 
-// Wiring tests for the directory verifier (PRD v1.47) — construction and
+// Wiring tests for the directory verifier (PRD v1.47): construction and
 // nil-safety only. Verification behaviour lives in internal/auth's tests; what
 // can go wrong here is the assembly: a typed nil reaching an interface field,
 // a bind password in argv, or a config error demoted to a warning.
@@ -14,7 +14,7 @@ import (
 )
 
 // validLDAPSettings is a full configuration buildLDAP accepts, pointing at an
-// address nothing answers on — reachability is deliberately not construction's
+// address nothing answers on: reachability is deliberately not construction's
 // problem.
 func validLDAPSettings() ldapSettings {
 	return ldapSettings{
@@ -38,7 +38,7 @@ func TestBuildLDAPWithNothingConfiguredIsNil(t *testing.T) {
 	// The typed-nil lesson (the buildOIDC rule): the auth store decides
 	// whether directory fallthrough exists by comparing its PasswordVerifier
 	// field against nil, and a nil *auth.LDAP stuffed straight into it would
-	// be a non-nil interface holding a nil pointer — every unknown name would
+	// be a non-nil interface holding a nil pointer; every unknown name would
 	// then reach Verify and panic. The INTERFACE must be nil.
 	if v := ldapVerifier(directory); v != nil {
 		t.Fatalf("ldapVerifier(nil) = %#v, want a nil interface", v)
@@ -50,7 +50,7 @@ func TestBuildLDAPWithNothingConfiguredIsNil(t *testing.T) {
 
 func TestBuildLDAPWarnsOnHalfAConfiguration(t *testing.T) {
 	// Settings without --ldap-url mean the operator set LDAP up and is not
-	// getting LDAP — worth a line, not an error, and definitely not a
+	// getting LDAP: worth a line, not an error, and definitely not a
 	// half-built verifier.
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
@@ -58,7 +58,7 @@ func TestBuildLDAPWarnsOnHalfAConfiguration(t *testing.T) {
 	directory, err := buildLDAP(context.Background(),
 		ldapSettings{userBaseDN: "ou=people,dc=example,dc=test"}, nil, logger)
 	if err != nil || directory != nil {
-		t.Fatalf("half-configured buildLDAP = %+v, %v — want nil, nil", directory, err)
+		t.Fatalf("half-configured buildLDAP = %+v, %v; want nil, nil", directory, err)
 	}
 	if !strings.Contains(buf.String(), "--ldap-url") {
 		t.Errorf("no warning naming --ldap-url was logged: %s", buf.String())
@@ -68,7 +68,7 @@ func TestBuildLDAPWarnsOnHalfAConfiguration(t *testing.T) {
 func TestBuildLDAPRefusesABareBindPassword(t *testing.T) {
 	// R3: everything in argv is world-readable through /proc/<pid>/cmdline, so
 	// the flag takes a secret: reference and nothing else. The refusal fires
-	// before any store access — a nil secrets store must not change the answer.
+	// before any store access: a nil secrets store must not change the answer.
 	cfg := validLDAPSettings()
 	cfg.bindDN = "cn=svc,dc=example,dc=test"
 	cfg.bindRef = "hunter2-not-a-reference"
