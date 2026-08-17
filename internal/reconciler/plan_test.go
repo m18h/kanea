@@ -419,16 +419,16 @@ func TestAllocIDAndKeyFormats(t *testing.T) {
 		t.Errorf("ServicePrefix = %q", got)
 	}
 	// Alloc ids are containerd container ids and netns names: they must clear
-	// the CNI plugin's 5-character floor (M0 spike ①).
+	// the CNI plugin's 5-character floor (spike ①).
 	if len(reconciler.AllocID("a", "b", 0)) < 5 {
 		t.Error("shortest alloc id is below the CNI floor")
 	}
 }
 
 // R10: a dependent never starts before its dependencies are healthy. This is
-// M2's exit criterion, and the failure it prevents is a service that comes up,
-// cannot reach its database, and crash-loops through its restart budget before
-// the database has finished starting.
+// §20's dependency-ordering criterion, and the failure it prevents is a
+// service that comes up, cannot reach its database, and crash-loops through
+// its restart budget before the database has finished starting.
 func TestPlanGatesDependentsOnDependencyHealth(t *testing.T) {
 	db := desired(1)
 	db.Service = "postgres"

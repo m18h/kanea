@@ -1234,7 +1234,7 @@ func (r *Reconciler) teardown(ctx context.Context, desired Desired, action Actio
 		return fmt.Errorf("remove: %w", err)
 	}
 	// Detach after the task is gone: CNI DEL needs the namespace to still
-	// exist (M0 spike ②).
+	// exist (spike ②).
 	if r.network != nil {
 		spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
 		if err := r.network.Detach(ctx, spec); err != nil {

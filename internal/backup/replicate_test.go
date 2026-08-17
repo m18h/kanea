@@ -15,7 +15,7 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// The end-to-end test M10's exit criterion asks for: a node's state, shipped to
+// The end-to-end test §20's restore criterion asks for: a node's state, shipped to
 // a sink, restored onto a fresh path, and byte-for-byte the same afterwards.
 
 func openStore(t *testing.T) store.Store {

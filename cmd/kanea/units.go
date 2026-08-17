@@ -10,7 +10,7 @@ import (
 	"github.com/m18h/kanea/internal/provision"
 )
 
-// systemd units (PRD §5.2.11, §20 M10).
+// systemd units (PRD §5.2.11).
 //
 // The cgroup layout is the point, not the service files. Constraint #11 says
 // the control plane has a kernel-guaranteed memory floor and workloads have a

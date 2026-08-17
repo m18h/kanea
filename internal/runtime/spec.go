@@ -114,7 +114,7 @@ func specOpts(spec AllocSpec) []oci.SpecOpts {
 	opts = append(opts, withResources(spec))
 	if spec.NetnsPath != "" {
 		// Join the netns CNI already wired up. Created before the task starts,
-		// removed after it dies (M0 spike ②).
+		// removed after it dies (spike ②).
 		opts = append(opts, oci.WithLinuxNamespace(specs.LinuxNamespace{
 			Type: specs.NetworkNamespace,
 			Path: spec.NetnsPath,

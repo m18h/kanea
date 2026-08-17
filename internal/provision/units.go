@@ -126,8 +126,9 @@ func (l Layout) containerdConfig() string {
 		  address = "` + l.SocketPath() + `"
 
 		# The metrics endpoint the autoscaler's containerd scraper reads
-		# (PRD §9.1). M0 found 47 metric families per task here, which is why
-		# that scraper streams and allowlists rather than parsing the lot.
+		# (PRD §9.1). The containerd spike found 47 metric families per task
+		# here, which is why that scraper streams and allowlists rather than
+		# parsing the lot.
 		[metrics]
 		  address = "127.0.0.1:1338"
 
@@ -186,7 +187,7 @@ func (l Layout) containerdUnit() string {
 //
 // The socket lives in the daemon user's $HOME and *not* under a copy-up'd
 // /run: rootlesskit gives the daemon a namespace-private tmpfs there, so a
-// socket in /run is invisible to every client outside the namespace. M0 spike
+// socket in /run is invisible to every client outside the namespace. Spike
 // ④ found that the expensive way.
 func (l Layout) buildkitUnit() string {
 	home := filepath.Join(l.DataDir, "buildkit")
@@ -203,7 +204,7 @@ func (l Layout) buildkitUnit() string {
 		Environment=HOME=` + home + `
 		Environment=XDG_RUNTIME_DIR=` + filepath.Join(home, "run") + `
 		Environment=PATH=` + l.BinDir() + `:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-		# --net=host keeps a node-local registry reachable (M0 spike ④).
+		# --net=host keeps a node-local registry reachable (spike ④).
 		ExecStart=` + l.BinDir() + `/rootlesskit \
 		  --net=host \
 		  --copy-up=/etc \

@@ -13,8 +13,8 @@ indistinguishable from one nobody checked.
 
 | Claim | Where it is claimed | Evidence |
 |---|---|---|
-| `init` → first HTTPS ≤ 5 min on a fresh VM | §21 UX, §20 M10 | [§1](#1-init--first-https), **pending** |
-| Functions end to end on a node | §20 M11 exit criterion | [`spikes/wasm-functions/REPORT.md`](../spikes/wasm-functions/REPORT.md) check H, **harness written, run pending** |
+| `init` → first HTTPS ≤ 5 min on a fresh VM | §21 UX, §20 | [§1](#1-init--first-https), **pending** |
+| Functions end to end on a node | §20, the functions exit criterion | [`spikes/wasm-functions/REPORT.md`](../spikes/wasm-functions/REPORT.md) check H, **harness written, run pending** |
 | Kernel floor ≥ 5.10 | §21 Platform | [`spikes/ebpf-datapath/REPORT.md`](../spikes/ebpf-datapath/REPORT.md) Kernel A, **pending**; run `go test -tags bpfload` on the node |
 | S3 interoperability | §15.3 | `s3-interop` CI (MinIO, both addressing styles); real providers via `s3-cloud.yml`, **pending secrets** |
 | OOM kills are attributed, not guessed | §17, §5.2.11 (v1.68) | [§5](#5-oom-attribution-v168), **pending** |
@@ -118,7 +118,7 @@ Same walk, with `--base-domain <your.domain>` and `--tls-default acme` (plus
 
 ---
 
-## 2. Functions end to end (M11 check H)
+## 2. Functions end to end (check H)
 
 Driver and prerequisites: [`spikes/wasm-functions/check-h/`](../spikes/wasm-functions/check-h/).
 Results belong in that spike's REPORT.md, beside checks A to G, which is the
@@ -206,7 +206,7 @@ can answer is the one thing the whole feature rests on:
 The kill is recorded in `memory.events`, and that file lives in a cgroup runc
 removes when the *container* is deleted, not when the task exits. The
 reconciler observes the exit first and tears down after, so the window should
-hold, and the M0 spike read the counter after exit successfully
+hold, and the containerd-lifecycle spike read the counter after exit successfully
 ([`spikes/containerd-lifecycle/cgroups.go`](../spikes/containerd-lifecycle/cgroups.go),
 check "alloc cgroup oom_kill incremented"). "Should hold" on a timing question
 is exactly the genre of claim v1.53 and PR #59 were: invisible in dev, wrong on
@@ -302,7 +302,7 @@ kanea doctor
 
 ## 7. The seccomp filter is real on a running alloc
 
-PRD §14 A05 has claimed a default seccomp profile since M5; the audit found
+PRD §14 A05 has claimed a default seccomp profile from the start; the audit found
 it applied nowhere (K-06). The unit tests pin the spec. What they cannot prove
 is that a real runc on a real kernel accepts the resolved profile and a
 workload actually runs under it:

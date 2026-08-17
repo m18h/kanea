@@ -1419,7 +1419,7 @@ func validateDuration(field, value string, rng hcl.Range) hcl.Diagnostics {
 // Every entry is checked here rather than when the policy is generated,
 // because by then the diagnostic would have no file or line to point at, and
 // a network rule that silently fails to match is the exact failure mode this
-// whole area is prone to (M0 spike ①).
+// whole area is prone to (spike ①).
 func validateNetworkPolicy(svc *Service) hcl.Diagnostics {
 	if svc.Network == nil || svc.Network.Policy == nil {
 		return nil

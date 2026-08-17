@@ -20,9 +20,6 @@ import (
 //	go build -ldflags "-X main.version=vX.Y.Z" ./cmd/kanea
 var version = "0.0.0-dev"
 
-// errNotImplemented marks subcommands belonging to a future milestone (PRD §20).
-var errNotImplemented = errors.New("not implemented yet: see PRD §20 milestones")
-
 type command struct {
 	name string
 	desc string
@@ -112,8 +109,6 @@ func run(args []string) error {
 	}
 	return fmt.Errorf("unknown command %q", args[0])
 }
-
-func todo([]string) error { return errNotImplemented }
 
 func runVersion([]string) error {
 	_, err := fmt.Fprintln(os.Stdout, "kanea", version)

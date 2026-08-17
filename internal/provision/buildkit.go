@@ -16,7 +16,7 @@ import (
 
 // The rootless build daemon (PRD §5.2.11, §10.2).
 //
-// M0 spike ④ chose BuildKit as the only build driver precisely because it is
+// spike ④ chose BuildKit as the only build driver precisely because it is
 // unprivileged and non-root end to end, which is why no §14 hardening
 // exception is needed for builds. That property is not free: it needs a system
 // user, subordinate uid/gid ranges for the user namespaces rootlesskit
@@ -63,7 +63,7 @@ func SetupBuildkit(ctx context.Context, l Layout, log *slog.Logger) error {
 
 	// The socket lives here and *not* under /run: rootlesskit copy-ups /run
 	// into a namespace-private tmpfs, so a socket there is invisible to every
-	// client outside the namespace. M0 spike ④ found that the expensive way.
+	// client outside the namespace. Spike ④ found that the expensive way.
 	//
 	// The home's parent is the data directory, which `kanea init` and kanead
 	// both create 0750 root:root; a mode the daemon's user can neither own

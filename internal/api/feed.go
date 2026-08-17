@@ -27,7 +27,7 @@ type feedFunc func(ctx context.Context, emit emitFunc)
 // FeedInterval is how often a Store-backed feed looks for changes.
 //
 // Polling the Store rather than being notified by it: the Store has no change
-// stream yet (that is the CDC replicator, §15.3, M10), and adding one just for
+// stream yet (that is the CDC replicator, §15.3), and adding one just for
 // the dashboard would be a second source of truth for "what changed". A second
 // is well inside what a human watching a page notices, and the poll is a
 // bounded, paginated read: the shape §5.2.2 requires.

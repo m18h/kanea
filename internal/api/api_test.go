@@ -430,7 +430,7 @@ func TestClientReportsAHelpfulErrorWhenDaemonIsDown(t *testing.T) {
 }
 
 func TestSocketPermissionsAreRestrictive(t *testing.T) {
-	// The socket is the authentication boundary in M1 (PRD §14, A05).
+	// The socket is an authentication boundary (PRD §14, A05).
 	h := newHarness(t)
 	info, err := os.Stat(h.socket)
 	if err != nil {

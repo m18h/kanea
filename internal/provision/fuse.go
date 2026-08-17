@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// The FUSE stack for S3 volumes (PRD §8, M0 spike ③).
+// The FUSE stack for S3 volumes (PRD §8, spike ③).
 //
 // Two pieces of host state that internal/storage has always assumed and
 // nothing has ever created: `user_allow_other` in /etc/fuse.conf, and an

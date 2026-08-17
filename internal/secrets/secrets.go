@@ -111,13 +111,14 @@ func Open(cfg Config) (*Store, error) {
 		return nil, err
 	}
 	if created {
-		// Said loudly because the escrow ceremony that makes this recoverable
-		// is M10: right now, losing this file loses every secret and makes
-		// every encrypted backup unreadable (§15.3).
+		// Said loudly because this key was generated outside `kanea init`, which
+		// is where the escrow ceremony records it: losing this file loses every
+		// secret and makes every encrypted backup unreadable (§15.3).
 		cfg.Logger.Warn("generated a new secrets master key",
 			"path", cfg.KeyPath,
 			"detail", "back this file up now: without it every stored secret and "+
-				"every encrypted backup is unrecoverable (key escrow arrives with `kanea init`)")
+				"every encrypted backup is unrecoverable (`kanea init` runs the escrow "+
+				"ceremony that records it)")
 	}
 
 	aead, err := chacha20poly1305.NewX(key)

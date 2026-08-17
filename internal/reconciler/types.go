@@ -529,7 +529,7 @@ type ScalingMetric struct {
 
 // Volume is one local volume mounted into every alloc of a service.
 //
-// M1 implements local storage only, and gives each alloc its own directory.
+// Local storage gives each alloc its own directory.
 // Sharing one directory between allocs is what PRD §8 calls the "shared" mode;
 // it needs a spec field to opt into, and per-alloc is the safe default: two
 // database allocs writing the same data directory would corrupt it.

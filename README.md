@@ -303,8 +303,8 @@ came from Kanea.
 
 ### Signing in with your directory
 
-Local accounts (`kanea user add`) and OIDC have been there since M5; LDAP joins
-them. Point `kanead` at the directory and map groups to roles. It is deny-by-default,
+Local accounts (`kanea user add`) and OIDC have been there from the start; LDAP
+joins them. Point `kanead` at the directory and map groups to roles. It is deny-by-default,
 so a bind that maps to no group is refused:
 
 ```bash
@@ -415,9 +415,19 @@ external` adopts it instead.
 
 ## Status
 
-**M0 through M10 are complete.** The milestone table, what shipped in each, and
-the decisions a change is most likely to trip over live in
-[`AGENTS.md`](./AGENTS.md), in one table, in one place to update.
+**Everything on this page is built and released.** Services and volumes,
+ingress with TLS, the dashboard, accounts and directory sign-in, autoscaling,
+GitOps pipelines, notifications, the MCP server, backup and restore, the
+host-component installer, and wasm functions.
+
+What is still owed before v1.0 is evidence rather than code: the runs no test
+can stand in for, on a real node. `init` to a first HTTPS service inside the
+five-minute budget, functions end to end, the 5.10 kernel floor, and S3 against
+providers other than MinIO. Those are tracked, with dates, in
+[`docs/VALIDATION.md`](./docs/VALIDATION.md).
+
+The decisions a change is most likely to trip over live in
+[`AGENTS.md`](./AGENTS.md), in one place to update.
 
 ## Documentation
 

@@ -190,7 +190,7 @@ jobs:
       # The datapath is left out deliberately: it needs BPF features a hosted
       # runner does not reliably have, and a flaky required job teaches people
       # to ignore CI. The dataplane is exercised on a real node instead
-      # (§20 M10): the same reasoning that kept cilium out before it.
+      # (docs/VALIDATION.md): the same reasoning that kept cilium out before it.
       - name: Install the host components
         run: sudo ./bin/kanea install --only containerd,runc,buildkit
       - name: The sockets answer

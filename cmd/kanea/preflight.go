@@ -230,7 +230,7 @@ func checkSystemd() checkResult {
 // The manifest is the matrix, so this is a comparison against the same table
 // the installer used rather than a second list to keep in step. A component
 // installed at a version this build does not pin is a finding: the flag sets
-// in §5.2.5 and the file interfaces M0 found are version-specific, and a
+// in §5.2.5 and the file interfaces the spikes found are version-specific, and a
 // mismatch is how a node develops behaviour nobody can reproduce.
 func checkVersionMatrix(layout provision.Layout) checkResult {
 	manifest, err := provision.Load()

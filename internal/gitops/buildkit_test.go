@@ -16,7 +16,7 @@ import (
 // environment, and produces whatever metadata the test asks for.
 //
 // A fake binary rather than an interface seam: what is under test is the exact
-// invocation M0 spike ④ validated (`--opt filename=`, the output string, the
+// invocation spike ④ validated (`--opt filename=`, the output string, the
 // metadata file) and an interface would let that drift while the tests stayed
 // green. This runs the real exec path, so the argv asserted below is the argv
 // buildkitd would receive.
@@ -112,7 +112,7 @@ func TestBuildPassesTheInvocationTheSpikeValidated(t *testing.T) {
 	}
 
 	argv := args(t, argsFile)
-	// The findings from M0 spike ④, each of which is a silent failure if it
+	// The findings from spike ④, each of which is a silent failure if it
 	// regresses.
 	if argValue(argv, "--frontend") != "dockerfile.v0" {
 		t.Errorf("frontend = %q", argValue(argv, "--frontend"))

@@ -58,7 +58,7 @@ func CreateNetns(allocID string) (string, error) {
 
 // DeleteNetns removes an alloc's network namespace. Call it only after CNI DEL
 // and after the task is gone: CNI DEL needs the namespace to still exist in
-// order to clean up (M0 spike ②).
+// order to clean up (spike ②).
 //
 // Missing is success: teardown is idempotent.
 func DeleteNetns(allocID string) error {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
@@ -61,76 +60,29 @@ func TestNoArgsPrintsUsage(t *testing.T) {
 	}
 }
 
-// implemented lists the commands that do real work today. Everything else must
-// still report the milestone that will bring it, so `kanea backup` says "not
-// implemented yet" rather than failing obscurely.
-var implemented = map[string]bool{
-	"version": true,
-	// M1 runtime core:
-	"agent": true, "plan": true, "run": true, "stop": true, "ps": true, "logs": true,
-	"status": true, "describe": true,
-	// M3 ingress:
-	"edge": true,
-	// M5 auth & secrets:
-	"secret": true, "user": true, "token": true,
-	// M6 metrics & autoscaling:
-	"scale": true,
-	// M7 GitOps & pipelines:
-	"build": true, "project": true,
-	// M9 MCP server:
-	"mcp": true,
-	// M10 hardening & packaging:
-	"backup": true, "restore": true, "init": true, "doctor": true,
-	"upgrade": true, "ui": true, "exec": true,
-	// M10, host components (PRD §5.2.12, v1.30):
-	"install": true, "bundle": true,
-	// Certificate sources (PRD §7.3, v1.33):
-	"ca": true,
-	// M11 functions (PRD v1.39):
-	"functions": true,
-	// Service lifecycle verbs (PRD v1.55):
-	"start": true, "restart": true,
-	// Volume visibility (PRD v1.69):
-	"volume": true,
-}
-
-func TestUnimplementedCommandsReportMilestone(t *testing.T) {
-	for _, c := range commands {
-		if implemented[c.name] {
-			continue
-		}
-		if !isStub(c.run) {
-			t.Errorf("command %q is not in the implemented list but does not report the milestone", c.name)
-		}
-	}
-}
-
-// isStub reports whether a command still points at the not-implemented stub.
+// Every command in the table does real work: there is no not-implemented stub
+// left to point at, so the invariant is simply that dispatch can never reach a
+// nil handler and that no name is claimed twice (the second entry would be
+// unreachable, since dispatch takes the first match).
 //
-// Identity rather than invocation: `kanea agent` and `kanea edge` are daemons
-// that bind listeners and run until interrupted, so calling them to find out
-// whether they are wired would hang the test suite. It only worked while every
-// implemented command happened to fail fast.
-func isStub(run func([]string) error) bool {
-	return reflect.ValueOf(run).Pointer() == reflect.ValueOf(todo).Pointer()
-}
-
-func TestImplementedCommandsAreWired(t *testing.T) {
-	// Guards against the opposite mistake: a command listed as implemented but
-	// still pointing at the todo stub.
-	for name := range implemented {
-		var found bool
-		for _, c := range commands {
-			if c.name != name {
-				continue
-			}
-			found = true
-			if isStub(c.run) {
-				t.Errorf("command %q is listed as implemented but still points at the stub", name)
-			}
+// Checked by identity rather than by calling: `kanea agent` and `kanea edge`
+// are daemons that bind listeners and run until interrupted, so invoking one to
+// find out whether it is wired would hang the suite.
+func TestEveryCommandIsWired(t *testing.T) {
+	seen := map[string]bool{}
+	for _, c := range commands {
+		if c.run == nil {
+			t.Errorf("command %q has no handler", c.name)
 		}
-		if !found {
-			t.Errorf("command %q is listed as implemented but missing from the table", name)
+		if c.name == "" {
+			t.Error("a command in the table has no name")
+		}
+		if seen[c.name] {
+			t.Errorf("command %q is listed twice; the second entry is unreachable", c.name)
+		}
+		seen[c.name] = true
+		if c.desc == "" {
+			t.Errorf("command %q has no description, so usage output cannot explain it", c.name)
 		}
 	}
 }

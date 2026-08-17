@@ -18,7 +18,7 @@ import (
 
 // The BuildKit runner (PRD §10.2).
 //
-// BuildKit is the only build driver, chosen in M0 spike ④ because it is the
+// BuildKit is the only build driver, chosen in spike ④ because it is the
 // only validated configuration needing **no elevated privilege anywhere**:
 // `buildkitd` runs as an unprivileged non-root host user under rootlesskit,
 // and this drives it over its unix socket with `buildctl`. Nothing in the build
@@ -39,7 +39,7 @@ import (
 // DefaultBuildkitSocket is where the provisioned daemon listens: in its own
 // home under the data directory, *not* under `/run`; rootlesskit copy-ups
 // `/run` into a namespace-private tmpfs, so a socket there is invisible to
-// every client outside the namespace (M0 spike ④). Root-reachable only, by
+// every client outside the namespace (spike ④). Root-reachable only, by
 // the unit's 0750 home.
 //
 // Must equal provision.BuildkitSocket over the default layout, pinned by
@@ -307,7 +307,7 @@ func checkBuildOptions(target, tag, cacheRepo string) error {
 	return nil
 }
 
-// buildArgs is the invocation M0 spike ④ validated.
+// buildArgs is the invocation spike ④ validated.
 func buildArgs(req BuildRequest, recipe, metadataFile string) []string {
 	output := fmt.Sprintf("type=image,name=%s,push=true", req.Reference())
 	if req.Insecure {
@@ -321,7 +321,7 @@ func buildArgs(req BuildRequest, recipe, metadataFile string) []string {
 		"--local", "dockerfile=" + req.ContextDir,
 		// Explicit, always: the frontend defaults to the literal "Dockerfile",
 		// so a Containerfile build silently fails to find its recipe without
-		// this (M0 spike ④).
+		// this (spike ④).
 		"--opt", "filename=" + recipe,
 		"--output", output,
 		"--metadata-file", metadataFile,

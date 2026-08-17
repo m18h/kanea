@@ -192,7 +192,7 @@ func TestS3ModeSelectsTheDriver(t *testing.T) {
 		mode       string
 		wantBinary string
 	}{
-		// mountpoint-s3 is the default and is read-mostly (M0 spike ③).
+		// mountpoint-s3 is the default and is read-mostly (spike ③).
 		{name: "default is mountpoint-s3", mode: "", wantBinary: "mount-s3"},
 		{name: "ro is mountpoint-s3", mode: ModeReadOnly, wantBinary: "mount-s3"},
 		// s3fs is the only candidate with append and write-at-offset.
@@ -403,7 +403,7 @@ func TestCheckRejectsAnEmptyMountPoint(t *testing.T) {
 }
 
 // s3fs keeps serving ENOENT for objects that are still in the bucket after an
-// outage and never recovers on its own (M0 spike ③). A supervisor that only
+// outage and never recovers on its own (spike ③). A supervisor that only
 // reported health would leave a workload reading successful, wrong answers.
 func TestSuperviseRemountsAFailedMount(t *testing.T) {
 	runner := newFakeRunner()
