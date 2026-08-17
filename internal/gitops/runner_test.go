@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+
 	"github.com/m18h/kanea/internal/gitops"
 )
 
@@ -83,6 +86,38 @@ func buildRepo(t *testing.T) string {
 		"web/Dockerfile": "FROM scratch\n",
 		"README.md":      "docs",
 	})
+}
+
+// repoWithSymlink is buildRepo plus one committed symlink. go-git stores the
+// link as a symlink blob, so the checkout the runner builds contains it
+// verbatim - the shape a hostile repository pushes.
+func repoWithSymlink(t *testing.T, linkName, linkTarget string) string {
+	t.Helper()
+	dir := buildRepo(t)
+
+	r, err := gogit.PlainOpen(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := os.Symlink(linkTarget, filepath.Join(dir, linkName)); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	tree, err := r.Worktree()
+	if err != nil {
+		t.Fatalf("worktree: %v", err)
+	}
+	if _, err := tree.Add(linkName); err != nil {
+		t.Fatalf("add %s: %v", linkName, err)
+	}
+	if _, err := tree.Commit("add the link", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name: "Ada Lovelace", Email: "ada@example.com",
+			When: time.Date(2026, 8, 5, 11, 0, 0, 0, time.UTC),
+		},
+	}); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return dir
 }
 
 func TestRunBuildsAndDeploysADigest(t *testing.T) {
@@ -289,6 +324,103 @@ func TestABuildContextOutsideTheCheckoutIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(run.Error, "outside the checkout") {
 		t.Errorf("error = %q; it does not say why", run.Error)
+	}
+}
+
+func TestABuildContextThroughASymlinkIsRefused(t *testing.T) {
+	h := newRunner(t, writeMetadata, nil)
+
+	// The lexical withinDir check passes for "ctx": it *is* inside the
+	// checkout. But it is a symlink, and the build's context reader resolves
+	// the root through EvalSymlinks - as root - so `ctx -> /etc` builds the
+	// host's /etc. The link target is irrelevant: any symlink is refused.
+	run, err := h.runner.Run(context.Background(), gitops.Request{
+		Project: "shop", Service: "web", Source: gitops.Source{URL: repoWithSymlink(t, "ctx", "/etc")},
+		Build: gitops.BuildSpec{Context: "ctx", Target: "registry.example.com/shop/web"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if run.State != gitops.RunFailed {
+		t.Fatalf("state = %q, want failed", run.State)
+	}
+	if !strings.Contains(run.Error, "symlink") {
+		t.Errorf("error = %q; it does not say why", run.Error)
+	}
+	if _, err := os.Stat(h.argsFile); err == nil {
+		t.Error("the build ran despite the symlinked context")
+	}
+}
+
+func TestASymlinkBesideTheContextDoesNotBlockIt(t *testing.T) {
+	h := newRunner(t, writeMetadata, nil)
+
+	// A link elsewhere in the repository is not on the context's path, and a
+	// build must not care: only the components of the context itself are
+	// walked.
+	run, err := h.runner.Run(context.Background(), gitops.Request{
+		Project: "shop", Service: "web", Source: gitops.Source{URL: repoWithSymlink(t, "docs-link", "README.md")},
+		Build: gitops.BuildSpec{Context: "./web", Target: "registry.example.com/shop/web"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if run.State != gitops.RunSucceeded {
+		t.Fatalf("run = %+v", run)
+	}
+}
+
+func TestABuildWithAnInjectedOptionIsRefused(t *testing.T) {
+	h := newRunner(t, writeMetadata, nil)
+
+	// The plan-time half lives in jobspec's validateBuild; this is the runner
+	// half, after ExpandTag, which is where a *branch name* carrying a comma
+	// would land it (${GIT_BRANCH} is sanitized for slashes, not for option
+	// syntax). buildctl parses --output as a comma-separated key=value list:
+	// a comma here is `registry.insecure=true` on the push, not a name.
+	run, err := h.runner.Run(context.Background(), gitops.Request{
+		Project: "shop", Service: "web", Source: gitops.Source{URL: buildRepo(t)},
+		Build: gitops.BuildSpec{
+			Context: "./web", Target: "registry.example.com/shop/web",
+			Tag: "latest,registry.insecure=true",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if run.State != gitops.RunFailed {
+		t.Fatalf("state = %q, want failed", run.State)
+	}
+	if !strings.Contains(run.Error, "option syntax") {
+		t.Errorf("error = %q; it does not say why", run.Error)
+	}
+	if _, err := os.Stat(h.argsFile); err == nil {
+		t.Error("the build ran despite the injected option")
+	}
+}
+
+func TestACloneErrorRedactsURLCredentials(t *testing.T) {
+	h := newRunner(t, writeMetadata, nil)
+
+	// The URL is echoed into the build log and the run record, both readable
+	// by any viewer: a credential embedded in it must not survive the echo.
+	// 127.0.0.1:1 refuses the connection immediately, so the clone fails here.
+	run, err := h.runner.Run(context.Background(), gitops.Request{
+		Project: "shop", Service: "web",
+		Source: gitops.Source{URL: "https://oauth2:glpat-secret@127.0.0.1:1/team/repo.git"},
+		Build:  gitops.BuildSpec{Context: ".", Target: "registry.example.com/shop/web"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if run.State != gitops.RunFailed {
+		t.Fatalf("state = %q, want failed", run.State)
+	}
+	if strings.Contains(run.Error, "glpat-secret") {
+		t.Errorf("error = %q; it carries the credential", run.Error)
+	}
+	if !strings.Contains(run.Error, "127.0.0.1") {
+		t.Errorf("error = %q; the redacted URL should still name the host", run.Error)
 	}
 }
 

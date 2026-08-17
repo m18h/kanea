@@ -217,6 +217,30 @@ func TestRecipeDetection(t *testing.T) {
 	}
 }
 
+func TestASymlinkedRecipeIsRefused(t *testing.T) {
+	// The stat here runs as root on the host, before BuildKit's in-context
+	// link rebasing ever applies: following a recipe symlink makes any host
+	// path a file-existence oracle, and on a reader without rebasing, a read
+	// primitive. Lstat, and refuse.
+	dir := buildContext(t, map[string]string{"Dockerfile": "FROM scratch\n"})
+	if err := os.Symlink("/etc/shadow", filepath.Join(dir, "Containerfile")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	// Auto-detect skips the link rather than selecting it: the real
+	// Dockerfile still wins.
+	got, err := gitops.DetectRecipe(dir, "")
+	if err != nil || got != "Dockerfile" {
+		t.Fatalf("DetectRecipe = %q, %v; want the real Dockerfile", got, err)
+	}
+
+	// An override naming the link is refused by name.
+	if _, err := gitops.DetectRecipe(dir, "Containerfile"); err == nil ||
+		!strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("DetectRecipe(override) = %v; want the symlink refusal", err)
+	}
+}
+
 func TestBuildWithoutARecipeFailsBeforeInvokingBuildkit(t *testing.T) {
 	binary, argsFile, _ := fakeBuildctl(t, writeMetadata)
 	ctx := buildContext(t, map[string]string{"main.go": "package main"})

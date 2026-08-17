@@ -286,6 +286,27 @@ func (b *Builder) registryAuth(scratch string, config []byte) ([]string, error) 
 	return append(env, "DOCKER_CONFIG="+dir), nil
 }
 
+// checkBuildOptions is the runner half of jobspec's validateBuild (the
+// ownershipRefusedBy precedent: two cheap duplicated checks, one at plan for
+// the operator, one here for records that arrive another way). buildctl
+// parses --output, --export-cache and --import-cache as comma-separated
+// key=value lists, so a comma, an '=' or whitespace in any of these is option
+// injection - `x,registry.insecure=true` would downgrade the push to
+// cleartext, and a second `name=` key wins over the first.
+func checkBuildOptions(target, tag, cacheRepo string) error {
+	for _, field := range []struct{ name, value string }{
+		{"target", target}, {"tag", tag}, {"cache_repo", cacheRepo},
+	} {
+		if strings.ContainsAny(field.value, ",= \t\n\r") {
+			return fmt.Errorf(
+				"gitops: build %s %q contains a comma, an '=' or whitespace, which buildctl "+
+					"would parse as option syntax rather than as part of the name",
+				field.name, field.value)
+		}
+	}
+	return nil
+}
+
 // buildArgs is the invocation M0 spike ④ validated.
 func buildArgs(req BuildRequest, recipe, metadataFile string) []string {
 	output := fmt.Sprintf("type=image,name=%s,push=true", req.Reference())
@@ -326,16 +347,31 @@ func buildArgs(req BuildRequest, recipe, metadataFile string) []string {
 // Containerfile wins when both are present (the Podman/buildah convention the
 // PRD adopts) and an explicit override may name either. The result is passed
 // to `--opt filename=` because BuildKit would otherwise assume `Dockerfile`.
+//
+// The file is Lstat'd, not Stat'd: this process runs as root, and a symlinked
+// recipe is a host file-existence oracle (and, on a reader that does not
+// rebase in-context links, a file-read primitive). A real repository that
+// wants one recipe under both names should hardlink or duplicate it.
 func DetectRecipe(contextDir, override string) (string, error) {
+	recipe := func(name string) error {
+		fi, err := os.Lstat(filepath.Join(contextDir, name))
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("gitops: build recipe %q is a symlink; recipes must be real files in the context", name)
+		}
+		return nil
+	}
 	if override != "" {
-		if _, err := os.Stat(filepath.Join(contextDir, override)); err != nil {
+		if err := recipe(override); err != nil {
 			return "", fmt.Errorf("gitops: build.dockerfile names %q, which is not in the context: %w",
 				override, err)
 		}
 		return override, nil
 	}
 	for _, name := range recipeNames {
-		if _, err := os.Stat(filepath.Join(contextDir, name)); err == nil {
+		if err := recipe(name); err == nil {
 			return name, nil
 		}
 	}

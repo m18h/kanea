@@ -246,7 +246,7 @@ func (r *Runner) checkout(ctx context.Context, run *Run, req Request, logs io.Wr
 		return Checkout{}, dir, r.runs.Update(ctx, *run)
 	}
 
-	note(logs, "==> cloning %s\n", req.Source.URL)
+	note(logs, "==> cloning %s\n", redactURL(req.Source.URL))
 	checkout, err := r.syncer.Materialize(ctx, req.Source, dir)
 	run.EndStep(StepCheckout, r.now(), err)
 	if uerr := r.runs.Update(ctx, *run); uerr != nil {
@@ -287,6 +287,10 @@ func (r *Runner) build(
 	}
 
 	tag := ExpandTag(req.Build.Tag, checkout)
+	if err := checkBuildOptions(req.Build.Target, tag, req.Build.CacheRepo); err != nil {
+		run.EndStep(StepBuild, r.now(), err)
+		return BuildResult{}, err
+	}
 	note(logs, "==> building %s:%s from %s\n", req.Build.Target, tag, req.Build.Context)
 
 	result, err := r.builder.Build(ctx, BuildRequest{
@@ -433,6 +437,34 @@ func withinDir(root, target string) error {
 	rel, err := filepath.Rel(absRoot, absTarget)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("gitops: build context %q is outside the checkout", target)
+	}
+	if rel == "." {
+		return nil
+	}
+	// The lexical check above is not sufficient on its own: a checkout writes
+	// symlink blobs verbatim, and the build's context reader (buildkit's
+	// fsutil) resolves the context root through filepath.EvalSymlinks. A
+	// symlink at or below the root therefore relocates the whole context to an
+	// arbitrary host directory - `ctx -> /etc` is the shape, and the reader
+	// runs as root. Refuse any symlink in the path rather than comparing
+	// resolved paths, so the answer does not depend on what the link points at.
+	cur := absRoot
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if errors.Is(err, os.ErrNotExist) {
+			// A missing directory cannot be a symlink; DetectRecipe reports the
+			// absence with the better message.
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("gitops: build context %q: %w", target, err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf(
+				"gitops: build context %q crosses %q, a symlink: a context must be a real "+
+					"directory inside the checkout, never a link to one", target, cur)
+		}
 	}
 	return nil
 }
