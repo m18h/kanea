@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App } from '@/App'
 
 /**
- * The gate is presentation, not enforcement — the daemon refuses every route
+ * The gate is presentation, not enforcement: the daemon refuses every route
  * behind it regardless. What these check is that an operator meets a password
  * field rather than a screenful of 401s, and that a session ending returns
  * them to it.
@@ -122,7 +122,16 @@ describe('App', () => {
     renderApp()
 
     await screen.findByLabelText('Sign out')
-    for (const label of ['Dashboard', 'Services', 'Pipelines', 'Events', 'Backups']) {
+    for (const label of [
+      'Dashboard',
+      'Projects',
+      'Services',
+      'Pipelines',
+      'Functions',
+      'Storage',
+      'Events',
+      'Backups',
+    ]) {
       expect(screen.getByRole('link', { name: label })).toBeDefined()
     }
   })

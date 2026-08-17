@@ -3,8 +3,10 @@ import {
   Activity,
   Boxes,
   DatabaseBackup,
+  FolderTree,
   FunctionSquare,
   GitBranch,
+  HardDrive,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -35,9 +37,15 @@ export function Sidebar({ className }: { className?: string | undefined }) {
 
   const nav: { to: string; label: string; icon: LucideIcon; exact: boolean; badge?: number | undefined }[] = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+    { to: '/projects', label: 'Projects', icon: FolderTree, exact: false },
     { to: '/services', label: 'Services', icon: Boxes, exact: false, badge: counts.services },
     { to: '/pipelines', label: 'Pipelines', icon: GitBranch, exact: false, badge: counts.buildsRunning },
     { to: '/functions', label: 'Functions', icon: FunctionSquare, exact: false, badge: counts.functions },
+    // Projects and Storage carry no badge on purpose: each would cost the
+    // sidebar a poll of its own on every page (a project list walks services,
+    // allocs and pipeline configs), and neither number is one an operator is
+    // waiting for the way a running build or a new alert is.
+    { to: '/storage', label: 'Storage', icon: HardDrive, exact: false },
     { to: '/events', label: 'Events', icon: Activity, exact: false, badge: counts.alerts },
     { to: '/backups', label: 'Backups', icon: DatabaseBackup, exact: false },
     { to: '/settings', label: 'Settings', icon: Settings2, exact: false },
@@ -69,7 +77,7 @@ export function Sidebar({ className }: { className?: string | undefined }) {
       <div className="mt-auto border-t border-sidebar-border px-4 py-3">
         <SocketLine />
         <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
-          <span aria-hidden>◇</span> store idx {health.data?.store_index ?? '—'}
+          <span aria-hidden>◇</span> store idx {health.data?.store_index ?? '-'}
         </div>
       </div>
       <UserRow />

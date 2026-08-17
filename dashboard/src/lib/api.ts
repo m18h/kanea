@@ -56,7 +56,7 @@ export const serviceSchema = z.object({
   DependsOn: z.array(z.string()).nullish(),
   Scaling: scalingPolicySchema.nullish(),
   // v1.39: a service lowered from a `function` block. The marker is what the
-  // Functions page filters on and the Services page filters out — one record,
+  // Functions page filters on and the Services page filters out: one record,
   // shown on exactly one page. Both fields carry lowercase json tags.
   runtime: z.string().optional(),
   function: z.unknown().nullish(),
@@ -72,7 +72,7 @@ export const servicesResponseSchema = z.object({
 
 // AllocRecord marshals with lowercase json tags (internal/reconciler/types.go),
 // unlike Desired whose untagged fields ride as PascalCase. The distinction is
-// the Go structs', not ours — match it field for field.
+// the Go structs', not ours: match it field for field.
 export const allocSchema = z.object({
   id: z.string(),
   project: z.string(),
@@ -114,8 +114,8 @@ export const logLineSchema = z.object({
  * overran its send buffer and cost the whole multiplexed socket.
  *
  * `lines` is nullable because Go marshals a nil slice as null, and a schema
- * that only tolerates [] is one refactor from silently discarding every frame
- * — but it is *required*, unlike the other list schemas, because the field
+ * that only tolerates [] is one refactor from silently discarding every frame,
+ * but it is *required*, unlike the other list schemas, because the field
  * carries no omitempty and is therefore always on the wire. Optional would let
  * the pre-v1.70 single-line frame parse as an empty batch and be discarded in
  * silence, which is the one failure a tab open across an upgrade can hit.
@@ -162,7 +162,7 @@ export const functionViewSchema = z.object({
   running: z.number(),
   healthy: z.number(),
   restarts: z.number(),
-  // Absent means "not measured", never zero — the datapath is not scraped
+  // Absent means "not measured", never zero; the datapath is not scraped
   // under --network netns, and a dash is the honest render.
   invocations_per_minute: z.number().optional(),
   invoker: invokerStatsSchema.nullish(),
@@ -235,7 +235,7 @@ export const allocStatsSchema = z.object({
  * The edge's labelled totals (PRD §9.1.1).
  *
  * Cumulative counters for the life of the edge process, not a rate. Absent
- * entirely when the edge has not been scraped or the service is not exposed —
+ * entirely when the edge has not been scraped or the service is not exposed:
  * which is a different fact from a service that has served nothing, and the
  * UI has to render the two differently.
  */
@@ -341,7 +341,7 @@ export const runsResponseSchema = z.object({
 export type Run = z.infer<typeof runSchema>
 export type RunStep = z.infer<typeof runStepSchema>
 
-/** Terminal run states — the ones that will not change again. */
+/** Terminal run states: the ones that will not change again. */
 const terminalRunStates = new Set(['succeeded', 'failed', 'cancelled'])
 
 export function isRunFinished(run: Run): boolean {
@@ -425,7 +425,7 @@ export async function triggerBuild(
 /**
  * scaleService writes one number; the reconciler converges.
  *
- * Stop is a scale to zero and start is a scale back up — the same route the
+ * Stop is a scale to zero and start is a scale back up: the same route the
  * autoscaler and `kanea scale` use, so there is no second path to the runtime
  * for the dashboard to disagree with.
  */
@@ -442,7 +442,7 @@ export async function scaleService(
   })
 }
 
-/** restartService bumps the restart generation — a rolling restart through the
+/** restartService bumps the restart generation: a rolling restart through the
  * same update policy a deploy uses. */
 export async function restartService(project: string, service: string, csrf?: string): Promise<void> {
   await apiFetch(`/v1/services/${enc(project)}/${enc(service)}/restart`, {
@@ -469,7 +469,7 @@ function enc(segment: string): string {
 export const eventSchema = z.object({
   id: z.string(),
   name: z.string(),
-  // Severity arrives as a name — the Go side marshals it that way so a feed is
+  // Severity arrives as a name; the Go side marshals it that way so a feed is
   // readable without a lookup table.
   severity: z.enum(['info', 'warning', 'error']).catch('warning'),
   project: z.string().optional(),
@@ -510,11 +510,11 @@ export async function fetchEvents(
 
 /**
  * The machine's own numbers. Every metric is optional because the reader
- * reports nothing rather than a made-up figure — the first CPU read has no
+ * reports nothing rather than a made-up figure: the first CPU read has no
  * delta to compute from, and procfs may be unreadable entirely.
  */
 /** One visible GPU (v1.42). VRAM fields are absent when a driver could not
- * report them — an [N/A] from nvidia-smi is not an empty card. */
+ * report them: an [N/A] from nvidia-smi is not an empty card. */
 export const nodeGPUSchema = z.object({
   name: z.string(),
   vram_used_bytes: z.number().optional(),
@@ -582,7 +582,7 @@ export type StatsHistory = z.infer<typeof statsHistorySchema>
 
 /**
  * Fetch a metric history for seeding sparklines. Returns null when the daemon
- * predates the route or has no metrics store — the charts then simply start
+ * predates the route or has no metrics store: the charts then simply start
  * empty and accumulate live, exactly as they did before v1.38.
  */
 export async function fetchStatsHistory(
@@ -614,7 +614,7 @@ export const projectSummarySchema = z.object({
   allocs: z.number(),
   running: z.number(),
   git: projectGitSchema.nullish(),
-  // Channel names only, never tokens — which is also all the routing hint on
+  // Channel names only, never tokens, which is also all the routing hint on
   // the Events page needs.
   notifications: z.array(z.string()).nullish(),
 })
@@ -631,6 +631,52 @@ export async function fetchProjects(signal?: AbortSignal): Promise<ProjectSummar
   const resp = await fetch('/v1/projects', init)
   if (!resp.ok) throw new Error(`projects: ${resp.status}`)
   return projectsResponseSchema.parse(await resp.json()).projects ?? []
+}
+
+// ---- volumes (PRD §8, §12.2, v1.69) ----
+
+/**
+ * One service's use of a storage resource.
+ *
+ * `used_bytes` and `size_bytes` are optional on the wire and stay optional
+ * here, deliberately: an unmeasured volume has no reading, and a default of 0
+ * would say it is empty (§9.2, "no data" is never zero). Every renderer of
+ * these two fields must distinguish `undefined` from `0`.
+ */
+export const volumeMountSchema = z.object({
+  project: z.string(),
+  service: z.string(),
+  volume: z.string(),
+  mount_path: z.string().optional(),
+  read_only: z.boolean().optional(),
+  path: z.string().optional(),
+  used_bytes: z.number().optional(),
+  size_bytes: z.number().optional(),
+  // ok | over | unmeasured, as internal/api/volumes.go names them.
+  state: z.string(),
+})
+
+export const volumeStorageSchema = z.object({
+  project: z.string(),
+  name: z.string(),
+  type: z.string(),
+  target: z.string().optional(),
+  mounts: z.array(volumeMountSchema).nullish(),
+})
+
+export const volumesResponseSchema = z.object({
+  storages: z.array(volumeStorageSchema).nullish(),
+})
+
+export type VolumeMount = z.infer<typeof volumeMountSchema>
+export type VolumeStorage = z.infer<typeof volumeStorageSchema>
+
+/** List storage resources with everything mounting them. */
+export async function fetchVolumes(signal?: AbortSignal): Promise<VolumeStorage[]> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch('/v1/volumes', init)
+  if (!resp.ok) throw new Error(`volumes: ${resp.status}`)
+  return volumesResponseSchema.parse(await resp.json()).storages ?? []
 }
 
 // ---- audit log (PRD §13.3, §14 A09) ----
@@ -710,7 +756,7 @@ export type BackupsResponse = z.infer<typeof backupsResponseSchema>
  * List archives and report replication health.
  *
  * A 503 means no backup destination is configured, which is a supported (if
- * regrettable) state rather than a failure. The page says so explicitly — an
+ * regrettable) state rather than a failure. The page says so explicitly: an
  * empty list with no explanation reads as "backups are fine and there are none
  * yet", which is the opposite of the truth.
  */
@@ -731,7 +777,7 @@ export async function createBackup(reason: string, csrf?: string): Promise<void>
   })
 }
 
-/** Check an archive against its manifest. A read, so no CSRF — the daemon
+/** Check an archive against its manifest. A read, so no CSRF: the daemon
  * only checks the token on mutations. */
 export async function verifyBackup(id: string): Promise<void> {
   await apiFetch(`/v1/backups/${enc(id)}/verify`)
@@ -766,7 +812,7 @@ export async function stageRestore(id: string, csrf?: string): Promise<StageRest
 /**
  * The notifications channel block serialises with Go field names: the
  * jobspec.Notifications type carries no json tags, so `Telegram`, `On` and the
- * rest arrive PascalCase — the same fact the service schema notes about
+ * rest arrive PascalCase; the same fact the service schema notes about
  * `Desired`. `DefRange` also rides along and is deliberately not declared
  * here: zod strips unknown keys, and a PUT never needs to send it.
  */
@@ -815,7 +861,7 @@ export const s3DestinationSchema = z.object({
   endpoint: z.string(),
   region: z.string().optional(),
   access_key: z.string().optional(),
-  // A `secret:` reference — never the key itself. The daemon refuses anything
+  // A `secret:` reference, never the key itself. The daemon refuses anything
   // else by shape, and the form's helper text says the same thing earlier.
   secret_key_ref: z.string().optional(),
   path_style: z.boolean().nullish(),
@@ -840,7 +886,7 @@ export const backupLiveStatusSchema = z.object({
 })
 
 export const backupSettingsViewSchema = z.object({
-  // "store", "flags" or "none" — where the effective configuration came from.
+  // "store", "flags" or "none": where the effective configuration came from.
   source: z.string(),
   settings: backupSettingsRecordSchema.nullish(),
   status: backupLiveStatusSchema.nullish(),
@@ -889,8 +935,8 @@ export async function fetchSettings(signal?: AbortSignal): Promise<SettingsRespo
 }
 
 /**
- * Replace the backup destination. A 400 carries the daemon's own refusal —
- * including the probe failure text — and apiFetch surfaces it verbatim, which
+ * Replace the backup destination. A 400 carries the daemon's own refusal
+ * (including the probe failure text) and apiFetch surfaces it verbatim, which
  * is what the form's error banner shows.
  */
 export async function putBackupSettings(
@@ -1056,7 +1102,7 @@ export async function deleteUser(name: string, csrf?: string): Promise<void> {
 
 /**
  * A bearer token's public half. `expires` and `last_used` arrive as the Go
- * zero time when unset — the struct field cannot omit itself — so the page
+ * zero time when unset (the struct field cannot omit itself) so the page
  * runs them through isZeroTime before calling anything "never".
  */
 export const tokenSchema = z.object({
@@ -1074,7 +1120,7 @@ export const tokensResponseSchema = z.object({
 
 export const tokenCreatedSchema = z.object({
   token: tokenSchema,
-  // The presented form, returned exactly once. Nothing stores it — a lost
+  // The presented form, returned exactly once. Nothing stores it: a lost
   // token is replaced, not recovered.
   secret: z.string(),
 })
@@ -1122,8 +1168,8 @@ export const auditPageSchema = z.object({
 export type AuditPage = z.infer<typeof auditPageSchema>
 
 /**
- * Read one page of the audit log, newest first, with the daemon's own filters
- * — actor, action and the `after` cursor are all server-side, so the page
+ * Read one page of the audit log, newest first, with the daemon's own filters:
+ * actor, action and the `after` cursor are all server-side, so the page
  * never downloads the log to search it.
  */
 export async function fetchAuditPage(
@@ -1182,7 +1228,7 @@ export const secretProvidersResponseSchema = z.object({
 export type SecretProviderStatus = z.infer<typeof secretProviderStatusSchema>
 
 /**
- * Read provider sync status — metadata by construction, never values. Null
+ * Read provider sync status: metadata by construction, never values. Null
  * when this node has no --secrets-providers-config, which is the common case
  * and not worth a section, let alone an error.
  */

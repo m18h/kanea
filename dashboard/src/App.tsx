@@ -3,7 +3,9 @@ import { useRouter } from '@/hooks/useRouter'
 import { matchPath } from '@/lib/paths'
 import { AppShell } from '@/components/layout/AppShell'
 import { Overview } from '@/pages/Overview'
+import { Projects } from '@/pages/Projects'
 import { Services } from '@/pages/Services'
+import { Storage } from '@/pages/Storage'
 import { ServiceDetail } from '@/pages/ServiceDetail'
 import { Functions } from '@/pages/Functions'
 import { Pipelines } from '@/pages/Pipelines'
@@ -29,7 +31,7 @@ export function App() {
 /**
  * Gate decides between the app and the login screen.
  *
- * The daemon is the authority — every route behind this is deny-by-default —
+ * The daemon is the authority: every route behind this is deny-by-default;
  * so this is presentation, not enforcement. Skipping it would not expose data;
  * it would show an operator a screen full of 401s instead of a password field.
  */
@@ -57,6 +59,7 @@ function Shell() {
 /** Page resolves the current path to a view. */
 function Page({ path }: { path: string }) {
   if (matchPath('/', path)) return <Overview />
+  if (matchPath('/projects', path)) return <Projects />
   if (matchPath('/services', path)) return <Services />
   if (matchPath('/services/new', path)) return <SpecEditorPage />
 
@@ -78,6 +81,7 @@ function Page({ path }: { path: string }) {
     return <PipelineDetail project={run.project} service={run.service} id={run.id} />
   }
 
+  if (matchPath('/storage', path)) return <Storage />
   if (matchPath('/events', path)) return <Events />
   if (matchPath('/backups', path)) return <Backups />
   const settings = matchPath('/settings/:tab', path)
