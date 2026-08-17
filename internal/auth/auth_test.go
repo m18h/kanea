@@ -615,3 +615,63 @@ func TestSuccessfulLoginDeletesTheLockoutRecord(t *testing.T) {
 		t.Errorf("the lockout record outlived the good login: %v", err)
 	}
 }
+
+// K-13: deleting an account must end the access its already-issued cookies
+// carry, or the documented response to a stolen credential changes nothing
+// for the attacker holding it.
+func TestDeletingAUserRevokesItsSessions(t *testing.T) {
+	a, _ := newAuth(t)
+	ctx := context.Background()
+
+	if err := a.PutUser(ctx, "admin", goodPassword, auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	if err := a.PutUser(ctx, "viewer", goodPassword, auth.RoleViewer); err != nil {
+		t.Fatalf("PutUser viewer: %v", err)
+	}
+	_, adminCookie, err := a.Login(ctx, "admin", goodPassword, "10.0.0.1")
+	if err != nil {
+		t.Fatalf("Login admin: %v", err)
+	}
+	_, viewerCookie, err := a.Login(ctx, "viewer", goodPassword, "10.0.0.2")
+	if err != nil {
+		t.Fatalf("Login viewer: %v", err)
+	}
+
+	if err := a.DeleteUser(ctx, "viewer"); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	if _, err := a.Session(ctx, viewerCookie); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Errorf("the deleted account's session resolved: %v", err)
+	}
+	// Another account's session is untouched.
+	if _, err := a.Session(ctx, adminCookie); err != nil {
+		t.Errorf("an unrelated session died with the deletion: %v", err)
+	}
+}
+
+// K-13, the re-credentialling half: a password change (or demotion) ends the
+// sessions issued under the old one - the session embeds the role, so the
+// sweep is the only way the change takes effect before the absolute expiry.
+func TestPutUserRevokesExistingSessions(t *testing.T) {
+	a, _ := newAuth(t)
+	ctx := context.Background()
+
+	if err := a.PutUser(ctx, "admin", goodPassword, auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser: %v", err)
+	}
+	_, cookie, err := a.Login(ctx, "admin", goodPassword, "10.0.0.1")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if err := a.PutUser(ctx, "admin", "a-new-password-that-is-long", auth.RoleAdmin); err != nil {
+		t.Fatalf("PutUser (password change): %v", err)
+	}
+	if _, err := a.Session(ctx, cookie); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Errorf("the pre-change session survived the password change: %v", err)
+	}
+	if _, _, err := a.Login(ctx, "admin", "a-new-password-that-is-long", "10.0.0.1"); err != nil {
+		t.Errorf("login with the new password failed: %v", err)
+	}
+}

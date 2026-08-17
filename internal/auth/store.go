@@ -1,7 +1,10 @@
 package auth
 
 import (
+	"container/list"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -111,6 +114,13 @@ func (s *Store) PutUser(ctx context.Context, name, password string, role Role) e
 				return err
 			}
 		}
+		// A re-credentialling (or demotion) ends the access already-issued
+		// cookies carry (K-13): the session embeds the role, so the sweep is
+		// the only way a password change or demotion takes effect before the
+		// 12 h absolute expiry. The operator re-logs-in.
+		if _, err := s.DeleteSessionsFor(ctx, name); err != nil {
+			return err
+		}
 	}
 
 	mut, err := store.PutMutation(authKind, userPrefix+name, user)
@@ -161,8 +171,41 @@ func (s *Store) DeleteUser(ctx context.Context, name string) error {
 			return err
 		}
 	}
+	// The account's sessions die with it (K-13): a session resolves its
+	// subject from the record alone, so without the sweep a deleted account's
+	// cookie authorizes until the 12 h absolute expiry - the documented
+	// response to a stolen credential would change nothing for the attacker
+	// holding it.
+	if _, err := s.DeleteSessionsFor(ctx, name); err != nil {
+		return err
+	}
 	_, err = s.store.Apply(ctx, store.DeleteMutation(authKind, userPrefix+name))
 	return err
+}
+
+// DeleteSessionsFor revokes every session a subject holds and reports how
+// many there were (K-13). A bounded prefix scan over auth/session/*: account
+// lifecycle events are rare, and the table holds one row per live login.
+func (s *Store) DeleteSessionsFor(ctx context.Context, subject string) (int, error) {
+	sessions, err := listPrefix[Session](ctx, s.store, sessionPrefix)
+	if err != nil {
+		return 0, err
+	}
+	var muts []store.Mutation
+	for _, sess := range sessions {
+		if sess.Subject != subject {
+			continue
+		}
+		muts = append(muts, store.DeleteMutation(authKind, sessionPrefix+sess.Hash))
+	}
+	if len(muts) == 0 {
+		return 0, nil
+	}
+	if _, err := s.store.Apply(ctx, muts...); err != nil {
+		return 0, fmt.Errorf("auth: revoke sessions for %s: %w", subject, err)
+	}
+	s.log.Info("sessions revoked", "user", subject, "count", len(muts))
+	return len(muts), nil
 }
 
 // checkNotLastAdmin refuses a change that would leave no admin account.
@@ -539,21 +582,100 @@ func listPrefix[T any](ctx context.Context, s store.Store, prefix string) ([]T, 
 }
 
 // loginLimiter bounds failed logins per source and per account.
+//
+// The map is bounded two ways (K-14): the account half of a key is hashed
+// before it enters the map, because the limiter needs equality, not the
+// plaintext, and an unbounded attacker-chosen string per attempt is memory
+// growth by login form; and the table itself is an LRU with a hard capacity,
+// because a botnet of distinct sources is the same growth with small keys.
+// Eviction skips currently-locked entries first: a capacity attack must not
+// be a way to clear a lockout.
 type loginLimiter struct {
-	mu     sync.Mutex
-	limit  LoginLimit
-	now    func() time.Time
-	counts map[string]*attemptState
+	mu       sync.Mutex
+	limit    LoginLimit
+	now      func() time.Time
+	capacity int // entries; zero means loginLimiterCapacity (tests shrink it)
+	counts   map[string]*list.Element
+	order    *list.List // *attemptState, most recently touched first
 }
 
+// loginLimiterCapacity caps the tracked keys, mirroring the edge rate
+// limiter's DefaultCapacity: 64k sources is a real attack's footprint, and
+// past it the oldest idle entry is the cheapest thing to forget.
+const loginLimiterCapacity = 1 << 16
+
 type attemptState struct {
+	key       string
 	failures  int
 	first     time.Time
 	lockedTil time.Time
 }
 
 func newLoginLimiter(limit LoginLimit, now func() time.Time) *loginLimiter {
-	return &loginLimiter{limit: limit, now: now, counts: map[string]*attemptState{}}
+	return &loginLimiter{
+		limit:  limit,
+		now:    now,
+		counts: map[string]*list.Element{},
+		order:  list.New(),
+	}
+}
+
+// stateFor returns the key's state, creating it on first use, and marks it
+// most-recently-touched. The caller holds the lock.
+func (l *loginLimiter) stateFor(key string) *attemptState {
+	if elem, ok := l.counts[key]; ok {
+		l.order.MoveToFront(elem)
+		st, _ := elem.Value.(*attemptState)
+		return st
+	}
+	l.evictIfFull()
+	st := &attemptState{key: key}
+	l.counts[key] = l.order.PushFront(st)
+	return st
+}
+
+// peek reads without creating or re-ordering. The caller holds the lock.
+func (l *loginLimiter) peek(key string) (*attemptState, bool) {
+	elem, ok := l.counts[key]
+	if !ok {
+		return nil, false
+	}
+	st, _ := elem.Value.(*attemptState)
+	return st, true
+}
+
+// evictIfFull makes room for one more entry. The caller holds the lock.
+//
+// The scan from the back skips locked entries first: evicting one would clear
+// a lockout, and a capacity attack must not be the way to do that. A table
+// that is ALL locked entries (a colossal attack) still evicts: bounded memory
+// is the property the cap exists for, and the attacker has by then locked
+// mostly their own throwaway sources.
+func (l *loginLimiter) evictIfFull() {
+	now := l.now()
+	capacity := l.capacity
+	if capacity <= 0 {
+		capacity = loginLimiterCapacity
+	}
+	for len(l.counts) >= capacity {
+		var victim *list.Element
+		for elem := l.order.Back(); elem != nil; elem = elem.Prev() {
+			st, _ := elem.Value.(*attemptState)
+			if st.lockedTil.IsZero() || !now.Before(st.lockedTil) {
+				victim = elem
+				break
+			}
+		}
+		if victim == nil {
+			victim = l.order.Back() // everything is locked: evict the coldest
+		}
+		if victim == nil {
+			return
+		}
+		st, _ := victim.Value.(*attemptState)
+		l.order.Remove(victim)
+		delete(l.counts, st.key)
+	}
 }
 
 // check refuses a login that is currently locked out.
@@ -563,7 +685,7 @@ func (l *loginLimiter) check(source, account string) error {
 
 	now := l.now()
 	for _, key := range keysFor(source, account) {
-		state, ok := l.counts[key]
+		state, ok := l.peek(key)
 		if ok && now.Before(state.lockedTil) {
 			return ErrRateLimited
 		}
@@ -580,11 +702,11 @@ func (l *loginLimiter) fail(source, account string) (lockedTil time.Time, locked
 	defer l.mu.Unlock()
 
 	now := l.now()
-	accountKey := "acct:" + account
+	accountKey := accountKeyFor(account)
 	for _, key := range keysFor(source, account) {
-		state, ok := l.counts[key]
-		if !ok || now.Sub(state.first) > l.limit.Window {
-			l.counts[key] = &attemptState{failures: 1, first: now}
+		state := l.stateFor(key)
+		if now.Sub(state.first) > l.limit.Window || state.failures == 0 {
+			state.failures, state.first = 1, now
 			continue
 		}
 		state.failures++
@@ -605,11 +727,16 @@ func (l *loginLimiter) fail(source, account string) (lockedTil time.Time, locked
 func (l *loginLimiter) succeed(source, account string) (hadAccountState bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	accountKey := "acct:" + account
+	accountKey := accountKeyFor(account)
 	for _, key := range keysFor(source, account) {
-		if _, ok := l.counts[key]; ok && key == accountKey {
+		elem, ok := l.counts[key]
+		if !ok {
+			continue
+		}
+		if key == accountKey {
 			hadAccountState = true
 		}
+		l.order.Remove(elem)
 		delete(l.counts, key)
 	}
 	return hadAccountState
@@ -623,7 +750,9 @@ func (l *loginLimiter) succeed(source, account string) (hadAccountState bool) {
 func (l *loginLimiter) seed(account string, til time.Time, failures int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.counts["acct:"+account] = &attemptState{failures: failures, first: l.now(), lockedTil: til}
+	now := l.now()
+	st := l.stateFor(accountKeyFor(account))
+	st.failures, st.first, st.lockedTil = failures, now, til
 }
 
 // prune drops entries that can no longer matter. The caller holds the lock.
@@ -631,15 +760,28 @@ func (l *loginLimiter) seed(account string, til time.Time, failures int) {
 // Without it the map grows with every distinct source address, which is a set
 // chosen by whoever is attacking: the same bound the edge's rate limiter needs.
 func (l *loginLimiter) prune(now time.Time) {
-	for key, state := range l.counts {
-		stale := now.Sub(state.first) > l.limit.Window
-		unlocked := state.lockedTil.IsZero() || now.After(state.lockedTil)
+	for elem := l.order.Back(); elem != nil; {
+		prev := elem.Prev()
+		st, _ := elem.Value.(*attemptState)
+		stale := now.Sub(st.first) > l.limit.Window
+		unlocked := st.lockedTil.IsZero() || now.After(st.lockedTil)
 		if stale && unlocked {
-			delete(l.counts, key)
+			l.order.Remove(elem)
+			delete(l.counts, st.key)
 		}
+		elem = prev
 	}
 }
 
 func keysFor(source, account string) [2]string {
-	return [2]string{"src:" + source, "acct:" + account}
+	return [2]string{"src:" + source, accountKeyFor(account)}
+}
+
+// accountKeyFor hashes the account half of a limiter key (K-14): the limiter
+// needs equality, not the plaintext, and a raw attacker-chosen name (up to
+// the 4 KiB body cap, checkName having never run) is memory growth by login
+// form. Source keys stay readable: they are IP strings, already bounded.
+func accountKeyFor(account string) string {
+	sum := sha256.Sum256([]byte(account))
+	return "acct:" + hex.EncodeToString(sum[:])
 }
