@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -322,6 +323,64 @@ var errNotMounted = errors.New("storage: nothing is mounted at this path")
 // an allowed prefix before making anything.
 func (m *Manager) ResolveHost(path string, create bool) (string, error) {
 	return m.hostPaths.ResolveOrCreate(path, create)
+}
+
+// HostStagingDir is where host volumes are staged for a race-free hand to
+// runc: one bind-mounted, fd-pinned directory per alloc per volume, under a
+// root-owned tree (K-20).
+const HostStagingDir = "/run/kanea/host-volumes"
+
+// StageHost pins the checked directory and bind-mounts it under the staging
+// tree, returning the staging path to hand to the runtime (K-20). The mount
+// source is /proc/self/fd/N of an openat2-pinned handle: the object the
+// allowlist was checked against is the object mounted, and a workload that
+// could rename the checked path between Resolve and the container's mount -
+// the race the string answer left open - finds the race already lost.
+//
+// A retry re-stages over a stale bind (unmount, then mount): a create that
+// failed after staging must not inherit the previous attempt's.
+//
+// Off linux there is no runc and no race to close (dev mode): the resolved
+// path itself comes back, unchanged.
+func (m *Manager) StageHost(allocID, volume, resolved string) (string, error) {
+	if !stagingSupported {
+		return resolved, nil
+	}
+	target := filepath.Join(HostStagingDir, allocID, volume)
+	// Stale state from a crashed attempt is replaced, never stacked on.
+	if err := unstagePath(m.mounted, target); err != nil {
+		return "", err
+	}
+	if err := pinAndBind(resolved, target, m.hostPaths.Allowed()); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// UnstageHost releases every staged bind one alloc held. Absent is success:
+// teardown runs on paths where part of it already happened.
+func (m *Manager) UnstageHost(allocID string) error {
+	if !stagingSupported {
+		return nil
+	}
+	base := filepath.Join(HostStagingDir, allocID)
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("list staging for %s: %w", allocID, err)
+	}
+	var errs []error
+	for _, e := range entries {
+		if err := unstagePath(m.mounted, filepath.Join(base, e.Name())); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := os.Remove(base); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, fmt.Errorf("remove staging base %s: %w", base, err))
+	}
+	return errors.Join(errs...)
 }
 
 // Prune releases every tracked mount whose target is not in keep.
