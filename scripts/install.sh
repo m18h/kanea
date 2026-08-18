@@ -2,9 +2,10 @@
 # Kanea installer (PRD §5.2.12).
 #
 # It does three things and stops: fetch the binary, verify it, and hand over to
-# `kanea init`. It generates no keys and starts nothing: those are decisions
-# with consequences, and a script that made them for you would be making them at
-# the moment you understand the node least.
+# `kanea init`. The one system change beyond the binary itself is the kanea-edge
+# account (below), which init would create anyway. It generates no keys and
+# starts nothing: those are decisions with consequences, and a script that made
+# them for you would be making them at the moment you understand the node least.
 #
 # The runtime is not among them. `kanea init` installs containerd, runc and
 # buildkitd at versions the binary pins (PRD §5.2.12) and enforces a version
@@ -23,6 +24,7 @@ VERSION="${KANEA_VERSION:-latest}"
 PREFIX="${KANEA_PREFIX:-/usr/local/bin}"
 
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'install: %s\n' "$*" >&2; }
 note() { printf '%s\n' "$*"; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
@@ -123,6 +125,27 @@ fi
 tar -xzf "${WORK}/${ARCHIVE}" -C "$WORK"
 install -m 0755 "${WORK}/kanea" "${PREFIX}/kanea"
 note "Installed ${PREFIX}/kanea"
+
+# The edge's own account (PRD §5.2.6), created here as well as by `kanea init`.
+# This script is served from the website independently of the release it
+# installs, and init on v0.22.0 and older panics at exactly this step (a nil
+# logger inside provision.EnsureUser): an account that already exists turns
+# that code path into a no-op, so the newest installer paired with an older
+# pinned release still initialises. It runs before the upgrade split so a
+# reinstall of an affected release is covered too. The flags are init's own,
+# idempotent the same way; a failure is a warning, never fatal, exactly as
+# init treats it.
+if ! id -u kanea-edge >/dev/null 2>&1; then
+  if command -v useradd >/dev/null 2>&1; then
+    if useradd --system --no-create-home --shell /usr/sbin/nologin kanea-edge; then
+      note "Created the kanea-edge system account"
+    else
+      warn "could not create the kanea-edge account; run: useradd --system --no-create-home --shell /usr/sbin/nologin kanea-edge"
+    fi
+  else
+    warn "useradd not found (install the passwd/shadow-utils package); without it kanea init cannot create the kanea-edge account"
+  fi
+fi
 
 # The upgrade ending. The new binary is on disk but the old one is still the
 # one running; `kanea upgrade` owns the restart order (PRD §15.4): back up,
