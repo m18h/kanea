@@ -14,6 +14,87 @@
 <script src="assets/react.production.min.js"></script>
 <script src="assets/react-dom.production.min.js"></script>
 <script src="assets/dc-runtime.js"></script>
+
+<!-- MOBILE-PATCH: hand-applied responsive overrides + anchor/deep-link fixes.
+     Everything else in this file is a design-tool export (see AGENTS.md); if the
+     page is re-exported from the tool, re-apply this block. It deliberately lives
+     in the head, outside the x-dc template, so the dc runtime never manages it.
+     (Never write the template tag's literal name in a comment here: the runtime
+     re-fetches this page and locates the template with a regex for it.)
+     The style substrings below match the runtime-rendered serialization
+     (minmax(0px, …), spaces after colons), not the template source. -->
+<script>
+  // Deep links (the docs' ../#install, shared fragment URLs) point at sections
+  // the runtime renders asynchronously: the browser's own fragment jump runs
+  // while the template is still hidden and lands nowhere. Once the rendered
+  // tree exists, re-do the jump; scroll-margin-top below frames it.
+  (function () {
+    if (!location.hash) return;
+    var id;
+    try { id = decodeURIComponent(location.hash.slice(1)); } catch (e) { return; }
+    var done = false;
+    function jump() {
+      if (done) return;
+      var el = document.getElementById(id);
+      if (el && el.closest('#dc-root')) {
+        done = true;
+        el.scrollIntoView();
+        obs.disconnect();
+      }
+    }
+    var obs = new MutationObserver(jump);
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+    setTimeout(function () { obs.disconnect(); }, 6000);
+    jump();
+  })();
+</script>
+<style>
+  /* Anchor jumps land on the section, framed — not with its title jammed under
+     the sticky header. The header is ~62px tall; 76px leaves a small gap. */
+  section[id] { scroll-margin-top: 76px; }
+
+  @media (max-width: 900px) {
+    section[id] { scroll-margin-top: 72px; }
+
+    /* One compact sticky row: brand, version, theme, GitHub. The section links
+       wrap into three rows on a phone, and as a sticky block they cover every
+       anchor target. Mobile users scroll a landing page rather than nav-hop. */
+    #dc-root header { flex-wrap: nowrap !important; gap: 10px !important; padding: 12px 16px !important; }
+    #dc-root header nav { display: none !important; }
+
+    /* Every fixed multi-column grid becomes one column. */
+    #dc-root [style*="grid-template-columns: 66px minmax(0px, 1fr)"],
+    #dc-root [style*="grid-template-columns: minmax(0px, 0.93fr) minmax(0px, 1.07fr)"],
+    #dc-root [style*="grid-template-columns: minmax(0px, 1fr) minmax(0px, 1fr)"],
+    #dc-root [style*="grid-template-columns: minmax(0px, 1fr) minmax(0px, 1.02fr)"],
+    #dc-root [style*="grid-template-columns: minmax(0px, 1.08fr) minmax(0px, 0.92fr)"],
+    #dc-root [style*="grid-template-columns: repeat(3, minmax(0px, 1fr))"] {
+      grid-template-columns: minmax(0px, 1fr) !important;
+    }
+    #dc-root [style*="grid-template-columns: repeat(4, minmax(0px, 1fr))"] {
+      grid-template-columns: repeat(2, minmax(0px, 1fr)) !important;
+    }
+
+    /* The 66px vertical-label rails go; their sections keep the content cell. */
+    #dc-root div:has(> [style*="writing-mode: vertical-rl"]) { display: none !important; }
+
+    /* Desktop paddings become phone-sized. */
+    #dc-root [style*="padding: 70px 36px"] { padding: 48px 20px 44px !important; }
+    #dc-root [style*="padding: 76px 44px 60px 36px"] {
+      padding: 44px 20px 36px !important;
+      border-right: 0 !important;
+      border-bottom: 1px solid var(--line) !important;
+    }
+    #dc-root [style*="padding: 30px 30px 32px"] { padding: 20px 16px 24px !important; }
+    #dc-root section[style*="padding: 74px 36px"] { padding: 48px 20px !important; }
+    #dc-root section[style*="padding: 15px 36px"] { padding: 12px 16px !important; }
+    #dc-root footer[style*="padding: 40px 36px"] { padding: 28px 20px 36px !important; }
+
+    /* The comparison table keeps its columns and scrolls sideways. */
+    #dc-root #compare [style*="repeat(4, minmax(0px, 1fr))"] { min-width: 660px; }
+    #dc-root #compare [style="border: 1px solid var(--line-2);"] { overflow-x: auto; }
+  }
+</style>
 </head>
 <body>
 <x-dc>

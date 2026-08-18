@@ -325,6 +325,13 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
                        # stylesheet with the old landing page leaves the docs unstyled. It did.
                        # docs/ also links ../#install and expects that id to exist on the
                        # export; #homebrew stopped existing and the link had to move.
+                       # ONE hand edit exists: the MOBILE-PATCH block in index.html's head
+                       # (mobile overrides + anchor offset + the deep-link re-jump script).
+                       # Re-apply it after any tool re-export. Two traps it embodies: the
+                       # runtime re-fetches the page and regexes for the template tag, so
+                       # that tag's literal name must never appear in a comment; and the
+                       # runtime re-serializes inline styles through React, so overrides
+                       # match the rendered form (minmax(0px, …)), not the template's.
                        # install.sh there is COPIED from scripts/ by .github/workflows/pages.yml
                        # and gitignored: two copies drift, and the one that drifts is curled
 /scripts/install.sh    # the installer; its asset names are a contract with .github/workflows/release.yml
