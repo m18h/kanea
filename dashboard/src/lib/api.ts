@@ -578,6 +578,18 @@ export const nodeStatsSchema = z.object({
 
 export type NodeStats = z.infer<typeof nodeStatsSchema>
 
+/**
+ * What the `node` topic pushes (v1.79): the same body GET /v1/stats serves,
+ * plus the seed on the first frame. Extended from the REST schema rather than
+ * restated, because the daemon embeds it for exactly that reason.
+ */
+export const nodeSampleSchema = nodeStatsSchema.extend({
+  history: z.lazy(() => statsHistorySchema).optional(),
+  history_omitted: z.boolean().optional(),
+})
+
+export type NodeSample = z.infer<typeof nodeSampleSchema>
+
 /** Fetch the node summary: declared counts, alloc states, machine stats. */
 export async function fetchNodeStats(signal?: AbortSignal): Promise<NodeStats> {
   const init: RequestInit = signal ? { signal } : {}
