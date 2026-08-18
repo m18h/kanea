@@ -8,7 +8,7 @@ import { MetricChartPanel } from '@/components/MetricChartPanel'
 import { PageHeader } from '@/components/PageHeader'
 import { StatTile } from '@/components/StatTile'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
-import { useTimedSeries } from '@/hooks/useSeries'
+import { seriesKey, useTimedSeries } from '@/hooks/useSeries'
 import {
   Topic,
   allocsResponseSchema,
@@ -262,11 +262,14 @@ function UtilisationCard({
 }) {
   const machine = node?.node
   const at = machine?.at ?? node?.at ?? ''
-  const cpu = useTimedSeries(machine?.cpu_percent, at, history, 'cpu')
-  const memory = useTimedSeries(machine?.memory_percent, at, history, 'memory')
-  const load = useTimedSeries(machine?.load1, at)
-  const runningSeries = useTimedSeries(node?.running, node?.at ?? '')
-  const gpu = useTimedSeries(machine?.gpu_vram_percent, at, history, 'gpu_vram')
+  const cpu = useTimedSeries(seriesKey('node', 'cpu'), machine?.cpu_percent, at, history, 'cpu')
+  const memory = useTimedSeries(
+    seriesKey('node', 'memory'), machine?.memory_percent, at, history, 'memory')
+  const load = useTimedSeries(seriesKey('node', 'load1'), machine?.load1, at, history, 'load1')
+  const runningSeries = useTimedSeries(
+    seriesKey('node', 'allocs_running'), node?.running, node?.at ?? '', history, 'allocs_running')
+  const gpu = useTimedSeries(
+    seriesKey('node', 'gpu_vram'), machine?.gpu_vram_percent, at, history, 'gpu_vram')
 
   const memoryText =
     machine?.memory_total_bytes !== undefined && machine.memory_available_bytes !== undefined

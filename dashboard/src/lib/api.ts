@@ -629,11 +629,14 @@ export type StatsHistory = z.infer<typeof statsHistorySchema>
  * empty and accumulate live, exactly as they did before v1.38.
  */
 export async function fetchStatsHistory(
-  target: { project: string; service: string } | 'node',
+  target: { project: string; service: string; allocs?: boolean } | 'node',
   signal?: AbortSignal,
 ): Promise<StatsHistory | null> {
   const suffix =
-    target === 'node' ? '' : `?project=${enc(target.project)}&service=${enc(target.service)}`
+    target === 'node'
+      ? ''
+      : `?project=${enc(target.project)}&service=${enc(target.service)}` +
+        (target.allocs ? '&allocs=true' : '')
   const init: RequestInit = signal ? { signal } : {}
   const resp = await fetch(`/v1/stats/history${suffix}`, init)
   if (resp.status === 404 || resp.status === 503) return null

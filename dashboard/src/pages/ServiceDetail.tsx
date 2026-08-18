@@ -19,7 +19,7 @@ import { StatusDot } from '@/components/StatusDot'
 import { useLiveLog, MaxLogLines } from '@/hooks/useLiveLog'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { useSession } from '@/hooks/useSession'
-import { useSeries, useTimedSeries } from '@/hooks/useSeries'
+import { allocSubject, seedFromHistory, seriesKey, useSeries, useTimedSeries } from '@/hooks/useSeries'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { Link } from '@/lib/router'
@@ -68,12 +68,15 @@ export function ServiceDetail({ project, service }: { project: string; service: 
     refetchInterval: 15_000,
   })
 
-  // Seed once and never refetch: live samples take over from where the
-  // history ends, and re-fetching would splice the same window twice.
+  // The seed the charts and the alloc sparklines start from. A minute of
+  // staleness rather than Infinity (v1.79): the store refuses a seed that is
+  // not older than what it already holds, so freshness here is a performance
+  // question rather than a correctness one, and Infinity only bought a
+  // long-lived tab a window that kept getting older.
   const seed = useQuery({
     queryKey: ['stats-history', project, service],
-    queryFn: ({ signal }) => fetchStatsHistory({ project, service }, signal),
-    staleTime: Infinity,
+    queryFn: ({ signal }) => fetchStatsHistory({ project, service, allocs: true }, signal),
+    staleTime: 60_000,
     retry: false,
   })
 
@@ -172,7 +175,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
         />
       </div>
 
-      <StatsPanel sample={stats.data} history={seed.data ?? null} />
+      <StatsPanel subject={key} sample={stats.data} history={seed.data ?? null} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
@@ -202,8 +205,10 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                       <AllocRow
                         key={alloc.id}
                         alloc={alloc}
+                        subject={key}
                         stats={(stats.data?.allocs ?? []).find((a) => a.alloc_id === alloc.id)}
                         at={stats.data?.at ?? ''}
+                        history={seed.data ?? null}
                       />
                     ))}
                   </TBody>
@@ -563,17 +568,20 @@ function Total({ label, value }: { label: string; value: string }) {
  * (PRD §6.1), so the graph and the policy talk about the same quantities.
  */
 function StatsPanel({
+  subject,
   sample,
   history,
 }: {
+  subject: string
   sample: StatsSample | null
   history: StatsHistory | null
 }) {
   const at = sample?.at ?? ''
-  const cpu = useTimedSeries(sample?.cpu, at, history, 'cpu')
-  const memory = useTimedSeries(sample?.memory, at, history, 'memory')
-  const rps = useTimedSeries(sample?.rps, at, history, 'rps')
-  const p95 = useTimedSeries(sample?.p95_latency_ms, at, history, 'p95_latency_ms')
+  const cpu = useTimedSeries(seriesKey(subject, 'cpu'), sample?.cpu, at, history, 'cpu')
+  const memory = useTimedSeries(seriesKey(subject, 'memory'), sample?.memory, at, history, 'memory')
+  const rps = useTimedSeries(seriesKey(subject, 'rps'), sample?.rps, at, history, 'rps')
+  const p95 = useTimedSeries(
+    seriesKey(subject, 'p95_latency_ms'), sample?.p95_latency_ms, at, history, 'p95_latency_ms')
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -600,15 +608,28 @@ function StatsPanel({
 /** AllocRow is one alloc, with its own resource history. */
 function AllocRow({
   alloc,
+  subject,
   stats,
   at,
+  history,
 }: {
   alloc: Alloc
+  subject: string
   stats: AllocStats | undefined
   at: string
+  history: StatsHistory | null
 }) {
-  const cpu = useSeries(stats?.cpu, at)
-  const memory = useSeries(stats?.memory, at)
+  // Seeded from the per-alloc half of the history (v1.79). Before it existed
+  // these two sparklines accumulated from empty at one point per five seconds,
+  // so a row was visibly blank for the first minute of every visit, with no
+  // readout beside it to fall back on.
+  const block = history?.allocs?.[alloc.id]
+  const key = allocSubject(subject, alloc.id)
+  const cpu = useSeries(
+    seriesKey(key, 'cpu'), stats?.cpu, at, block ? seedFromHistory(block, 'cpu') : undefined)
+  const memory = useSeries(
+    seriesKey(key, 'memory'), stats?.memory, at,
+    block ? seedFromHistory(block, 'memory') : undefined)
   const tone = allocStateVariant(alloc.state)
   const reason = allocExitReason(alloc)
   const { session } = useSession()
