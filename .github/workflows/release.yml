@@ -118,12 +118,33 @@ jobs:
       - name: Build the offline bundles
         run: |
           set -euo pipefail
+
+          # The two commands below are the only ones in this job that depend
+          # on a third party's network weather: the install fetches upstream
+          # release archives, and the bundle exports an image from Docker Hub.
+          # A CDN connection reset mid-pull failed the v0.23.0 release with
+          # nothing wrong with the code, so each gets three attempts with a
+          # widening pause. Every retry is announced and the last failure is
+          # still a failure: this hides a flaky network, never a broken build.
+          retry() {
+            local attempt=1
+            until "$@"; do
+              if [ "$attempt" -ge 3 ]; then
+                echo "::error::failed after $attempt attempts: $*"
+                return 1
+              fi
+              echo "::warning::attempt $attempt failed, retrying: $*"
+              sleep $((attempt * 15))
+              attempt=$((attempt + 1))
+            done
+          }
+
           tar -C dist -xzf "dist/kanea_${VERSION#v}_linux_amd64.tar.gz"
-          sudo ./dist/kanea install --only containerd,runc
+          retry sudo ./dist/kanea install --only containerd,runc
           sudo systemctl daemon-reload
           sudo systemctl enable --now kanea-containerd.service
           for arch in amd64 arm64; do
-            sudo ./dist/kanea bundle create --arch "$arch" \
+            retry sudo ./dist/kanea bundle create --arch "$arch" \
               -o "dist/kanea_${VERSION#v}_linux_${arch}_bundle.tar.gz"
           done
           sudo chown "$(id -u):$(id -g)" dist/*_bundle.tar.gz
