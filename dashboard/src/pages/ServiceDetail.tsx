@@ -20,6 +20,7 @@ import { useLiveLog, MaxLogLines } from '@/hooks/useLiveLog'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { useSession } from '@/hooks/useSession'
 import { allocSubject, seedFromHistory, seriesKey, useSeries, useTimedSeries } from '@/hooks/useSeries'
+import { seriesStatus } from '@/lib/seriesStatus'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { Link } from '@/lib/router'
@@ -175,7 +176,14 @@ export function ServiceDetail({ project, service }: { project: string; service: 
         />
       </div>
 
-      <StatsPanel subject={key} sample={stats.data} history={seed.data ?? null} />
+      <StatsPanel
+        subject={key}
+        sample={stats.data}
+        history={seed.data ?? null}
+        seeded={!seed.isPending}
+        connected={stats.connected}
+        error={stats.error}
+      />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
@@ -209,6 +217,8 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                         stats={(stats.data?.allocs ?? []).find((a) => a.alloc_id === alloc.id)}
                         at={stats.data?.at ?? ''}
                         history={seed.data ?? null}
+                        seeded={!seed.isPending}
+                        connected={stats.connected}
                       />
                     ))}
                   </TBody>
@@ -571,10 +581,16 @@ function StatsPanel({
   subject,
   sample,
   history,
+  seeded,
+  connected,
+  error,
 }: {
   subject: string
   sample: StatsSample | null
   history: StatsHistory | null
+  seeded: boolean
+  connected: boolean
+  error: string | null
 }) {
   const at = sample?.at ?? ''
   const cpu = useTimedSeries(seriesKey(subject, 'cpu'), sample?.cpu, at, history, 'cpu')
@@ -583,6 +599,10 @@ function StatsPanel({
   const p95 = useTimedSeries(
     seriesKey(subject, 'p95_latency_ms'), sample?.p95_latency_ms, at, history, 'p95_latency_ms')
 
+  // One verdict for the panel, because all four series arrive on the same
+  // frame and from the same seed: they are never empty for different reasons.
+  const status = seriesStatus({ points: cpu.times.length, seeded, connected, error })
+
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {/* CPU and memory are percentages of the declared limit, so the scale
@@ -590,16 +610,16 @@ function StatsPanel({
           the same. Rate and latency have no natural ceiling and scale to
           their own range. */}
       <Card className="p-4">
-        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={sample?.cpu} tone={1} big />
+        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={sample?.cpu} tone={1} big status={status} error={error} />
       </Card>
       <Card className="p-4">
-        <MetricChartPanel label="Memory" unit="%" series={memory} scale="percent" latest={sample?.memory} tone={2} big />
+        <MetricChartPanel label="Memory" unit="%" series={memory} scale="percent" latest={sample?.memory} tone={2} big status={status} error={error} />
       </Card>
       <Card className="p-4">
-        <MetricChartPanel label="Requests / s" unit="/s" series={rps} scale="auto" latest={sample?.rps} tone={3} big />
+        <MetricChartPanel label="Requests / s" unit="/s" series={rps} scale="auto" latest={sample?.rps} tone={3} big status={status} error={error} />
       </Card>
       <Card className="p-4">
-        <MetricChartPanel label="p95 latency" unit=" ms" series={p95} scale="auto" latest={sample?.p95_latency_ms} tone={4} big />
+        <MetricChartPanel label="p95 latency" unit=" ms" series={p95} scale="auto" latest={sample?.p95_latency_ms} tone={4} big status={status} error={error} />
       </Card>
     </div>
   )
@@ -612,12 +632,16 @@ function AllocRow({
   stats,
   at,
   history,
+  seeded,
+  connected,
 }: {
   alloc: Alloc
   subject: string
   stats: AllocStats | undefined
   at: string
   history: StatsHistory | null
+  seeded: boolean
+  connected: boolean
 }) {
   // Seeded from the per-alloc half of the history (v1.79). Before it existed
   // these two sparklines accumulated from empty at one point per five seconds,
@@ -630,6 +654,7 @@ function AllocRow({
   const memory = useSeries(
     seriesKey(key, 'memory'), stats?.memory, at,
     block ? seedFromHistory(block, 'memory') : undefined)
+  const status = seriesStatus({ points: cpu.length, seeded, connected })
   const tone = allocStateVariant(alloc.state)
   const reason = allocExitReason(alloc)
   const { session } = useSession()
@@ -646,10 +671,10 @@ function AllocRow({
         />
       </TD>
       <TD>
-        <Sparkline points={cpu} max={100} unit="%" tone={1} className="h-6 w-24" label={`CPU for ${alloc.id}`} />
+        <Sparkline points={cpu} max={100} unit="%" tone={1} className="h-6 w-24" label={`CPU for ${alloc.id}`} status={status} />
       </TD>
       <TD>
-        <Sparkline points={memory} max={100} unit="%" tone={2} className="h-6 w-24" label={`Memory for ${alloc.id}`} />
+        <Sparkline points={memory} max={100} unit="%" tone={2} className="h-6 w-24" label={`Memory for ${alloc.id}`} status={status} />
       </TD>
       <TD className="font-mono tabular-nums">
         {alloc.restarts ?? 0}

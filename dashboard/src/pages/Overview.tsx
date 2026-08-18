@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { StatTile } from '@/components/StatTile'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { seriesKey, useTimedSeries } from '@/hooks/useSeries'
+import { seriesStatus } from '@/lib/seriesStatus'
 import {
   Topic,
   allocsResponseSchema,
@@ -134,7 +135,12 @@ export function Overview() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
-        <UtilisationCard node={node.data} history={seed.data ?? null} />
+        <UtilisationCard
+          node={node.data}
+          history={seed.data ?? null}
+          seeded={!seed.isPending}
+          connected={!node.isPending}
+        />
 
         <Card className="lg:col-span-2">
           <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -256,9 +262,13 @@ export function Overview() {
 function UtilisationCard({
   node,
   history,
+  seeded,
+  connected,
 }: {
   node: NodeStats | undefined
   history: StatsHistory | null
+  seeded: boolean
+  connected: boolean
 }) {
   const machine = node?.node
   const at = machine?.at ?? node?.at ?? ''
@@ -270,6 +280,10 @@ function UtilisationCard({
     seriesKey('node', 'allocs_running'), node?.running, node?.at ?? '', history, 'allocs_running')
   const gpu = useTimedSeries(
     seriesKey('node', 'gpu_vram'), machine?.gpu_vram_percent, at, history, 'gpu_vram')
+
+  // One verdict for the card: every panel here is fed by the same poll and the
+  // same seed, so they are never empty for different reasons.
+  const status = seriesStatus({ points: cpu.times.length, seeded, connected })
 
   const memoryText =
     machine?.memory_total_bytes !== undefined && machine.memory_available_bytes !== undefined
@@ -292,22 +306,24 @@ function UtilisationCard({
         <span className="font-mono text-xs text-muted-foreground">procfs · 10s poll</span>
       </CardHeader>
       <CardContent className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
-        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={machine?.cpu_percent} tone={1} />
+        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={machine?.cpu_percent} tone={1} status={status} />
         <MetricChartPanel
           label="Memory"
           unit="%"
           series={memory}
           scale="percent"
+          status={status}
           latest={machine?.memory_percent}
           {...(memoryText !== undefined ? { valueText: memoryText } : {})}
           tone={2}
         />
-        <MetricChartPanel label="Load 1m" unit="" series={load} scale="auto" latest={machine?.load1} tone={3} />
+        <MetricChartPanel label="Load 1m" unit="" series={load} scale="auto" latest={machine?.load1} tone={3} status={status} />
         <MetricChartPanel
           label="Allocs running"
           unit=""
           series={runningSeries}
           scale="auto"
+          status={status}
           latest={node?.running}
           tone={4}
         />
@@ -317,6 +333,7 @@ function UtilisationCard({
             unit="%"
             series={gpu}
             scale="percent"
+            status={status}
             latest={machine?.gpu_vram_percent}
             {...(gpuText !== undefined ? { valueText: gpuText } : {})}
             tone={2}

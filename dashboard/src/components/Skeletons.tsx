@@ -65,7 +65,19 @@ export function ChartSkeleton({ big }: { big?: boolean }) {
     <div aria-hidden aria-busy className="space-y-2">
       <Skeleton className="h-3.5 w-20" />
       <Skeleton className={big ? 'h-8 w-24' : 'h-5 w-16'} />
-      <Skeleton className={big ? 'h-24 w-full' : 'h-16 w-full'} />
+      <ChartAreaSkeleton big={big} />
     </div>
   )
+}
+
+/**
+ * ChartAreaSkeleton is the plot rectangle alone, for a panel that is already
+ * drawing its own label and readout and is waiting only for the line.
+ *
+ * The heights match MetricChartPanel's exactly, so the swap to a real chart
+ * shifts nothing. It deliberately draws no axis and no baseline: a zero line
+ * under a shimmer would be a value nobody measured (§9.2).
+ */
+export function ChartAreaSkeleton({ big }: { big?: boolean | undefined }) {
+  return <Skeleton aria-hidden className={big ? 'h-24 w-full' : 'h-16 w-full'} />
 }
