@@ -118,15 +118,71 @@ func (s *Server) handleStatsHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// aggKey identifies one memoized aggregate: which computation, over which
+// metrics, at which window, ending at which slot.
+type aggKey struct {
+	kind     string
+	metric   string
+	weightBy string
+	window   time.Duration
+	slot     int64
+}
+
+// maxAggCacheEntries bounds the memo. The working set is one or two windows, so
+// this is a guard rather than a policy: `window` is client-chosen, so the map
+// needs *some* bound, and clearing it wholesale past the bound is cheaper to
+// reason about than an LRU for a case that does not arise.
+const maxAggCacheEntries = 64
+
+// cachedAggregate answers from the memo, or computes and stores.
+//
+// Computing under the same lock is deliberate: it collapses concurrent
+// identical requests into one ring walk instead of letting each do its own. The
+// cost is that a second window briefly waits behind the first, which is the
+// right trade when the alternative is N subscribers each walking every series.
+func (s *Server) cachedAggregate(key aggKey, compute func() []scaling.Point) []scaling.Point {
+	s.aggCache.mu.Lock()
+	defer s.aggCache.mu.Unlock()
+
+	if points, ok := s.aggCache.entries[key]; ok {
+		return points
+	}
+	points := compute()
+	if s.aggCache.entries == nil || len(s.aggCache.entries) >= maxAggCacheEntries {
+		s.aggCache.entries = map[aggKey][]scaling.Point{}
+	}
+	s.aggCache.entries[key] = points
+	return points
+}
+
 // serviceSubjects lists the service-level subjects ("project/service") that
 // carry a metric, excluding per-alloc ones.
+//
+// Cached against the series epoch: the underlying scan walks the whole key
+// space and sorts it, and the answer cannot change while that space is
+// unchanged.
 func (s *Server) serviceSubjects(metric string) []string {
+	epoch := s.metrics.Epoch()
+
+	s.subjectCache.mu.Lock()
+	defer s.subjectCache.mu.Unlock()
+
+	if !s.subjectCache.valid || s.subjectCache.epoch != epoch {
+		s.subjectCache.epoch = epoch
+		s.subjectCache.valid = true
+		s.subjectCache.byMetric = map[string][]string{}
+	}
+	if subjects, ok := s.subjectCache.byMetric[metric]; ok {
+		return subjects
+	}
+
 	var out []string
 	for _, subject := range s.metrics.Subjects(metric) {
 		if strings.Count(subject, "/") == 1 {
 			out = append(out, subject)
 		}
 	}
+	s.subjectCache.byMetric[metric] = out
 	return out
 }
 
@@ -136,19 +192,29 @@ func (s *Server) serviceSubjects(metric string) []string {
 // sum of those that do. Points from one Metrics store share slot-aligned
 // timestamps, which is what makes merging by instant exact.
 func (s *Server) sumSeries(metric string, from, to time.Time) []scaling.Point {
-	sums := map[time.Time]float64{}
-	for _, subject := range s.serviceSubjects(metric) {
-		for _, p := range s.metrics.Range(scaling.Key{Subject: subject, Metric: metric}, from, to) {
-			sums[p.At] += p.Value
+	key := aggKey{kind: "sum", metric: metric, window: to.Sub(from), slot: to.Unix()}
+	return s.cachedAggregate(key, func() []scaling.Point {
+		sums := map[time.Time]float64{}
+		for _, subject := range s.serviceSubjects(metric) {
+			for _, p := range s.metrics.Range(scaling.Key{Subject: subject, Metric: metric}, from, to) {
+				sums[p.At] += p.Value
+			}
 		}
-	}
-	return sortPoints(sums)
+		return sortPoints(sums)
+	})
 }
 
 // weightedSeries averages a metric across services, weighting each by a
 // second metric at the same slot (missing weight = 1, so a service the edge
 // has latency but no rate for still counts once rather than vanishing).
 func (s *Server) weightedSeries(metric, weightBy string, from, to time.Time) []scaling.Point {
+	key := aggKey{kind: "weighted", metric: metric, weightBy: weightBy, window: to.Sub(from), slot: to.Unix()}
+	return s.cachedAggregate(key, func() []scaling.Point {
+		return s.computeWeightedSeries(metric, weightBy, from, to)
+	})
+}
+
+func (s *Server) computeWeightedSeries(metric, weightBy string, from, to time.Time) []scaling.Point {
 	type acc struct{ weighted, weight float64 }
 	slots := map[time.Time]*acc{}
 

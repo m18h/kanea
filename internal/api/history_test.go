@@ -2,7 +2,9 @@ package api_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -226,5 +228,105 @@ func TestTheHistoryRangeIsSlotAligned(t *testing.T) {
 	}
 	if !out.From.Equal(out.From.Truncate(scaling.RawInterval)) {
 		t.Errorf("from = %v is not on a raw slot boundary", out.From)
+	}
+}
+
+// countingMetrics wraps a real store and counts the calls the node aggregates
+// are expensive in: the key-space scan and the per-series ring walk.
+type countingMetrics struct {
+	*scaling.Metrics
+	mu       sync.Mutex
+	subjects int
+	ranges   int
+}
+
+func (c *countingMetrics) Subjects(metric string) []string {
+	c.mu.Lock()
+	c.subjects++
+	c.mu.Unlock()
+	return c.Metrics.Subjects(metric)
+}
+
+func (c *countingMetrics) Range(key scaling.Key, from, to time.Time) []scaling.Point {
+	c.mu.Lock()
+	c.ranges++
+	c.mu.Unlock()
+	return c.Metrics.Range(key, from, to)
+}
+
+func (c *countingMetrics) counts() (subjects, ranges int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.subjects, c.ranges
+}
+
+func TestTheNodeAggregatesAreComputedOncePerSlot(t *testing.T) {
+	// Every node-view request summed rps across every service and walked every
+	// series twice more for the weighted p95, plus two scans of the whole key
+	// space (v1.79). One Overview subscriber per five seconds is fine; N of
+	// them is the cost K-18 removed from the stats feed, reappearing here.
+	now := time.Now().Truncate(scaling.RawInterval)
+	real := scaling.NewMetrics(scaling.MetricsConfig{})
+	for i := range 20 {
+		subject := fmt.Sprintf("shop/svc-%d", i)
+		for at := now.Add(-10 * time.Minute); !at.After(now); at = at.Add(scaling.RawInterval) {
+			real.Record(scaling.Key{Subject: subject, Metric: scaling.MetricRPS}, at, 10)
+			real.Record(scaling.Key{Subject: subject, Metric: scaling.MetricP95}, at, 20)
+		}
+	}
+	counting := &countingMetrics{Metrics: real}
+	h := newAuthHarness(t, func(cfg *api.ServerConfig) { cfg.Metrics = counting })
+
+	// Warm the memo, then measure only what the repeats cost.
+	if status, _ := getHistory(t, h, ""); status != http.StatusOK {
+		t.Fatalf("history = %d", status)
+	}
+	subjectsAfterFirst, rangesAfterFirst := counting.counts()
+
+	for range 9 {
+		if status, _ := getHistory(t, h, ""); status != http.StatusOK {
+			t.Fatal("history failed on a repeat")
+		}
+	}
+	subjects, ranges := counting.counts()
+
+	// The node's own three series are read directly and are not aggregates, so
+	// they are expected to repeat; the aggregates are not.
+	if grew := ranges - rangesAfterFirst; grew > 9*3 {
+		t.Errorf("nine repeat requests cost %d extra ring walks (first request: %d); "+
+			"the aggregates are being recomputed per request", grew, rangesAfterFirst)
+	}
+	if grew := subjects - subjectsAfterFirst; grew != 0 {
+		t.Errorf("nine repeat requests cost %d extra key-space scans; the subject "+
+			"set cannot change without the series epoch moving", grew)
+	}
+}
+
+func TestForgettingASeriesInvalidatesTheSubjectCache(t *testing.T) {
+	// The epoch is what makes the subject cache safe to hold: a service that
+	// goes away must stop being summed, and nothing about time says it has.
+	now := time.Now().Truncate(scaling.RawInterval)
+	real := scaling.NewMetrics(scaling.MetricsConfig{})
+	for _, subject := range []string{"shop/web", "shop/api"} {
+		real.Record(scaling.Key{Subject: subject, Metric: scaling.MetricRPS}, now, 10)
+	}
+	h := newAuthHarness(t, func(cfg *api.ServerConfig) { cfg.Metrics = real })
+
+	status, out := getHistory(t, h, "")
+	if status != http.StatusOK {
+		t.Fatalf("history = %d", status)
+	}
+	if len(out.Series["rps"]) == 0 || out.Series["rps"][0].Value != 20 {
+		t.Fatalf("rps = %+v, want a single summed point of 20", out.Series["rps"])
+	}
+
+	real.Forget("shop/api")
+
+	// A different slot, so this is the subject cache being invalidated rather
+	// than the aggregate memo simply expiring.
+	_, out = getHistory(t, h, "?window=2m")
+	if len(out.Series["rps"]) == 0 || out.Series["rps"][0].Value != 10 {
+		t.Fatalf("rps = %+v after forgetting one service, want 10: a forgotten "+
+			"series is still being summed", out.Series["rps"])
 	}
 }
