@@ -33,8 +33,13 @@ type feedFunc func(ctx context.Context, emit emitFunc)
 // bounded, paginated read: the shape §5.2.2 requires.
 const FeedInterval = time.Second
 
+// budgetFunc reports whether a seed of this many points may be sent. It is the
+// session's, because the budget is a per-connection resource like the
+// subscription cap; a feed only asks.
+type budgetFunc func(points int) bool
+
 // feedFor resolves a subscription request to the feed that serves it.
-func (s *Server) feedFor(frame ClientFrame) (feedFunc, error) {
+func (s *Server) feedFor(frame ClientFrame, budget budgetFunc) (feedFunc, error) {
 	switch frame.Topic {
 	case TopicServices:
 		return s.feedServices, nil
@@ -52,10 +57,91 @@ func (s *Server) feedFor(frame ClientFrame) (feedFunc, error) {
 		if frame.Project == "" || frame.Service == "" {
 			return nil, fmt.Errorf("api: the %s topic needs a project and a service", TopicStats)
 		}
-		return s.feedStats(frame), nil
+		if err := s.checkSeedRequest(frame, "service"); err != nil {
+			return nil, err
+		}
+		return s.feedStats(frame, budget), nil
+	case TopicNode:
+		if s.metrics == nil {
+			return nil, fmt.Errorf("api: the %s topic needs the metrics pipeline", TopicNode)
+		}
+		if frame.Project != "" || frame.Service != "" {
+			return nil, fmt.Errorf(
+				"api: the %s topic is the node's own; it takes no project or service", TopicNode)
+		}
+		if err := s.checkSeedRequest(frame, "node"); err != nil {
+			return nil, err
+		}
+		return s.feedNode(frame, budget), nil
 	default:
 		return nil, fmt.Errorf("api: unknown topic %q", frame.Topic)
 	}
+}
+
+// checkSeedRequest refuses a malformed seed request at subscribe time.
+//
+// At subscribe rather than at the first emit, so a typo answers with an error
+// frame naming it instead of a subscription that quietly seeds nothing: the
+// same reason the REST route refuses an unknown series by name.
+func (s *Server) checkSeedRequest(frame ClientFrame, view string) error {
+	if !frame.History {
+		return nil
+	}
+	if frame.HistoryWindow != "" {
+		if _, err := time.ParseDuration(frame.HistoryWindow); err != nil {
+			return fmt.Errorf("api: history_window is not a duration")
+		}
+	}
+	known := func(n string) bool { _, ok := nodeSeries[n]; return ok }
+	fallback := defaultNodeSeries
+	if view == "service" {
+		known = func(n string) bool { _, ok := serviceSeries[n]; return ok }
+		fallback = defaultServiceSeries
+	}
+	_, err := resolveSeries(frame.HistorySeries, fallback, known, view)
+	return err
+}
+
+// seedRequestFrom turns a subscribe frame into a seed request.
+func seedRequestFrom(frame ClientFrame) seedRequest {
+	window := defaultHistoryWindow
+	if frame.HistoryWindow != "" {
+		if parsed, err := time.ParseDuration(frame.HistoryWindow); err == nil {
+			window = parsed
+		}
+	}
+	return seedRequest{
+		window: clampWindow(window),
+		series: frame.HistorySeries,
+		allocs: frame.HistoryAllocs,
+	}
+}
+
+// seedFor builds a subscription's seed, or reports that the budget refused it.
+//
+// A build error cannot happen here (the request was validated at subscribe) but
+// is treated as "no seed" rather than as a failure: the live samples are the
+// point of the subscription and a seed is an optimisation on top of them.
+func (s *Server) seedFor(ctx context.Context, subject string, frame ClientFrame, budget budgetFunc) (*StatsHistorySeed, bool) {
+	if !frame.History {
+		return nil, false
+	}
+	seed, err := s.buildSeed(ctx, subject, seedRequestFrom(frame))
+	if err != nil || seed == nil {
+		if err != nil {
+			s.log.Debug("cannot build a history seed", "subject", subject, "error", err)
+		}
+		return nil, false
+	}
+
+	points := countPoints(seed.HistoryBlock)
+	for _, block := range seed.Allocs {
+		points += countPoints(block)
+	}
+	if budget != nil && !budget(points) {
+		return nil, true
+	}
+	return seed, false
 }
 
 // StatsSample is one service's live numbers.
@@ -79,6 +165,16 @@ type StatsSample struct {
 	// scraped or the service is not exposed, which is a different fact from a
 	// service that has served nothing.
 	Edge *scaling.ServiceBreakdown `json:"edge,omitempty"`
+	// History is the seed (v1.79), on the FIRST frame of a subscription that
+	// asked for one and absent on every frame after it. That placement is what
+	// keeps §12.1's rule true: a frame is still a superset of the one it
+	// supersedes, so a client merges the seed under its live samples rather
+	// than replacing its state per frame.
+	History *StatsHistorySeed `json:"history,omitempty"`
+	// HistoryOmitted says a requested seed was refused by the session's budget
+	// rather than being empty. A chart that starts blank should be able to say
+	// why: §9.2's distinction, applied to the seed itself.
+	HistoryOmitted bool `json:"history_omitted,omitempty"`
 }
 
 // AllocStats is one alloc's resource use.
@@ -90,7 +186,7 @@ type AllocStats struct {
 }
 
 // feedStats streams live samples for one service.
-func (s *Server) feedStats(frame ClientFrame) feedFunc {
+func (s *Server) feedStats(frame ClientFrame, budget budgetFunc) feedFunc {
 	service := frame.Project + "/" + frame.Service
 
 	return func(ctx context.Context, emit emitFunc) {
@@ -100,13 +196,63 @@ func (s *Server) feedStats(frame ClientFrame) feedFunc {
 		ticker := time.NewTicker(scaling.RawInterval)
 		defer ticker.Stop()
 
-		emit(s.statsFor(ctx, service))
+		// The seed rides the first frame and no frame after it (v1.79): built
+		// once, here, rather than per tick.
+		first := s.statsFor(ctx, service)
+		first.History, first.HistoryOmitted = s.seedFor(ctx, service, frame, budget)
+		emit(first)
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				emit(s.statsFor(ctx, service))
+			}
+		}
+	}
+}
+
+// NodeSample is what the node topic pushes: the same body GET /v1/stats serves,
+// plus the seed.
+//
+// Embedded rather than duplicated so the REST route and the feed cannot drift
+// about what a node summary is, and so a client parses both with one schema.
+type NodeSample struct {
+	NodeStats
+	History        *StatsHistorySeed `json:"history,omitempty"`
+	HistoryOmitted bool              `json:"history_omitted,omitempty"`
+}
+
+// feedNode streams the node's own summary and machine statistics.
+//
+// It exists so the Overview stops polling GET /v1/stats every ten seconds
+// beside a socket it was already holding (v1.79), and so those charts can be
+// seeded like every other.
+func (s *Server) feedNode(frame ClientFrame, budget budgetFunc) feedFunc {
+	return func(ctx context.Context, emit emitFunc) {
+		ticker := time.NewTicker(scaling.RawInterval)
+		defer ticker.Stop()
+
+		sample := func() NodeSample {
+			stats, err := s.nodeStats(ctx)
+			if err != nil {
+				s.log.Debug("node feed: cannot read node stats", "error", err)
+				return NodeSample{}
+			}
+			return NodeSample{NodeStats: stats}
+		}
+
+		first := sample()
+		first.History, first.HistoryOmitted = s.seedFor(ctx, scaling.NodeSubject, frame, budget)
+		emit(first)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				emit(sample())
 			}
 		}
 	}

@@ -425,3 +425,242 @@ func TestTheNodeOnlySeriesNeverReachTheExporter(t *testing.T) {
 		t.Errorf("the node subject was rendered as a label:\n%s", body)
 	}
 }
+
+func TestAStatsSubscriptionSeedsOnlyItsFirstFrame(t *testing.T) {
+	// The seed is on the first frame and no frame after it (v1.79), which is
+	// what keeps §12.1's rule true: a frame stays a superset of the one it
+	// supersedes, so a client merges the seed under its live samples instead of
+	// replacing its state every tick.
+	now := time.Now().Truncate(scaling.RawInterval)
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		m := scaling.NewMetrics(scaling.MetricsConfig{})
+		for at := now.Add(-5 * time.Minute); !at.After(now); at = at.Add(scaling.RawInterval) {
+			m.Record(scaling.Key{Subject: "shop/web", Metric: scaling.MetricCPU}, at, 55)
+		}
+		cfg.Metrics = m
+	})
+
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+	send(t, conn, api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicStats,
+		Project: "shop", Service: "web", History: true,
+	})
+
+	var first api.StatsSample
+	if err := json.Unmarshal(receive(t, conn).Data, &first); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if first.History == nil {
+		t.Fatal("the first frame carried no seed")
+	}
+	if len(first.History.Series["cpu"]) < 2 {
+		t.Fatalf("the seed carries %d cpu points, want a window of them",
+			len(first.History.Series["cpu"]))
+	}
+	if first.History.IntervalSeconds == 0 {
+		t.Error("the seed has no interval; a client cannot rebuild its slots")
+	}
+
+	// Resubscribing is a replace, and it re-seeds: that is the property that
+	// makes a reconnect cost nothing extra.
+	send(t, conn, api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicStats,
+		Project: "shop", Service: "web", History: true,
+	})
+	var again api.StatsSample
+	if err := json.Unmarshal(receive(t, conn).Data, &again); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if again.History == nil {
+		t.Error("a resubscribe did not re-seed; a reconnecting client would start blank")
+	}
+}
+
+func TestASubscriptionThatAsksForNoHistoryEmitsNoHistoryKey(t *testing.T) {
+	// The omitempty pin. Every pre-v1.79 client subscribes without the field
+	// and must keep getting exactly the frames it always got.
+	now := time.Now()
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		m := scaling.NewMetrics(scaling.MetricsConfig{})
+		m.Record(scaling.Key{Subject: "shop/web", Metric: scaling.MetricCPU}, now, 55)
+		cfg.Metrics = m
+	})
+
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+	send(t, conn, api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicStats, Project: "shop", Service: "web",
+	})
+
+	body := string(receive(t, conn).Data)
+	if strings.Contains(body, "history") {
+		t.Errorf("a subscription that asked for no history got one: %s", body)
+	}
+}
+
+func TestHistoryIsNotPartOfTheSubscriptionKey(t *testing.T) {
+	// Keying on it would double the subscriptions a page holds against
+	// maxSubscriptions and make an ordinary remount cost a second live feed.
+	// The seed is purely additive, so the key stays topic+project+service.
+	now := time.Now()
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		m := scaling.NewMetrics(scaling.MetricsConfig{})
+		m.Record(scaling.Key{Subject: "shop/web", Metric: scaling.MetricCPU}, now, 55)
+		cfg.Metrics = m
+	})
+
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+	seeded := api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicStats,
+		Project: "shop", Service: "web", History: true,
+	}
+	send(t, conn, seeded)
+	first := receive(t, conn)
+	send(t, conn, seeded)
+	second := receive(t, conn)
+
+	if first.Key != second.Key {
+		t.Fatalf("keys differ: %q then %q", first.Key, second.Key)
+	}
+	if want := api.TopicStats + ":shop/web"; first.Key != want {
+		t.Errorf("key = %q, want %q: the history request leaked into it", first.Key, want)
+	}
+}
+
+func TestTheSeedBudgetRefusesResubscribeAmplification(t *testing.T) {
+	// A subscribe frame is about a hundred bytes and the seed it asks for is
+	// orders of magnitude larger, and a subscribe is a replace, so
+	// subscribe/unsubscribe in a loop would re-seed without limit. Over budget
+	// the seed is omitted and *says so*, and the live samples keep flowing:
+	// stats is not a lossy topic, so failing by dropping the frame would cost
+	// the socket every other panel is riding on.
+	now := time.Now().Truncate(scaling.RawInterval)
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		m := scaling.NewMetrics(scaling.MetricsConfig{})
+		for at := now.Add(-time.Hour); !at.After(now); at = at.Add(scaling.RawInterval) {
+			for _, metric := range []string{
+				scaling.MetricCPU, scaling.MetricMemory, scaling.MetricRPS, scaling.MetricP95,
+			} {
+				m.Record(scaling.Key{Subject: "shop/web", Metric: metric}, at, 1)
+			}
+		}
+		cfg.Metrics = m
+	})
+
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+	frame := api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicStats,
+		// Just inside the raw tier: a full hour falls to the 60s rollup and is
+		// twelve times cheaper, which is not what this bound is about.
+		Project: "shop", Service: "web", History: true, HistoryWindow: "55m",
+	}
+
+	omitted := false
+	for range 8 {
+		send(t, conn, frame)
+		var sample api.StatsSample
+		if err := json.Unmarshal(receive(t, conn).Data, &sample); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if sample.HistoryOmitted {
+			omitted = true
+			if sample.History != nil {
+				t.Error("a seed was both omitted and sent")
+			}
+			// The live half is unaffected: the budget drops the seed, not the
+			// subscription.
+			if sample.Service != "shop/web" {
+				t.Errorf("the live sample went missing with the seed: %+v", sample)
+			}
+			break
+		}
+	}
+	if !omitted {
+		t.Fatal("eight raw-tier seeds were served without the budget refusing one")
+	}
+}
+
+func TestTheNodeTopicStreamsAndSeeds(t *testing.T) {
+	now := time.Now().Truncate(scaling.RawInterval)
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		m := scaling.NewMetrics(scaling.MetricsConfig{})
+		for at := now.Add(-5 * time.Minute); !at.After(now); at = at.Add(scaling.RawInterval) {
+			m.Record(scaling.Key{Subject: scaling.NodeSubject, Metric: scaling.MetricNodeCPU}, at, 12)
+			m.Record(scaling.Key{Subject: scaling.NodeSubject, Metric: scaling.MetricNodeLoad1}, at, 0.5)
+		}
+		cfg.Metrics = m
+	})
+
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+	send(t, conn, api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicNode,
+		History: true, HistorySeries: []string{"cpu", "load1"},
+	})
+
+	var sample api.NodeSample
+	if err := json.Unmarshal(receive(t, conn).Data, &sample); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if sample.History == nil {
+		t.Fatal("the node topic's first frame carried no seed")
+	}
+	// load1 is exactly what the Overview's panel could never seed before: no
+	// such series was recorded, so it accumulated from empty every visit.
+	if len(sample.History.Series["load1"]) < 2 {
+		t.Errorf("load1 seed = %+v, want a window of points", sample.History.Series["load1"])
+	}
+	if len(sample.History.Series["cpu"]) < 2 {
+		t.Errorf("cpu seed = %+v, want a window of points", sample.History.Series["cpu"])
+	}
+}
+
+func TestTheNodeTopicRefusesAProjectOrService(t *testing.T) {
+	// There is one node. A scoped subscription would be a request for something
+	// that does not exist, answered with an error frame rather than a feed that
+	// quietly ignores the scope.
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		cfg.Metrics = scaling.NewMetrics(scaling.MetricsConfig{})
+	})
+
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+	send(t, conn, api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicNode, Project: "shop", Service: "web",
+	})
+
+	frame := receive(t, conn)
+	if frame.Type != "error" {
+		t.Fatalf("frame type = %q, want error", frame.Type)
+	}
+	if !strings.Contains(frame.Error, "node") {
+		t.Errorf("the refusal does not name the topic: %q", frame.Error)
+	}
+}
+
+func TestAnUnknownSeedSeriesIsRefusedAtSubscribe(t *testing.T) {
+	// At subscribe rather than at the first emit: a typo answers with an error
+	// naming it, instead of a live subscription that quietly seeds nothing and
+	// reads as a service with no traffic.
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		cfg.Metrics = scaling.NewMetrics(scaling.MetricsConfig{})
+	})
+
+	conn := dialWS(t, h, "")
+	defer func() { _ = conn.CloseNow() }()
+	send(t, conn, api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicStats, Project: "shop", Service: "web",
+		History: true, HistorySeries: []string{"cpu_percent"},
+	})
+
+	frame := receive(t, conn)
+	if frame.Type != "error" {
+		t.Fatalf("frame type = %q, want error", frame.Type)
+	}
+	if !strings.Contains(frame.Error, "cpu_percent") {
+		t.Errorf("the refusal does not name the series: %q", frame.Error)
+	}
+}

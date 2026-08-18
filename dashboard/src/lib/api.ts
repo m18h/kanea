@@ -254,6 +254,14 @@ export const statsSampleSchema = z.object({
   p95_latency_ms: z.number().optional(),
   allocs: z.array(allocStatsSchema).nullish(),
   edge: edgeBreakdownSchema.optional(),
+  // The seed, on the first frame of a subscription that asked for one and no
+  // frame after it (v1.79). A client merges it under its live samples rather
+  // than replacing state per frame, which is what keeps a later frame a
+  // superset of the one it supersedes.
+  history: z.lazy(() => statsHistorySchema).optional(),
+  // The seed was refused by the session's budget rather than being empty. A
+  // chart that starts blank should be able to say why.
+  history_omitted: z.boolean().optional(),
 })
 
 export type StatsSample = z.infer<typeof statsSampleSchema>
@@ -266,6 +274,9 @@ export const Topic = {
   Allocs: 'allocs',
   Logs: 'logs',
   Stats: 'stats',
+  /** The node's own summary and machine stats (v1.79), pushed on the scrape
+   * interval so the Overview stops polling REST beside this socket. */
+  Node: 'node',
 } as const
 
 export type TopicName = (typeof Topic)[keyof typeof Topic]
@@ -285,6 +296,20 @@ export interface SubscribeRequest {
   project?: string
   service?: string
   tail?: number
+  /**
+   * Ask the stats or node topic to seed this subscription's first frame with
+   * its recent history (v1.79), so a chart draws its shape before a second
+   * sample exists. Opt-in: a page of per-row subscriptions asks for a narrow
+   * window, or for nothing at all.
+   *
+   * None of these are part of the subscription key, deliberately, exactly as
+   * `tail` is not: the seed is purely additive, and keying on it would make an
+   * ordinary remount open a second live feed.
+   */
+  history?: boolean
+  history_window?: string
+  history_series?: string[]
+  history_allocs?: boolean
 }
 
 /** The subscription key the daemon echoes back, so frames can be routed. */
@@ -568,14 +593,32 @@ export const historyPointSchema = z.object({
   value: z.number(),
 })
 
-export const statsHistorySchema = z.object({
-  subject: z.string(),
+/** One window of sparse series at one resolution. */
+export const historyBlockSchema = z.object({
   from: z.string(),
   to: z.string(),
   interval_seconds: z.number(),
   // Sparse: a gap is an absent point, never a zero. The interval is what lets
   // the client rebuild fixed slots and put the gaps back.
   series: z.record(z.string(), z.array(historyPointSchema).nullable()),
+})
+
+export type HistoryBlock = z.infer<typeof historyBlockSchema>
+
+/**
+ * The seed a stats or node subscription carries on its first frame (v1.79),
+ * and the body GET /v1/stats/history serves.
+ *
+ * `allocs` is the per-alloc breakdown over its own shorter window: a sparkline
+ * in a table cell is sixty pixels wide, so it is not seeded with the chart's
+ * window. It arrives whole or not at all, and `allocs_omitted` says which:
+ * truncating it to a second window would leave the client rebuilding slots
+ * against the wrong interval, which draws a wrong chart rather than no chart.
+ */
+export const statsHistorySchema = historyBlockSchema.extend({
+  subject: z.string().optional(),
+  allocs: z.record(z.string(), historyBlockSchema).nullish(),
+  allocs_omitted: z.boolean().optional(),
 })
 
 export type StatsHistory = z.infer<typeof statsHistorySchema>

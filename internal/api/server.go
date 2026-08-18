@@ -298,6 +298,16 @@ type Server struct {
 		allocs []reconciler.AllocRecord
 	}
 
+	// nodeSummaryCache is allocCache's argument applied to the node summary
+	// (v1.79): it walks every service *and* every alloc, and the node topic
+	// asks for it once per subscriber per interval.
+	nodeSummaryCache struct {
+		mu     sync.Mutex
+		index  uint64
+		valid  bool
+		counts nodeCounts
+	}
+
 	// aggCache memoizes the node view's read-time aggregates (v1.79): the sum
 	// across services and the rps-weighted mean. Each costs a ring walk per
 	// service plus a scan of the whole key space, and the node topic asks for
