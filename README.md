@@ -44,7 +44,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.21.0; ARCH=amd64
+VERSION=v0.22.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -331,6 +331,15 @@ streams logs live (filterable, with copy, download and a full-screen view), and
 shows every restart or deploy as **rollout progress**, which is the planner's
 own spec-hash rule on the wire. It also opens a **shell into any running alloc**
 from the browser, over the same exec websocket the CLI uses.
+
+Every chart **arrives with its history already in it**: the recent window rides
+the first frame of the same subscription that carries the live samples, so a
+page draws its shape immediately instead of growing one point per scrape, and
+the series survive navigating away and back. The per-alloc sparklines in the
+allocs table are seeded the same way. When a chart genuinely has nothing, it
+says **`no samples yet`** rather than "no data", which is also the honest
+answer for the ten seconds after a `kanead` restart: every rate is a delta
+between two readings, so none can exist until the second one lands.
 
 The **Projects** page lists each namespace with its services, how many allocs
 are actually running, where its spec comes from and when it last synced, with
