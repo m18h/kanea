@@ -60,16 +60,9 @@ const signedIn = {
 
 beforeEach(() => {
   vi.stubGlobal('WebSocket', silentWebSocket)
-  // Node's own globals shadow jsdom's here, so neither of these exists in the
-  // test environment even though every browser has both. The shell reads them
-  // for the theme toggle, which is not what these tests are about.
-  vi.stubGlobal('matchMedia', () => ({ matches: false }))
-  const store = new Map<string, string>()
-  vi.stubGlobal('localStorage', {
-    getItem: (k: string) => store.get(k) ?? null,
-    setItem: (k: string, v: string) => void store.set(k, v),
-    removeItem: (k: string) => void store.delete(k),
-  })
+  // localStorage lives in test/setup.ts, defined rather than stubbed: the
+  // theme effect writes it, and a stub that afterEach removes is a global
+  // that vanishes under an effect still in flight. See the note there.
   window.history.pushState({}, '', '/')
 })
 
