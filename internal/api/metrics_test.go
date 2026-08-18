@@ -547,6 +547,11 @@ func TestTheSeedBudgetRefusesResubscribeAmplification(t *testing.T) {
 			}
 		}
 		cfg.Metrics = m
+		// A frozen clock, so the budget's refill window cannot elapse while a
+		// slow -race run works through the eight subscribes: a refill mid-test
+		// is correct behaviour that would read here as a budget that never
+		// engaged.
+		cfg.Now = func() time.Time { return now }
 	})
 
 	conn := dialWS(t, h, "")

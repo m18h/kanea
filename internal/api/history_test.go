@@ -286,7 +286,13 @@ func TestTheNodeAggregatesAreComputedOncePerSlot(t *testing.T) {
 		}
 	}
 	counting := &countingMetrics{Metrics: store}
-	h := newAuthHarness(t, func(cfg *api.ServerConfig) { cfg.Metrics = counting })
+	// A frozen clock, because the cache is keyed on the slot the range ends at
+	// and a real one rolls the slot over mid-test under -race: the recompute
+	// that follows is correct behaviour and would read here as a broken cache.
+	h := newAuthHarness(t, func(cfg *api.ServerConfig) {
+		cfg.Metrics = counting
+		cfg.Now = func() time.Time { return now }
+	})
 
 	// Warm the memo, then measure only what the repeats cost.
 	if status, _ := getHistory(t, h, ""); status != http.StatusOK {
