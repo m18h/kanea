@@ -111,6 +111,9 @@ func SetupBuildkit(ctx context.Context, l Layout, log *slog.Logger) error {
 // EnsureGroup, and built for the same caller: `kanea init`, which creates the
 // build daemon's account and the edge's (PRD §5.2.6).
 func EnsureUser(ctx context.Context, name string, log *slog.Logger) error {
+	if log == nil {
+		log = slog.Default()
+	}
 	if _, err := user.Lookup(name); err == nil {
 		return nil
 	} else if !isUnknownUser(err) {
