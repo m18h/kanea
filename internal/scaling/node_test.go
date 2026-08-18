@@ -1,9 +1,12 @@
 package scaling_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/m18h/kanea/internal/scaling"
 )
@@ -164,4 +167,105 @@ func TestNodePartialProcfsReportsWhatItCanRead(t *testing.T) {
 	if stats.CPUPercent != nil {
 		t.Error("a CPU figure appeared with no /proc/stat")
 	}
+}
+
+func TestOnlyTheSamplerAdvancesTheCPUBaseline(t *testing.T) {
+	// The v1.79 regression. cpu() is a delta over the previous /proc/stat
+	// reading and swapping that baseline is destructive, so before this every
+	// GET /v1/stats consumed the recorder's: an inbound request at t=4.9s made
+	// the *next* recorded node_cpu_percent cover a hundred milliseconds. A real
+	// reading of the wrong interval, which is worse than a gap because nothing
+	// about it looks wrong.
+	root := fakeProc(t, "cpu  100 0 100 800 0 0 0 0 0 0\n", meminfoFixture, "0.1 0.2 0.3 1/2 3\n")
+	reader := scaling.NewNodeReader(root)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var recorded []scaling.NodeStats
+	// An interval long enough that the ticker never fires during the test: the
+	// only sample here is Start's synchronous first one, which is what makes
+	// "did anything else take a reading" observable.
+	reader.Start(ctx, time.Hour, func(stats scaling.NodeStats) {
+		mu.Lock()
+		defer mu.Unlock()
+		recorded = append(recorded, stats)
+	})
+
+	first := reader.Read()
+
+	// Move the counters. A reader that samples on Read would now compute and
+	// report a delta, and would leave the sampler a baseline it never chose.
+	if err := os.WriteFile(filepath.Join(root, "stat"),
+		[]byte("cpu  150 0 150 850 50 0 0 0 0 0\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	for range 50 {
+		stats := reader.Read()
+		if !stats.At.Equal(first.At) {
+			t.Fatalf("Read took a fresh reading (at %v, want the sampler's %v): "+
+				"it is consuming the baseline the sampler needs", stats.At, first.At)
+		}
+		if stats.CPUPercent != nil {
+			t.Fatalf("Read reported %v%% CPU from a second sampling; only the "+
+				"sampler may advance the delta", *stats.CPUPercent)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(recorded) != 1 {
+		t.Fatalf("the sampler ran %d times, want 1: something else is driving it", len(recorded))
+	}
+}
+
+func TestAnUndrivenReaderStillReads(t *testing.T) {
+	// Development runs, an API-only server and every test that predates Start:
+	// nobody owns the schedule, so Read samples directly, exactly as it always
+	// did. Serving nothing here would be a blank dashboard off a working procfs.
+	root := fakeProc(t, "cpu  100 0 100 800 0 0 0 0 0 0\n", meminfoFixture, "0.52 1.04 2.08 3/512 12345\n")
+	stats := scaling.NewNodeReader(root).Read()
+
+	if stats.MemoryPercent == nil || *stats.MemoryPercent != 50 {
+		t.Errorf("memory percent = %v, want 50", stats.MemoryPercent)
+	}
+	if stats.Load1 == nil || *stats.Load1 != 0.52 {
+		t.Errorf("load1 = %v, want 0.52", stats.Load1)
+	}
+}
+
+func TestRecordNodeRecordsLoad1AndNotItsSiblings(t *testing.T) {
+	m, c := newMetrics(t)
+	one, five, fifteen := 0.52, 1.04, 2.08
+	scaling.RecordNode(m, scaling.NodeStats{
+		At: c.at, Load1: &one, Load5: &five, Load15: &fifteen,
+	})
+
+	if _, ok := m.Latest(key(scaling.NodeSubject, scaling.MetricNodeLoad1)); !ok {
+		t.Error("node_load1 was not recorded")
+	}
+	// Three curves differing only in how much they are smoothed would be three
+	// series for one fact; the point-in-time reading already carries all three.
+	for _, name := range []string{"node_load5", "node_load15"} {
+		if _, ok := m.Latest(key(scaling.NodeSubject, name)); ok {
+			t.Errorf("%s was recorded; only load1 belongs in the series", name)
+		}
+	}
+}
+
+func TestRecordAllocsRunningIsASeriesAndToleratesNoStore(t *testing.T) {
+	m, c := newMetrics(t)
+	scaling.RecordAllocsRunning(m, c.at, 7)
+
+	point, ok := m.Latest(key(scaling.NodeSubject, scaling.MetricNodeAllocsRunning))
+	if !ok {
+		t.Fatal("node_allocs_running was not recorded")
+	}
+	if point.Value != 7 {
+		t.Errorf("running = %v, want 7", point.Value)
+	}
+	// Nil is the API-only server: the resolver still runs, nothing records.
+	scaling.RecordAllocsRunning(nil, c.at, 7)
 }

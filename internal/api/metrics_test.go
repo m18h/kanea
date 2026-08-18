@@ -384,3 +384,44 @@ func TestStatsCarriesTheEdgeBreakdown(t *testing.T) {
 		t.Errorf("an unreported service carried a breakdown: %+v", *unexposed.Edge)
 	}
 }
+
+func TestTheNodeOnlySeriesNeverReachTheExporter(t *testing.T) {
+	// The v1.38 rule turned into a tripwire (v1.79). Node series are recorded
+	// into the time series under names the exporter's fixed list does not carry,
+	// so the Prometheus surface is unchanged by their existence. `exported` is
+	// what enforces it, and this fails the moment someone adds the sixth name
+	// to it without meaning to promise it publicly.
+	now := time.Now()
+	nodeOnly := []string{
+		scaling.MetricNodeCPU,
+		scaling.MetricNodeMemory,
+		scaling.MetricNodeGPU,
+		scaling.MetricNodeLoad1,
+		scaling.MetricNodeAllocsRunning,
+	}
+
+	h := newAuthHarness(t, withMetrics(func(m *scaling.Metrics) {
+		for i, metric := range nodeOnly {
+			m.Record(scaling.Key{Subject: scaling.NodeSubject, Metric: metric}, now, float64(i+1))
+		}
+		// One published series, so a body that is empty for an unrelated reason
+		// cannot pass this test by accident.
+		m.Record(scaling.Key{Subject: "shop/web", Metric: scaling.MetricCPU}, now, 42)
+	}))
+
+	body := scrapeMetrics(t, h)
+	if !strings.Contains(body, "kanea_cpu_percent") {
+		t.Fatalf("the exposition is missing the series that should be there:\n%s", body)
+	}
+	for _, metric := range nodeOnly {
+		if strings.Contains(body, metric) {
+			t.Errorf("%q reached /v1/metrics; node series are recorded under names "+
+				"the exporter does not publish, so the Prometheus surface stays "+
+				"unchanged:\n%s", metric, body)
+		}
+	}
+	// The subject would be the other way in: a bare "node" rendered as a label.
+	if strings.Contains(body, `project="node"`) || strings.Contains(body, `service="node"`) {
+		t.Errorf("the node subject was rendered as a label:\n%s", body)
+	}
+}

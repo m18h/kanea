@@ -203,12 +203,15 @@ func toPolicy(policy *reconciler.ScalingPolicy, log *slog.Logger) scaling.Policy
 type allocResolver struct {
 	store store.Store
 	log   *slog.Logger
+	// metrics records node_allocs_running off the listing Refresh already
+	// performs (v1.79). Nil is fine: the map is the resolver's real job.
+	metrics *scaling.Metrics
 
 	current atomic.Pointer[map[string]scaling.AllocInfo]
 }
 
-func newAllocResolver(st store.Store, log *slog.Logger) *allocResolver {
-	r := &allocResolver{store: st, log: log}
+func newAllocResolver(st store.Store, log *slog.Logger, metrics *scaling.Metrics) *allocResolver {
+	r := &allocResolver{store: st, log: log, metrics: metrics}
 	empty := map[string]scaling.AllocInfo{}
 	r.current.Store(&empty)
 	return r
@@ -236,8 +239,18 @@ func (r *allocResolver) Refresh(ctx context.Context) error {
 		limits[d.Project+"/"+d.Service] = d
 	}
 
+	// Counted here, in the loop that is already walking every alloc, because
+	// that is the only shape constraint #2 permits: a listing added to the
+	// metrics path to draw one chart line would be the read budget §18 rule 2
+	// tells this pipeline not to spend (v1.79). It is deliberately counted
+	// over every alloc, not only the ones with a surviving service, so it
+	// answers "what is running on this node".
+	running := 0
 	next := make(map[string]scaling.AllocInfo, len(allocs))
 	for _, alloc := range allocs {
+		if alloc.State == reconciler.AllocRunning {
+			running++
+		}
 		service := alloc.Project + "/" + alloc.Service
 		desired, ok := limits[service]
 		if !ok {
@@ -253,6 +266,7 @@ func (r *allocResolver) Refresh(ctx context.Context) error {
 		}
 	}
 	r.current.Store(&next)
+	scaling.RecordAllocsRunning(r.metrics, time.Now(), running)
 	return nil
 }
 
@@ -388,7 +402,7 @@ const scrapeOff = "off"
 // metrics listener still runs workloads, and a node where nobody declared a
 // scaling policy still wants the graphs.
 func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger) {
-	resolver := newAllocResolver(cfg.store, logger)
+	resolver := newAllocResolver(cfg.store, logger, cfg.metrics)
 	go resolver.Run(ctx, allocRefreshInterval)
 
 	if cfg.containerdURL != scrapeOff {
@@ -440,22 +454,19 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 				"flows_per_second and drops_per_second rules will never fire")
 	}
 
-	// Node CPU and memory history (v1.38): two series so the dashboard's
-	// utilisation sparklines can be seeded, recorded at the same cadence as
-	// every other scrape. A nil reading records nothing: a gap, never a zero.
+	// Node history (v1.38, v1.79): series so the dashboard's utilisation
+	// sparklines can be seeded, recorded at the same cadence as every other
+	// scrape. A nil reading records nothing: a gap, never a zero.
+	//
+	// Start rather than a ticker here, because the reader owns its own
+	// schedule now: its CPU figure is a delta over the previous /proc/stat
+	// sample, so a second caller taking readings destroys this one's baseline
+	// (v1.79). Everything else reads through NodeReader.Read, which answers
+	// with what this sampler produced.
 	if cfg.node != nil {
-		go func() {
-			ticker := time.NewTicker(cfg.interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-				}
-				scaling.RecordNode(cfg.metrics, cfg.node.Read())
-			}
-		}()
+		cfg.node.Start(ctx, cfg.interval, func(stats scaling.NodeStats) {
+			scaling.RecordNode(cfg.metrics, stats)
+		})
 	}
 
 	// Sweeping is housekeeping: Forget covers the services that leave cleanly,
