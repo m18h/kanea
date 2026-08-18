@@ -77,6 +77,15 @@ type Metrics struct {
 
 	// dropped counts series refused at the cap, so the condition is visible.
 	dropped int64
+
+	// epoch moves whenever the *set* of series changes: a key created, or one
+	// dropped by Forget or Sweep. It exists so a caller can cache an answer
+	// derived from the key space (which subjects carry a metric) without
+	// recomputing it per request, the way the API caches an alloc listing
+	// against the Store's index. Recording into an existing series does not
+	// move it, which is the whole point: that is the common case by orders of
+	// magnitude and it cannot change the answer.
+	epoch uint64
 }
 
 // MetricsConfig configures the store.
@@ -131,6 +140,7 @@ func (m *Metrics) Record(key Key, at time.Time, value float64) {
 			pendingSlot: slotOf(at, RollupInterval),
 		}
 		m.series[key] = pair
+		m.epoch++
 	}
 
 	pair.raw.set(at, value)
@@ -186,11 +196,40 @@ func (m *Metrics) Average(key Key, window time.Duration) (mean float64, points i
 	return pair.raw.average(m.now().Add(-window), m.now())
 }
 
+// RangeInterval reports the interval Range will serve this range at.
+//
+// Exported because a caller has to advertise it: GET /v1/stats/history's
+// interval_seconds is what a client rebuilds fixed slots against, and computing
+// it a second time is exactly how the two came to disagree. The route decided
+// from the window it was asked for while Range decided from how long ago `from`
+// was, and since the handler captured `to` before calling, a one-hour window
+// missed the raw tier by however long the handler took: the rollup answered at
+// 60 s while the response promised 5 s, and the client placed every point in
+// the wrong slot.
+//
+// Both conditions are load-bearing. The first is the question the caller means
+// to ask ("is this window short enough for the raw tier"). The second keeps a
+// short window that ended long ago out of the raw ring, which no longer holds
+// it: without it such a range reads empty where the rollup would have answered.
+func (m *Metrics) RangeInterval(from, to time.Time) time.Duration {
+	return rangeInterval(m.now(), from, to)
+}
+
+// rangeInterval is RangeInterval over an explicit now, so Range can decide
+// under the lock it already holds without taking the clock twice.
+func rangeInterval(now, from, to time.Time) time.Duration {
+	if to.Sub(from) <= RawWindow && now.Sub(from) <= RawWindow {
+		return RawInterval
+	}
+	return RollupInterval
+}
+
 // Range returns the points between two instants, oldest first.
 //
 // It reads the raw tier when the range fits inside it and the rollup otherwise,
 // because a six-hour chart drawn from five-second points is 4 320 values nobody
-// can see and a websocket frame nobody needs.
+// can see and a websocket frame nobody needs. Which tier that is is RangeInterval's
+// answer and nobody else's; see there for why it is one function.
 func (m *Metrics) Range(key Key, from, to time.Time) []Point {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -199,7 +238,7 @@ func (m *Metrics) Range(key Key, from, to time.Time) []Point {
 	if !ok {
 		return nil
 	}
-	if m.now().Sub(from) <= RawWindow {
+	if rangeInterval(m.now(), from, to) == RawInterval {
 		return pair.raw.rangePoints(from, to)
 	}
 	return pair.rollup.rangePoints(from, to)
@@ -236,7 +275,20 @@ func (m *Metrics) Forget(subject string) int {
 			dropped++
 		}
 	}
+	m.epoch += uint64(dropped)
 	return dropped
+}
+
+// Epoch reports a counter that moves whenever the set of series changes.
+//
+// A cache keyed on it is valid exactly as long as the key space is unchanged,
+// which is what a derived answer like "which subjects carry rps" depends on.
+// It moves on creation and on every deletion, never on an ordinary Record into
+// a series that already exists.
+func (m *Metrics) Epoch() uint64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.epoch
 }
 
 // Sweep drops series with nothing recent in them.
@@ -255,6 +307,7 @@ func (m *Metrics) Sweep() int {
 			dropped++
 		}
 	}
+	m.epoch += uint64(dropped)
 	return dropped
 }
 

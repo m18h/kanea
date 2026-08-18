@@ -34,6 +34,10 @@ const (
 	// TopicStats carries live resource and traffic samples for one service and
 	// its allocs (PRD §12.2's service detail graphs).
 	TopicStats = "stats"
+	// TopicNode carries the node's own summary and machine statistics (v1.79),
+	// so the Overview stops polling GET /v1/stats beside the socket it is
+	// already holding. It takes no project or service: there is one node.
+	TopicNode = "node"
 )
 
 // lossyTopic reports whether a data frame on this topic may be dropped rather
@@ -70,6 +74,27 @@ type ClientFrame struct {
 	Service string `json:"service,omitempty"`
 	// Tail is how many existing log lines to send before following.
 	Tail int `json:"tail,omitempty"`
+	// History asks a stats or node subscription to carry a seed on its first
+	// frame (v1.79). Absent means no seed, so a pre-v1.79 client's subscribe
+	// frame is byte-identical to what it always sent and gets the frames it
+	// always got.
+	//
+	// Opt-in rather than always-on because the dashboard subscribes stats per
+	// table row: a seed nobody asked for, twenty times over, is one send
+	// buffer's worth of payload on mount, which is the v1.70 defect in a new
+	// place.
+	History bool `json:"history,omitempty"`
+	// HistoryWindow is how far back, as a Go duration ("15m"). Empty means the
+	// default, and it is clamped by the same helper the REST route uses so the
+	// two cannot disagree about what a window means.
+	HistoryWindow string `json:"history_window,omitempty"`
+	// HistorySeries names the series to seed. Empty means the view's default
+	// set. An unknown name is refused by name rather than dropped: a chart
+	// seeded with nothing looks exactly like a service that has served nothing.
+	HistorySeries []string `json:"history_series,omitempty"`
+	// HistoryAllocs adds the per-alloc breakdown the allocs table needs.
+	// Ignored without History, exactly as Tail is ignored off the logs topic.
+	HistoryAllocs bool `json:"history_allocs,omitempty"`
 }
 
 // ServerFrame is what the daemon sends back.
@@ -254,6 +279,45 @@ type wsSession struct {
 
 	mu   sync.Mutex
 	subs map[string]context.CancelFunc
+	// seedPoints and seedWindowAt are the seed budget (v1.79). A subscribe
+	// frame is about a hundred bytes and the seed it can ask for is about a
+	// hundred and thirty kilobytes, and a subscribe is treated as a replace, so
+	// subscribe/unsubscribe in a loop would re-seed without limit. A refill
+	// window rather than a hard total, because a page legitimately re-seeds all
+	// day as the operator navigates.
+	seedPoints   int
+	seedWindowAt time.Time
+}
+
+// The seed budget, per connection.
+const (
+	// seedBudgetPoints is what one connection may seed per window. Sized so an
+	// ordinary page (a node view, a service, a table of rows) re-seeds freely
+	// while a loop does not.
+	seedBudgetPoints = 12000
+	seedBudgetWindow = 30 * time.Second
+)
+
+// spendSeedBudget reports whether a seed of this size may be sent.
+//
+// Over budget the seed is omitted and the omission is stated in the frame; the
+// live samples still flow. A gap the client can name, never an error and never
+// a closed connection: the topic is not lossy, so failing here by dropping the
+// whole frame would cost the socket every other panel is riding on.
+func (s *wsSession) spendSeedBudget(points int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := s.server.now()
+	if s.seedWindowAt.IsZero() || now.Sub(s.seedWindowAt) >= seedBudgetWindow {
+		s.seedWindowAt = now
+		s.seedPoints = 0
+	}
+	if s.seedPoints+points > seedBudgetPoints {
+		return false
+	}
+	s.seedPoints += points
+	return true
 }
 
 // run serves the session until the client goes away.
@@ -423,7 +487,7 @@ const maxSubscriptions = 32
 func (s *wsSession) subscribe(ctx context.Context, frame ClientFrame) {
 	key := subscriptionKey(frame)
 
-	feed, err := s.server.feedFor(frame)
+	feed, err := s.server.feedFor(frame, s.spendSeedBudget)
 	if err != nil {
 		s.emitError(frame.Topic, err.Error())
 		return

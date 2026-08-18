@@ -978,6 +978,34 @@ plan. The isolation properties are unchanged: builds are serialised
 through a bounded queue (§10.2), refused when full, and the daemon's
 footprint lives inside the §5.2.11 reserve.
 
+### 3.22 The websocket history seed (A04; PRD v1.79, §9.1, §12.1)
+
+**A subscribe frame is about a hundred bytes and the seed it can ask for is
+about a hundred and thirty kilobytes**, so the stats and node topics carrying
+their own history (v1.79) is an amplification primitive if it can be
+repeated. The adversary here is an *authenticated* one - the socket is behind
+§13's deny-by-default auth and the Origin allowlist - so this is a resource
+bound against a viewer who misbehaves, in the same family as
+`maxSubscriptions` and `wsMaxPerViewer`, not an authentication control.
+
+Three bounds, and each answers a different shape of the same request. **A cap
+on the points in one seed frame** bounds a single answer: `stats` is not a
+lossy topic, so an oversized frame is not dropped but written under the write
+timeout to a client that may be slow, and it is allocated per subscriber.
+**The per-alloc half is dropped whole rather than truncated**, which is a
+correctness rule first (two windows in one frame make a client's slot
+arithmetic silently wrong) and a bound second. And **a per-session seed
+budget** answers the repeat: a subscribe is treated as a replace, so
+subscribe/unsubscribe in a loop would otherwise re-seed without limit. Over
+budget the seed is omitted, the omission is *stated in the frame*, and the
+live samples keep flowing - a gap the client can name, never an error and
+never a closed connection.
+
+What is deliberately not done: the seed is not made cheaper by a denser wire
+encoding. It would be several times smaller and it would be a second shape
+for the same series, which is the drift this codebase pays for elsewhere;
+the bound is on how much may be asked for, not on how it is spelled.
+
 ---
 
 ## 4. Attack walkthroughs

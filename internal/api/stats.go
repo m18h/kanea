@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -60,7 +61,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	project, service := q.Get("project"), q.Get("service")
 
 	if project == "" && service == "" {
-		stats, err := s.nodeStats(r)
+		stats, err := s.nodeStats(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -80,28 +81,51 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.statsFor(r.Context(), project+"/"+service))
 }
 
-// nodeStats gathers the node summary.
-func (s *Server) nodeStats(r *http.Request) (NodeStats, error) {
-	out := NodeStats{Version: s.version, At: time.Now()}
+// nodeCounts is the Store-derived half of the node summary: everything that can
+// only change when a write moves the index.
+type nodeCounts struct {
+	Projects, Services, Allocs int
+	Running, Unhealthy, Failed int
+}
 
-	services, err := listAll[reconciler.Desired](r.Context(), s.store, store.KindService)
+// nodeSummaryAtCurrentIndex counts what the node summary reports, cached per
+// store index.
+//
+// The same argument allocsAtCurrentIndex makes (K-18), and it became necessary
+// for the same reason: with the node websocket topic this is asked once per
+// subscriber per interval, and it walks every service *and* every alloc.
+func (s *Server) nodeSummaryAtCurrentIndex(ctx context.Context) (nodeCounts, error) {
+	index, err := s.store.Index(ctx)
 	if err != nil {
-		return out, err
+		return nodeCounts{}, err
 	}
-	allocs, err := listAll[reconciler.AllocRecord](r.Context(), s.store, store.KindAlloc)
+
+	s.nodeSummaryCache.mu.Lock()
+	defer s.nodeSummaryCache.mu.Unlock()
+	if s.nodeSummaryCache.valid && s.nodeSummaryCache.index == index {
+		return s.nodeSummaryCache.counts, nil
+	}
+
+	services, err := listAll[reconciler.Desired](ctx, s.store, store.KindService)
 	if err != nil {
-		return out, err
+		return nodeCounts{}, err
+	}
+	allocs, err := listAll[reconciler.AllocRecord](ctx, s.store, store.KindAlloc)
+	if err != nil {
+		return nodeCounts{}, err
 	}
 
 	projects := map[string]struct{}{}
 	for _, svc := range services {
 		projects[svc.Project] = struct{}{}
 	}
-	out.Projects, out.Services, out.Allocs = len(projects), len(services), len(allocs)
+	counts := nodeCounts{
+		Projects: len(projects), Services: len(services), Allocs: len(allocs),
+	}
 	for _, alloc := range allocs {
 		switch {
 		case alloc.State == reconciler.AllocFailed:
-			out.Failed++
+			counts.Failed++
 		case alloc.State == reconciler.AllocRunning && alloc.Probed() && !alloc.Healthy:
 			// Running but failing its probe. Counted separately from running,
 			// because a service whose allocs are all up and all unhealthy is
@@ -111,11 +135,28 @@ func (s *Server) nodeStats(r *http.Request) (NodeStats, error) {
 			// by a probe, so an alloc of a service that declares no check has it
 			// false forever, and testing the field alone would report every such
 			// alloc as unhealthy.
-			out.Unhealthy++
+			counts.Unhealthy++
 		case alloc.State == reconciler.AllocRunning:
-			out.Running++
+			counts.Running++
 		}
 	}
+
+	s.nodeSummaryCache.index = index
+	s.nodeSummaryCache.counts = counts
+	s.nodeSummaryCache.valid = true
+	return counts, nil
+}
+
+// nodeStats gathers the node summary.
+func (s *Server) nodeStats(ctx context.Context) (NodeStats, error) {
+	out := NodeStats{Version: s.version, At: s.now()}
+
+	counts, err := s.nodeSummaryAtCurrentIndex(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Projects, out.Services, out.Allocs = counts.Projects, counts.Services, counts.Allocs
+	out.Running, out.Unhealthy, out.Failed = counts.Running, counts.Unhealthy, counts.Failed
 
 	if s.metrics != nil {
 		out.Metrics = &MetricsHealth{Series: s.metrics.Len(), Dropped: s.metrics.Dropped()}

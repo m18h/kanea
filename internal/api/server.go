@@ -29,6 +29,7 @@ import (
 	"github.com/m18h/kanea/internal/ratelimit"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/scaling"
 	"github.com/m18h/kanea/internal/secrets"
 	"github.com/m18h/kanea/internal/secretsource"
 	"github.com/m18h/kanea/internal/store"
@@ -295,6 +296,43 @@ type Server struct {
 		index  uint64
 		valid  bool
 		allocs []reconciler.AllocRecord
+	}
+
+	// nodeSummaryCache is allocCache's argument applied to the node summary
+	// (v1.79): it walks every service *and* every alloc, and the node topic
+	// asks for it once per subscriber per interval.
+	nodeSummaryCache struct {
+		mu     sync.Mutex
+		index  uint64
+		valid  bool
+		counts nodeCounts
+	}
+
+	// aggCache memoizes the node view's read-time aggregates (v1.79): the sum
+	// across services and the rps-weighted mean. Each costs a ring walk per
+	// service plus a scan of the whole key space, and the node topic asks for
+	// them per subscriber per interval.
+	//
+	// Keyed on the slot the range ends at, which is allocCache's store-index
+	// trick applied to time: both range surfaces truncate to a raw slot, and
+	// Record drops out-of-order samples, so a passed slot's answer is final and
+	// invalidation is nothing but the slot rolling over. The one residual is
+	// stated in §9.1: the newest slot may be partly assembled, so a sum can
+	// read momentarily low and is right at the next one.
+	aggCache struct {
+		mu      sync.Mutex
+		entries map[aggKey][]scaling.Point
+	}
+
+	// subjectCache memoizes which subjects carry a metric, keyed on the series
+	// epoch rather than on time: that set changes only when a series is created
+	// or dropped, which is far rarer than a slot, and the answer costs a scan
+	// of the whole key space with a sort.
+	subjectCache struct {
+		mu       sync.Mutex
+		epoch    uint64
+		valid    bool
+		byMetric map[string][]string
 	}
 
 	// now, started and pid feed the health payload's uptime report (v1.38).

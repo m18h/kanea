@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { mergeSeed, seedFromHistory, SparklineLength } from '@/hooks/useSeries'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { allocSubject, mergeSeed, seedFromHistory, seriesKey, SparklineLength } from '@/hooks/useSeries'
+import { clearAll } from '@/lib/seriesStore'
 import type { StatsHistory } from '@/lib/api'
 
 function history(points: { at: string; value: number }[]): StatsHistory {
@@ -96,9 +97,14 @@ describe('timedSeedFromHistory', () => {
 })
 
 describe('useTimedSeries', () => {
+  // The store is module state, so every case starts from nothing or they leak
+  // into each other through their keys.
+  beforeEach(() => clearAll())
+
   it('accumulates samples at their timestamps and dedupes repeats', () => {
+    const key = seriesKey('shop/web', 'cpu')
     const { result, rerender } = renderHook<TimedSeries, { v: number | undefined; at: string }>(
-      ({ v, at }) => useTimedSeries(v, at),
+      ({ v, at }) => useTimedSeries(key, v, at),
       { initialProps: { v: 10, at: '2026-08-13T10:00:00Z' } },
     )
     rerender({ v: 10, at: '2026-08-13T10:00:00Z' }) // repeat: must not double
@@ -115,8 +121,9 @@ describe('useTimedSeries', () => {
       { at: '2026-08-13T10:00:00Z', value: 10 },
       { at: '2026-08-13T10:00:05Z', value: 20 },
     ])
+    const key = seriesKey('shop/seeded', 'cpu')
     const { result, rerender } = renderHook<TimedSeries, { v: number | undefined; at: string }>(
-      ({ v, at }) => useTimedSeries(v, at, history, 'cpu'),
+      ({ v, at }) => useTimedSeries(key, v, at, history, 'cpu'),
       { initialProps: { v: 20, at: '2026-08-13T10:00:05Z' } },
     )
     // The live sample at the seed's newest timestamp is the overlap.
@@ -125,11 +132,58 @@ describe('useTimedSeries', () => {
   })
 
   it('breaks the line when live samples resume after a silence', () => {
+    const key = seriesKey('shop/silent', 'cpu')
     const { result, rerender } = renderHook<TimedSeries, { v: number | undefined; at: string }>(
-      ({ v, at }) => useTimedSeries(v, at),
+      ({ v, at }) => useTimedSeries(key, v, at),
       { initialProps: { v: 10, at: '2026-08-13T10:00:00Z' } },
     )
     rerender({ v: 20, at: '2026-08-13T10:02:00Z' }) // tab was hidden
     expect(result.current.values).toEqual([10, null, 20])
+  })
+})
+
+describe('a series outliving its component', () => {
+  beforeEach(() => clearAll())
+
+  it('is still there when the same key is mounted again', () => {
+    // The regression the whole store exists for. Every buffer used to be a ref
+    // inside the panel drawing it, so any navigation away and back rebuilt
+    // from nothing and the chart was blank until a fresh seed landed.
+    const key = seriesKey('shop/web', 'cpu')
+    const first = renderHook<TimedSeries, { v: number; at: string }>(
+      ({ v, at }) => useTimedSeries(key, v, at),
+      { initialProps: { v: 10, at: '2026-08-13T10:00:00Z' } },
+    )
+    first.rerender({ v: 20, at: '2026-08-13T10:00:05Z' })
+    expect(first.result.current.values).toEqual([10, 20])
+    first.unmount()
+
+    const second = renderHook<TimedSeries, { v: number; at: string }>(
+      ({ v, at }) => useTimedSeries(key, v, at),
+      { initialProps: { v: 30, at: '2026-08-13T10:00:10Z' } },
+    )
+    // Populated on the very first render of the new mount, which is what makes
+    // the panel draw immediately instead of showing an empty box.
+    expect(second.result.current.values).toEqual([10, 20, 30])
+  })
+
+  it('keeps different keys apart', () => {
+    // Two allocs in one table share a component and must not share a buffer.
+    const a = seriesKey(allocSubject('shop/web', 'alloc-0'), 'cpu')
+    const b = seriesKey(allocSubject('shop/web', 'alloc-1'), 'cpu')
+    renderHook(() => useTimedSeries(a, 10, '2026-08-13T10:00:00Z'))
+    const other = renderHook(() => useTimedSeries(b, 99, '2026-08-13T10:00:00Z'))
+
+    expect(other.result.current.values).toEqual([99])
+  })
+
+  it('records one point when two components share a key', () => {
+    // The store's idempotence, which is what makes recording during render
+    // safe now that the buffer is shared rather than per-component.
+    const key = seriesKey('shop/shared', 'cpu')
+    renderHook(() => useTimedSeries(key, 10, '2026-08-13T10:00:00Z'))
+    const second = renderHook(() => useTimedSeries(key, 10, '2026-08-13T10:00:00Z'))
+
+    expect(second.result.current.values).toEqual([10])
   })
 })

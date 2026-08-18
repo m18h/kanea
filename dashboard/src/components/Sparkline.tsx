@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { Skeleton } from '@/components/ui/skeleton'
+import type { SeriesStatus } from '@/lib/seriesStatus'
 import { cn } from '@/lib/utils'
 import { formatMetric } from '@/lib/state'
 
@@ -14,6 +16,13 @@ export interface SparklineProps {
   /** tone picks the series colour: 1 amber, 2 blue, 3 green, 4 red. Identity
    * never rides on the hue alone: every sparkline sits under its own label. */
   tone?: 1 | 2 | 3 | 4 | undefined
+  /**
+   * status explains an empty series, consulted only when there is nothing to
+   * draw. The copy is shorter than the chart panel's because this lives in a
+   * table cell: "none yet" fits where "no samples yet" does not, and it says
+   * the same thing, which is that the absence is in the record.
+   */
+  status?: SeriesStatus | undefined
 }
 
 // A static map, never a template string: Tailwind's scanner only keeps class
@@ -40,7 +49,15 @@ const padRight = 6
  * and a crosshair readout on hover, because a chart whose values can only be
  * guessed at is a decoration.
  */
-export function Sparkline({ points, max, className, label, unit = '', tone }: SparklineProps) {
+export function Sparkline({
+  points,
+  max,
+  className,
+  label,
+  unit = '',
+  tone,
+  status = 'live',
+}: SparklineProps) {
   const wrap = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 120, h: 24 })
   const [hover, setHover] = useState<number | null>(null)
@@ -121,11 +138,25 @@ export function Sparkline({ points, max, className, label, unit = '', tone }: Sp
   }
 
   if (empty) {
+    // The wrapper and its ref stay mounted in every state, for the reason the
+    // resize observer's comment gives above: its effect has no dependencies
+    // and will not run again when the data arrives.
     return (
-      <div ref={wrap} className={cn('flex items-center', className ?? 'h-6 w-[120px]')}>
-        <span className="text-xs text-muted-foreground" aria-label={label}>
-          no data
-        </span>
+      <div
+        ref={wrap}
+        className={cn('flex items-center', className ?? 'h-6 w-[120px]')}
+        aria-busy={status === 'loading' || undefined}
+      >
+        {status === 'loading' ? (
+          <Skeleton aria-label={label} className="h-3 w-full" />
+        ) : (
+          <span
+            className={cn('text-xs', status === 'error' ? 'text-status-error' : 'text-muted-foreground')}
+            aria-label={label}
+          >
+            {status === 'error' ? 'error' : 'none yet'}
+          </span>
+        )}
       </div>
     )
   }

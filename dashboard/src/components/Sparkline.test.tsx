@@ -24,9 +24,19 @@ describe('Sparkline', () => {
 
   it('says so when there is nothing to draw', () => {
     // Not an empty chart: a blank rectangle reads as "measured zero", and this
-    // is "measured nothing".
+    // is "measured nothing". "yet" puts the absence in the record rather than
+    // the value, in the shortest form that fits a table cell.
     render(<Sparkline points={[undefined, undefined]} label="cpu" />)
-    expect(screen.getByLabelText('cpu').textContent).toBe('no data')
+    expect(screen.getByLabelText('cpu').textContent).toBe('none yet')
+  })
+
+  it('shows a skeleton, not a verdict, while the data is still arriving', () => {
+    // The label survives every state, which is the contract that keeps the
+    // cell reachable to assistive tech whether or not it has a line in it.
+    render(<Sparkline points={[]} label="cpu" status="loading" />)
+    const cell = screen.getByLabelText('cpu')
+    expect(cell.textContent).toBe('')
+    expect(cell.querySelectorAll('polyline')).toHaveLength(0)
   })
 
   it('scales against the given maximum, not its own range', () => {

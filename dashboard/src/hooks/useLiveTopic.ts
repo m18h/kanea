@@ -39,12 +39,21 @@ export function useLiveTopic<S extends z.ZodTypeAny>(
   }))
 
   const { topic, project, service, tail } = req
+  const { history, history_window: historyWindow, history_allocs: historyAllocs } = req
+  // Joined rather than passed as an array: the effect below compares its deps
+  // by identity, and a fresh array literal at every call site would resubscribe
+  // on every render.
+  const historySeries = req.history_series?.join(',')
 
   useEffect(() => {
     const request: SubscribeRequest = { topic }
     if (project !== undefined) request.project = project
     if (service !== undefined) request.service = service
     if (tail !== undefined) request.tail = tail
+    if (history !== undefined) request.history = history
+    if (historyWindow !== undefined) request.history_window = historyWindow
+    if (historySeries !== undefined) request.history_series = historySeries.split(',')
+    if (historyAllocs !== undefined) request.history_allocs = historyAllocs
 
     const socket = liveSocket()
     const unsubscribeStatus = socket.onStatus((up) => {
@@ -82,7 +91,7 @@ export function useLiveTopic<S extends z.ZodTypeAny>(
     // schema is a module-level constant at every call site; including it would
     // resubscribe on every render for callers that build it inline.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic, project, service, tail])
+  }, [topic, project, service, tail, history, historyWindow, historySeries, historyAllocs])
 
   return state
 }

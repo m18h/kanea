@@ -271,6 +271,22 @@ export function nodeStats() {
   }
 }
 
+/** allocHistory is the per-alloc half of a seed (v1.79): one block per alloc of
+ * the service, over its own shorter window, keyed by alloc id. */
+export function allocHistory(project: string, service: string) {
+  const out: Record<string, ReturnType<typeof history>> = {}
+  for (const alloc of allocs) {
+    if (alloc.project !== project || alloc.service !== service) continue
+    out[alloc.id] = history(`${project}/${service}/${alloc.id}`, allocSeriesNames)
+  }
+  return out
+}
+
+/** The default series each view serves, matching internal/api/seed.go. */
+export const serviceSeriesNames = ['cpu', 'memory', 'rps', 'p95_latency_ms']
+export const nodeSeriesNames = ['cpu', 'memory', 'gpu_vram', 'rps', 'p95_latency_ms']
+export const allocSeriesNames = ['cpu', 'memory', 'memory_bytes']
+
 /** history builds 15 minutes of 5s points ending now, with one honest gap. */
 export function history(subject: string, seriesNames: string[]) {
   const interval = 5

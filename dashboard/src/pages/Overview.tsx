@@ -8,7 +8,8 @@ import { MetricChartPanel } from '@/components/MetricChartPanel'
 import { PageHeader } from '@/components/PageHeader'
 import { StatTile } from '@/components/StatTile'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
-import { useTimedSeries } from '@/hooks/useSeries'
+import { seriesKey, useTimedSeries } from '@/hooks/useSeries'
+import { seriesStatus } from '@/lib/seriesStatus'
 import {
   Topic,
   allocsResponseSchema,
@@ -17,7 +18,7 @@ import {
   fetchHealth,
   fetchNodeStats,
   fetchRuns,
-  fetchStatsHistory,
+  nodeSampleSchema,
   servicesResponseSchema,
   type NodeStats,
   type StatsHistory,
@@ -46,11 +47,30 @@ export function Overview() {
     refetchInterval: 10_000,
   })
 
-  const node = useQuery({
+  // Live over the socket the page is already holding (v1.79), with its own
+  // seed on the first frame, so the utilisation charts draw a populated window
+  // on arrival instead of growing one point per ten seconds from empty. The
+  // series list is explicit because the default set is what v1.38 and v1.42
+  // shipped, and load1 and allocs_running are the two panels that could never
+  // seed at all.
+  const node = useLiveTopic(
+    {
+      topic: Topic.Node,
+      history: true,
+      history_series: ['cpu', 'memory', 'gpu_vram', 'load1', 'allocs_running'],
+    },
+    nodeSampleSchema,
+  )
+
+  // One release of fallback for a daemon that predates the topic; without it
+  // an upgrade lag would blank the card rather than merely slow it down.
+  const nodeRest = useQuery({
     queryKey: ['node-stats'],
     queryFn: ({ signal }) => fetchNodeStats(signal),
-    refetchInterval: 10_000,
+    enabled: !node.up,
+    refetchInterval: node.up ? false : 10_000,
   })
+  const nodeStats = node.data ?? nodeRest.data
 
   const runs = useQuery({
     queryKey: ['runs'],
@@ -68,14 +88,6 @@ export function Overview() {
     queryKey: ['backups'],
     queryFn: ({ signal }) => fetchBackups(signal),
     refetchInterval: 30_000,
-  })
-
-  // Seed once; the poll takes over from where the history ends.
-  const seed = useQuery({
-    queryKey: ['stats-history', 'node'],
-    queryFn: ({ signal }) => fetchStatsHistory('node', signal),
-    staleTime: Infinity,
-    retry: false,
   })
 
   // Functions are services too, but every surface counts them under
@@ -134,7 +146,12 @@ export function Overview() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
-        <UtilisationCard node={node.data} history={seed.data ?? null} />
+        <UtilisationCard
+          node={nodeStats}
+          history={node.data?.history ?? null}
+          seeded={node.data?.history !== undefined || node.data?.history_omitted === true}
+          connected={node.connected}
+        />
 
         <Card className="lg:col-span-2">
           <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -159,7 +176,7 @@ export function Overview() {
             <CardTitle>Autoscaler decisions</CardTitle>
           </CardHeader>
           <CardContent>
-            {node.data?.breaker_open ? (
+            {nodeStats?.breaker_open ? (
               <p className="pb-2 text-sm text-status-error">
                 The circuit breaker is open: scaling and rollouts are paused.
               </p>
@@ -256,17 +273,28 @@ export function Overview() {
 function UtilisationCard({
   node,
   history,
+  seeded,
+  connected,
 }: {
   node: NodeStats | undefined
   history: StatsHistory | null
+  seeded: boolean
+  connected: boolean
 }) {
   const machine = node?.node
   const at = machine?.at ?? node?.at ?? ''
-  const cpu = useTimedSeries(machine?.cpu_percent, at, history, 'cpu')
-  const memory = useTimedSeries(machine?.memory_percent, at, history, 'memory')
-  const load = useTimedSeries(machine?.load1, at)
-  const runningSeries = useTimedSeries(node?.running, node?.at ?? '')
-  const gpu = useTimedSeries(machine?.gpu_vram_percent, at, history, 'gpu_vram')
+  const cpu = useTimedSeries(seriesKey('node', 'cpu'), machine?.cpu_percent, at, history, 'cpu')
+  const memory = useTimedSeries(
+    seriesKey('node', 'memory'), machine?.memory_percent, at, history, 'memory')
+  const load = useTimedSeries(seriesKey('node', 'load1'), machine?.load1, at, history, 'load1')
+  const runningSeries = useTimedSeries(
+    seriesKey('node', 'allocs_running'), node?.running, node?.at ?? '', history, 'allocs_running')
+  const gpu = useTimedSeries(
+    seriesKey('node', 'gpu_vram'), machine?.gpu_vram_percent, at, history, 'gpu_vram')
+
+  // One verdict for the card: every panel here is fed by the same poll and the
+  // same seed, so they are never empty for different reasons.
+  const status = seriesStatus({ points: cpu.times.length, seeded, connected })
 
   const memoryText =
     machine?.memory_total_bytes !== undefined && machine.memory_available_bytes !== undefined
@@ -286,25 +314,27 @@ function UtilisationCard({
     <Card className="lg:col-span-3">
       <CardHeader className="flex-row items-baseline justify-between space-y-0">
         <CardTitle>Server utilisation</CardTitle>
-        <span className="font-mono text-xs text-muted-foreground">procfs · 10s poll</span>
+        <span className="font-mono text-xs text-muted-foreground">procfs · 5s live</span>
       </CardHeader>
       <CardContent className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
-        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={machine?.cpu_percent} tone={1} />
+        <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={machine?.cpu_percent} tone={1} status={status} />
         <MetricChartPanel
           label="Memory"
           unit="%"
           series={memory}
           scale="percent"
+          status={status}
           latest={machine?.memory_percent}
           {...(memoryText !== undefined ? { valueText: memoryText } : {})}
           tone={2}
         />
-        <MetricChartPanel label="Load 1m" unit="" series={load} scale="auto" latest={machine?.load1} tone={3} />
+        <MetricChartPanel label="Load 1m" unit="" series={load} scale="auto" latest={machine?.load1} tone={3} status={status} />
         <MetricChartPanel
           label="Allocs running"
           unit=""
           series={runningSeries}
           scale="auto"
+          status={status}
           latest={node?.running}
           tone={4}
         />
@@ -314,6 +344,7 @@ function UtilisationCard({
             unit="%"
             series={gpu}
             scale="percent"
+            status={status}
             latest={machine?.gpu_vram_percent}
             {...(gpuText !== undefined ? { valueText: gpuText } : {})}
             tone={2}

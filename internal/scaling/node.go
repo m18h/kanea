@@ -2,6 +2,7 @@ package scaling
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -72,6 +73,10 @@ type NodeReader struct {
 
 	mu   sync.Mutex
 	last *nodeCPUSample
+	// latest is the sampler's most recent reading, published for Read. Nil
+	// until Start runs, which is what makes "nobody started me" a state Read
+	// can recognise rather than a reason to serve nothing.
+	latest *NodeStats
 }
 
 // nodeCPUSample is one /proc/stat reading.
@@ -104,6 +109,20 @@ const (
 	MetricNodeCPU    = "node_cpu_percent"
 	MetricNodeMemory = "node_memory_percent"
 	MetricNodeGPU    = "node_gpu_vram_percent"
+	// MetricNodeLoad1 is the kernel's one-minute load average (v1.79). Load5
+	// and Load15 are deliberately not recorded: three curves that differ only
+	// in how much they are smoothed are three series for one fact, and the
+	// point-in-time reading already carries all three.
+	MetricNodeLoad1 = "node_load1"
+	// MetricNodeAllocsRunning is how many allocs were running at the last
+	// alloc-map refresh (v1.79). It is recorded from cmd/kanea, off the
+	// listing that refresh already performs, which is the condition under
+	// which constraint #2 permits it at all: a Store walk added per scrape to
+	// draw one chart line is the read budget the metrics pipeline is told not
+	// to spend. It therefore lands at that cadence rather than the scrape's,
+	// so most slots hold nothing; those are gaps like any other and carrying
+	// the last value forward would be §9.2's mistake.
+	MetricNodeAllocsRunning = "node_allocs_running"
 )
 
 // RecordNode records a node reading into the time series.
@@ -124,16 +143,89 @@ func RecordNode(m *Metrics, stats NodeStats) {
 	if stats.GPUVRAMPercent != nil {
 		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeGPU}, stats.At, *stats.GPUVRAMPercent)
 	}
+	if stats.Load1 != nil {
+		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeLoad1}, stats.At, *stats.Load1)
+	}
 }
 
-// Read takes a reading.
+// RecordAllocsRunning records how many allocs are running.
+//
+// It takes a number rather than anything to count, deliberately: this package
+// imports neither the Store nor the reconciler and must not start, so the
+// caller does the counting where it is already looking (constraint #2).
+func RecordAllocsRunning(m *Metrics, at time.Time, running int) {
+	if m == nil {
+		return
+	}
+	m.Record(Key{Subject: NodeSubject, Metric: MetricNodeAllocsRunning}, at, float64(running))
+}
+
+// Read answers with the node's statistics.
+//
+// On a started reader this is the last sample the sampler took, verbatim, `At`
+// included: a reading at most one interval old that says so, and the same
+// numbers the recorded history is drawn from, so a tile and its chart finally
+// agree. On a reader nobody started (a development run, an API-only server,
+// every test that predates Start) it samples directly, which is what it always
+// did.
+//
+// Why it is not simply "take a reading": cpu() is a delta over the previous
+// /proc/stat sample and swapping that baseline is destructive, so before v1.79
+// any caller consumed the recorder's. An inbound GET /v1/stats at t=4.9s made
+// the recorder's t=5s sample cover a hundred milliseconds; a real reading of
+// the wrong interval, which is worse than a gap because nothing about it looks
+// wrong. One owner of the schedule is the fix. A short cache would only have
+// narrowed the window.
+func (r *NodeReader) Read() NodeStats {
+	r.mu.Lock()
+	latest := r.latest
+	r.mu.Unlock()
+	if latest != nil {
+		return *latest
+	}
+	return r.sample()
+}
+
+// Start gives the delta one owner: this sampler, on this schedule.
+//
+// It takes a reading immediately so the baseline exists before the first tick
+// rather than an interval later, then samples and records until ctx is done.
+// Recording is the caller's business through record, which keeps this function
+// ignorant of what a metric is; passing nil just publishes readings for Read.
+func (r *NodeReader) Start(ctx context.Context, interval time.Duration, record func(NodeStats)) {
+	publish := func() {
+		stats := r.sample()
+		r.mu.Lock()
+		r.latest = &stats
+		r.mu.Unlock()
+		if record != nil {
+			record(stats)
+		}
+	}
+
+	publish()
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			publish()
+		}
+	}()
+}
+
+// sample takes a fresh reading, advancing the CPU baseline.
 //
 // Nothing here fails: a node whose /proc cannot be read still has a control
 // plane worth talking to, and returning an error would make an unreadable
 // counter break the route that reports everything else. Missing values are
 // reported as missing, which is the honest answer and the one the pointer
 // fields exist to express.
-func (r *NodeReader) Read() NodeStats {
+func (r *NodeReader) sample() NodeStats {
 	stats := NodeStats{Cores: runtime.NumCPU(), At: r.now()}
 	if runtime.GOOS != "linux" && r.procRoot == "/proc" {
 		// procfs is Linux. On a development machine the daemon is not running
