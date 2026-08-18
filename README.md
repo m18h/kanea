@@ -44,7 +44,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.22.0; ARCH=amd64
+VERSION=v0.23.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -109,9 +109,12 @@ sudo usermod -aG kanea $USER
 ```
 
 Init ends with the node summary: the dashboard URL, your admin account, the
-internal DNS address and the subnet layout. `--listen 0.0.0.0:8600` with
-`--listen-cert`/`--listen-key` serves the API and dashboard beyond loopback (TLS is
-required there, refused up front otherwise); `--admin-user` and a piped
+internal DNS address and the subnet layout. TLS is required beyond loopback,
+and init provisions it by default: a public listen address — answered at the
+prompt or passed as a bare `--listen` — mints a 10-year self-signed pair at
+`/etc/kanea/api.crt` and serves the API and dashboard with it. Bring your own
+with `--listen-cert`/`--listen-key`, or override the default at any time via
+the server config below. `--admin-user` and a piped
 password make it scriptable; `--no-start` writes the files and stops, which is
 the pre-v0.5 behaviour.
 
@@ -442,7 +445,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.79) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.80) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

@@ -771,8 +771,12 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       the stanza is declared and <code>--listen</code> was not passed,
       <code>kanea init</code> skips the listen question and renders no listen flags into
       the unit: the file owns the listener. On the flags path, a non-loopback
-      <code>--listen</code> requires the <code>--listen-cert</code>/<code>--listen-key</code>
-      pair and is refused up front without it.
+      <code>--listen</code> with no explicit <code>--listen-cert</code>/<code>--listen-key</code>
+      pair no longer refuses: init provisions a default 10-year self-signed pair at
+      <code>/etc/kanea/api.crt</code>/<code>api.key</code> (minted once, never re-minted)
+      and points the daemon at it. The one refusal left is an unspecified host
+      (<code>0.0.0.0</code>): a SAN needs something to name, so bind a specific address
+      or set <code>api_domain</code> in the stanza.
     </p>
     <p>
       One consequence worth knowing when adopting the stanza on an existing node: an init
@@ -2146,8 +2150,13 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
                 [--listen=127.0.0.1:8600] [--listen-cert=…] [--listen-key=…]
                 [--admin-user=…] [--no-start] [--skip-checks] [--skip-units]</pre>
     <p>
-      A non-loopback <code>--listen</code> requires the TLS pair and is refused up front
-      otherwise: the same refusal the daemon would make, moved in front of you.
+      A non-loopback <code>--listen</code> is served over TLS, and since v0.23 init
+      provisions it: with no explicit <code>--listen-cert</code>/<code>--listen-key</code>
+      pair it mints a ten-year self-signed pair at <code>/etc/kanea/api.crt</code> and
+      <code>api.key</code> (once; a pair already there is left alone) and points the unit
+      at it. Bring your own with the flags, or take the listener over with the
+      <code>bind</code> stanza below. The one refusal left is an unspecified host
+      (<code>0.0.0.0</code>, <code>:8600</code>): a certificate's SAN needs a host to name.
       <code>--admin-user</code> plus a piped password makes it scriptable;
       <code>--no-start</code> writes the files and stops, which is the pre-v0.5 behaviour.
       Re-running is safe: an existing master key and an existing account are left alone.

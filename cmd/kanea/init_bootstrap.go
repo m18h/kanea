@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -23,8 +24,10 @@ import (
 
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/auth"
+	"github.com/m18h/kanea/internal/certsource"
 	"github.com/m18h/kanea/internal/network"
 	"github.com/m18h/kanea/internal/nodeconfig"
+	"github.com/m18h/kanea/internal/provision"
 )
 
 // adminAPI is the slice of the API client the bootstrap needs: a seam so the
@@ -65,45 +68,156 @@ func systemctl(ctx context.Context, timeout time.Duration, args ...string) error
 	return nil
 }
 
+// listenDecision is resolveListen's answer: where the API/dashboard binds,
+// and which certificate secures it.
+type listenDecision struct {
+	addr string // the effective address; "" is socket-only
+	// cert/key are the explicit --listen-cert/--listen-key pair, or empty.
+	cert, key string
+	// provisionPair means the address is public and no explicit pair was
+	// given: init provisions the default 10-year self-signed pair (PRD v1.80)
+	// and the unit points --listen-cert/--listen-key at it. The override
+	// chain is unchanged: kanea.hcl's bind stanza owns the listener when
+	// present (no listen flags are rendered at all), and explicit flags win.
+	provisionPair bool
+}
+
 // resolveListen settles the API/dashboard listen address before anything else
 // runs, so a refusal costs nothing. Prompted only on a terminal and only when
 // the flag was not given: a script that passes --listen consumes no stdin, and
 // a piped init with no flag gets the loopback default rather than a prompt
 // that would eat a line meant for the key ceremony.
-func resolveListen(o *out, reader *bufio.Reader, explicit bool, value, cert, key string) (string, error) {
+//
+// A public address with no certificate pair is no longer refused (v1.80):
+// init provisions a default self-signed pair instead of demanding one
+// (§13.1/§14 A05's rule is "TLS beyond loopback", and the provisioned pair
+// satisfies it). The one refusal left is the unspecified host, because a SAN
+// needs something to name.
+func resolveListen(o *out, reader *bufio.Reader, explicit bool, value, cert, key string) (listenDecision, error) {
 	addr := value
 	if !explicit && term.IsTerminal(int(os.Stdin.Fd())) {
-		o.printf("API/dashboard listen address [%s] (\"none\" for socket-only): ", api.DefaultListenAddr)
-		if err := o.Err(); err != nil {
-			return "", err
-		}
-		line, err := reader.ReadString('\n')
-		if err != nil && strings.TrimSpace(line) == "" {
-			return "", fmt.Errorf("read listen address: %w", err)
-		}
-		if answer := strings.TrimSpace(line); answer != "" {
-			addr = answer
+		var err error
+		addr, err = askListenAddress(o, reader)
+		if err != nil {
+			return listenDecision{}, err
 		}
 	}
 	if addr == "none" || addr == "off" {
-		return "", nil
+		return listenDecision{}, nil
 	}
 
 	if (cert == "") != (key == "") {
-		return "", errors.New("--listen-cert and --listen-key go together")
+		return listenDecision{}, errors.New("--listen-cert and --listen-key go together")
 	}
 	public, err := api.IsPublicAddr(addr)
 	if err != nil {
+		return listenDecision{}, err
+	}
+	if !public || cert != "" {
+		return listenDecision{addr: addr, cert: cert, key: key}, nil
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return listenDecision{}, fmt.Errorf("bad listen address %q: %w", addr, err)
+	}
+	if unspecifiedListenHost(host) {
+		// validateBind's v1.61 rule, applied to the provisioned pair: a
+		// certificate needs a name, and every-interface has none.
+		return listenDecision{}, fmt.Errorf("%s binds every interface, and a certificate's SAN needs a "+
+			"host to name; bind a specific address, or set bind.api_tls and bind.api_domain in %s",
+			addr, nodeconfig.DefaultPath)
+	}
+	return listenDecision{addr: addr, provisionPair: true}, nil
+}
+
+// askListenAddress is the prompt itself. An empty answer keeps loopback.
+func askListenAddress(o *out, reader *bufio.Reader) (string, error) {
+	o.printf("API/dashboard listen address [%s] (\"none\" for socket-only): ", api.DefaultListenAddr)
+	if err := o.Err(); err != nil {
 		return "", err
 	}
-	if public && cert == "" {
-		// The same refusal listenNetwork makes at startup (§13.1, §14 A05),
-		// moved in front of whoever typed the address: a unit that fails on
-		// its first boot is a refusal in a journal nobody is watching yet.
-		return "", fmt.Errorf("%s is beyond loopback and would carry credentials in clear text; "+
-			"pass --listen-cert/--listen-key, bind loopback, or answer none", addr)
+	line, err := reader.ReadString('\n')
+	if err != nil && strings.TrimSpace(line) == "" {
+		return "", fmt.Errorf("read listen address: %w", err)
 	}
-	return addr, nil
+	if answer := strings.TrimSpace(line); answer != "" {
+		return answer, nil
+	}
+	return api.DefaultListenAddr, nil
+}
+
+// The static pair init provisions as the default listener certificate
+// (PRD v1.80): a public listen address gets HTTPS with a SAN matching its
+// host, and kanea.hcl's bind stanza (or explicit --listen-cert/--listen-key)
+// is the override.
+var (
+	provisionedAPICertPath = filepath.Join(provision.DefaultConfDir, "api.crt")
+	provisionedAPIKeyPath  = filepath.Join(provision.DefaultConfDir, "api.key")
+)
+
+// unspecifiedListenHost reports whether host names every interface: the empty
+// host (":8600") or the unspecified address of either family. Mirrors
+// nodeconfig's unexported check (the deliberate-duplication precedent): the
+// daemon's parser stays the authority; this is init's early refusal.
+func unspecifiedListenHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsUnspecified()
+}
+
+// ensureAPIPair provisions the default listener certificate (PRD v1.80): a
+// static, ten-year self-signed pair minted once, which the unit points
+// --listen-cert/--listen-key at. Existing files are left alone: re-minting
+// would flip the fingerprint operators have already accepted, which is the
+// master key's "never regenerated" rule at a smaller stake. Half a pair is an
+// error, never a guess: something edited these files by hand, and init does
+// not overwrite what it cannot explain.
+func ensureAPIPair(o *out, addr, certPath, keyPath string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("bad listen address %q: %w", addr, err)
+	}
+	if unspecifiedListenHost(host) {
+		return fmt.Errorf("%s binds every interface, and a certificate's SAN needs a "+
+			"host to name; bind a specific address, or set bind.api_tls and bind.api_domain in %s",
+			addr, nodeconfig.DefaultPath)
+	}
+
+	_, certErr := os.Stat(certPath)
+	_, keyErr := os.Stat(keyPath)
+	certExists, keyExists := certErr == nil, keyErr == nil
+	switch {
+	case certExists && keyExists:
+		o.printf("Listener certificate already present at %s; leaving it alone.\n", certPath)
+		return nil
+	case certExists != keyExists:
+		return fmt.Errorf("half a certificate pair at %s and %s; remove or complete it", certPath, keyPath)
+	}
+
+	certPEM, keyPEM, err := certsource.StandalonePairPEM(host, time.Now())
+	if err != nil {
+		return err
+	}
+	// #nosec G301; createLayout's mode for the same directory: /etc/kanea is
+	// policy, not a secret, and the key beside the certificate is 0600.
+	if err := os.MkdirAll(filepath.Dir(certPath), 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(certPath), err)
+	}
+	// Cert 0644 (public material), key 0600: certsource's own warning for
+	// provided keys fires on anything wider, and the key is a credential.
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil { // #nosec G306; a public certificate
+		return fmt.Errorf("write %s: %w", certPath, err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", keyPath, err)
+	}
+	o.printf("Provisioned a 10-year self-signed listener certificate for %s:\n", host)
+	o.printf("  %s\n", certPath)
+	o.println("  Override it any time: /etc/kanea/kanea.hcl's bind stanza (acme,")
+	o.println("  self-signed, provided, plaintext) or --listen-cert/--listen-key.")
+	return o.Err()
 }
 
 // listenFromServerConfig decides whether kanea.hcl owns the API listener for
@@ -228,11 +342,15 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 
 	// §13.1 refuses a network listener on a daemon that booted with no
 	// account, and its refusal message prescribes exactly this: create the
-	// account, then restart. The health.Listen check also covers a re-run
-	// whose only change was --listen: `enable --now` does not re-exec a
-	// running unit, so without a restart the new address would never bind.
-	if opts.listen != "" && (created || health.Listen == "") {
-		o.println("Restarting kanead so the network listener opens…")
+	// account, then restart. The comparison beside it covers a re-run whose
+	// listener changed in either direction — a new --listen, a new bind
+	// stanza (v1.80), or a "none" that retires one: `enable --now` does not
+	// re-exec a running unit, so without the restart the daemon keeps serving
+	// whatever the previous run settled. health.Listen is the daemon's
+	// *configured* address, reported verbatim, so an unchanged re-run
+	// compares equal and nothing restarts.
+	if (created && opts.listen != "") || opts.listen != health.Listen {
+		o.println("Restarting kanead so the settled listener takes effect…")
 		if err := opts.run(ctx, "restart", "kanead"); err != nil {
 			printManualNext(o)
 			return fmt.Errorf("restart kanead: %w", err)
@@ -242,7 +360,7 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 			printManualNext(o)
 			return err
 		}
-		if health.Listen == "" {
+		if opts.listen != "" && health.Listen != opts.listen {
 			// A warning, not a failure: the node works over the socket, and
 			// the journal has the listener's own refusal with its reason.
 			o.println("Warning: the network listener did not open; check `journalctl -u kanead`.")

@@ -109,7 +109,7 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	var listenAddr, unitListen string
+	var listenAddr, unitListen, unitListenCert, unitListenKey string
 	if fileOwned {
 		listenAddr = fileAddr
 		o.printf("API/dashboard listener: %s (from %s)\n\n", listenAddr, nodeCfg.Path)
@@ -117,11 +117,23 @@ func runInit(args []string) error {
 		if nodeCfg.Bind != nil && explicitListen {
 			o.printf("Note: --listen wins; %s's bind stanza is not consulted.\n\n", nodeCfg.Path)
 		}
-		listenAddr, err = resolveListen(o, reader, explicitListen, *listenFlag, *listenCert, *listenKey)
+		decision, err := resolveListen(o, reader, explicitListen, *listenFlag, *listenCert, *listenKey)
 		if err != nil {
 			return err
 		}
+		listenAddr = decision.addr
 		unitListen = listenAddr
+		unitListenCert, unitListenKey = decision.cert, decision.key
+		if decision.provisionPair {
+			// The default 10-year pair (v1.80): minted once and left alone on
+			// re-runs. Provisioned here, before the checks and the install,
+			// like the address itself, so a failed re-run still finds it there.
+			if err := ensureAPIPair(o, decision.addr, provisionedAPICertPath, provisionedAPIKeyPath); err != nil {
+				return err
+			}
+			unitListenCert, unitListenKey = provisionedAPICertPath, provisionedAPIKeyPath
+			o.println()
+		}
 	}
 
 	// `--containerd external` adopts the daemon already on the node instead of
@@ -213,7 +225,7 @@ func runInit(args []string) error {
 			reserve: *reserve, binary: executablePath(),
 			network: *networkMode, nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
 			nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
-			listen: unitListen, listenCert: *listenCert, listenKey: *listenKey,
+			listen: unitListen, listenCert: unitListenCert, listenKey: unitListenKey,
 		}); err != nil {
 			return err
 		}
