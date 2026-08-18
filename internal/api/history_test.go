@@ -277,15 +277,15 @@ func TestTheNodeAggregatesAreComputedOncePerSlot(t *testing.T) {
 	// space (v1.79). One Overview subscriber per five seconds is fine; N of
 	// them is the cost K-18 removed from the stats feed, reappearing here.
 	now := time.Now().Truncate(scaling.RawInterval)
-	real := scaling.NewMetrics(scaling.MetricsConfig{})
+	store := scaling.NewMetrics(scaling.MetricsConfig{})
 	for i := range 20 {
 		subject := fmt.Sprintf("shop/svc-%d", i)
 		for at := now.Add(-10 * time.Minute); !at.After(now); at = at.Add(scaling.RawInterval) {
-			real.Record(scaling.Key{Subject: subject, Metric: scaling.MetricRPS}, at, 10)
-			real.Record(scaling.Key{Subject: subject, Metric: scaling.MetricP95}, at, 20)
+			store.Record(scaling.Key{Subject: subject, Metric: scaling.MetricRPS}, at, 10)
+			store.Record(scaling.Key{Subject: subject, Metric: scaling.MetricP95}, at, 20)
 		}
 	}
-	counting := &countingMetrics{Metrics: real}
+	counting := &countingMetrics{Metrics: store}
 	h := newAuthHarness(t, func(cfg *api.ServerConfig) { cfg.Metrics = counting })
 
 	// Warm the memo, then measure only what the repeats cost.
@@ -317,11 +317,11 @@ func TestForgettingASeriesInvalidatesTheSubjectCache(t *testing.T) {
 	// The epoch is what makes the subject cache safe to hold: a service that
 	// goes away must stop being summed, and nothing about time says it has.
 	now := time.Now().Truncate(scaling.RawInterval)
-	real := scaling.NewMetrics(scaling.MetricsConfig{})
+	store := scaling.NewMetrics(scaling.MetricsConfig{})
 	for _, subject := range []string{"shop/web", "shop/api"} {
-		real.Record(scaling.Key{Subject: subject, Metric: scaling.MetricRPS}, now, 10)
+		store.Record(scaling.Key{Subject: subject, Metric: scaling.MetricRPS}, now, 10)
 	}
-	h := newAuthHarness(t, func(cfg *api.ServerConfig) { cfg.Metrics = real })
+	h := newAuthHarness(t, func(cfg *api.ServerConfig) { cfg.Metrics = store })
 
 	status, out := getHistory(t, h, "")
 	if status != http.StatusOK {
@@ -331,7 +331,7 @@ func TestForgettingASeriesInvalidatesTheSubjectCache(t *testing.T) {
 		t.Fatalf("rps = %+v, want a single summed point of 20", out.Series["rps"])
 	}
 
-	real.Forget("shop/api")
+	store.Forget("shop/api")
 
 	// A different slot, so this is the subject cache being invalidated rather
 	// than the aggregate memo simply expiring.
@@ -410,7 +410,7 @@ func TestHistoryServesTheSelectedSeries(t *testing.T) {
 func TestHistoryRefusesAnUnknownSeriesByName(t *testing.T) {
 	// Refused rather than dropped: a chart seeded with nothing looks exactly
 	// like a service that has served nothing, so a typo would read as an outage.
-	h := newAuthHarness(t, withMetrics(func(m *scaling.Metrics) {}))
+	h := newAuthHarness(t, withMetrics(func(*scaling.Metrics) {}))
 
 	req := h.request(t, http.MethodGet,
 		api.PathStatsHistory+"?project=shop&service=web&series=cpu,cpu_percent", nil)
@@ -489,7 +489,7 @@ func TestAnAllocWithNoSamplesStillAppearsInTheSeed(t *testing.T) {
 	// the reason statsFor already gives: an alloc that started a second ago has
 	// a record and no samples. It also keeps the seed's alloc set identical to
 	// the live sample's, so nothing seeds a row the live frames never feed.
-	h := newAuthHarness(t, withMetrics(func(m *scaling.Metrics) {}))
+	h := newAuthHarness(t, withMetrics(func(*scaling.Metrics) {}))
 	putAlloc(t, h, "shop-web-0", "shop", "web", 0)
 
 	status, out := getHistory(t, h, "?project=shop&service=web&allocs=true")
@@ -537,7 +537,7 @@ func TestTheAllocHalfIsOmittedWholeNeverTruncated(t *testing.T) {
 func TestTheNodeViewHasNoAllocHalf(t *testing.T) {
 	// A node view has no service to break down, so the flag is meaningless
 	// there rather than an error: nothing is dropped, so nothing is flagged.
-	h := newAuthHarness(t, withMetrics(func(m *scaling.Metrics) {}))
+	h := newAuthHarness(t, withMetrics(func(*scaling.Metrics) {}))
 	putAlloc(t, h, "shop-web-0", "shop", "web", 0)
 
 	status, out := getHistory(t, h, "?allocs=true")

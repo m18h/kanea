@@ -276,9 +276,6 @@ type wsSession struct {
 	// the notify dispatcher's rule): a client that is behind is behind for
 	// thousands of frames, and one line per frame is the second outage.
 	dropWarn sync.Once
-	// seedWarn is dropWarn's rule applied to the seed budget: a client that is
-	// over budget is over it repeatedly.
-	seedWarn sync.Once
 
 	mu   sync.Mutex
 	subs map[string]context.CancelFunc
