@@ -2753,10 +2753,13 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
     // The heading nearest the top of the viewport wins. An IntersectionObserver
     // alone reports whatever crosses the boundary, which flickers between two
     // headings when a short section scrolls past; this picks deterministically.
+    // The threshold matches the sticky chrome (header alone on desktop, header
+    // plus the contents bar on mobile) so the mark agrees with where a jump lands.
     function update() {
+      var offset = matchMedia('(max-width: 900px)').matches ? 140 : 90;
       var best = null, bestTop = -Infinity;
       for (var i = 0; i < targets.length; i++) {
-        var t = targets[i].getBoundingClientRect().top - 90;
+        var t = targets[i].getBoundingClientRect().top - offset;
         if (t <= 0 && t > bestTop) { bestTop = t; best = targets[i]; }
       }
       if (!best && targets.length) best = targets[0];

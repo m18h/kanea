@@ -308,6 +308,14 @@ footer .sp { margin-left: auto; }
   scroll-margin-top: 78px;
 }
 .prose h4 { font-size: 1.02rem; margin: 30px 0 8px; scroll-margin-top: 78px; }
+@media (max-width: 900px) {
+  /* Selecting a section must move to the section, not strand its title behind
+     the sticky chrome: on a narrow screen that is the 58px header plus the
+     ~62px contents bar, so 78px is 40-odd px short and the heading lands
+     hidden. 132px clears both with a small gap. */
+  .prose h2, .prose h3, .prose h4 { scroll-margin-top: 132px; }
+  .prose h2 { margin: 64px 0 18px; }
+}
 .prose > p:first-of-type { font-size: 1.05rem; color: var(--muted); }
 .prose p { margin: 0 0 16px; }
 .prose ul, .prose ol { margin: 0 0 16px; padding-left: 22px; }
