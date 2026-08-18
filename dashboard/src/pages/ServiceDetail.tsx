@@ -28,7 +28,6 @@ import {
   Topic,
   allocsResponseSchema,
   fetchEvents,
-  fetchStatsHistory,
   restartService,
   scaleService,
   servicesResponseSchema,
@@ -61,7 +60,13 @@ const notFoundGraceMs = 750
 export function ServiceDetail({ project, service }: { project: string; service: string }) {
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
-  const stats = useLiveTopic({ topic: Topic.Stats, project, service }, statsSampleSchema)
+  // The seed rides this subscription's first frame (v1.79): one round trip
+  // instead of a socket and a REST call, and a reconnect re-seeds for free
+  // because the daemon treats a resubscribe as a replace.
+  const stats = useLiveTopic(
+    { topic: Topic.Stats, project, service, history: true, history_allocs: true },
+    statsSampleSchema,
+  )
 
   const events = useQuery({
     queryKey: ['events', project],
@@ -69,17 +74,10 @@ export function ServiceDetail({ project, service }: { project: string; service: 
     refetchInterval: 15_000,
   })
 
-  // The seed the charts and the alloc sparklines start from. A minute of
-  // staleness rather than Infinity (v1.79): the store refuses a seed that is
-  // not older than what it already holds, so freshness here is a performance
-  // question rather than a correctness one, and Infinity only bought a
-  // long-lived tab a window that kept getting older.
-  const seed = useQuery({
-    queryKey: ['stats-history', project, service],
-    queryFn: ({ signal }) => fetchStatsHistory({ project, service, allocs: true }, signal),
-    staleTime: 60_000,
-    retry: false,
-  })
+  // The seed arrives on the first frame; GET /v1/stats/history remains for
+  // one-shot callers with nowhere to put a socket, and is no longer one of them.
+  const history = stats.data?.history ?? null
+  const seeded = stats.data?.history !== undefined || stats.data?.history_omitted === true
 
   const key = `${project}/${service}`
   const desired = (services.data?.services ?? []).find(
@@ -179,8 +177,8 @@ export function ServiceDetail({ project, service }: { project: string; service: 
       <StatsPanel
         subject={key}
         sample={stats.data}
-        history={seed.data ?? null}
-        seeded={!seed.isPending}
+        history={history}
+        seeded={seeded}
         connected={stats.connected}
         error={stats.error}
       />
@@ -216,8 +214,8 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                         subject={key}
                         stats={(stats.data?.allocs ?? []).find((a) => a.alloc_id === alloc.id)}
                         at={stats.data?.at ?? ''}
-                        history={seed.data ?? null}
-                        seeded={!seed.isPending}
+                        history={history}
+                        seeded={seeded}
                         connected={stats.connected}
                       />
                     ))}
