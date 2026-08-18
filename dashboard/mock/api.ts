@@ -446,7 +446,15 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 function liveSocket(ws: WebSocket): void {
   const subs = new Map<
     string,
-    { topic: string; project?: string; service?: string; history?: boolean; series?: string[] }
+    {
+      topic: string
+      project?: string
+      service?: string
+      history?: boolean
+      series?: string[]
+      allocs?: boolean
+      seeded?: boolean
+    }
   >()
 
   const send = (key: string, topic: string, data: unknown) => {
@@ -459,12 +467,32 @@ function liveSocket(ws: WebSocket): void {
     if (!sub) return
     if (sub.topic === 'services') send(key, 'services', servicesPayload())
     if (sub.topic === 'allocs') send(key, 'allocs', allocsPayload())
+    // The seed rides the first frame and no frame after it, exactly as the
+    // daemon does, so dev exercises the contract rather than a friendlier
+    // version of it.
+    const seed = <T>(names: string[], subject: string, allocsOf?: [string, string]): T | object => {
+      if (!sub.history || sub.seeded) return {}
+      sub.seeded = true
+      const body = history(subject, sub.series ?? names)
+      return {
+        history: allocsOf ? { ...body, allocs: allocHistory(allocsOf[0], allocsOf[1]) } : body,
+      }
+    }
     if (sub.topic === 'node') {
-      send(key, 'node', { ...nodeStats(), ...(sub.history ? { history: history('node', sub.series ?? nodeSeriesNames) } : {}) })
+      send(key, 'node', { ...nodeStats(), ...seed(nodeSeriesNames, 'node') })
     }
     if (sub.topic === 'stats' && sub.project && sub.service) {
       const svc = findService(sub.project, sub.service)
-      if (svc) send(key, 'stats', serviceStats(svc))
+      if (svc) {
+        send(key, 'stats', {
+          ...serviceStats(svc),
+          ...seed(
+            serviceSeriesNames,
+            `${sub.project}/${sub.service}`,
+            sub.allocs ? [sub.project, sub.service] : undefined,
+          ),
+        })
+      }
     }
   }
 
@@ -477,6 +505,7 @@ function liveSocket(ws: WebSocket): void {
       tail?: number
       history?: boolean
       history_series?: string[]
+      history_allocs?: boolean
     }
     try {
       frame = JSON.parse(raw.toString()) as typeof frame
@@ -496,9 +525,12 @@ function liveSocket(ws: WebSocket): void {
         service?: string
         history?: boolean
         series?: string[]
+        allocs?: boolean
+        seeded?: boolean
       } = { topic: frame.topic }
       if (frame.history) sub.history = true
       if (frame.history_series) sub.series = frame.history_series
+      if (frame.history_allocs) sub.allocs = true
       if (frame.project) sub.project = frame.project
       if (frame.service) sub.service = frame.service
       subs.set(key, sub)
