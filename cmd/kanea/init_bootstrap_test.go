@@ -4,6 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -21,10 +27,16 @@ type fakeAdminAPI struct {
 	putRole  auth.Role
 	// listenAfterRestart is what Health reports once a restart ran.
 	listenAfterRestart string
+	// healthAfterRestart, when set, replaces the reported health wholesale
+	// once a restart ran: a listener can close, not only open.
+	healthAfterRestart *api.Health
 	restarted          bool
 }
 
 func (f *fakeAdminAPI) Health(context.Context) (api.Health, error) {
+	if f.restarted && f.healthAfterRestart != nil {
+		return *f.healthAfterRestart, nil
+	}
 	h := f.health
 	if f.restarted && f.listenAfterRestart != "" {
 		h.Listen = f.listenAfterRestart
@@ -151,6 +163,82 @@ func TestBootstrapRestartsWhenTheListenerIsNotOpen(t *testing.T) {
 	}
 }
 
+func TestBootstrapRestartsWhenTheListenAddressChanged(t *testing.T) {
+	// The re-run that moves the listener: accounts exist and the daemon is
+	// already serving the old address, so neither half of the pre-v1.80
+	// condition (created, or no listener configured) fires. Only comparing
+	// the settled address against the daemon's configured one picks the new
+	// unit's argv up.
+	fake := &fakeAdminAPI{
+		health:             api.Health{Listen: "127.0.0.1:8600"},
+		users:              []auth.User{{Name: "michael", Role: auth.RoleAdmin}},
+		listenAfterRestart: "10.0.0.5:8600",
+	}
+	runner := &recordingRunner{}
+	var buf bytes.Buffer
+
+	opts := testBootstrapOptions(fake, runner)
+	opts.listen = "10.0.0.5:8600"
+	if err := bootstrapDaemon(&out{w: &buf}, bufio.NewReader(strings.NewReader("")), opts); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if got := runner.restarts(); got != 1 {
+		t.Errorf("restarts = %d, want 1: a changed --listen never binds without it", got)
+	}
+	if !strings.Contains(buf.String(), "10.0.0.5:8600") {
+		t.Errorf("summary must report the new address:\n%s", buf.String())
+	}
+}
+
+func TestBootstrapRestartsWhenTheListenerIsRetired(t *testing.T) {
+	// listen → none: the running daemon is still holding the old listener,
+	// and only a restart closes it. The "did not open" warning must NOT fire
+	// afterwards: a socket-only outcome is exactly what was asked for.
+	fake := &fakeAdminAPI{
+		health:             api.Health{Listen: "127.0.0.1:8600"},
+		users:              []auth.User{{Name: "michael", Role: auth.RoleAdmin}},
+		healthAfterRestart: &api.Health{},
+	}
+	runner := &recordingRunner{}
+	var buf bytes.Buffer
+
+	opts := testBootstrapOptions(fake, runner)
+	opts.listen = ""
+	if err := bootstrapDaemon(&out{w: &buf}, bufio.NewReader(strings.NewReader("")), opts); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if got := runner.restarts(); got != 1 {
+		t.Errorf("restarts = %d, want 1: retiring a listener takes a restart", got)
+	}
+	if strings.Contains(buf.String(), "did not open") {
+		t.Errorf("a retired listener must not warn as a failed one:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), api.DefaultSocket) {
+		t.Errorf("a socket-only summary names the socket:\n%s", buf.String())
+	}
+}
+
+func TestBootstrapDoesNotRestartAFreshSocketOnlyNode(t *testing.T) {
+	// Fresh init, socket-only: the account is created over the socket and
+	// there is no listener to open, so there is nothing to restart for.
+	fake := &fakeAdminAPI{}
+	runner := &recordingRunner{}
+	var buf bytes.Buffer
+
+	opts := testBootstrapOptions(fake, runner)
+	opts.listen = ""
+	reader := bufio.NewReader(strings.NewReader("michael\nsw0rdfish-passw0rd\n"))
+	if err := bootstrapDaemon(&out{w: &buf}, reader, opts); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if len(fake.putCalls) != 1 {
+		t.Errorf("PutUser calls = %v, want [michael]", fake.putCalls)
+	}
+	if got := runner.restarts(); got != 0 {
+		t.Errorf("restarts = %d, want 0: a socket-only node has no listener to open", got)
+	}
+}
+
 func TestBootstrapWithAdminUserFlagPromptsOnlyForThePassword(t *testing.T) {
 	fake := &fakeAdminAPI{listenAfterRestart: "127.0.0.1:8600"}
 	runner := &recordingRunner{}
@@ -233,22 +321,27 @@ func TestResolveListenValidatesWithoutPrompting(t *testing.T) {
 		cert     string
 		key      string
 		want     string
+		wantPair bool
 		wantErr  bool
 	}{
 		{name: "default loopback", value: api.DefaultListenAddr, want: "127.0.0.1:8600"},
 		{name: "none means socket-only", explicit: true, value: "none", want: ""},
 		{name: "off is an alias", explicit: true, value: "off", want: ""},
-		{name: "public without TLS refused", explicit: true, value: "0.0.0.0:8600", wantErr: true},
+		{name: "public without a pair gets the default pair", explicit: true, value: "198.100.154.249:8600",
+			want: "198.100.154.249:8600", wantPair: true},
 		{name: "public with TLS", explicit: true, value: "10.0.0.5:8600",
 			cert: "/etc/kanea/api.crt", key: "/etc/kanea/api.key", want: "10.0.0.5:8600"},
+		{name: "a LAN address is beyond loopback and gets the pair", explicit: true, value: "192.168.1.10:8600", wantPair: true,
+			want: "192.168.1.10:8600"},
 		{name: "half a keypair refused", explicit: true, value: "127.0.0.1:8600",
 			cert: "/etc/kanea/api.crt", wantErr: true},
 		{name: "garbage refused", explicit: true, value: "not an address", wantErr: true},
+		{name: "unspecified host has no name to certify", explicit: true, value: "0.0.0.0:8600", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := bufio.NewReader(strings.NewReader("this line must not be consumed\n"))
-			got, err := resolveListen(newOut(), reader, tc.explicit, tc.value, tc.cert, tc.key)
+			decision, err := resolveListen(newOut(), reader, tc.explicit, tc.value, tc.cert, tc.key)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("accepted %q", tc.value)
@@ -258,12 +351,87 @@ func TestResolveListenValidatesWithoutPrompting(t *testing.T) {
 			if err != nil {
 				t.Fatalf("refused %q: %v", tc.value, err)
 			}
-			if got != tc.want {
-				t.Errorf("got %q, want %q", got, tc.want)
+			if decision.addr != tc.want {
+				t.Errorf("got %q, want %q", decision.addr, tc.want)
+			}
+			if decision.provisionPair != tc.wantPair {
+				t.Errorf("provisionPair = %v, want %v", decision.provisionPair, tc.wantPair)
 			}
 			if line, _ := reader.ReadString('\n'); line != "this line must not be consumed\n" {
 				t.Errorf("resolveListen consumed stdin it was not offered; next read got %q", line)
 			}
 		})
 	}
+}
+
+// The default listener pair (PRD v1.80): minted once, left alone on re-runs,
+// and refused when only half a pair exists.
+func TestEnsureAPIPair(t *testing.T) {
+	t.Run("mints a usable 10-year pair once, then leaves it alone", func(t *testing.T) {
+		certPath := filepath.Join(t.TempDir(), "api.crt")
+		keyPath := filepath.Join(t.TempDir(), "api.key")
+		var buf bytes.Buffer
+		if err := ensureAPIPair(&out{w: &buf}, "198.100.154.249:8600", certPath, keyPath); err != nil {
+			t.Fatalf("ensureAPIPair: %v", err)
+		}
+		pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			t.Fatalf("the written pair must load: %v", err)
+		}
+		leaf, err := x509.ParseCertificate(pair.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(leaf.IPAddresses) != 1 || !leaf.IPAddresses[0].Equal(net.ParseIP("198.100.154.249")) {
+			t.Errorf("IP SANs = %v, want the listen address's IP", leaf.IPAddresses)
+		}
+		if got := time.Until(leaf.NotAfter); got < 9*365*24*time.Hour {
+			t.Errorf("validity = %v, want the 10-year default", got)
+		}
+		info, err := os.Stat(keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("key mode = %04o, want 0600 (certsource's own provided-key rule)", perm)
+		}
+
+		// A re-run must not re-mint: the fingerprint operators accepted is
+		// the one that stays.
+		before, _ := os.ReadFile(certPath)
+		if err := ensureAPIPair(&out{w: &buf}, "198.100.154.249:8600", certPath, keyPath); err != nil {
+			t.Fatalf("ensureAPIPair re-run: %v", err)
+		}
+		after, _ := os.ReadFile(certPath)
+		if !bytes.Equal(before, after) {
+			t.Error("a re-run re-minted the certificate; existing material is left alone")
+		}
+		if !strings.Contains(buf.String(), "leaving it alone") {
+			t.Errorf("the re-run must say it left the pair alone:\n%s", buf.String())
+		}
+	})
+
+	t.Run("half a pair is an error, never a guess", func(t *testing.T) {
+		dir := t.TempDir()
+		certPath := filepath.Join(dir, "api.crt")
+		keyPath := filepath.Join(dir, "api.key")
+		if err := os.WriteFile(certPath, []byte("some cert"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureAPIPair(newOut(), "198.100.154.249:8600", certPath, keyPath); err == nil {
+			t.Fatal("a cert with no key must not be completed silently")
+		}
+	})
+
+	t.Run("an unspecified host is refused before anything is written", func(t *testing.T) {
+		dir := t.TempDir()
+		certPath := filepath.Join(dir, "api.crt")
+		err := ensureAPIPair(newOut(), "0.0.0.0:8600", certPath, filepath.Join(dir, "api.key"))
+		if err == nil || !strings.Contains(err.Error(), "api_domain") {
+			t.Fatalf("the refusal must name the api_domain route, got: %v", err)
+		}
+		if _, statErr := os.Stat(certPath); !errors.Is(statErr, os.ErrNotExist) {
+			t.Error("the refusal wrote a certificate")
+		}
+	})
 }
