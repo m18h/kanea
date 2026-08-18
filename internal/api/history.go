@@ -30,12 +30,16 @@ const (
 // A gap is an absent point, never a zero (§9.2): the ring's unwritten slots
 // are simply not serialised, so this surface cannot get the rule wrong. The
 // interval lets a client rebuild fixed slots and place the gaps.
+// The embedded block keeps the pre-v1.79 wire shape exactly: an embedded
+// struct's fields are flattened in place, so this still marshals as subject,
+// from, to, interval_seconds, series, in that order, plus two omitempty
+// additions that a request naming no allocs never produces.
 type HistoryResponse struct {
-	Subject         string                     `json:"subject"`
-	From            time.Time                  `json:"from"`
-	To              time.Time                  `json:"to"`
-	IntervalSeconds int                        `json:"interval_seconds"`
-	Series          map[string][]scaling.Point `json:"series"`
+	Subject string `json:"subject"`
+	HistoryBlock
+	// Allocs is the per-alloc breakdown (v1.79), served only when asked for.
+	Allocs        map[string]HistoryBlock `json:"allocs,omitempty"`
+	AllocsOmitted bool                    `json:"allocs_omitted,omitempty"`
 }
 
 // handleStatsHistory serves a service's history, or the node's when no
@@ -63,56 +67,31 @@ func (s *Server) handleStatsHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		window = parsed
 	}
-	window = min(max(window, minHistoryWindow), scaling.RollupWindow)
 
-	// Truncated to a raw slot rather than taken as "now" (v1.79). Two things
-	// depend on it. The ring's own slots are on this grid, so an untruncated
-	// range asks for a fraction of a slot at each end and no two responses are
-	// comparable; and the aggregate cache below can only key on a slot if the
-	// range is one. It is also half of the tier fix: the old code decided the
-	// interval from the window while Range decided from how long ago `from`
-	// was, and a window of exactly RawWindow missed the raw tier by however
-	// long the handler had taken.
-	to := s.now().Truncate(scaling.RawInterval)
-	from := to.Add(-window)
-
-	// Which tier Range will serve decides the slot width the client rebuilds
-	// gaps against, so it is asked rather than re-derived: one function, two
-	// callers, and they cannot disagree.
-	interval := s.metrics.RangeInterval(from, to)
-
-	out := HistoryResponse{
-		From: from, To: to,
-		IntervalSeconds: int(interval / time.Second),
-		Series:          map[string][]scaling.Point{},
+	subject := scaling.NodeSubject
+	if project != "" {
+		subject = project + "/" + service
+	}
+	req := seedRequest{
+		window: clampWindow(window),
+		series: parseSeriesList(q.Get("series")),
+		allocs: q.Get("allocs") == "true",
 	}
 
-	if project == "" {
-		out.Subject = scaling.NodeSubject
-		// The node's own recorded series, plus read-time aggregates for what
-		// is only recorded per service.
-		out.Series["cpu"] = s.metrics.Range(
-			scaling.Key{Subject: scaling.NodeSubject, Metric: scaling.MetricNodeCPU}, from, to)
-		out.Series["memory"] = s.metrics.Range(
-			scaling.Key{Subject: scaling.NodeSubject, Metric: scaling.MetricNodeMemory}, from, to)
-		out.Series["gpu_vram"] = s.metrics.Range(
-			scaling.Key{Subject: scaling.NodeSubject, Metric: scaling.MetricNodeGPU}, from, to)
-		out.Series["rps"] = s.sumSeries(scaling.MetricRPS, from, to)
-		// An rps-weighted mean of per-service p95s, which is an approximation:
-		// percentiles do not aggregate. Stated here and in the PRD rather than
-		// silently presented as a measurement.
-		out.Series["p95_latency_ms"] = s.weightedSeries(scaling.MetricP95, scaling.MetricRPS, from, to)
-	} else {
-		subject := project + "/" + service
-		out.Subject = subject
-		for name, metric := range map[string]string{
-			"cpu":            scaling.MetricCPU,
-			"memory":         scaling.MetricMemory,
-			"rps":            scaling.MetricRPS,
-			"p95_latency_ms": scaling.MetricP95,
-		} {
-			out.Series[name] = s.metrics.Range(scaling.Key{Subject: subject, Metric: metric}, from, to)
-		}
+	// The same builder the websocket seed uses (v1.79): one implementation of
+	// what a window means, which tier answers it and which series a view
+	// carries, so the two surfaces cannot drift.
+	seed, err := s.buildSeed(r.Context(), subject, req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	out := HistoryResponse{
+		Subject:       subject,
+		HistoryBlock:  seed.HistoryBlock,
+		Allocs:        seed.Allocs,
+		AllocsOmitted: seed.AllocsOmitted,
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -126,6 +105,7 @@ type aggKey struct {
 	weightBy string
 	window   time.Duration
 	slot     int64
+	withNode bool
 }
 
 // maxAggCacheEntries bounds the memo. The working set is one or two windows, so
@@ -191,12 +171,21 @@ func (s *Server) serviceSubjects(metric string) []string {
 // A slot where no service has a point is absent; a slot where some do is the
 // sum of those that do. Points from one Metrics store share slot-aligned
 // timestamps, which is what makes merging by instant exact.
-func (s *Server) sumSeries(metric string, from, to time.Time) []scaling.Point {
-	key := aggKey{kind: "sum", metric: metric, window: to.Sub(from), slot: to.Unix()}
+// withNode adds the node subject's own recording, which the datapath uses for
+// traffic it cannot attribute to a service. A node total that left it out would
+// be missing exactly the traffic nobody could account for.
+func (s *Server) sumSeries(metric string, from, to time.Time, withNode bool) []scaling.Point {
+	key := aggKey{kind: "sum", metric: metric, window: to.Sub(from), slot: to.Unix(), withNode: withNode}
 	return s.cachedAggregate(key, func() []scaling.Point {
 		sums := map[time.Time]float64{}
 		for _, subject := range s.serviceSubjects(metric) {
 			for _, p := range s.metrics.Range(scaling.Key{Subject: subject, Metric: metric}, from, to) {
+				sums[p.At] += p.Value
+			}
+		}
+		if withNode {
+			for _, p := range s.metrics.Range(
+				scaling.Key{Subject: scaling.NodeSubject, Metric: metric}, from, to) {
 				sums[p.At] += p.Value
 			}
 		}
