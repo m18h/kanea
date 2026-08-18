@@ -470,7 +470,8 @@ function liveSocket(ws: WebSocket): void {
     // The seed rides the first frame and no frame after it, exactly as the
     // daemon does, so dev exercises the contract rather than a friendlier
     // version of it.
-    const seed = <T>(names: string[], subject: string, allocsOf?: [string, string]): T | object => {
+    type Seeded = { history?: ReturnType<typeof history> & { allocs?: Record<string, unknown> } }
+    const seed = (names: string[], subject: string, allocsOf?: [string, string]): Seeded => {
       if (!sub.history || sub.seeded) return {}
       sub.seeded = true
       const body = history(subject, sub.series ?? names)
