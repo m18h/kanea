@@ -13,7 +13,6 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/auth"
 )
 
@@ -47,7 +46,7 @@ func runUser(args []string) error {
 // history; the same reasoning that keeps secret values out of argv.
 func runUserAdd(args []string) error {
 	fs := flag.NewFlagSet("user add", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	role := fs.String("role", string(auth.RoleAdmin), "admin or viewer")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -65,7 +64,11 @@ func runUserAdd(args []string) error {
 		return err
 	}
 
-	if err := api.NewClient(*socket).PutUser(context.Background(), name, password, auth.Role(*role)); err != nil {
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	if err := client.PutUser(context.Background(), name, password, auth.Role(*role)); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(os.Stdout, "wrote account %s (%s)\n", name, *role)
@@ -74,12 +77,16 @@ func runUserAdd(args []string) error {
 
 func runUserList(args []string) error {
 	fs := flag.NewFlagSet("user ls", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	users, err := api.NewClient(*socket).Users(context.Background())
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	users, err := client.Users(context.Background())
 	if err != nil {
 		return err
 	}
@@ -105,7 +112,7 @@ func runUserList(args []string) error {
 
 func runUserDelete(args []string) error {
 	fs := flag.NewFlagSet("user rm", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -113,7 +120,11 @@ func runUserDelete(args []string) error {
 		return errors.New("usage: kanea user rm <name>")
 	}
 
-	if err := api.NewClient(*socket).DeleteUser(context.Background(), fs.Arg(0)); err != nil {
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	if err := client.DeleteUser(context.Background(), fs.Arg(0)); err != nil {
 		return err
 	}
 	// The account's sessions die with it server-side (K-13): a stolen cookie
@@ -129,7 +140,7 @@ func runUserDelete(args []string) error {
 // delete or re-credential.
 func runUserRevokeSessions(args []string) error {
 	fs := flag.NewFlagSet("user revoke-sessions", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -137,7 +148,11 @@ func runUserRevokeSessions(args []string) error {
 		return errors.New("usage: kanea user revoke-sessions <name>")
 	}
 
-	n, err := api.NewClient(*socket).RevokeUserSessions(context.Background(), fs.Arg(0))
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	n, err := client.RevokeUserSessions(context.Background(), fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -164,7 +179,7 @@ func runToken(args []string) error {
 
 func runTokenCreate(args []string) error {
 	fs := flag.NewFlagSet("token create", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	role := fs.String("role", string(auth.RoleViewer), "admin or viewer")
 	ttl := fs.String("expires-in", "", "lifetime, e.g. 720h (default: never expires)")
 	if err := fs.Parse(args); err != nil {
@@ -177,7 +192,11 @@ func runTokenCreate(args []string) error {
 		return fmt.Errorf("unknown role %q: want admin or viewer", *role)
 	}
 
-	resp, err := api.NewClient(*socket).CreateToken(context.Background(), fs.Arg(0), auth.Role(*role), *ttl)
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	resp, err := client.CreateToken(context.Background(), fs.Arg(0), auth.Role(*role), *ttl)
 	if err != nil {
 		return err
 	}
@@ -205,12 +224,16 @@ func runTokenCreate(args []string) error {
 
 func runTokenList(args []string) error {
 	fs := flag.NewFlagSet("token ls", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	tokens, err := api.NewClient(*socket).Tokens(context.Background())
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	tokens, err := client.Tokens(context.Background())
 	if err != nil {
 		return err
 	}
@@ -236,7 +259,7 @@ func runTokenList(args []string) error {
 
 func runTokenRevoke(args []string) error {
 	fs := flag.NewFlagSet("token rm", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -244,7 +267,11 @@ func runTokenRevoke(args []string) error {
 		return errors.New("usage: kanea token rm <id>")
 	}
 
-	if err := api.NewClient(*socket).RevokeToken(context.Background(), fs.Arg(0)); err != nil {
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	if err := client.RevokeToken(context.Background(), fs.Arg(0)); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(os.Stdout, "revoked token %s\n", fs.Arg(0))

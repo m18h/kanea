@@ -118,13 +118,16 @@ func runFunctions(args []string) error {
 		return fmt.Errorf("usage: kanea functions list [--json]")
 	}
 	fs := flag.NewFlagSet("functions list", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	resp, err := client.Functions(context.Background())
 	if err != nil {
 		return err

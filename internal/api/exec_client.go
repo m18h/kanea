@@ -94,13 +94,20 @@ const maxExecFrameBytes = (1 << 20) + 1
 
 // dialExec opens the websocket over the daemon's transport.
 func (c *Client) dialExec(ctx context.Context, opts ExecOptions) (*websocket.Conn, error) {
-	target := "ws://kanead" + PathExec + "?" +
+	target := c.wsURL(PathExec) + "?" +
 		ExecQuery(opts.Project, opts.Alloc, opts.Command, opts.TTY, opts.User)
 
 	conn, resp, err := websocket.Dial(ctx, target, &websocket.DialOptions{
 		// The client's own transport, so an exec goes over the same unix socket
 		// every other command does. Nothing about this route is reachable by a
 		// path the rest of the CLI does not already use.
+		//
+		// Remotely that transport is the TLS one, and the bearer token rides
+		// its RoundTripper: coder/websocket builds this handshake request
+		// itself and sends it through this client, so auth set anywhere else
+		// would miss it. The server side needs nothing — checkOrigin admits a
+		// request with no Origin (a CLI is not a browser) and checkCSRF exempts
+		// token callers.
 		HTTPClient: c.http,
 	})
 	if err != nil {

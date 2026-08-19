@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/logging"
 	"github.com/m18h/kanea/internal/secrets"
@@ -39,13 +38,16 @@ func runBackup(args []string) error {
 
 func runBackupCreate(args []string) error {
 	fs := flag.NewFlagSet("backup create", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	reason := fs.String("reason", "on-demand", "recorded in the archive manifest")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	manifest, err := client.CreateBackup(context.Background(), *reason)
 	if err != nil {
 		return err
@@ -62,12 +64,15 @@ func runBackupCreate(args []string) error {
 
 func runBackupList(args []string) error {
 	fs := flag.NewFlagSet("backup list", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	resp, err := client.Backups(context.Background())
 	if err != nil {
 		return err
@@ -110,7 +115,7 @@ func runBackupList(args []string) error {
 
 func runBackupVerify(args []string) error {
 	fs := flag.NewFlagSet("backup verify", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -118,7 +123,10 @@ func runBackupVerify(args []string) error {
 		return errors.New("usage: kanea backup verify <archive-id>")
 	}
 
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	if err := client.VerifyBackup(context.Background(), fs.Arg(0)); err != nil {
 		return err
 	}
@@ -136,7 +144,7 @@ func runBackupVerify(args []string) error {
 // procedure for a node that is up and wrong.
 func runRestore(args []string) error {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	from := fs.String("from", "",
 		"restore offline from a destination: a directory, or s3://bucket/prefix")
 	endpoint := fs.String("s3-endpoint", "", "S3 endpoint URL (with --from s3://…)")
@@ -156,7 +164,9 @@ func runRestore(args []string) error {
 	}
 
 	if *from == "" {
-		return stageRestore(*socket, *archive, *skipReplay)
+		// Staging a restore is a control-plane call like any other, so it goes
+		// through the endpoint; the offline path below never touches a daemon.
+		return stageRestore(ep, *archive, *skipReplay)
 	}
 	return offlineRestore(offlineRestoreOptions{
 		from: *from, endpoint: *endpoint, region: *region,
@@ -167,8 +177,11 @@ func runRestore(args []string) error {
 }
 
 // stageRestore asks the daemon to restore at its next start.
-func stageRestore(socket, archive string, skipReplay bool) error {
-	client := api.NewClient(socket)
+func stageRestore(ep *endpoint, archive string, skipReplay bool) error {
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	resp, err := client.StageRestore(context.Background(), archive, skipReplay)
 	if err != nil {
 		return err

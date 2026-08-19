@@ -8,7 +8,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/certsource"
 )
 
@@ -43,14 +42,18 @@ func runCA(args []string) error {
 // rather than one with installation advice pasted on the front.
 func runCAShow(args []string) error {
 	fs := flag.NewFlagSet("ca show", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	out := fs.String("out", "", "write to this file instead of stdout")
 	quiet := fs.Bool("quiet", false, "omit the installation hints")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	pem, err := api.NewClient(*socket).CACertificate(context.Background())
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	pem, err := client.CACertificate(context.Background())
 	if err != nil {
 		return err
 	}
@@ -112,12 +115,16 @@ func printTrustHints(pem []byte) error {
 // runCAInfo summarises the CA without printing it.
 func runCAInfo(args []string) error {
 	fs := flag.NewFlagSet("ca info", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	pem, err := api.NewClient(*socket).CACertificate(context.Background())
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	pem, err := client.CACertificate(context.Background())
 	if err != nil {
 		return err
 	}

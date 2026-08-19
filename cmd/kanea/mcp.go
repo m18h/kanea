@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/logging"
@@ -25,7 +24,7 @@ import (
 // confers, which, per §13.1, is the authority of the user who can open it.
 func runMCP(args []string) error {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	verbose := fs.Bool("verbose", false, "log protocol activity to stderr")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -53,13 +52,25 @@ func runMCP(args []string) error {
 	// is load-once, so a session-long value is the daemon's own behaviour. A
 	// failed fetch (older daemon, unreachable socket) parses without them:
 	// the unknown-variable diagnostic reaches the agent as the tool's error.
-	nodeVars, varsErr := api.NewClient(*socket).Vars(context.Background())
+	// The stdio transport's credential is the unix socket (§16.3). A remote
+	// agent already has the node's own /mcp endpoint with a bearer token, so
+	// `kanea mcp --url` would be a second spelling of a transport that exists.
+	if err := ep.local("mcp",
+		"the stdio server's credential is the local socket; remote agents use the node's own "+
+			"/mcp endpoint with a token"); err != nil {
+		return err
+	}
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	nodeVars, varsErr := client.Vars(context.Background())
 	if varsErr != nil {
 		log.Debug("node variables unavailable; specs parse without them", "error", varsErr)
 	}
 
 	server, err := mcp.New(mcp.Config{
-		Backend:   mcp.NewSocketBackend(*socket),
+		Backend:   mcp.NewSocketBackend(*ep.socket),
 		Logger:    log,
 		Version:   version,
 		ParseSpec: specParser(nodeVars),
@@ -74,7 +85,7 @@ func runMCP(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	log.Debug("serving MCP over stdio", "socket", *socket)
+	log.Debug("serving MCP over stdio", "socket", *ep.socket)
 	if err := server.ServeStdio(ctx, os.Stdin, os.Stdout); err != nil {
 		return fmt.Errorf("mcp: %w", err)
 	}

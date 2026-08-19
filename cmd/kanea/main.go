@@ -45,6 +45,7 @@ var commands = []command{
 	{"run", "apply a job spec or just the selected services (shop/web …); alias: apply", runRun},
 	{"stop", "stop a service (scale to zero; --rm deletes it)", runStop},
 	{"start", "start a stopped service (one replica unless a count is given)", runStart},
+	{"deploy", "point an existing service at a new image, leaving its spec alone", runDeploy},
 	{"restart", "roll a service's allocs through its update policy", runRestart},
 	{"ps", "list allocations (-a adds stopped and not-yet-created)", runPs},
 	{"describe", "one service in full: spec, routes, allocs, stats, events", runDescribe},

@@ -21,13 +21,16 @@ func runVolume(args []string) error {
 		return fmt.Errorf("usage: kanea volume list [--json]")
 	}
 	fs := flag.NewFlagSet("volume list", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	resp, err := client.Volumes(context.Background())
 	if err != nil {
 		return err

@@ -26,11 +26,6 @@ import (
 	"github.com/m18h/kanea/internal/scaling"
 )
 
-// socketFlag adds the shared --socket flag.
-func socketFlag(fs *flag.FlagSet) *string {
-	return fs.String("socket", api.DefaultSocket, "kanead control socket")
-}
-
 // loadSpec parses the job spec files given on the command line, or builds a
 // one-service spec from the --image/--name/--project flags. PRD §6 calls the
 // image-only path first-class: `kanea run --image=nginx --name web` must work
@@ -150,7 +145,7 @@ func pipelineConfigs(spec *jobspec.Spec) []gitops.Config {
 // runRun implements `kanea run`.
 func runRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	image := fs.String("image", "", "run a single image without a spec file")
 	name := fs.String("name", "", "service name (with --image)")
 	project := fs.String("project", "", "project name (with --image)")
@@ -167,13 +162,25 @@ func runRun(args []string) error {
 	// The client exists before the parse (v1.63): the spec may lean on the
 	// node's shared variables, fetched best-effort like the port pre-check.
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	desired, pipelines, err := loadSpec(files, sels, *image, *name, *project, *count,
 		fetchNodeVars(ctx, client))
 	if err != nil {
 		return err
 	}
 
+	// `--image` builds a Desired from nothing, so applying one over a service
+	// that carries more than it can express silently deletes the difference.
+	// Refused rather than warned: the loss is invisible until something stops
+	// answering, and `kanea deploy` is the verb that was wanted.
+	if *image != "" {
+		if err := checkImageWouldNotClobber(ctx, client, desired); err != nil {
+			return err
+		}
+	}
 	if err := checkPublishedPorts(ctx, client, desired); err != nil {
 		return err
 	}
@@ -192,6 +199,62 @@ func runRun(args []string) error {
 		return nil
 	}
 	return waitForRunning(ctx, client, desired, *wait)
+}
+
+// checkImageWouldNotClobber refuses a `--image` apply that would delete what
+// the stored record carries.
+//
+// `--image` is a first-class path (PRD §6.2) for creating a bare service, and
+// re-running the same command on the same bare service must stay idempotent.
+// So this refuses on loss, not on existence: if the stored record holds
+// something the synthetic one cannot express, the apply would drop it, and
+// that is invisible until traffic stops arriving.
+func checkImageWouldNotClobber(ctx context.Context, client *api.Client, desired []reconciler.Desired) error {
+	existing, err := client.Services(ctx)
+	if err != nil {
+		// Best-effort, like the port pre-check: a daemon that cannot list is a
+		// problem the apply itself will report more precisely.
+		return nil //nolint:nilerr // the apply reports the real failure
+	}
+	for _, want := range desired {
+		for _, have := range existing {
+			if have.Project != want.Project || have.Service != want.Service {
+				continue
+			}
+			if lost := fieldsLostByImageApply(have); len(lost) > 0 {
+				return fmt.Errorf(
+					"%s/%s already declares %s, which `--image` cannot express and would delete.\n"+
+						"  To change the image and keep the rest: kanea deploy %s/%s %s\n"+
+						"  To replace the service wholesale: apply the spec file that declares it",
+					have.Project, have.Service, strings.Join(lost, ", "),
+					have.Project, have.Service, want.Image)
+			}
+		}
+	}
+	return nil
+}
+
+// fieldsLostByImageApply names what a --image apply would drop from a record,
+// in the vocabulary the spec uses, so the message reads like the file someone
+// wrote rather than like a struct.
+func fieldsLostByImageApply(d reconciler.Desired) []string {
+	var lost []string
+	add := func(cond bool, name string) {
+		if cond {
+			lost = append(lost, name)
+		}
+	}
+	add(len(d.Ports) > 0, "ports")
+	add(d.Expose != nil || len(d.ExtraExposes) > 0, "expose")
+	add(len(d.Env) > 0, "env")
+	add(len(d.Volumes) > 0, "volumes")
+	add(len(d.Devices) > 0, "device grants")
+	add(len(d.Sockets) > 0, "socket grants")
+	add(d.Check != nil, "health check")
+	add(d.Scaling != nil, "scaling")
+	add(len(d.Capabilities) > 0, "capabilities")
+	add(d.Function != nil, "function config")
+	return lost
 }
 
 // waitForRunning polls until every desired alloc is running, so `kanea run`
@@ -307,7 +370,7 @@ func isDesiredAlloc(desired []reconciler.Desired, alloc reconciler.AllocRecord) 
 // runPlan implements `kanea plan`: the dry-run diff PRD §6.2 R4 requires.
 func runPlan(args []string) error {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	image := fs.String("image", "", "plan a single image without a spec file")
 	name := fs.String("name", "", "service name (with --image)")
 	project := fs.String("project", "", "project name (with --image)")
@@ -322,7 +385,10 @@ func runPlan(args []string) error {
 	}
 	// The client exists before the parse (v1.63), for the node-vars fetch.
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	desired, _, err := loadSpec(files, sels, *image, *name, *project, *count,
 		fetchNodeVars(ctx, client))
 	if err != nil {
@@ -362,7 +428,7 @@ func runPlan(args []string) error {
 // runPs implements `kanea ps`.
 func runPs(args []string) error {
 	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "filter by project")
 	service := fs.String("service", "", "filter by service")
 	all := fs.Bool("a", false,
@@ -374,7 +440,10 @@ func runPs(args []string) error {
 	showAll := *all || *allLong
 
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	allocs, err := client.Allocs(ctx, *project, *service)
 	if err != nil {
 		return err
@@ -487,7 +556,7 @@ func declaredButAbsent(
 // platform healthy, and is anything unhappy?".
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "filter by project")
 	traffic := fs.Bool("traffic", false,
 		"show the edge's status-code and byte breakdown per service (PRD §9.1.1)")
@@ -500,7 +569,10 @@ func runStatus(args []string) error {
 	}
 
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	health, err := client.Health(ctx)
 	if err != nil {
@@ -537,7 +609,7 @@ func runStatus(args []string) error {
 
 	o := newOut()
 	o.printf("kanead    %s (store index %d)\n", health.Status, health.StoreIndex)
-	o.printf("socket    %s\n", client.Socket())
+	o.printf("endpoint  %s\n", client.Target())
 	o.println()
 
 	if len(services) == 0 {
@@ -738,10 +810,15 @@ func formatBytes(n float64) string {
 
 // statusJSON is `kanea status --json`.
 type statusJSON struct {
-	Status     string             `json:"status"`
-	StoreIndex uint64             `json:"store_index"`
-	Socket     string             `json:"socket"`
-	Services   []statusServiceRow `json:"services"`
+	Status     string `json:"status"`
+	StoreIndex uint64 `json:"store_index"`
+	// Socket keeps its name and stays populated locally, so a script that
+	// already reads `.socket` is unbroken; it is omitted on a remote client,
+	// which has no socket, rather than carrying a URL under that key.
+	Socket string `json:"socket,omitempty"`
+	// Endpoint is what the client actually talked to, socket or origin.
+	Endpoint string             `json:"endpoint"`
+	Services []statusServiceRow `json:"services"`
 }
 
 type statusServiceRow struct {
@@ -769,6 +846,7 @@ func writeStatusJSON(ctx context.Context, client *api.Client, health api.Health,
 		Status:     health.Status,
 		StoreIndex: health.StoreIndex,
 		Socket:     client.Socket(),
+		Endpoint:   client.Target(),
 		Services:   []statusServiceRow{},
 	}
 	for _, svc := range services {
@@ -831,7 +909,7 @@ func serviceHealth(desiredCount, running, backoff, failed, unhealthy int) (strin
 // runLogs implements `kanea logs`.
 func runLogs(args []string) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "filter by project")
 	alloc := fs.String("alloc", "", "a single alloc id")
 	follow := fs.Bool("f", false, "follow the stream")
@@ -852,7 +930,10 @@ func runLogs(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	// A service name resolves like every other service-targeting command
 	// (v1.56): `media/plex` used to be passed through as a literal (a name
@@ -881,7 +962,7 @@ func runLogs(args []string) error {
 // runStop implements `kanea stop`: scale a service to zero, or remove it.
 func runStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
 	remove := fs.Bool("rm", false, "also delete the service declaration")
 	if err := fs.Parse(args); err != nil {
@@ -893,7 +974,10 @@ func runStop(args []string) error {
 	service := fs.Arg(0)
 
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	services, err := client.Services(ctx)
 	if err != nil {
@@ -932,7 +1016,7 @@ func runStop(args []string) error {
 // because start is idempotent, never a second spelling of scale.
 func runStart(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -950,7 +1034,10 @@ func runStart(args []string) error {
 	}
 
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	services, err := client.Services(ctx)
 	if err != nil {
@@ -994,6 +1081,85 @@ func runStart(args []string) error {
 	return o.Err()
 }
 
+// runDeploy implements `kanea deploy`: point an existing service at a new
+// image and leave everything else exactly as declared (PRD v1.82, §16.2).
+//
+// Read the record, change one field, write the whole thing back. There is no
+// route that sets an image on its own, and sending back what was read is what
+// makes that safe: a deploy can never silently drop a field this command does
+// not know about. It is the recipe MCP's deploy_service already uses, which is
+// why the two cannot drift into disagreeing about what a deploy is.
+//
+// `kanea run --image` is emphatically not this: it builds a Desired from
+// scratch, so over an existing service it drops ports, env, volumes and the
+// rest. That is why this command exists.
+func runDeploy(args []string) error {
+	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
+	ep := endpointFlags(fs)
+	project := fs.String("project", "", "project name")
+	wait := fs.Duration("wait", 60*time.Second,
+		"how long to wait for the new image to be running")
+	noWait := fs.Bool("no-wait", false, "return once the change is accepted, without waiting")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("usage: kanea deploy [--project P] <[project/]service> <image>")
+	}
+	image := strings.TrimSpace(fs.Arg(1))
+	if image == "" {
+		return errors.New("deploy: an image reference is required")
+	}
+
+	ctx := context.Background()
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	target, err := findService(services, *project, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+
+	o := newOut()
+	// Re-running a pipeline on an unchanged commit is normal and is not an
+	// error. Nothing pinned means nothing else to converge to, so there is
+	// genuinely no work; a pin present means the running digest may differ from
+	// what Image names, and the apply is worth making.
+	if target.Image == image && target.PinnedImage == "" {
+		o.printf("%s/%s already declares %s; nothing to do\n",
+			target.Project, target.Service, image)
+		return o.Err()
+	}
+
+	previous := target.Image
+	target.Image = image
+	if _, err := client.Apply(ctx, []reconciler.Desired{target}, nil); err != nil {
+		return err
+	}
+	if previous == "" {
+		o.printf("deploying %s/%s -> %s\n", target.Project, target.Service, image)
+	} else {
+		o.printf("deploying %s/%s: %s -> %s\n", target.Project, target.Service, previous, image)
+	}
+
+	if *noWait {
+		return o.Err()
+	}
+	// Waiting by default is what makes this usable in CI: a pipeline should go
+	// red when the new image does not come up, not when someone reads the logs
+	// the next morning.
+	if err := waitForRunning(ctx, client, []reconciler.Desired{target}, *wait); err != nil {
+		return err
+	}
+	o.printf("%s/%s is running %s\n", target.Project, target.Service, image)
+	return o.Err()
+}
+
 // runRestart implements `kanea restart`: ask the server to bump the service's
 // generation, which rolls its allocs through the update policy; the same
 // route the dashboard and MCP's restart_service have always used. It is also
@@ -1001,7 +1167,7 @@ func runStart(args []string) error {
 // and R29 ties the crash-restart count to the hash that spent it.
 func runRestart(args []string) error {
 	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1011,7 +1177,10 @@ func runRestart(args []string) error {
 	}
 
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	services, err := client.Services(ctx)
 	if err != nil {
@@ -1038,7 +1207,7 @@ func runRestart(args []string) error {
 // because there is only one way to change it.
 func runScale(args []string) error {
 	fs := flag.NewFlagSet("scale", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1052,7 +1221,10 @@ func runScale(args []string) error {
 	}
 
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	services, err := client.Services(ctx)
 	if err != nil {

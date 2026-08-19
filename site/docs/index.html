@@ -120,6 +120,12 @@
     <a class="sub" href="#mcp-http">Streamable HTTP</a>
     <a class="sub" href="#mcp-tools">The tools</a>
     <a class="sub" href="#mcp-safety">Deciding what to hand over</a>
+    <a class="part" href="#remote">Working with a remote node</a>
+    <a class="sub" href="#remote-setup">Setting it up</a>
+    <a class="sub" href="#remote-deploy">Deploying a new image</a>
+    <a class="sub" href="#remote-ci">In a pipeline</a>
+    <a class="sub" href="#remote-limits">What stays on the node</a>
+    <a class="sub" href="#remote-gitops">The alternative: let the node pull</a>
     <a class="part" href="#troubleshoot">Troubleshooting</a>
     <a class="sub" href="#troubleshoot-services">Checking services</a>
     <a class="sub" href="#troubleshoot-logs">Viewing logs</a>
@@ -3463,11 +3469,21 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
       name with <code>--project</code>.
     </p>
     <p>
+      Every client command also takes a <b>remote endpoint</b> instead of the socket:
+      <code>--url</code> / <code>$KANEA_URL</code>, <code>--token</code> /
+      <code>$KANEA_TOKEN</code> and <code>--ca-cert</code> / <code>$KANEA_CA_CERT</code>.
+      That is how a laptop or a CI runner drives a node it is not sitting on; see
+      <a href="#remote">Working with a remote node</a> for the setup and the pipeline
+      examples.
+    </p>
+    <p>
       The CLI also installs through <a href="../#install">Homebrew</a>, on Linux and on
-      macOS. A Mac gets the authoring half: <code>kanea plan</code> parses and validates a
-      job spec with file-and-line diagnostics before anything dials a socket, so no daemon
-      is needed; the platform itself, and everything above that needs the socket, runs on
-      Linux.
+      macOS. <code>kanea plan</code> parses and validates a job spec with file-and-line
+      diagnostics before anything dials a socket, so authoring needs no daemon at all
+      &mdash; and since v1.82 the rest of the CLI is not tied to the socket either: with
+      <code>KANEA_URL</code> and a token it drives a remote node completely. A Mac is a
+      first-class client; it is just never the node, which is Linux. See
+      <a href="#remote">Working with a remote node</a>.
     </p>
 
     <h3 id="cli-setup">Setup</h3>
@@ -3634,6 +3650,14 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       unchanged spec does nothing: a deploy is a spec-hash mismatch, not an invocation.
     </p>
     <p>
+      <b><code>--image</code> creates a bare service and cannot update a real one.</b> It
+      builds a record from project, name, count and image alone, so applying it over a
+      service that declares ports, expose, env, volumes, a health check or scaling would
+      delete them. It refuses when that would happen, naming what would be lost;
+      <a href="#remote-deploy"><code>kanea deploy</code></a> is the verb for changing the
+      image of a service that already exists.
+    </p>
+    <p>
       A <b>selector</b> scopes both commands to part of the file: <code>kanea run
       app.hcl shop/web</code> applies one service, <code>shop</code> alone a whole
       project, and several selectors union. An argument that exists on disk is a spec
@@ -3642,6 +3666,17 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       changes what a spec means, only how much of it is sent) and every selector must
       match at least one service in the file. An apply is additive either way: services
       not in the request are never touched, so a scoped run cannot delete anything.
+    </p>
+
+    <h4><code>kanea deploy</code></h4>
+    <pre class="plain">kanea deploy [--project P] &lt;[project/]service&gt; &lt;image&gt; [--wait 60s] [--no-wait]</pre>
+    <p>
+      Point an existing service at a new image and leave the rest of its spec alone. It
+      reads the record, changes the image and writes the whole record back, because there
+      is no route that sets an image on its own and round-tripping is what stops a deploy
+      dropping a field. Waits for the new image to be running by default, which is what
+      makes it usable as a pipeline's last step. This is the CI verb; see
+      <a href="#remote-deploy">Deploying a new image</a>.
     </p>
 
     <h4><code>kanea stop</code></h4>
@@ -4203,6 +4238,232 @@ sudo kanea token create --role viewer --expires-in 720h agent-30d</pre>
         <code>secret:&lt;project&gt;/&lt;name&gt;</code> and the agent never sees a value.
       </li>
     </ul>
+
+
+    <!-- ================= remote ================= -->
+    <h2 id="remote">Working with a remote node</h2>
+
+    <p>
+      The CLI reaches <code>kanead</code> two ways. Locally it uses the unix socket, and
+      your credential is membership of the <code>kanea</code> group. From anywhere else it
+      uses the node's HTTPS listener, and your credential is a bearer token. Everything
+      below is the second one &mdash; a laptop, or a CI runner that has just built an image.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>Local</th><th>Remote</th></tr></thead>
+        <tbody>
+          <tr><td><b>Reaches the daemon by</b></td><td>the unix socket</td><td><code>https://node:8600</code></td></tr>
+          <tr><td><b>Credential</b></td><td><code>kanea</code> group membership</td><td>a bearer token</td></tr>
+          <tr><td><b>Set up with</b></td><td><code>usermod -aG kanea $USER</code></td><td><code>KANEA_URL</code>, <code>KANEA_TOKEN</code>, <code>KANEA_CA_CERT</code></td></tr>
+          <tr><td><b>Get the CLI from</b></td><td>the install script</td><td><b>Homebrew</b>, or a release archive</td></tr>
+          <tr><td><b>Authorized as</b></td><td>admin, always</td><td>the token's role</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      A remote CLI is not a new privilege. It presents the same token the REST API and the
+      MCP server have always accepted, and the role decides exactly what it decided there:
+      a viewer token can look and cannot deploy. What was missing until v1.82 was a client
+      that spoke it, not a permission.
+    </p>
+
+    <h3 id="remote-setup">Setting it up</h3>
+
+    <h4>1. Get the CLI</h4>
+    <p>
+      On a laptop, or in a CI image, Homebrew is the easy channel &mdash; it needs no root
+      and no node:
+    </p>
+    <pre class="plain">brew tap m18h/kanea
+brew trust m18h/kanea   # brew ≥ 6 refuses formulae from untrusted third-party taps
+brew install kanea</pre>
+    <p>
+      For a container base without Homebrew, take the release archive; it is one static
+      binary and needs nothing installed beside it. The
+      <a href="#install-manual">verify-by-hand</a> steps are the same.
+    </p>
+
+    <h4>2. Mint a token, on the node</h4>
+    <pre class="plain">sudo kanea token create --role admin ci --expires-in 720h</pre>
+    <p>
+      The secret goes to stdout once and is not recoverable, so
+      <code>… &gt; token.txt</code> captures exactly it while the commentary goes to
+      stderr. <b>Deploying needs <code>--role admin</code></b>; a viewer token can read
+      everything and change nothing, which is the right choice for a job that only
+      inspects. <code>kanea token ls</code> shows what exists and
+      <code>kanea token rm &lt;id&gt;</code> revokes one, immediately.
+    </p>
+    <div class="callout">
+      <b class="label">Set an expiry</b>
+      <p>
+        <code>kanea token create</code> warns when a token never expires, for good reason:
+        <code>--expires-in 720h</code> costs nothing and bounds how long a leaked CI
+        variable is worth anything. Rotating is one command on each side.
+      </p>
+    </div>
+
+    <h4>3. Trust the node's certificate</h4>
+    <p>
+      A Kanea node serves its own CA's certificate or a self-signed one unless you gave it
+      an <code>acme</code> name, so a fresh client does not trust it and the TLS handshake
+      fails before anything else happens. Export the CA once:
+    </p>
+    <pre class="plain">sudo kanea ca show &gt; kanea-ca.crt        # on the node
+export KANEA_CA_CERT=/path/to/kanea-ca.crt</pre>
+    <p>
+      <code>KANEA_CA_CERT</code> takes <b>a file path or the PEM itself</b>, because a CI
+      system hands secrets to a job as values and writing them to a file first is a step
+      that gets skipped. Both of these work:
+    </p>
+    <pre class="plain">KANEA_CA_CERT=/etc/kanea/ca.crt
+KANEA_CA_CERT="$(cat kanea-ca.crt)"     # or a CI variable holding the PEM</pre>
+    <p>
+      If the node's certificate comes from Let's Encrypt (an <code>acme</code>
+      <a href="#nodeconfig-bind"><code>bind</code> stanza</a>), skip this entirely: the
+      public roots already trust it. There is deliberately <b>no
+      <code>--insecure-skip-verify</code></b>; the whole reason the inline form above
+      exists is that a skip flag is what people reach for when the honest path is awkward.
+    </p>
+
+    <h4>4. Point the CLI at the node</h4>
+    <pre class="plain">export KANEA_URL=https://kanea.apps.example.com:8600
+export KANEA_TOKEN=$(cat token.txt)
+
+kanea ps
+kanea status
+kanea logs -f shop/web</pre>
+    <p>
+      Every client command takes these, as environment variables or as
+      <code>--url</code>, <code>--token</code> and <code>--ca-cert</code>. A flag you
+      actually pass beats the environment; an explicit <code>--socket</code> keeps a
+      command local even with <code>KANEA_URL</code> exported, so a node's own shell is
+      never redirected by a variable someone set for another tool.
+    </p>
+
+    <h3 id="remote-deploy">Deploying a new image</h3>
+
+    <pre class="plain">kanea deploy [--project P] &lt;[project/]service&gt; &lt;image&gt; [--wait 60s] [--no-wait]</pre>
+    <p>
+      <code>kanea deploy</code> points an existing service at a new image and
+      <b>leaves everything else exactly as declared</b>. It reads the service's record,
+      changes the image, and writes the whole record back &mdash; which matters, because
+      there is no API route that sets an image on its own, and round-tripping the record
+      is what makes it impossible for a deploy to drop a field it does not know about.
+    </p>
+    <pre class="plain">kanea deploy shop/web ghcr.io/acme/web@sha256:9f2a…</pre>
+    <p>
+      It waits for the new image to be running and fails if it does not, so a pipeline
+      goes red at the deploy rather than the next morning. <code>--no-wait</code> returns
+      as soon as the change is accepted. Deploying the image a service already declares is
+      reported and does nothing, so re-running a pipeline on an unchanged commit is not an
+      error.
+    </p>
+    <p>
+      <b>Prefer a digest to a tag.</b> A tag can move under you, so two allocs replaced a
+      minute apart can run different code; a digest is the thing that was built.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">Not <code>kanea run --image</code></b>
+      <p>
+        That flag builds a service from nothing &mdash; project, name, count, image &mdash;
+        so applying it over an existing service used to <b>delete its ports, expose block,
+        env, volumes, health check and scaling</b>, silently, and you found out when
+        traffic stopped arriving. It now refuses and names what would be lost. Use it to
+        create a bare service; use <code>kanea deploy</code> to change one that exists.
+      </p>
+    </div>
+
+    <h3 id="remote-ci">In a pipeline</h3>
+
+    <p>GitLab:</p>
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>.gitlab-ci.yml</span></div>
+<pre class="plain">deploy:
+  stage: deploy
+  image: ghcr.io/acme/ci-base:latest        # any image with the kanea binary
+  variables:
+    KANEA_URL: https://kanea.apps.example.com:8600
+  script:
+    - kanea deploy shop/web "$CI_REGISTRY_IMAGE@$IMAGE_DIGEST"
+  # KANEA_TOKEN: masked project variable
+  # KANEA_CA_CERT: a file variable, or the PEM as a masked variable</pre>
+    </div>
+
+    <p>GitHub Actions:</p>
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>.github/workflows/deploy.yml</span></div>
+<pre class="plain">- name: Deploy
+  env:
+    KANEA_URL: https://kanea.apps.example.com:8600
+    KANEA_TOKEN: ${{ secrets.KANEA_TOKEN }}
+    KANEA_CA_CERT: ${{ secrets.KANEA_CA_PEM }}
+  run: kanea deploy shop/web "ghcr.io/acme/web@${{ steps.build.outputs.digest }}"</pre>
+    </div>
+
+    <div class="callout">
+      <b class="label">If the job fails before it deploys</b>
+      <p>
+        <code>KANEA_TOKEN is set but no endpoint</code> &mdash; you set the token and not
+        the URL. <code>… has no credential without a token</code> &mdash; the secret was
+        not exported and arrived empty, which is why an empty variable counts as unset
+        rather than as a token. <code>… certificate from an unknown authority</code>
+        &mdash; set <code>KANEA_CA_CERT</code>. <code>refusing to send a token … over
+        plain HTTP</code> &mdash; the endpoint is <code>http://</code> and not loopback,
+        which would put the token on the wire in clear text.
+      </p>
+    </div>
+
+    <h3 id="remote-limits">What stays on the node</h3>
+
+    <p>Two commands refuse a remote endpoint, and both are about the machine rather than the platform:</p>
+    <ul>
+      <li>
+        <b><code>kanea upgrade</code></b> restarts this host's <code>kanead</code> and
+        <code>kanea-edge</code> units and installs a binary over this host's. Reading a
+        remote daemon's version and then restarting local services is the worst outcome
+        available here, so it is refused by name. Upgrade over ssh, or on the node.
+      </li>
+      <li>
+        <b><code>kanea mcp</code></b> serves MCP over stdio, and its credential <i>is</i>
+        the local socket. A remote agent already has the node's own
+        <a href="#mcp-http"><code>/mcp</code> endpoint</a> with a bearer token, so a second
+        spelling would add nothing.
+      </li>
+    </ul>
+    <p>
+      <code>kanea init</code>, <code>install</code>, <code>bundle</code> and
+      <code>doctor</code> never take an endpoint at all: they act on the host they run on.
+      Everything else works remotely, including <code>kanea exec</code> (over
+      <code>wss://</code>, with the same token) and <code>kanea logs -f</code>.
+    </p>
+
+    <h3 id="remote-gitops">The alternative: let the node pull</h3>
+
+    <p>
+      A token in CI is not the only way. Kanea's own design answer is the other direction:
+      the node watches a git repository, and CI commits the digest rather than calling out.
+    </p>
+    <ol>
+      <li>Your pipeline builds and pushes the image, then commits the new digest into the
+        spec repository the project's <code>git</code> block names.</li>
+      <li>The push fires the webhook (<code>POST /v1/webhooks/git/&lt;project&gt;</code>,
+        authenticated with GitLab's <code>X-Gitlab-Token</code> or GitHub's
+        <code>X-Hub-Signature-256</code> against the project's
+        <code>webhook_secret_ref</code>).</li>
+      <li>Kanea re-reads the repository over its own credential and applies what it finds.
+        Nothing is deployed <i>from</i> the request, so a forged delivery cannot choose an
+        image.</li>
+    </ol>
+    <p>
+      It needs no token in CI and leaves a git history of every deploy; it costs a spec
+      repository and a commit per release. <code>kanea project sync &lt;project&gt;</code>
+      forces the read immediately rather than waiting for the poll. Which one to prefer is
+      a question of whether you would rather your deploys be a push or a record.
+    </p>
 
     <!-- ================= troubleshooting ================= -->
     <h2 id="troubleshoot">Troubleshooting</h2>
