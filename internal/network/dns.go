@@ -122,13 +122,36 @@ func NewDNS(cfg DNSConfig) (*DNS, error) {
 		cfg.MaxForwards = DefaultMaxForwards
 	}
 
+	// An upstream that is this resolver forwards every external name to
+	// itself: the query loops until the forward timeout and comes back
+	// SERVFAIL, which reads as "the internet is broken" rather than as a
+	// configuration mistake. It is reachable by two ordinary routes — a
+	// loopback bind beside a loopback nameserver, and a node whose own
+	// resolv.conf was pointed at Kanea's resolver on purpose — so it is
+	// dropped by name here rather than left to be diagnosed by timeout.
+	// Dropped, not refused: the other upstreams in the list still work, and
+	// only an empty result is fatal.
 	upstreams := make([]string, 0, len(cfg.Upstreams))
+	var selfForward []string
 	for _, u := range cfg.Upstreams {
 		normalized, err := normalizeUpstream(u)
 		if err != nil {
 			return nil, err
 		}
+		if sameEndpoint(normalized, cfg.Listen) {
+			selfForward = append(selfForward, normalized)
+			continue
+		}
 		upstreams = append(upstreams, normalized)
+	}
+	if len(selfForward) > 0 {
+		if len(upstreams) == 0 {
+			return nil, fmt.Errorf("dns: every upstream is this resolver's own address (%s); "+
+				"forwarding there is a loop — set --dns-upstream, or a dns stanza, to a real resolver",
+				cfg.Listen)
+		}
+		cfg.Logger.Warn("dropping upstreams that point at this resolver",
+			"dropped", selfForward, "listen", cfg.Listen, "remaining", upstreams)
 	}
 
 	d := &DNS{
@@ -179,6 +202,24 @@ func normalizeUpstream(u string) (string, error) {
 		return "", fmt.Errorf("dns: upstream %q is not an address: %w", u, err)
 	}
 	return net.JoinHostPort(u, "53"), nil
+}
+
+// sameEndpoint reports whether two host:port strings name the same address.
+// Compared as parsed addresses rather than as text, because "[::1]:53" and
+// "[0:0:0:0:0:0:0:1]:53" are the same resolver spelled two ways and a string
+// comparison would forward one of them to itself. A name (rather than an
+// address) cannot be this resolver, whose bind validateNodeLocal requires to
+// be an IP, so an unparseable side is simply not a match.
+func sameEndpoint(a, b string) bool {
+	left, err := netip.ParseAddrPort(a)
+	if err != nil {
+		return false
+	}
+	right, err := netip.ParseAddrPort(b)
+	if err != nil {
+		return false
+	}
+	return left.Addr().Unmap() == right.Addr().Unmap() && left.Port() == right.Port()
 }
 
 // SetZone replaces the served records with those derived from the given

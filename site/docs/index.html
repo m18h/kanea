@@ -520,8 +520,14 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <code>&lt;service&gt;.&lt;project&gt;.kanea</code> names authoritatively and forwards
       everything else upstream. The upstream list is, in order of precedence: the
       <code>--dns-upstream</code> flag; the server config's <code>dns</code> stanza
-      (v1.66); the host's own <code>/etc/resolv.conf</code>, read once at startup. The
-      stanza is how you pin resolvers on a node whose resolv.conf is DHCP's to rewrite:
+      (v1.66); the host's own <code>/etc/resolv.conf</code>, read once at startup, taken
+      exactly as listed. That includes systemd-resolved's <code>127.0.0.53</code> stub,
+      which is the only nameserver a stock Debian or Ubuntu server has:
+      <code>kanead</code> forwards from the host's own namespace, so the stub is as
+      reachable for it as for any other process, and a workload inherits the node's
+      cache and DNSSEC posture with it (an alloc is never handed these addresses; its
+      resolv.conf names Kanea's resolver). The stanza is how you pin resolvers on a node
+      whose resolv.conf is DHCP's to rewrite:
     </p>
     <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
 <span class="k">dns</span> {

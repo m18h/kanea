@@ -105,18 +105,39 @@ const hostResolvConf = "/etc/resolv.conf"
 // HostResolvers reads the node's upstream resolvers, for forwarding names
 // outside the internal zone.
 //
-// Any entry pointing at loopback is dropped. On a host running systemd-resolved
-// that is 127.0.0.53, which resolves fine *on the host* and is unreachable from
-// inside an alloc's namespace: forwarding there would send every external
-// lookup into a black hole that only fails after a timeout.
+// Every nameserver is kept, loopback included, and the file's order is the
+// host's own preference order. A loopback entry used to be dropped on the
+// grounds that an alloc cannot reach it, which named the wrong reader: an
+// alloc never receives these addresses. Its /etc/resolv.conf carries the
+// internal resolver and nothing else (WriteResolvConf), and the only consumer
+// of this list is kanead's own forwarder, which dials from kanead's network
+// namespace with a plain net.Dialer — so 127.0.0.53 is exactly as reachable
+// here as it is for any other process on the node.
+//
+// That mattered because systemd-resolved's stub is the *only* nameserver in
+// /etc/resolv.conf on a stock Debian or Ubuntu server, so the drop left
+// nothing behind and kanead refused to start on the most ordinary DNS setup
+// there is. Forwarding to the stub is also the better answer on its merits:
+// it is the host's own resolver, so a workload inherits the node's cache,
+// its DNSSEC posture and any split-horizon view a link supplies — which is
+// what "the host's own resolvers" in upstreamResolvers means.
 func HostResolvers() ([]string, error) {
 	raw, err := os.ReadFile(hostResolvConf)
 	if err != nil {
 		return nil, fmt.Errorf("network: read %s: %w", hostResolvConf, err)
 	}
 
+	out := parseResolvers(raw)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("network: %s lists no usable nameserver", hostResolvConf)
+	}
+	return out, nil
+}
+
+// parseResolvers is HostResolvers without the read: the half a test can drive.
+// Entries keep the file's order, which is the host's own preference order.
+func parseResolvers(raw []byte) []string {
 	var out []string
-	var skippedLoopback bool
 	for line := range strings.Lines(string(raw)) {
 		fields := strings.Fields(line)
 		if len(fields) < 2 || fields[0] != "nameserver" {
@@ -126,19 +147,7 @@ func HostResolvers() ([]string, error) {
 		if err != nil {
 			continue
 		}
-		if addr.IsLoopback() {
-			skippedLoopback = true
-			continue
-		}
 		out = append(out, net.JoinHostPort(addr.String(), "53"))
 	}
-
-	if len(out) == 0 {
-		if skippedLoopback {
-			return nil, fmt.Errorf("network: %s lists only loopback resolvers, which allocs cannot "+
-				"reach; pass --dns-upstream with a reachable resolver", hostResolvConf)
-		}
-		return nil, fmt.Errorf("network: %s lists no usable nameserver", hostResolvConf)
-	}
-	return out, nil
+	return out
 }

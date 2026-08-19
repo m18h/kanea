@@ -555,3 +555,47 @@ func TestDNSRelayTruncatesAnOversizedUpstreamReply(t *testing.T) {
 		t.Errorf("answers = %d, want header+question only", len(r.Answers))
 	}
 }
+
+// The loopback ban used to prevent one real hazard by accident: a resolver
+// whose upstream is itself. Now that ordinary loopback upstreams are kept,
+// the loop is refused deliberately instead of being diagnosed by timeout.
+func TestNewDNSDropsUpstreamsThatPointAtItself(t *testing.T) {
+	t.Run("a self-forward is dropped and the rest survive", func(t *testing.T) {
+		d, err := NewDNS(DNSConfig{
+			Listen:    "10.42.0.1:53",
+			Upstreams: []string{"10.42.0.1:53", "213.186.33.99"},
+		})
+		if err != nil {
+			t.Fatalf("NewDNS: %v", err)
+		}
+		if len(d.upstreams) != 1 || d.upstreams[0] != "213.186.33.99:53" {
+			t.Fatalf("upstreams = %v, want only the real resolver", d.upstreams)
+		}
+	})
+
+	t.Run("the same address spelled differently is still a loop", func(t *testing.T) {
+		_, err := NewDNS(DNSConfig{
+			Listen:    "[::1]:53",
+			Upstreams: []string{"[0:0:0:0:0:0:0:1]:53"},
+		})
+		if err == nil {
+			t.Fatal("expected a refusal: the sole upstream is this resolver")
+		}
+		if !strings.Contains(err.Error(), "loop") {
+			t.Fatalf("error should name the loop, got: %v", err)
+		}
+	})
+
+	t.Run("the stub is a fine upstream when it is not us", func(t *testing.T) {
+		d, err := NewDNS(DNSConfig{
+			Listen:    "10.42.0.1:53",
+			Upstreams: []string{"127.0.0.53"},
+		})
+		if err != nil {
+			t.Fatalf("NewDNS: %v", err)
+		}
+		if len(d.upstreams) != 1 || d.upstreams[0] != "127.0.0.53:53" {
+			t.Fatalf("upstreams = %v, want the stub kept", d.upstreams)
+		}
+	})
+}

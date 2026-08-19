@@ -249,7 +249,10 @@ never secrets. The node's stanza is readable by any signed-in caller over
 It may also carry a `dns` stanza pinning the resolvers the internal DNS
 forwards external names to (`dns { upstreams = ["1.1.1.1"] }`), for a node
 whose `/etc/resolv.conf` is DHCP's to rewrite. An explicit `--dns-upstream`
-flag wins; with neither, the daemon uses the host's own resolvers.
+flag wins; with neither, the daemon uses the host's own resolvers, exactly as
+listed — including systemd-resolved's `127.0.0.53` stub, which is what a
+stock Debian or Ubuntu server has and which `kanead` reaches from the host
+like any other process, so no stanza is needed to boot such a node.
 
 ### Functions
 
@@ -445,7 +448,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.80) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.81) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |
