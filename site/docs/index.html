@@ -1293,7 +1293,12 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       The API and the dashboard are one listener: the dashboard is served by
       <code>kanead</code> on the same address the REST API, the WebSocket and the MCP
       HTTP transport bind, in front of <code>kanea-edge</code> entirely; neither is a
-      service, and neither takes an <code>expose</code> block. Exposing them means
+      service, and neither takes an <code>expose</code> block. <b>The consequence worth
+      internalising is that the dashboard's URL carries the listener's port</b>
+      &mdash; <code>https://&lt;name&gt;:8600</code> by default, not <code>:443</code>,
+      which belongs to the edge and has no route to the dashboard. There is a
+      <a href="#nodeconfig-bind">worked example</a> in the <code>bind</code> stanza's
+      own section. Exposing them means
       setting where that listener binds, and there are two ways: the
       <code>--listen</code>/<code>--listen-cert</code>/<code>--listen-key</code> flags
       (asked by <a href="#cli-setup"><code>kanea init</code></a> and rendered into the
@@ -1494,6 +1499,91 @@ sudo systemctl restart kanead</pre>
         </tbody>
       </table>
     </div>
+
+    <h4>A worked example: the dashboard on a public name</h4>
+
+    <p>
+      The most common thing anyone wants from this stanza &mdash; a real certificate on a
+      real name, replacing the self-signed pair <code>kanea init</code> provisions:
+    </p>
+
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">bind</span> {
+  <span class="k">api_addr</span>   = <span class="s">"0.0.0.0:8600"</span>
+  <span class="k">api_tls</span>    = <span class="s">"acme"</span>
+  <span class="k">api_domain</span> = <span class="s">"kanea.apps.example.com"</span>
+}</code></pre>
+
+    <p>The dashboard is then at:</p>
+
+    <pre class="plain">https://kanea.apps.example.com:8600</pre>
+
+    <div class="callout warn">
+      <b class="label">The port is part of the URL, and leaving it off fails confusingly</b>
+      <p>
+        <code>https://kanea.apps.example.com</code> &mdash; no port &mdash; goes to
+        <b>:443, which is <code>kanea-edge</code></b>, a different process that has never
+        heard of the dashboard. The dashboard is served by <code>kanead</code> itself and
+        <a href="#arch-dashboard">is not a service</a>, so no route to it can exist and
+        the edge has nothing to forward to.
+      </p>
+      <p>
+        What you get is not a 404. On a node with no exposed services the edge holds no
+        certificates at all, so the TLS handshake fails outright &mdash;
+        <code>SSL_ERROR_INTERNAL_ERROR_ALERT</code> in Firefox,
+        <code>tlsv1 alert internal error</code> from curl &mdash; which reads like a
+        broken certificate rather than a wrong port. Check the port before you debug the
+        certificate.
+      </p>
+    </div>
+
+    <p>Three things have to be true for that certificate to issue, and only the first is in this file:</p>
+    <ol>
+      <li>
+        <b>An A record for <code>kanea.apps.example.com</code> pointing at the node.</b>
+        The name is validated by the CA connecting to it, so it must resolve before the
+        first attempt.
+      </li>
+      <li>
+        <b><code>--acme-email</code> on the daemon.</b> It is a flag, and
+        <code>kanea init</code> does not write it into the unit, so it goes in a
+        <a href="#dns-base-domain">drop-in</a>. Without it nothing is ever requested from
+        a CA, and the log says so at every start. Note there is <b>no <code>acme</code>
+        stanza</b> in this file: writing one is accepted, ignored, and warned about by
+        name, which is a confusing way to discover the flag exists.
+      </li>
+      <li>
+        <b>Port 80 reachable, with <code>kanea-edge</code> running.</b> The edge answers
+        <code>/.well-known/acme-challenge/</code> on :80 even though the certificate is
+        for kanead's listener, so a stopped edge means no dashboard certificate.
+      </li>
+    </ol>
+
+    <div class="callout">
+      <b class="label">Two ways to get this wrong that look like something else</b>
+      <p>
+        <b>Binding loopback does not put the dashboard behind the edge.</b>
+        <code>api_addr = "127.0.0.1:8600"</code> makes it reachable only from the node
+        itself; nothing bridges :443 to it, because a route's upstream is always a
+        service VIP.
+      </p>
+      <p>
+        <b>Until the first issuance the handshake fails by name</b>, rather than serving
+        something weaker. The listener binds a few seconds before the certificate arrives,
+        so a restart has a brief window where the dashboard is hard-unreachable, and a node
+        where ACME cannot issue stays that way with the real reason only in
+        <code>journalctl -u kanead</code>. That is deliberate: a wrong certificate is worse
+        than a refused connection.
+      </p>
+    </div>
+
+    <p>
+      Wanting the bare name with no port means giving the dashboard <code>:443</code> and
+      moving the edge with <code>kanea edge --https :8443</code>. Two processes cannot
+      share a port, so that is the whole decision: every service you deploy then answers
+      on <code>:8443</code> instead. It is a reasonable trade on a node whose apps live
+      elsewhere, and a bad one on a node that hosts anything.
+    </p>
 
     <h3 id="nodeconfig-storage">storage: host-volume allowlist</h3>
 
@@ -1924,7 +2014,9 @@ ExecStart=/usr/local/bin/kanea agent --data-dir /var/lib/kanea \
       covered by the wildcard unless you happen to name it under the base domain. Give it
       a name with <a href="#nodeconfig-bind"><code>bind.api_domain</code></a> and point a
       record at the node; without one it is reached by IP, and its certificate is the
-      self-signed pair <code>kanea init</code> provisioned.
+      self-signed pair <code>kanea init</code> provisioned. Remember that you reach it at
+      the <i>listener's</i> port &mdash; <code>https://kanea.example.com:8600</code>
+      &mdash; because the edge, which owns <code>:443</code>, has no route to it.
     </p>
     <p>
       Nothing needs a record per alloc, and nothing needs a record that changes when you
@@ -4303,6 +4395,19 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
         <code>--config off</code> disables the file entirely. Remember the file is read
         <b>once</b>, so an edit needs
         <a href="#nodeconfig-apply"><code>systemctl restart kanead</code></a>.
+      </li>
+      <li>
+        <b>The dashboard fails the TLS handshake, or the browser says the certificate is
+        broken.</b> Check the port first. The dashboard is <code>kanead</code>'s own
+        listener, so it answers on <code>bind.api_addr</code>'s port
+        (<code>https://&lt;name&gt;:8600</code>); the bare name goes to <code>:443</code>,
+        which is <code>kanea-edge</code>, and on a node with no exposed services the edge
+        holds no certificates at all, so the handshake dies with
+        <code>SSL_ERROR_INTERNAL_ERROR_ALERT</code> rather than a 404. If the port is
+        right, the other cause is a certificate that has not issued yet: the listener
+        refuses the handshake rather than serving something weaker, and
+        <code>journalctl -u kanead | grep 'api listener certificate installed'</code>
+        says whether it arrived. See <a href="#nodeconfig-bind">the worked example</a>.
       </li>
       <li>
         <b>A service has no public name, or the name does not resolve.</b> Three
