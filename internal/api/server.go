@@ -875,7 +875,10 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 // generation carry-over, pinned-image carry-over, the R22 port check, the
 // atomic batch, the wake, the events and the audit line must not exist twice.
 func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse, int, error) {
-	if len(req.Services) == 0 {
+	// A request with no services is normally a mistake. It is legitimate under
+	// a prune scope, which is how a spec says "this project should now be
+	// empty": refusing it would make removing the last service impossible.
+	if len(req.Services) == 0 && len(req.PruneProjects) == 0 {
 		return ApplyResponse{}, http.StatusBadRequest, errors.New("no services in request")
 	}
 
@@ -981,6 +984,17 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 		muts = append(muts, mut)
 	}
 
+	// The prune, appended to the same batch. Deletes ride with the puts so a
+	// spec that renames a service never exists in a state where both or
+	// neither is declared.
+	removed, err := s.pruneOrphans(r.Context(), req, applied)
+	if err != nil {
+		return ApplyResponse{}, http.StatusInternalServerError, err
+	}
+	for _, key := range removed {
+		muts = append(muts, store.DeleteMutation(store.KindService, key))
+	}
+
 	// One batch: a multi-service apply lands atomically, so the reconciler never
 	// sees half a deploy.
 	index, err := s.store.Apply(r.Context(), muts...)
@@ -988,7 +1002,14 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 		return ApplyResponse{}, http.StatusInternalServerError, err
 	}
 	s.wake()
-	auditTarget(r, strings.Join(applied, ","))
+	// The audit line names what was destroyed, not only what was written. A
+	// destructive action whose record does not say what it removed is the one
+	// outcome worth avoiding here.
+	target := strings.Join(applied, ",")
+	if len(removed) > 0 {
+		target += " -" + strings.Join(removed, ",-")
+	}
+	auditTarget(r, target)
 	// One event per service, not one per apply. A three-service deploy is
 	// three things an operator filters and routes independently, and the
 	// dispatcher coalesces them back into one message anyway.
@@ -996,8 +1017,50 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 		project, service, _ := strings.Cut(key, "/")
 		s.emit(notify.EventDeploySucceeded, project, service, "applied desired state")
 	}
-	s.log.Info("applied services", "services", applied, "index", index)
-	return ApplyResponse{Applied: applied, Index: index}, 0, nil
+	for _, key := range removed {
+		project, service, _ := strings.Cut(key, "/")
+		s.emit(notify.EventServiceRemoved, project, service,
+			"no longer declared by the spec that owns this project")
+	}
+	s.log.Info("applied services", "services", applied, "removed", removed, "index", index)
+	return ApplyResponse{Applied: applied, Removed: removed, Index: index}, 0, nil
+}
+
+// pruneOrphans names the stored services a prune-scoped apply should delete:
+// everything in a named project that the request does not declare.
+//
+// Returning the keys rather than the mutations keeps the decision testable and
+// lets the caller put them in the same batch as the puts.
+func (s *Server) pruneOrphans(ctx context.Context, req ApplyRequest, applied []string) ([]string, error) {
+	if len(req.PruneProjects) == 0 {
+		return nil, nil
+	}
+	scope := make(map[string]struct{}, len(req.PruneProjects))
+	for _, p := range req.PruneProjects {
+		scope[p] = struct{}{}
+	}
+	declared := make(map[string]struct{}, len(applied))
+	for _, key := range applied {
+		declared[key] = struct{}{}
+	}
+
+	stored, err := listAll[reconciler.Desired](ctx, s.store, store.KindService)
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	for _, svc := range stored {
+		if _, ours := scope[svc.Project]; !ours {
+			continue
+		}
+		key := svc.Project + "/" + svc.Service
+		if _, kept := declared[key]; kept {
+			continue
+		}
+		removed = append(removed, key)
+	}
+	sort.Strings(removed)
+	return removed, nil
 }
 
 // emit publishes a notification event, if the daemon has a dispatcher.

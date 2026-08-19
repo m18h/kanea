@@ -92,6 +92,17 @@ type ApplyRequest struct {
 	// source the daemon does not know is a service that can never be rebuilt,
 	// and that is exactly what splitting them into two calls would allow.
 	Pipelines []gitops.Config `json:"pipelines,omitempty"`
+	// PruneProjects names the projects this request is authoritative for: a
+	// stored service in one of them that the request does not name is deleted.
+	// Empty (the default) keeps the additive behaviour above, which is why
+	// every existing caller is unaffected.
+	//
+	// The scope is stated rather than inferred, and that is the whole design.
+	// `kanea run app.hcl shop/web` filters the desired state before sending it,
+	// so a server that derived "authoritative for" from the services present
+	// could not tell a selector-scoped apply from a spec that declares exactly
+	// those services — and would read the first as "delete everything else".
+	PruneProjects []string `json:"prune_projects,omitempty"`
 }
 
 // ScaleRequest sets a service's replica count.
@@ -102,6 +113,9 @@ type ScaleRequest struct {
 // ApplyResponse reports what the apply changed.
 type ApplyResponse struct {
 	Applied []string `json:"applied"`
+	// Removed names the services a prune deleted, empty unless the request
+	// carried PruneProjects.
+	Removed []string `json:"removed,omitempty"`
 	// Index is the store index the write was stamped with.
 	Index uint64 `json:"index"`
 }

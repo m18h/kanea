@@ -97,6 +97,7 @@
     <a class="sub" href="#spec-update">update and restart</a>
     <a class="sub" href="#spec-build">build</a>
     <a class="sub" href="#spec-interpolation">Interpolation</a>
+    <a class="sub" href="#spec-prune">Removing a service</a>
     <a class="sub" href="#spec-rules">Validation rules</a>
     <a class="sub" href="#spec-example">Full example</a>
     <a class="part" href="#stacks">Sample stacks</a>
@@ -2655,6 +2656,91 @@ restart {
       </table>
     </div>
 
+    <h3 id="spec-prune">Removing a service from a spec</h3>
+
+    <p>
+      Deleting a <code>service</code> block and re-applying does <b>not</b> stop the
+      service. An apply replaces the desired state of the services it names and leaves
+      everything else alone, so that <code>kanea run web.hcl</code> can never delete what
+      <code>db.hcl</code> declares. Removing a service is therefore a deliberate act, and
+      there are two ways to perform it.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>One service</th><th>Everything a spec dropped</th></tr></thead>
+        <tbody>
+          <tr><td><b>Command</b></td><td><code>kanea stop shop/web --rm</code></td><td><code>kanea run --remove-orphans app.hcl</code></td></tr>
+          <tr><td><b>Scope</b></td><td>the service you name</td><td>the spec's <code>project</code> blocks</td></tr>
+          <tr><td><b>Dry run</b></td><td>&mdash;</td><td><code>kanea plan --remove-orphans app.hcl</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>--remove-orphans</code> makes the spec authoritative for the projects it
+      declares a <code>project</code> block for: anything stored in one of them that the
+      file no longer declares is deleted, in the same atomic batch as the applies. Projects
+      the spec does not mention are never touched, so a spec for <code>shop</code> cannot
+      reach into <code>data</code>.
+    </p>
+    <pre class="plain">$ kanea plan --remove-orphans app.hcl
+~ update shop/web (image web:v1 -&gt; web:v2)
+- destroy shop/legacy-worker (count 1, image legacy:v3)
+
+Plan: 2 change(s). Run `kanea run` to apply.
+
+$ kanea run --remove-orphans app.hcl
+applied shop/web
+removed shop/legacy-worker
+
+1 service(s) removed. Volume data was not deleted.</pre>
+
+    <div class="callout warn">
+      <b class="label">Refused with a selector, and with <code>--image</code></b>
+      <p>
+        <code>kanea run app.hcl shop/web --remove-orphans</code> is refused by name. A
+        selector sends <i>part</i> of the spec, so the apply cannot claim to be the whole
+        of any project &mdash; and if it did, it would read as "delete everything in
+        <code>shop</code> except <code>web</code>". <code>--image</code> is refused for the
+        same reason from the other end: it declares one service and no project at all.
+      </p>
+      <p>
+        Note that flags must come <i>before</i> file arguments:
+        <code>kanea run --remove-orphans app.hcl</code>, not the other way round.
+      </p>
+    </div>
+
+    <h4>What a prune destroys, and what survives</h4>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Goes</th><th>Stays</th></tr></thead>
+        <tbody>
+          <tr><td>The containers, and the alloc records behind <code>kanea ps</code></td><td><b>Volume data</b>, local and network</td></tr>
+          <tr><td>The service's virtual IP (released, and another service may take it)</td><td>Certificates, including issued ACME ones</td></tr>
+          <tr><td>Its routes, and its network volume mounts</td><td>Secrets under the project</td></tr>
+          <tr><td>The restart generation and any pinned image digest</td><td>Its internal datapath id, which is keyed by name</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <b>Volume data is never deleted</b>, which cuts both ways and is why the command says
+      so every time. A service pruned by mistake comes back with its data by re-applying it,
+      because the directory is derived from <code>project/service/index</code> and nothing
+      removes it. And a prune frees no disk: reclaiming it is a manual
+      <code>rm</code> under the volume directory, deliberately, since Kanea has never
+      deleted a volume it did not create and R15 says as much for host paths.
+    </p>
+    <p>
+      Each removal emits <code>service.removed</code> and is named in the audit log, so a
+      prune is not a quiet operation even when nobody is watching the terminal.
+    </p>
+    <p>
+      A <a href="#stacks-db">GitOps</a> sync is unaffected: a synced repository still
+      applies additively, and removing a service from a synced spec leaves it running until
+      someone prunes or stops it.
+    </p>
+
     <h3 id="spec-rules">Validation rules</h3>
     <p>
       Sixteen rules, all enforced at parse or plan time with file/line/column diagnostics.
@@ -3634,8 +3720,10 @@ kanea ca info                       # its subject, fingerprint and validity</pre
     <pre class="plain">kanea plan app.hcl [more.hcl …] [selector …]
 kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
-      A real dry run: the create/change/destroy diff, the resulting workload budget, and
-      every validation rule. Multiple files are parsed as one set, so file order does not
+      A real dry run: the create/change diff, the resulting workload budget, and
+      every validation rule. <code>--remove-orphans</code> adds the
+      <code>- destroy</code> lines <code>kanea run --remove-orphans</code> would act on,
+      computed from the same scope, so the plan and the run cannot disagree. Multiple files are parsed as one set, so file order does not
       matter. This is where you find out about a cycle, a cross-project secret, a duplicate
       domain or a rate limit that would fail open.
     </p>
@@ -3648,6 +3736,22 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       behaviour. <code>--wait</code> is how long to wait for allocs to reach running
       before returning; <code>0</code> returns immediately. Running it twice with an
       unchanged spec does nothing: a deploy is a spec-hash mismatch, not an invocation.
+    </p>
+    <p>
+      <b>An apply is additive.</b> A service the spec no longer declares keeps running,
+      because <code>kanea run</code> on one file must not delete what another file
+      declares. <code>--remove-orphans</code> opts out of that, for the projects this spec
+      declares a <code>project</code> block for:
+    </p>
+    <pre class="plain">kanea run --remove-orphans app.hcl</pre>
+    <p>
+      Anything stored in one of those projects that the spec does not declare is deleted,
+      in the same atomic batch as the applies, so a rename never leaves both or neither in
+      place. It is <b>refused with a selector</b> (<code>kanea run app.hcl shop/web
+      --remove-orphans</code>) and with <code>--image</code>: a selector sends part of the
+      spec and <code>--image</code> declares no project, so neither can honestly claim to
+      be the whole of anything.
+      <a href="#spec-prune">What a prune destroys</a> is worth reading once.
     </p>
     <p>
       <b><code>--image</code> creates a bare service and cannot update a real one.</b> It

@@ -617,6 +617,17 @@ func unmetDependencies(d Desired, healthy map[string]bool) []string {
 // It compares only what a user declares, so an untouched service is not
 // reported as a change because the daemon filled in a default.
 func Diff(current, desired []Desired) []string {
+	return DiffScoped(current, desired, nil)
+}
+
+// DiffScoped is Diff with a prune scope: the projects the spec is authoritative
+// for, whose stored services it does not declare are rendered as destroyed.
+//
+// Diff's callers that cannot prune (MCP's plan_spec, the dashboard's spec
+// editor) pass nothing and see exactly what they saw before. A destroy line
+// shown where no prune will happen would be worse than no line at all: the
+// reader has no way to tell a warning from a plan.
+func DiffScoped(current, desired []Desired, pruneProjects []string) []string {
 	byKey := make(map[string]Desired, len(current))
 	for _, svc := range current {
 		byKey[svc.Project+"/"+svc.Service] = svc
@@ -674,7 +685,38 @@ func Diff(current, desired []Desired) []string {
 			out = append(out, fmt.Sprintf("~ update %s (%s)", key, strings.Join(changes, ", ")))
 		}
 	}
+	out = append(out, destroyLines(current, desired, pruneProjects)...)
 	sort.Strings(out)
+	return out
+}
+
+// destroyLines renders what a prune-scoped apply would remove: a stored service
+// in a project the spec owns that the spec no longer declares.
+func destroyLines(current, desired []Desired, pruneProjects []string) []string {
+	if len(pruneProjects) == 0 {
+		return nil
+	}
+	scope := make(map[string]struct{}, len(pruneProjects))
+	for _, p := range pruneProjects {
+		scope[p] = struct{}{}
+	}
+	declared := make(map[string]struct{}, len(desired))
+	for _, want := range desired {
+		declared[want.Project+"/"+want.Service] = struct{}{}
+	}
+
+	var out []string
+	for _, have := range current {
+		if _, ours := scope[have.Project]; !ours {
+			continue
+		}
+		key := have.Project + "/" + have.Service
+		if _, kept := declared[key]; kept {
+			continue
+		}
+		out = append(out, fmt.Sprintf("- destroy %s (count %d, image %s)",
+			key, have.Count, have.RunImage()))
+	}
 	return out
 }
 

@@ -298,6 +298,28 @@ same — `--listen none`, but `off` for `--config`, `--allowed-host-paths` and
 `--passthrough-config`. The full reference, with every field and refusal, is in
 the [node configuration docs](https://m18h.github.io/kanea/docs/#nodeconfig).
 
+### Removing a service
+
+An apply is additive: deleting a `service` block and re-applying leaves the
+service running, so `kanea run web.hcl` can never delete what `db.hcl`
+declares. To drop what a spec no longer declares:
+
+```bash
+kanea plan --remove-orphans app.hcl   # `- destroy` lines for what would go
+kanea run  --remove-orphans app.hcl
+```
+
+The spec becomes authoritative for the projects it declares a `project` block
+for; projects it does not mention are never touched. It is **refused with a
+selector or `--image`** — a selector sends part of the spec and `--image`
+declares no project, so neither can claim to be the whole of one. For a single
+service, `kanea stop shop/web --rm`.
+
+**Volume data is never deleted.** A service pruned by mistake comes back with
+its data by re-applying it; a deliberate prune frees no disk. What does go: the
+containers, the alloc records, the VIP, routes and mounts. Each removal emits
+`service.removed` and is named in the audit log.
+
 ### Volumes
 
 `kanea volume list` shows every storage resource with the mounts using it, their

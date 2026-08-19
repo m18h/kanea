@@ -32,17 +32,21 @@ import (
 // with no file at all. Selectors (PRD v1.57) narrow the converted desired
 // state to a project or a service: after parsing and validation, so the
 // filter can never change what the spec means, only how much of it is sent.
+// The third return is the set of projects the spec declares a `project` block
+// for: the scope a prune may claim authority over (v1.83). It is the block
+// list rather than the projects of the declared services, so a spec can say
+// "this project is now empty" as its last service is removed.
 func loadSpec(
 	files []string, sels []selector, image, name, project string, count int,
 	nodeVars nodeVarsResult,
-) ([]reconciler.Desired, []gitops.Config, error) {
+) ([]reconciler.Desired, []gitops.Config, []string, error) {
 	if image != "" {
 		if len(files) > 0 || len(sels) > 0 {
-			return nil, nil, errors.New(
+			return nil, nil, nil, errors.New(
 				"--image builds its one service from --name and --project; spec files and selectors do not combine with it")
 		}
 		if name == "" || project == "" {
-			return nil, nil, errors.New("--image also needs --name and --project")
+			return nil, nil, nil, errors.New("--image also needs --name and --project")
 		}
 		return []reconciler.Desired{{
 			Project: project,
@@ -52,14 +56,14 @@ func loadSpec(
 			// CPU and memory stay zero; unbounded, like a spec with no
 			// resources block (R11, v1.58). Pids keeps its cap everywhere.
 			Resources: runtime.Resources{PidsLimit: DefaultPidsLimit},
-		}}, nil, nil
+		}}, nil, nil, nil // --image declares no project block: never authoritative
 	}
 	if len(files) == 0 {
 		if len(sels) > 0 {
-			return nil, nil, fmt.Errorf(
+			return nil, nil, nil, fmt.Errorf(
 				"selector %q needs a spec file to select from; give at least one file", sels[0].raw)
 		}
-		return nil, nil, errors.New("give a job spec file, or --image with --name and --project")
+		return nil, nil, nil, errors.New("give a job spec file, or --image with --name and --project")
 	}
 
 	spec, diags := jobspec.ParseFiles(jobspec.Options{NodeVars: nodeVars.vars}, files...)
@@ -67,7 +71,7 @@ func loadSpec(
 		// Diagnostics carry file:line:column; print them as-is and fail without
 		// adding a second, vaguer error on top.
 		if _, werr := fmt.Fprint(os.Stderr, jobspec.FormatDiagnostics(diags)); werr != nil {
-			return nil, nil, werr
+			return nil, nil, nil, werr
 		}
 		// An unknown variable after a failed vars fetch may just be the
 		// daemon being unreachable: say so instead of leaving the two
@@ -77,20 +81,24 @@ func loadSpec(
 				"note: the node's shared variables were unavailable (%v); a variable defined in /etc/kanea/kanea.hcl would report as unknown here\n",
 				nodeVars.err)
 		}
-		return nil, nil, fmt.Errorf("%d problem(s) in the job spec", len(diags))
+		return nil, nil, nil, fmt.Errorf("%d problem(s) in the job spec", len(diags))
 	}
 	desired, err := toDesired(spec)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	pipelines := pipelineConfigs(spec)
 	if len(sels) > 0 {
 		if desired, err = filterDesired(desired, sels); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		pipelines = filterPipelines(pipelines, desired)
 	}
-	return desired, pipelines, nil
+	declared := make([]string, 0, len(spec.Projects))
+	for _, p := range spec.Projects {
+		declared = append(declared, p.Name)
+	}
+	return desired, pipelines, declared, nil
 }
 
 // nodeVarsResult is a best-effort GET /v1/vars: the map when the daemon
@@ -151,6 +159,8 @@ func runRun(args []string) error {
 	project := fs.String("project", "", "project name (with --image)")
 	count := fs.Int("count", 1, "alloc count (with --image)")
 	wait := fs.Duration("wait", 60*time.Second, "how long to wait for allocs to run; 0 to skip")
+	removeOrphans := fs.Bool("remove-orphans", false,
+		"delete services in this spec's projects that the spec no longer declares")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -166,8 +176,12 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	desired, pipelines, err := loadSpec(files, sels, *image, *name, *project, *count,
+	desired, pipelines, declared, err := loadSpec(files, sels, *image, *name, *project, *count,
 		fetchNodeVars(ctx, client))
+	if err != nil {
+		return err
+	}
+	prune, err := pruneScope(*removeOrphans, declared, sels, *image)
 	if err != nil {
 		return err
 	}
@@ -184,13 +198,23 @@ func runRun(args []string) error {
 	if err := checkPublishedPorts(ctx, client, desired); err != nil {
 		return err
 	}
-	resp, err := client.Apply(ctx, desired, pipelines)
+	resp, err := client.ApplyScoped(ctx, api.ApplyRequest{
+		Services: desired, Pipelines: pipelines, PruneProjects: prune,
+	})
 	if err != nil {
 		return err
 	}
 	o := newOut()
 	for _, svc := range resp.Applied {
 		o.printf("applied %s\n", svc)
+	}
+	for _, svc := range resp.Removed {
+		o.printf("removed %s\n", svc)
+	}
+	if len(resp.Removed) > 0 {
+		// Said every time, because it is the reason a mistaken prune is
+		// survivable and the reason a deliberate one does not free any disk.
+		o.printf("\n%d service(s) removed. Volume data was not deleted.\n", len(resp.Removed))
 	}
 	if err := o.Err(); err != nil {
 		return err
@@ -199,6 +223,36 @@ func runRun(args []string) error {
 		return nil
 	}
 	return waitForRunning(ctx, client, desired, *wait)
+}
+
+// pruneScope decides what a `--remove-orphans` apply may claim authority over.
+//
+// The two refusals are the point of the function. A selector filters the
+// desired state before it is sent, so the request no longer represents the
+// whole project and claiming authority over it would delete every unselected
+// sibling; `--image` declares no project block at all. Both are refused rather
+// than silently narrowed, following the doctrine checkImageWouldNotClobber
+// already sets: refuse where the alternative is a silent deletion.
+func pruneScope(removeOrphans bool, declared []string, sels []selector, image string) ([]string, error) {
+	if !removeOrphans {
+		return nil, nil
+	}
+	if image != "" {
+		return nil, errors.New(
+			"--remove-orphans needs a spec file: --image declares one service and no project, " +
+				"so it can never say what a project should contain")
+	}
+	if len(sels) > 0 {
+		return nil, fmt.Errorf(
+			"--remove-orphans cannot be combined with a selector (%s): a selector sends part of "+
+				"the spec, so the apply cannot claim to be the whole of any project. "+
+				"Re-run without the selector to prune, or without --remove-orphans to apply just that scope",
+			sels[0].raw)
+	}
+	if len(declared) == 0 {
+		return nil, errors.New("--remove-orphans: the spec declares no project block to be authoritative for")
+	}
+	return declared, nil
 }
 
 // checkImageWouldNotClobber refuses a `--image` apply that would delete what
@@ -375,6 +429,8 @@ func runPlan(args []string) error {
 	name := fs.String("name", "", "service name (with --image)")
 	project := fs.String("project", "", "project name (with --image)")
 	count := fs.Int("count", 1, "alloc count (with --image)")
+	removeOrphans := fs.Bool("remove-orphans", false,
+		"also show what `kanea run --remove-orphans` would delete")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -389,8 +445,14 @@ func runPlan(args []string) error {
 	if err != nil {
 		return err
 	}
-	desired, _, err := loadSpec(files, sels, *image, *name, *project, *count,
+	desired, _, declared, err := loadSpec(files, sels, *image, *name, *project, *count,
 		fetchNodeVars(ctx, client))
+	if err != nil {
+		return err
+	}
+	// The same scope the apply would claim, computed the same way, so a plan
+	// and the run that follows it cannot disagree about what would go.
+	prune, err := pruneScope(*removeOrphans, declared, sels, *image)
 	if err != nil {
 		return err
 	}
@@ -413,7 +475,7 @@ func runPlan(args []string) error {
 		}
 		o.printf("Scope: %s\n\n", strings.Join(raws, ", "))
 	}
-	diff := reconciler.Diff(current, desired)
+	diff := reconciler.DiffScoped(current, desired, prune)
 	if len(diff) == 0 {
 		o.println("No changes. Desired state matches the declared spec.")
 		return o.Err()
