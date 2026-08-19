@@ -48,6 +48,16 @@ func splitFilesAndSelectors(args []string) ([]string, []selector, error) {
 		}
 		sel, ok := parseSelector(arg)
 		if !ok {
+			// Go's flag package stops parsing at the first positional, so a
+			// flag written after a file lands here looking like a selector.
+			// Saying so is worth a branch: `kanea run app.hcl --remove-orphans`
+			// is the natural order to type, and "not a selector" sends the
+			// reader to look at their spec instead of at their command line.
+			if strings.HasPrefix(arg, "-") {
+				return nil, nil, fmt.Errorf(
+					"%q looks like a flag, and flags must come before file arguments: "+
+						"try `kanea <command> %s <files…>`", arg, arg)
+			}
 			return nil, nil, fmt.Errorf(
 				"%q is not a file and not a selector; a selector is a project or project/service name (DNS-1123 labels)",
 				arg)

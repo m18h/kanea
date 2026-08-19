@@ -140,9 +140,15 @@ func (c *Client) Services(ctx context.Context) ([]reconciler.Desired, error) {
 func (c *Client) Apply(
 	ctx context.Context, services []reconciler.Desired, pipelines []gitops.Config,
 ) (ApplyResponse, error) {
+	return c.ApplyScoped(ctx, ApplyRequest{Services: services, Pipelines: pipelines})
+}
+
+// ApplyScoped is Apply with the whole request, for the callers that need the
+// prune scope. Apply stays the shape every existing caller uses, so the
+// additive default is what you get unless you go out of your way.
+func (c *Client) ApplyScoped(ctx context.Context, req ApplyRequest) (ApplyResponse, error) {
 	var out ApplyResponse
-	err := c.do(ctx, http.MethodPut, PathServices,
-		ApplyRequest{Services: services, Pipelines: pipelines}, &out)
+	err := c.do(ctx, http.MethodPut, PathServices, req, &out)
 	return out, err
 }
 

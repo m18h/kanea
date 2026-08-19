@@ -26,6 +26,10 @@ const (
 	EventServiceUnhealthy = "service.unhealthy"
 	EventServiceHealthy   = "service.healthy"
 	EventServiceCrashed   = "service.crashed"
+	// EventServiceRemoved fires when a service's declaration is deleted.
+	// Added with the prune (v1.83), and it closes an older silence: nothing
+	// announced a deletion before, from any path.
+	EventServiceRemoved = "service.removed"
 
 	EventScaleUp   = "scale.up"
 	EventScaleDown = "scale.down"
@@ -161,6 +165,10 @@ var severities = map[string]Severity{
 	// time a human reads this the restart has happened, and the thing worth
 	// knowing is that it was needed.
 	EventServiceCrashed: SeverityError,
+	// A warning, not an error: a removal is something an operator asked for.
+	// It is not info either, because it is the one routine operation with no
+	// undo, and someone reading a digest should see it.
+	EventServiceRemoved: SeverityWarning,
 
 	EventScaleUp:   SeverityInfo,
 	EventScaleDown: SeverityInfo,
