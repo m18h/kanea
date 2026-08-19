@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/provision"
 )
 
 func TestUnitsCarryTheCgroupGuarantees(t *testing.T) {
@@ -199,6 +200,50 @@ func TestKaneadUnitRendersTheNetworkFlags(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("kanead.service is missing %q:\n%s", want, body)
 		}
+	}
+}
+
+// TestKaneadUnitPutsTheComponentBinDirOnPATH pins the fix for a node whose
+// components are installed and healthy and whose builds still fail with
+// `exec: "buildctl": executable file not found in $PATH`.
+//
+// kanead resolves buildctl by name, and systemd's default PATH does not
+// include Kanea's bin dir, so the daemon could not find a binary sitting
+// right there. Found on a real node; invisible in dev, where the operator's
+// own PATH is inherited.
+func TestKaneadUnitPutsTheComponentBinDirOnPATH(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		prefix string
+		want   string
+	}{
+		{"default prefix", "", provision.DefaultPrefix + "/bin"},
+		{"custom prefix", "/opt/kanea", "/opt/kanea/bin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := writeUnits(newOut(), unitOptions{
+				dir: dir, dataDir: "/var/lib/kanea", logDir: "/var/log/kanea",
+				reserve: "256M", binary: "/usr/local/bin/kanea", prefix: tc.prefix,
+			}); err != nil {
+				t.Fatalf("write units: %v", err)
+			}
+			body, err := os.ReadFile(filepath.Join(dir, "kanead.service")) // #nosec G304; a test path
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			want := "Environment=PATH=" + tc.want + ":"
+			if !strings.Contains(string(body), want) {
+				t.Errorf("kanead.service does not put %s on PATH; builds would fail:\n%s", tc.want, body)
+			}
+			// The system directories must survive: kanead also execs mount
+			// helpers (mount.cifs, s3fs) and nvidia-smi, which live there.
+			for _, sys := range []string{"/usr/bin", "/sbin"} {
+				if !strings.Contains(string(body), sys) {
+					t.Errorf("PATH dropped %s, which kanead needs for mount helpers:\n%s", sys, body)
+				}
+			}
+		})
 	}
 }
 

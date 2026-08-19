@@ -4397,6 +4397,19 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
         <a href="#nodeconfig-apply"><code>systemctl restart kanead</code></a>.
       </li>
       <li>
+        <b>Builds fail with <code>exec: "buildctl": executable file not found in
+        $PATH</code>.</b> The binary is installed &mdash; <code>kanea doctor</code> will
+        confirm it is at its pinned version &mdash; but <code>kanead</code> cannot find
+        it, because <code>buildctl</code> lives in Kanea's own bin dir and systemd's
+        default <code>PATH</code> does not include it. Nodes whose units were written
+        before this was fixed need the units regenerated:
+        <code>sudo kanea init</code> (idempotent) then
+        <code>sudo systemctl daemon-reload &amp;&amp; sudo systemctl restart kanead</code>.
+        <code>kanea doctor</code> names it under the <code>buildkit</code> check. Upgrading
+        alone will not fix it: <code>kanea upgrade</code> deliberately never rewrites
+        units.
+      </li>
+      <li>
         <b>The dashboard fails the TLS handshake, or the browser says the certificate is
         broken.</b> Check the port first. The dashboard is <code>kanead</code>'s own
         listener, so it answers on <code>bind.api_addr</code>'s port
