@@ -447,7 +447,7 @@ func runDoctor(args []string) error {
 	}
 
 	o := newOut()
-	o.printf("kanea doctor; %s\n\n", version)
+	o.printf("kanea doctor: %s\n\n", version)
 	ok := renderChecks(o, preflight(preflightOptions{
 		dataDir: *dataDir, containerdSocket: *containerdSocket,
 		networkMode:    *networkMode,

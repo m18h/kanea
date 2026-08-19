@@ -44,18 +44,36 @@
     <a class="sub" href="#overview-deploy">What counts as a deploy</a>
     <a class="sub" href="#overview-secrets">Secrets</a>
     <a class="sub" href="#overview-first">Your first service</a>
+    <a class="part" href="#install">Installing</a>
+    <a class="sub" href="#install-script">The install script</a>
+    <a class="sub" href="#install-init">Setting up the node</a>
+    <a class="sub" href="#install-components">Host components</a>
+    <a class="sub" href="#install-manual">Installing by hand</a>
+    <a class="sub" href="#install-upgrade">Upgrading</a>
+    <a class="sub" href="#install-airgapped">Air-gapped nodes</a>
     <a class="part" href="#arch">Architecture</a>
     <a class="sub" href="#arch-shape">The shape</a>
     <a class="sub" href="#arch-processes">Two processes, one binary</a>
     <a class="sub" href="#arch-store">The Store</a>
-    <a class="sub" href="#arch-runtime">Runtime driver (containerd</a>
-    <a class="sub" href="#arch-network">Network driver) eBPF datapath</a>
+    <a class="sub" href="#arch-runtime">Runtime driver: containerd</a>
+    <a class="sub" href="#arch-network">Network driver: eBPF datapath</a>
     <a class="sub" href="#arch-edge">The edge</a>
     <a class="sub" href="#arch-isolation">Resource isolation</a>
     <a class="sub" href="#arch-metrics">Metrics and autoscaling</a>
     <a class="sub" href="#arch-backup">State replication and restore</a>
     <a class="sub" href="#arch-mcp">API, dashboard and MCP</a>
     <a class="sub" href="#arch-dashboard">Exposing the API and dashboard</a>
+    <a class="part" href="#nodeconfig">Node configuration</a>
+    <a class="sub" href="#nodeconfig-file">The file</a>
+    <a class="sub" href="#nodeconfig-stanzas">What may go in it</a>
+    <a class="sub" href="#nodeconfig-bind">bind</a>
+    <a class="sub" href="#nodeconfig-storage">storage</a>
+    <a class="sub" href="#nodeconfig-grants">device and socket</a>
+    <a class="sub" href="#nodeconfig-dns">dns</a>
+    <a class="sub" href="#nodeconfig-variables">variables</a>
+    <a class="sub" href="#nodeconfig-apply">Applying a change</a>
+    <a class="sub" href="#nodeconfig-precedence">Flags and precedence</a>
+    <a class="sub" href="#nodeconfig-example">A complete file</a>
     <a class="part" href="#spec">Job spec reference</a>
     <a class="sub" href="#spec-top-level">Top level</a>
     <a class="sub" href="#spec-variables">variables</a>
@@ -122,9 +140,9 @@
     </p>
 
     <p>
-      If you have not installed it yet, the <a href="../#install">install section</a> on
-      the front page is four steps. This page assumes you have a node running and want to
-      know what you are looking at.
+      If you have not installed it yet, <a href="#install">Installing</a> is the next
+      section: one command for the binary, one for the node. The rest of this page
+      assumes you have a node running and want to know what you are looking at.
     </p>
 
     <h3 id="overview-concepts">Concepts</h3>
@@ -297,6 +315,448 @@ kanea logs -f demo/web</pre>
     </p>
 
 
+
+    <!-- ================= install ================= -->
+    <h2 id="install">Installing</h2>
+
+    <p>
+      Two commands: one puts the binary on the node, one turns the node into a platform.
+      The first only ever writes <code>/usr/local/bin/kanea</code>; everything else
+      &mdash; the runtime, the keys, the units, the accounts &mdash; belongs to
+      <code>kanea init</code>, which you can read before you run.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Requirement</th><th>What it must be</th></tr></thead>
+        <tbody>
+          <tr><td><b>Architectures</b></td><td><code>linux/amd64</code>, <code>linux/arm64</code>. Anything else is refused before a byte is downloaded.</td></tr>
+          <tr><td><b>Kernel</b></td><td>&ge; 5.10, cgroups v2 unified hierarchy.</td></tr>
+          <tr><td><b>Init system</b></td><td>systemd.</td></tr>
+          <tr><td><b>Clock</b></td><td>NTP-synchronised (certificates and audit timestamps depend on it).</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      That is the whole list. containerd, <code>runc</code>, rootless <code>buildkitd</code>
+      and the wasmtime shim are <i>not</i> prerequisites: <code>kanea init</code> installs
+      them at versions pinned by SHA-256 inside the binary. The network layer needs no
+      component at all, because the eBPF datapath is compiled into <code>kanea</code>.
+    </p>
+
+    <h3 id="install-script">The install script</h3>
+
+    <pre class="plain">curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash</pre>
+
+    <p>
+      It resolves the latest release, downloads the archive for this architecture,
+      verifies it, and installs one binary. Then it stops. It generates no keys, starts
+      no services, writes no units and installs no runtime, so running it on a node that
+      is already serving traffic changes nothing until you act on what it prints.
+    </p>
+
+    <p>
+      There are no arguments. The three knobs are environment variables, and
+      <code>sudo</code> does not forward them by default &mdash; use
+      <code>sudo VAR=value bash</code> or <code>sudo -E</code>:
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>KANEA_VERSION</code></td><td><code>latest</code></td><td>The release tag to install, e.g. <code>vX.Y.Z</code>. <code>latest</code> is resolved from the redirect GitHub already serves, so no <code>jq</code> and no API rate limit.</td></tr>
+          <tr><td><code>KANEA_PREFIX</code></td><td><code>/usr/local/bin</code></td><td>Directory the binary is installed into, mode 0755.</td></tr>
+          <tr><td><code>KANEA_REPO</code></td><td><code>m18h/kanea</code></td><td>The <code>owner/repo</code> releases come from, so a fork installs from itself.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre class="plain">curl -fsSL https://m18h.github.io/kanea/install.sh | sudo KANEA_VERSION=vX.Y.Z bash</pre>
+
+    <p>
+      It needs <code>curl</code>, <code>tar</code> and <code>install</code> on the node,
+      and it must run under <code>bash</code>, not <code>sh</code>. Four things are
+      refused up front rather than discovered after a download: a non-Linux kernel, an
+      architecture outside amd64 and arm64, an unreachable release endpoint, and a
+      repository with no published release (which would otherwise resolve to a
+      plausible-looking archive name and a 404 nobody can read).
+    </p>
+
+    <h4>What is verified</h4>
+    <p>
+      <b>The checksum is mandatory and there is no flag to skip it.</b> The script
+      downloads <code>checksums.txt</code>, takes the line for the archive it fetched, and
+      runs it through <code>sha256sum -c</code>. A mismatch stops with
+      <code>checksum mismatch: do not run this binary</code>.
+    </p>
+    <p>
+      The Sigstore signature is checked <i>when <code>cosign</code> is on
+      <code>PATH</code></i>: the keyless signature over <code>checksums.txt</code>, bound
+      to this repository's release workflow through the GitHub OIDC issuer. The
+      asymmetry is deliberate and worth being precise about:
+    </p>
+    <ul>
+      <li><b>cosign present, signature valid</b> &mdash; prints <code>Signature verified</code>.</li>
+      <li><b>cosign present, signature invalid</b> &mdash; <b>fatal</b>. The install stops.</li>
+      <li><b>cosign present, no signature published</b> &mdash; a note, then continues on the checksum alone.</li>
+      <li><b>cosign absent</b> &mdash; prints <code>cosign not found; checksum verified but signature not checked</code> and continues. Installing cosign first is the stronger path; <a href="#install-manual">verifying by hand</a> is the same check written out.</li>
+    </ul>
+
+    <div class="callout">
+      <b class="label">One side effect, and only one</b>
+      <p>
+        The script creates the <code>kanea-edge</code> system account if it is missing
+        (<code>useradd --system --no-create-home --shell /usr/sbin/nologin</code>). The
+        ingress process runs as that user rather than root, and a failure here is a
+        warning, never fatal. Nothing else on the node is touched.
+      </p>
+    </div>
+
+    <h3 id="install-init">Setting up the node</h3>
+
+    <p>
+      <code>sudo kanea init</code> is the rest of the way: preflight checks, the host
+      components, the master-key ceremony, the systemd units, the first admin account,
+      and a summary of what it built. Run it once, as root. It is safe to re-run &mdash;
+      see <a href="#install-init-idempotent">what a re-run does</a> below.
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>sudo kanea init</span></div>
+<pre class="plain">$ sudo kanea init
+kanea init: &lt;version&gt;
+
+API/dashboard listen address [127.0.0.1:8600] ("none" for socket-only): 192.168.1.10:8600
+Listener certificate already present at /etc/kanea/api.crt; leaving it alone.
+
+Checking this node:
+  ok    platform         linux/amd64
+  ok    cgroups v2       unified hierarchy with cpu, memory and pids
+  ok    kernel           6.12.43-amd64
+  ok    clock            synchronised (systemd-timesyncd)
+  ok    systemd          running
+  ok    data directory   /var/lib/kanea
+  ok    edge user        kanea-edge
+
+Installing the host components:
+kanea install: &lt;version&gt;
+
+Source: upstream
+Prefix: /usr/local/lib/kanea
+
+  up-to-date  containerd 2.3.3     container runtime daemon
+  up-to-date  runc 1.5.1           OCI runtime
+  up-to-date  wasmtime-shim 0.6.1  wasmtime containerd shim; functions
+
+Wrote /etc/kanea/containerd/config.toml
+Wrote /etc/systemd/system/kanea-containerd.service
+
+Starting containerd to pull the image components…
+  up-to-date  buildkit v0.32.0-rootless  rootless build daemon (the only build driver)
+
+Wrote /etc/systemd/system/kanea-buildkit.service
+
+Created /var/lib/kanea, /var/log/kanea/allocs and /etc/kanea
+Master key already present at /var/lib/kanea/master.key; leaving it alone.
+Wrote /etc/systemd/system/kanea.slice
+Wrote /etc/systemd/system/kanea-workloads.slice
+Wrote /etc/systemd/system/kanead.service
+Wrote /etc/systemd/system/kanea-edge.service
+
+Starting kanead:
+  waiting for the control plane…
+First admin username: &lt;name&gt;
+password for &lt;name&gt;:
+again:
+Created admin account "&lt;name&gt;".
+Restarting kanead so the settled listener takes effect…
+
+───────────────────────────────────────────────────────────────
+Kanea is running.
+
+  Dashboard      https://192.168.1.10:8600   (log in as "&lt;name&gt;")
+  Internal DNS   10.244.0.1:53   (allocs resolve &lt;service&gt;.&lt;project&gt; here)
+
+  Addressing
+    node CIDR      10.244.0.0/24      this node's allocs
+    cluster CIDR   10.244.0.0/16      routed, masqueraded as internal
+    service CIDR   10.201.0.0/16      service VIPs
+
+Deploy something:  kanea run &lt;spec.hcl&gt;
+CLI without sudo:  sudo usermod -aG kanea &lt;user&gt;   # root-equivalent; log in again
+Configure a backup destination before you need one; see docs/DR_RUNBOOK.md.</pre>
+    </div>
+
+    <p>
+      Versions and the kernel string are placeholders; the shape is what a run looks
+      like. This one is a <i>re-run</i> on a node that already had a key and a listener
+      certificate, which is why two lines say "leaving it alone" and the components read
+      <code>up-to-date</code>. A first run mints both and installs each component.
+    </p>
+
+    <h4>What it asks</h4>
+    <ol>
+      <li>
+        <b>The listen address</b>, defaulting to <code>127.0.0.1:8600</code>. Answer
+        <code>none</code> to keep the API on its unix socket only. This is asked
+        <i>only</i> when <code>--listen</code> was not passed and stdin is a terminal, so
+        a scripted install never has a prompt eat one of its lines. A
+        <a href="#nodeconfig-bind"><code>bind</code> stanza</a> in the server config
+        replaces the question entirely.
+      </li>
+      <li>
+        <b>The master key, typed back.</b> It is printed once and you must retype it
+        exactly; a mismatch writes nothing and stops. There is no flag to accept it
+        unseen.
+      </li>
+      <li>
+        <b>The first admin's username</b>, unless <code>--admin-user</code> was given.
+      </li>
+      <li>
+        <b>That account's password</b>, twice.
+      </li>
+    </ol>
+
+    <div class="callout warn">
+      <b class="label">The key is shown once</b>
+      <p>
+        Without it, every backup this node ever makes is unreadable and every stored
+        secret is unrecoverable. Have somewhere to record it <i>before</i> you start.
+        Every prompt in a run shares one reader, so a piped install works exactly as a
+        typed one does.
+      </p>
+    </div>
+
+    <h4>TLS for the dashboard</h4>
+    <p>
+      Beyond loopback the listener is served over TLS, and init provisions it rather
+      than refusing: with no explicit <code>--listen-cert</code>/<code>--listen-key</code>
+      pair it mints a ten-year self-signed pair at <code>/etc/kanea/api.crt</code> and
+      <code>api.key</code> (key mode 0600, with a real IP SAN when the address is an IP)
+      and points the unit at it. It is minted <b>once</b> and never re-minted, because
+      re-minting would flip the fingerprint an operator has already accepted.
+    </p>
+    <p>
+      Bring your own with the two flags, or hand the whole listener to the
+      <a href="#nodeconfig-bind"><code>bind</code> stanza</a>, which also gets you
+      <code>acme</code> and the node CA. One case is still refused: an unspecified host
+      (<code>0.0.0.0</code>, <code>:8600</code>), because a certificate's SAN needs
+      something to name &mdash; bind a specific address, or set
+      <code>bind.api_domain</code>.
+    </p>
+
+    <h4 id="install-init-idempotent">What a re-run does</h4>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Kept</th><th>Rewritten</th></tr></thead>
+        <tbody>
+          <tr><td>The master key, always. An existing one is never regenerated.</td><td>The four systemd units, every time, at mode 0644.</td></tr>
+          <tr><td>The <code>api.crt</code>/<code>api.key</code> pair. Half a pair is a hard error, never a guess.</td><td>The containerd config and component units.</td></tr>
+          <tr><td>The first admin. If any account exists the step is skipped, never re-prompted.</td><td></td></tr>
+          <tr><td><code>/etc/kanea/kanea.hcl</code>. Init <b>never</b> writes it, on a first run or a re-run.</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      That is exactly why a release whose notes mention changed units is a re-run of
+      <code>sudo kanea init</code> followed by <code>systemctl daemon-reload</code>:
+      it is the supported way to regenerate them, and it costs you neither the key nor
+      the accounts. kanead is only restarted when the settled listener actually differs
+      from the running one, so an unchanged re-run restarts nothing.
+    </p>
+
+    <h4>Useful flags</h4>
+    <p>
+      The full list is in the <a href="#cli-setup">CLI reference</a>; these are the ones
+      that come up:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td><code>--listen</code></td><td><code>127.0.0.1:8600</code></td><td>Skips the prompt. <code>none</code> keeps the API socket-only.</td></tr>
+          <tr><td><code>--admin-user</code></td><td>prompt</td><td>With a piped password, makes the whole run scriptable.</td></tr>
+          <tr><td><code>--containerd external</code></td><td>install our own</td><td>Adopt the containerd already on the node instead of installing one.</td></tr>
+          <tr><td><code>--bundle</code></td><td>&mdash;</td><td>Install the host components from an <a href="#install-airgapped">offline bundle</a>.</td></tr>
+          <tr><td><code>--reserve</code></td><td><code>256M</code></td><td>The control plane's memory floor. A node that runs builds wants 512M: buildkitd alone holds ~157 MiB.</td></tr>
+          <tr><td><code>--node-cidr</code></td><td><code>10.244.0.0/24</code></td><td>This node's container subnet. Its <code>.1</code> is also the internal DNS address.</td></tr>
+          <tr><td><code>--no-start</code></td><td><code>false</code></td><td>Write everything and stop, without starting kanead or creating an account.</td></tr>
+          <tr><td><code>--skip-checks</code></td><td><code>false</code></td><td>Run the ceremony without the preflight. The checks gate, so this is how you override one you disagree with.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="install-components">Host components</h3>
+
+    <p>
+      containerd, <code>runc</code>, rootless <code>buildkitd</code> and the wasmtime
+      shim are installed by Kanea, pinned by version and SHA-256 in a manifest compiled
+      into the binary. <b>Hashes are never fetched</b>, so moving a component is a code
+      change with a review behind it, and the same manifest is the version matrix
+      <code>kanea doctor</code> checks the node against.
+    </p>
+    <pre class="plain">kanea install --list         # the pinned versions, straight from the binary
+sudo kanea install --dry-run # resolve and verify every artefact, write nothing
+sudo kanea install           # normally you never run this; kanea init does</pre>
+    <p>
+      Nothing at a distribution's paths is touched. Kanea's containerd lives under
+      <code>/usr/local/lib/kanea</code> on its own socket at
+      <code>/run/kanea/containerd.sock</code>, which is why a node that ran Docker
+      yesterday runs it tomorrow.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>--list</code></td><td>Print the pinned matrix and exit. Needs no network and no root.</td></tr>
+          <tr><td><code>--dry-run</code></td><td>Download and verify everything, write nothing. The honest pre-flight for an upgrade.</td></tr>
+          <tr><td><code>--only</code></td><td>Comma-separated component names. They are reordered into manifest order, because install order is a dependency: containerd and runc first, containerd <i>starts</i>, and only then is the buildkit image pulled through it.</td></tr>
+          <tr><td><code>--force</code></td><td>Reinstall components already at the pinned version.</td></tr>
+          <tr><td><code>--bundle</code></td><td>Install from an <a href="#install-airgapped">offline bundle</a>. This turns network fetching off entirely; it is not a preference.</td></tr>
+          <tr><td><code>--containerd external</code></td><td>Adopt an existing containerd: drops containerd from the set and writes a slice drop-in instead.</td></tr>
+          <tr><td><code>--arch</code></td><td>Target architecture. Meaningful <b>only</b> with <code>--dry-run</code>; installing for a foreign architecture is refused.</td></tr>
+          <tr><td><code>--prefix</code>, <code>--conf-dir</code>, <code>--data-dir</code>, <code>--run-dir</code>, <code>--unit-dir</code></td><td>Where binaries, configuration, state, sockets and units go.</td></tr>
+          <tr><td><code>--skip-units</code></td><td>Binaries only. Also skips the image components, since containerd is never started.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="install-manual">Installing by hand</h3>
+
+    <p>
+      Every release publishes per-architecture archives, an SPDX SBOM beside each one,
+      a <code>kanea_&lt;version&gt;_source.spdx.json</code> for the build's own graph
+      (where the embedded dashboard's npm dependencies are listed), a
+      <code>checksums.txt</code>, and a keyless cosign signature over that file. The
+      SBOMs are listed <i>inside</i> the checksums, so the one signature covers them too:
+    </p>
+    <pre class="plain">VERSION=vX.Y.Z; ARCH=amd64   # the tag you want, e.g. from the releases page
+BASE=https://github.com/m18h/kanea/releases/download/$VERSION
+
+curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
+curl -fL -O $BASE/checksums.txt -O $BASE/checksums.txt.sig -O $BASE/checksums.txt.pem
+
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature   checksums.txt.sig \
+  --certificate-identity-regexp "https://github.com/m18h/kanea/" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  checksums.txt
+
+sha256sum --ignore-missing -c checksums.txt
+tar xzf kanea_${VERSION#v}_linux_$ARCH.tar.gz
+sudo install -m 0755 kanea /usr/local/bin/kanea</pre>
+    <p>
+      There is no long-lived signing key to guard. The signature is bound by Sigstore to
+      the release workflow in this repository, and the proof is in a public transparency
+      log. Then continue at <a href="#install-init"><code>sudo kanea init</code></a>.
+    </p>
+
+    <h4>Homebrew</h4>
+    <pre class="plain">brew tap m18h/kanea
+brew trust m18h/kanea   # brew ≥ 6 refuses formulae from untrusted third-party taps
+brew install kanea</pre>
+    <p>
+      Homebrew is a <b>CLI channel, never a node channel</b>. On macOS you get the
+      authoring half, where <code>kanea plan</code> validates job specs with
+      file-and-line diagnostics and needs no daemon. On Linux the formula installs the
+      same full binary, but a <i>node</i> belongs to the install script above:
+      root-owned at <code>/usr/local/bin</code>, where <code>kanea upgrade</code> owns
+      the swap. A brew-owned binary upgrades with <code>brew upgrade kanea</code>, then
+      <code>sudo kanea upgrade --no-fetch</code> for the restart-and-migrate half.
+    </p>
+
+    <h3 id="install-upgrade">Upgrading</h3>
+
+    <p>
+      <code>sudo kanea upgrade</code> alone is the whole upgrade: it downloads and
+      verifies the release itself before restarting anything. Re-running the install
+      script works too, and is what you do when the binary is what you want replaced
+      first; it changes the binary only, and says so:
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>re-running the install script</span></div>
+<pre class="plain">$ curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash
+Upgrading kanea &lt;installed&gt; -&gt; &lt;latest&gt; (linux/amd64)
+Verifying the checksum
+cosign not found; checksum verified but signature not checked
+Installed /usr/local/bin/kanea
+
+The running daemons are still on the old binary. Next:
+
+    sudo kanea upgrade
+
+It backs up, drains and restarts kanea-edge, then restarts kanead, which
+runs any state migrations. Running workloads are untouched throughout.</pre>
+    </div>
+
+    <p>
+      The sequence <code>kanea upgrade</code> performs, in order: resolve and verify the
+      release (sha256 always, cosign when present, <b>fatal if present and failing</b>),
+      install it atomically over its own path, take a pre-upgrade backup, restart
+      <code>kanea-edge</code>, restart <code>kanead</code>, run state migrations, and wait
+      for health. The edge goes first because it drains in seconds and must be current
+      before kanead publishes a new-format route snapshot; kanead goes last because it
+      runs the migration once everything else has settled.
+    </p>
+    <p>
+      <b>Running allocs are not touched at any point.</b> Already being at the target
+      version means nothing to download, so running it twice is safe by construction.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>--check</code></td><td>Report the running, installed and latest versions, and stop.</td></tr>
+          <tr><td><code>--version vX.Y.Z</code></td><td>Go to a specific release instead of the latest.</td></tr>
+          <tr><td><code>--no-fetch</code></td><td>Download nothing; restart onto whatever binary is already installed. This is the half a package manager leaves for you.</td></tr>
+          <tr><td><code>--allow-downgrade</code></td><td>Permit a target older than the running daemon. Refused otherwise, because the Store's schema is forward-only.</td></tr>
+          <tr><td><code>--skip-backup</code></td><td>Skip the pre-upgrade backup. The schema migration still takes its own local copy.</td></tr>
+          <tr><td><code>--dry-run</code></td><td>Print what would run and stop.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <b class="label">Upgrading never rewrites systemd units</b>
+      <p>
+        That is deliberate: your units may carry local edits. When release notes say the
+        units changed, re-run <code>sudo kanea init</code> (idempotent &mdash; key,
+        accounts and settings are kept) and then
+        <code>sudo systemctl daemon-reload</code>. Host components are pinned by the new
+        binary, so <code>sudo kanea install --dry-run</code> shows whether any need to
+        move and <code>sudo kanea doctor</code> confirms the node agrees with the matrix.
+      </p>
+    </div>
+
+    <h3 id="install-airgapped">Air-gapped nodes</h3>
+
+    <p>
+      A node with no egress is a supported installation, not a workaround. Build a bundle
+      where there is a network, carry it across, install from it:
+    </p>
+    <pre class="plain">kanea bundle create --arch amd64 -o kanea-bundle.tar.gz   # connected machine
+sudo kanea init --bundle kanea-bundle.tar.gz              # air-gapped node</pre>
+    <p>
+      <b>The bundle carries no hashes of its own.</b> Its contents are verified against
+      the ones compiled into the <i>installing</i> node's binary; a bundle that supplied
+      its own would be a bundle that authenticates itself. For image components that
+      means a digest comparison rather than a name lookup, because containerd names
+      image records from the archive's own annotation verbatim.
+    </p>
+    <p>
+      Releases publish one bundle per architecture, covered by the same signed
+      <code>checksums.txt</code>. This covers Kanea's own components; your workload
+      images still come from a registry the node can reach. On an air-gapped node
+      <code>kanea doctor --offline</code> skips the single network probe, and
+      <code>kanea upgrade</code> refuses to fetch with a pointer to this flow rather
+      than hanging.
+    </p>
+
     <!-- ================= arch ================= -->
     <h2 id="arch">Architecture</h2>
 
@@ -424,7 +884,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
         volumes; pressure must never surprise the control plane.</li>
     </ul>
 
-    <h3 id="arch-network">Network driver; eBPF datapath</h3>
+    <h3 id="arch-network">Network driver: eBPF datapath</h3>
     <p>
       The datapath is Kanea's own: three small eBPF programs, a handful of pinned maps and
       plain netlink plumbing, all loaded and written by <code>kanead</code> from one object
@@ -537,7 +997,9 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       Entries are validated when the file parses; an empty list is refused by name; a
       stanza that meant "no upstreams" would silently turn external resolution into
       SERVFAIL. An explicit <code>--dns-upstream</code> wins over the stanza and the daemon
-      says so in its log, the same precedence every half of the server config follows.
+      says so in its log, the same precedence every half of the server config follows. The
+      stanza's own reference, and how to apply an edit, is in
+      <a href="#nodeconfig-dns">Node configuration</a>.
     </p>
     <p>
       Datapath state is <b>derived state</b>. Programs, maps and the cgroup link are pinned
@@ -758,7 +1220,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       What each mode gives you:
     </p>
     <ul>
-      <li><b><code>self-signed</code></b>; a certificate from the node's own CA, the one
+      <li><b><code>self-signed</code></b>: a certificate from the node's own CA, the one
         <code>kanea ca show</code> installs on your devices, with a real IP SAN when the
         address is bare. Renewed automatically. The right default on a home network.</li>
       <li><b><code>acme</code></b>: a Let's Encrypt certificate for
@@ -767,7 +1229,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
         refused at startup without it.</li>
       <li><b><code>provided</code></b>: your own <code>api_cert</code>/<code>api_key</code>
         pair, for a certificate something else manages.</li>
-      <li><b><code>plaintext</code></b>; explicit HTTP. Allowed beyond loopback
+      <li><b><code>plaintext</code></b>: explicit HTTP. Allowed beyond loopback
         <i>because you typed it</i>, logged loudly, and it implies the insecure-cookie
         posture; a Secure cookie over plain HTTP is a login that silently fails.</li>
     </ul>
@@ -782,7 +1244,9 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <code>/etc/kanea/api.crt</code>/<code>api.key</code> (minted once, never re-minted)
       and points the daemon at it. The one refusal left is an unspecified host
       (<code>0.0.0.0</code>): a SAN needs something to name, so bind a specific address
-      or set <code>api_domain</code> in the stanza.
+      or set <code>api_domain</code> in the stanza. The stanza's full field list and every
+      refusal it can raise are in
+      <a href="#nodeconfig-bind">Node configuration &rarr; bind</a>.
     </p>
     <p>
       One consequence worth knowing when adopting the stanza on an existing node: an init
@@ -793,6 +1257,431 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <a href="#troubleshoot-common">troubleshooting page</a> has the steps.
     </p>
 
+
+
+    <!-- ================= nodeconfig ================= -->
+    <h2 id="nodeconfig">Node configuration</h2>
+
+    <p>
+      <code>/etc/kanea/kanea.hcl</code> is the node's own file: the settings that belong
+      to whoever owns the machine rather than to whoever writes a job spec. A spec can
+      <i>reference</i> what this file permits and can never add to it, which is the whole
+      point of the split &mdash; GitOps deploys specs automatically, so anything a spec
+      could declare, anyone who can push to a synced repository could declare.
+    </p>
+    <p>
+      It does not exist by default, and that default is "off": a node with no file grants
+      nothing, allows no host paths, and takes its listener and resolvers from flags.
+      <code>kanea init</code> creates the <code>/etc/kanea</code> directory but
+      <b>never writes this file</b>, on a first run or a re-run.
+    </p>
+
+    <h3 id="nodeconfig-file">The file</h3>
+
+    <p>Four properties decide how it behaves, and each one surprises somebody:</p>
+    <ul>
+      <li>
+        <b>It is read once, at daemon start.</b> One stat, never a poll. There is no
+        reload, no <code>SIGHUP</code> and no watcher, so an edit means a restart &mdash;
+        see <a href="#nodeconfig-apply">applying a change</a>. A grant is a decision, not
+        a thing that rotates behind your back.
+      </li>
+      <li>
+        <b>Absent is off, but malformed is fatal.</b> A missing file is every setting's
+        zero value and no error. A file that does not parse, or breaks a stanza's rules,
+        <b>stops the daemon starting</b>. There is deliberately no keep-last-good and no
+        partial load: a policy file half-applied is worse than one refused.
+      </li>
+      <li>
+        <b>It is trust-checked before it is parsed.</b> It must be a regular file (not a
+        symlink, not a directory), owned by root or by the daemon's own uid, and writable
+        only by its owner. Anything else refuses startup. World-<i>readable</i> is fine;
+        this is policy, not a secret.
+      </li>
+      <li>
+        <b>An unknown stanza is a warning; an unknown attribute is an error.</b> See
+        <a href="#nodeconfig-stanzas">the stanza list</a> for why the asymmetry is
+        intentional.
+      </li>
+    </ul>
+
+    <p>Creating it, if it is not there:</p>
+    <pre class="plain">sudo install -o root -g root -m 0644 /dev/null /etc/kanea/kanea.hcl
+sudo $EDITOR /etc/kanea/kanea.hcl
+sudo systemctl restart kanead</pre>
+
+    <h3 id="nodeconfig-stanzas">What may go in it</h3>
+
+    <p>Six stanzas are read. Everything else is accepted and warned about by name.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Stanza</th><th>Repeats?</th><th>What it decides</th></tr></thead>
+        <tbody>
+          <tr><td><a href="#nodeconfig-bind"><code>bind</code></a></td><td>once</td><td>Where the API and dashboard listen, and how that listener gets its certificate.</td></tr>
+          <tr><td><a href="#nodeconfig-storage"><code>storage</code></a></td><td>once</td><td>Which host directories a <code>host</code> volume may mount.</td></tr>
+          <tr><td><a href="#nodeconfig-dns"><code>dns</code></a></td><td>once</td><td>Which resolvers the internal DNS forwards external names to.</td></tr>
+          <tr><td><a href="#nodeconfig-variables"><code>variables</code></a></td><td>once</td><td>Node-wide defaults for spec variables.</td></tr>
+          <tr><td><a href="#nodeconfig-grants"><code>device</code></a></td><td>many</td><td>A named device grant, and the projects that may claim it.</td></tr>
+          <tr><td><a href="#nodeconfig-grants"><code>socket</code></a></td><td>many</td><td>A named socket grant, and the projects that may claim it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <b class="label">Unknown stanza: warning. Unknown attribute: error.</b>
+      <p>
+        A top-level block this version does not read is loaded, ignored, and
+        <b>named at startup</b> in a <code>server config carries stanzas this version
+        does not read</code> warning &mdash; never silently swallowed. That is what lets
+        the file carry settings a future version will read. But an unknown attribute
+        <i>inside</i> a stanza that <i>is</i> read is a hard parse error, because there
+        it is almost always a typo, and a silently ignored
+        <code>allowed_host_path</code> would be a security control that quietly did
+        nothing.
+      </p>
+    </div>
+
+    <h3 id="nodeconfig-bind">bind: the API and dashboard listener</h3>
+
+    <p>
+      Putting the listener here instead of in the unit means moving it later is an edit
+      plus a restart, never a re-init, and a <code>kanea init</code> re-run will not
+      overwrite it. When <code>api_addr</code> is declared and <code>--listen</code> was
+      not passed, init skips the listen question and renders <b>no</b> listen flags into
+      the unit &mdash; a unit that repeated the file's answer would turn the file off.
+    </p>
+
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">bind</span> {
+  <span class="k">api_addr</span>   = <span class="s">"192.168.1.10:8600"</span>
+  <span class="k">api_tls</span>    = <span class="s">"self-signed"</span>       <span class="c"># acme | self-signed | provided | plaintext</span>
+  <span class="c"># api_domain = "kanea.home.example"  # required by acme; names a self-signed cert</span>
+  <span class="c"># api_cert   = "/etc/kanea/api.pem"  # provided only; always with api_key</span>
+  <span class="c"># api_key    = "/etc/kanea/api.key"</span>
+}</code></pre>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>api_addr</code></td><td>The <code>host:port</code> to bind. Required by every other field: TLS with nothing to serve it on is a parse error.</td></tr>
+          <tr><td><code>api_tls</code></td><td><code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code> &mdash; the same vocabulary services use. What each one gives you is in <a href="#arch-dashboard">Exposing the API and dashboard</a>. Unset resolves at the daemon: a declared pair means <code>provided</code>, loopback means plaintext, anything beyond loopback refuses.</td></tr>
+          <tr><td><code>api_domain</code></td><td>Required by <code>acme</code> (an IP cannot hold an ACME certificate). For <code>self-signed</code> it names the certificate, and it becomes required when <code>api_addr</code> binds every interface.</td></tr>
+          <tr><td><code>api_cert</code>, <code>api_key</code></td><td>Your own PEM pair, for <code>provided</code> only. Always together.</td></tr>
+          <tr><td><code>edge_http</code>, <code>edge_https</code></td><td><b>Accepted, warned about, and not read.</b> They are part of the fuller design sketch; setting one today does nothing but add its name to the startup warning.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Every contradiction is a parse error rather than a silent preference:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>If you write</th><th>It says</th></tr></thead>
+        <tbody>
+          <tr><td>Only one of <code>api_cert</code>/<code>api_key</code></td><td>they go together</td></tr>
+          <tr><td>A pair, or any TLS field, with no <code>api_addr</code></td><td>TLS with no <code>api_addr</code> to serve it on</td></tr>
+          <tr><td><code>provided</code> with no pair</td><td><code>provided</code> needs <code>api_cert</code> and <code>api_key</code></td></tr>
+          <tr><td><code>plaintext</code> beside a pair</td><td>plaintext beside a TLS pair drops the pair; remove one</td></tr>
+          <tr><td><code>acme</code> or <code>self-signed</code> beside a pair</td><td>it issues its own certificate; remove the pair</td></tr>
+          <tr><td><code>acme</code> with no <code>api_domain</code></td><td>an IP cannot hold an ACME certificate</td></tr>
+          <tr><td><code>self-signed</code> on <code>0.0.0.0</code> with no <code>api_domain</code></td><td>binds every interface; set <code>api_domain</code> so the certificate has a name</td></tr>
+          <tr><td>Any other <code>api_tls</code> value</td><td>use one of acme, self-signed, provided, plaintext</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-storage">storage: host-volume allowlist</h3>
+
+    <p>
+      A <code>host</code> volume mounts a directory that already exists on the node, and
+      whether it may be mounted is not the spec's decision. The allowlist is empty by
+      default, so host volumes do nothing until this stanza names a parent.
+    </p>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">storage</span> {
+  <span class="k">allowed_host_paths</span> = [<span class="s">"/srv/kanea"</span>, <span class="s">"/mnt/media"</span>]
+}</code></pre>
+    <p>
+      The check runs <i>after</i> symlink resolution, on the object rather than the
+      spelling. Three things are refused at startup: a prefix that is not absolute, a
+      prefix that does not exist, and <code>"/"</code> itself &mdash; which "allows the
+      entire filesystem; list the directories you actually intend to share". An explicit
+      empty list is legal and means the same as no stanza: no host volumes.
+    </p>
+    <p>
+      A spec then mounts with <code>storage "x" { type = "host" path = "/srv/kanea/x" }</code>.
+      A path outside every prefix fails the alloc. A path that does not exist is refused
+      too, so a typo cannot become a silently empty volume &mdash; unless the spec sets
+      <code>create = true</code>, which makes Kanea create it, still only inside a prefix
+      you allowed. Creating is not owning: Kanea never chowns a host volume.
+    </p>
+
+    <h3 id="nodeconfig-grants">device and socket: passthrough grants</h3>
+
+    <p>
+      A job spec names a <i>grant</i>, never a path. There is no field in the spec for a
+      device node or a socket path &mdash; not a validated one, none &mdash; because the
+      node holds the mapping and the spec only asks for it by name.
+    </p>
+
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">device</span> <span class="s">"gpu"</span> {
+  <span class="k">nodes</span> = [<span class="s">"/dev/dri/card0"</span>, <span class="s">"/dev/dri/renderD128"</span>]  <span class="c"># a list; required</span>
+  <span class="k">allow</span> = [<span class="s">"media"</span>]                                 <span class="c"># projects that may claim it; required</span>
+  <span class="c"># mode = "rw"                                        # r, w, m; default "rw"</span>
+}
+
+<span class="k">socket</span> <span class="s">"containerd"</span> {
+  <span class="k">path</span>  = <span class="s">"/run/kanea/containerd.sock"</span>              <span class="c"># a single string; required</span>
+  <span class="k">allow</span> = [<span class="s">"ops"</span>]
+}</code></pre>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>On</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>The block label</td><td>both</td><td>The grant name a spec references. Must be a DNS-1123 label, or no spec could name it. Duplicates within a kind are refused.</td></tr>
+          <tr><td><code>nodes</code></td><td><code>device</code></td><td><b>A list</b> of absolute device paths. Required and non-empty.</td></tr>
+          <tr><td><code>path</code></td><td><code>socket</code></td><td><b>A single string.</b> Required, absolute, no <code>..</code>, not <code>/</code>.</td></tr>
+          <tr><td><code>allow</code></td><td>both</td><td>Required and non-empty: the projects that may claim the grant. Each must be a valid project name. There is no <code>projects</code> attribute &mdash; this is it.</td></tr>
+          <tr><td><code>mode</code></td><td><code>device</code></td><td>Optional cgroup permissions, some combination of <code>r</code>, <code>w</code> and <code>m</code>. Defaults to <code>"rw"</code>; <code>m</code> (mknod) only if you write it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      A spec claims one with <code>device "dri" { grant = "gpu" }</code> or
+      <code>socket "rt" { grant = "containerd" mount_path = "/run/containerd.sock" }</code>.
+      <b>Paths are resolved and type-checked per alloc, not at load</b>, so a grant naming
+      a device that is absent or is not a device fails <i>that alloc</i> with a message
+      naming the grant, rather than stopping the daemon. A transcoder silently running
+      without its GPU would look healthy and do the wrong thing, so it fails instead. A
+      grant the node does not hold is refused with a list of the ones it does.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">A socket grant is root on this node</b>
+      <p>
+        A container holding the runtime socket can start other containers without the
+        hardening defaults. There is no containment story and none is claimed:
+        <code>nosuid,noexec,nodev</code> restrict the filesystem entry, not the protocol
+        spoken over it. The control is that granting it happens on the machine, in a file
+        no spec author can write, and names one project.
+      </p>
+    </div>
+
+    <h3 id="nodeconfig-dns">dns: upstream resolvers</h3>
+
+    <p>
+      The internal resolver answers <code>&lt;service&gt;.&lt;project&gt;</code> names
+      itself and forwards everything else. By default it forwards where the host forwards
+      &mdash; every nameserver in <code>/etc/resolv.conf</code>, in the file's own order,
+      read once at startup. This stanza pins that list instead, which is what you want on
+      a node whose <code>resolv.conf</code> is DHCP's to rewrite:
+    </p>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">dns</span> {
+  <span class="k">upstreams</span> = [<span class="s">"1.1.1.1"</span>, <span class="s">"10.0.0.53:5353"</span>]  <span class="c"># a bare address gets :53</span>
+}</code></pre>
+    <p>
+      Each entry must be an address or a <code>host:port</code> pair, checked when the
+      file parses. <b>An empty list is refused by name</b>: a stanza meaning "no
+      upstreams" would silently turn every external name into SERVFAIL, so if that is
+      what you want, remove the stanza. Allocs never see this list &mdash; their
+      <code>resolv.conf</code> names Kanea's resolver alone, and it forwards on their
+      behalf from the host's own namespace.
+    </p>
+
+    <h3 id="nodeconfig-variables">variables: node-wide spec defaults</h3>
+
+    <p>
+      Values every spec on this node can reference as <code>${name}</code>, so one node's
+      domain or storage root does not have to be repeated in every file:
+    </p>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">variables</span> {
+  <span class="k">domain</span>      = <span class="s">"home.lan"</span>
+  <span class="k">media_root</span>  = <span class="s">"/srv/kanea/media"</span>
+}</code></pre>
+    <p>
+      Precedence is node under spec under caller: a spec's own <code>variables</code>
+      block wins over the node's, and <code>--var</code> on the command line wins over
+      both. Values are strings, numbers or bools &mdash; not lists or objects. A
+      definition may reference the built-ins but never a sibling, so there is deliberately
+      no ordering or cycle story. The R2 built-ins and <code>service</code> are reserved
+      names.
+    </p>
+    <div class="callout warn">
+      <b class="label">Never put a secret here</b>
+      <p>
+        <code>GET /v1/vars</code> serves this stanza to <i>any authenticated caller</i>,
+        which is exactly why nothing secret may live in it. Secrets are
+        <code>secret:</code> references, resolved per alloc into a tmpfs file; see
+        <a href="#overview-secrets">Secrets</a>.
+      </p>
+    </div>
+
+    <h3 id="nodeconfig-apply">Applying a change</h3>
+
+    <p>
+      The whole file is read once at startup, so there is one apply step and it is the
+      same for every stanza:
+    </p>
+    <pre class="plain">sudo systemctl restart kanead</pre>
+    <p>
+      <b><code>systemctl daemon-reload</code> is not part of this.</b> That is for
+      changes to the systemd <i>units</i>, which this file is not. Running it after
+      editing <code>kanea.hcl</code> is harmless but does nothing.
+    </p>
+
+    <h4>What a restart costs</h4>
+    <p>
+      Less than people expect, and it is worth knowing before you hesitate over a
+      production node:
+    </p>
+    <ul>
+      <li>
+        <b>Running workloads keep running.</b> The unit carries
+        <code>KillMode=process</code> precisely so a control-plane restart does not take
+        the containers with it; their shims outlive it.
+      </li>
+      <li>
+        <b>Ingress keeps serving.</b> <code>kanea-edge</code> is a separate process with
+        no <code>After=</code> relationship in either direction, and it serves the last
+        route snapshot it read from disk whether or not kanead is up.
+      </li>
+      <li>
+        <b>What pauses is <i>change</i></b>, for the second or two it takes to come back:
+        deploys, scaling decisions, certificate renewal, the API and the dashboard. See
+        <a href="#troubleshoot-slices">the process list</a> for the same split across
+        every daemon.
+      </li>
+    </ul>
+
+    <div class="callout warn">
+      <b class="label">A bad edit stops the daemon starting</b>
+      <p>
+        Malformed is fatal by design &mdash; no keep-last-good, no partial load &mdash;
+        so a file with a typo means <code>kanead</code> refuses to come back, with the
+        parse error naming the file and line in
+        <code>journalctl -u kanead</code>. Fix the file and restart again. If you need
+        the node up <i>first</i> and the config sorted out afterwards, add
+        <code>--config off</code> to the unit's <code>ExecStart</code>
+        (<code>systemctl edit kanead</code>), which starts the daemon as though the file
+        did not exist, so you can fix the file with the dashboard and the API back up.
+      </p>
+      <p>
+        There is no offline validator for this file today: the restart <i>is</i> the
+        check. On a node you cannot afford to have refuse a start, keep a known-good copy
+        beside it before editing.
+      </p>
+    </div>
+
+    <h4>Confirming it took effect</h4>
+    <p>
+      A few lines in <code>journalctl -u kanead</code> answer nearly every "the file
+      seems to do nothing" question:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Log line</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td><code>server config loaded</code></td><td>The file was found, trusted and parsed. It carries the path.</td></tr>
+          <tr><td><code>server config carries stanzas this version does not read</code></td><td>Something in the file is being ignored, and the message names it. A misspelled stanza shows up here rather than as an error.</td></tr>
+          <tr><td><code>dns upstreams from server config</code><br><code>api/dashboard listener from server config</code></td><td>That stanza won and is in effect. These are the positive confirmations, and their absence is as informative as their presence.</td></tr>
+          <tr><td><code>… is not consulted (--flag wins)</code></td><td>A flag on the unit is overriding that half of the file &mdash; there is one of these for <code>--dns-upstream</code>, <code>--listen</code>, <code>--allowed-host-paths</code> and <code>--passthrough-config</code>. This is the single most common cause of a stanza appearing to do nothing; see <a href="#nodeconfig-precedence">precedence</a>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-precedence">Flags, the file, and precedence</h3>
+
+    <p>
+      Every half of the file has a flag that overrides it, and the rule is the same
+      throughout: <b>an explicit flag wins, and the daemon says so in its log.</b>
+      Nothing is ever merged &mdash; whichever source supplies a setting supplies all of
+      it, so you never end up with an address from one place and its certificate from
+      another.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Stanza</th><th>Flag that wins</th><th>Turn it off with</th><th>If neither is set</th></tr></thead>
+        <tbody>
+          <tr><td><code>bind</code></td><td><code>--listen</code> (plus <code>--listen-cert</code>/<code>--listen-key</code>)</td><td><code>--listen none</code></td><td>Unix socket only</td></tr>
+          <tr><td><code>storage</code></td><td><code>--allowed-host-paths</code></td><td><code>--allowed-host-paths off</code></td><td>No host volumes</td></tr>
+          <tr><td><code>device</code>, <code>socket</code></td><td><code>--passthrough-config &lt;file&gt;</code></td><td><code>--passthrough-config off</code></td><td>No grants</td></tr>
+          <tr><td><code>dns</code></td><td><code>--dns-upstream</code></td><td><code>--dns-listen off</code> (disables the resolver)</td><td>The host's <code>resolv.conf</code></td></tr>
+          <tr><td><code>variables</code></td><td><i>none &mdash; file-only</i></td><td><code>--config off</code></td><td>No node variables</td></tr>
+          <tr><td><i>the whole file</i></td><td><code>--config &lt;file&gt;</code></td><td><code>--config off</code></td><td><code>/etc/kanea/kanea.hcl</code> if it exists</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <b class="label">Two traps in that table</b>
+      <p>
+        <b>The disable words are not the same.</b> It is <code>--listen none</code> but
+        <code>off</code> everywhere else. <code>none</code> was chosen for the listener
+        because it matches what <code>kanea init</code> asks you to type at the prompt.
+      </p>
+      <p>
+        <b><code>--config off</code> disables all six stanzas</b>, not just the security
+        ones. The file is never even stat-ed, so a present and perfectly good
+        <code>dns</code> or <code>variables</code> stanza goes with it. And
+        <code>variables</code> is the one half with no flag of its own, which is why the
+        daemon probes the file whenever <code>--config</code> does not say
+        <code>off</code>.
+      </p>
+    </div>
+
+    <p>
+      A flagged <code>--passthrough-config</code> file gets the same trust check as
+      <code>kanea.hcl</code> itself: arriving by argv does not make a policy file more
+      trustworthy. Note also that <code>--allowed-host-paths</code> does not <i>merge</i>
+      with the stanza; it replaces it, and the daemon logs
+      <code>server config storage stanza is not consulted</code> when both are present.
+    </p>
+
+    <h3 id="nodeconfig-example">A complete file</h3>
+
+    <p>Every stanza this version reads, in one file:</p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>/etc/kanea/kanea.hcl</span></div>
+<pre><span class="c"># /etc/kanea/kanea.hcl: the node's, never the repository's.</span>
+<span class="c"># Read once at startup. Edit, then: sudo systemctl restart kanead</span>
+
+<span class="k">bind</span> {                                       <span class="c"># where the API and dashboard listen</span>
+  <span class="k">api_addr</span> = <span class="s">"192.168.1.10:8600"</span>
+  <span class="k">api_tls</span>  = <span class="s">"self-signed"</span>                  <span class="c"># acme | self-signed | provided | plaintext</span>
+}
+
+<span class="k">storage</span> {                                    <span class="c"># parents that `host` volumes may mount from</span>
+  <span class="k">allowed_host_paths</span> = [<span class="s">"/srv/kanea"</span>, <span class="s">"/mnt/media"</span>]
+}
+
+<span class="k">dns</span> {                                        <span class="c"># pin resolvers; omit to follow the host's resolv.conf</span>
+  <span class="k">upstreams</span> = [<span class="s">"1.1.1.1"</span>, <span class="s">"9.9.9.9"</span>]
+}
+
+<span class="k">variables</span> {                                  <span class="c"># node-wide spec defaults; never secrets</span>
+  <span class="k">domain</span>     = <span class="s">"home.lan"</span>
+  <span class="k">media_root</span> = <span class="s">"/mnt/media"</span>
+}
+
+<span class="k">device</span> <span class="s">"gpu"</span> {                               <span class="c"># claimed as: device "dri" { grant = "gpu" }</span>
+  <span class="k">nodes</span> = [<span class="s">"/dev/dri/renderD128"</span>]
+  <span class="k">allow</span> = [<span class="s">"media"</span>]
+}
+
+<span class="k">socket</span> <span class="s">"containerd"</span> {                        <span class="c"># root-equivalent for whoever holds it</span>
+  <span class="k">path</span>  = <span class="s">"/run/kanea/containerd.sock"</span>
+  <span class="k">allow</span> = [<span class="s">"ops"</span>]
+}
+</pre>
+    </div>
 
     <!-- ================= spec ================= -->
     <h2 id="spec">Job spec reference</h2>
@@ -947,7 +1836,7 @@ service "web" {
         <thead><tr><th><code>type</code></th><th>Fields</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td><code>local</code></td><td>-</td><td>A directory on the node, managed by Kanea.</td></tr>
-          <tr><td><code>host</code></td><td><code>path</code>, <code>create</code></td><td>A directory the operator already owns, or, with <code>create = true</code>, one Kanea creates inside an allowed prefix. See R15: it does nothing until an operator allowlists its parent in <code>/etc/kanea/kanea.hcl</code>'s <code>storage { allowed_host_paths = […] }</code> stanza (or <code>--allowed-host-paths</code>, which wins).</td></tr>
+          <tr><td><code>host</code></td><td><code>path</code>, <code>create</code></td><td>A directory the operator already owns, or, with <code>create = true</code>, one Kanea creates inside an allowed prefix. See R15: it does nothing until an operator allowlists its parent in <code>/etc/kanea/kanea.hcl</code>'s <a href="#nodeconfig-storage"><code>storage { allowed_host_paths = […] }</code> stanza</a> (or <code>--allowed-host-paths</code>, which wins).</td></tr>
           <tr><td><code>nfs</code></td><td><code>server</code>, <code>export</code>, <code>options</code></td><td></td></tr>
           <tr><td><code>smb</code></td><td><code>server</code>, <code>share</code>, <code>auth_ref</code>, <code>options</code></td><td></td></tr>
           <tr><td><code>s3</code></td><td><code>bucket</code>, <code>endpoint</code>, <code>auth_ref</code>, <code>mode</code></td><td><code>mode = "ro"</code> selects mountpoint-s3, <code>"rw"</code> selects s3fs.</td></tr>
@@ -1043,7 +1932,7 @@ service "web" {
       <table>
         <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>grant</code></td><td>string</td><td>Required, on both blocks. Names a <code>device</code>/<code>socket</code> grant in the node's server config, <code>/etc/kanea/kanea.hcl</code>.</td></tr>
+          <tr><td><code>grant</code></td><td>string</td><td>Required, on both blocks. Names a <a href="#nodeconfig-grants"><code>device</code>/<code>socket</code> grant</a> in the node's server config, <code>/etc/kanea/kanea.hcl</code>.</td></tr>
           <tr><td><code>mount_path</code></td><td>string</td><td><code>socket</code> only, required. Where the socket appears in the container. A device appears at its host path.</td></tr>
           <tr><td><code>read_only</code></td><td>bool</td><td><code>socket</code> only. Restricts the filesystem entry, not the protocol spoken over it.</td></tr>
         </tbody>
@@ -1051,7 +1940,9 @@ service "web" {
     </div>
     <p>
       The operator side lives in the node's server config,
-      <code>/etc/kanea/kanea.hcl</code>, probed automatically at daemon start:
+      <code>/etc/kanea/kanea.hcl</code> (full reference:
+      <a href="#nodeconfig-grants">Node configuration &rarr; device and socket</a>),
+      probed automatically at daemon start:
       no flag, no unit editing, and a <code>kanea init</code> re-run never
       touches it. The default is that the file does not exist: a spec asking
       for a grant on a node with none fails its alloc rather than starting
@@ -1086,8 +1977,9 @@ service "web" {
         <a href="#spec-storage"><code>storage</code> allowlist stanza</a> in the
         same file. It must stay root-owned and writable only by its owner;
         kanead refuses a group- or world-writable policy file.</li>
-      <li><code>sudo systemctl restart kanead</code>; the file is read once, at
-        startup, never polled.</li>
+      <li><code>sudo systemctl restart kanead</code>: the file is read once, at
+        startup, never polled. Running workloads and ingress both survive the restart;
+        see <a href="#nodeconfig-apply">applying a change</a>.</li>
       <li>Verify: the startup log carries <code>server config loaded</code> with
         the path, and a <code>warn</code> line naming the passthrough
         consequence when grants are present. <code>kanea ps</code> shows the
@@ -1310,7 +2202,7 @@ restart {
       <table>
         <thead><tr><th>Form</th><th>Resolved</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>${VAR}</code></td><td>Parse time</td><td>From the spec's <a href="#spec-variables"><code>variables</code> block</a>, the node's <code>variables</code> stanza in <code>/etc/kanea/kanea.hcl</code>, and built-ins such as <code>KANEA_PROJECT</code>. Node under spec under caller (R30).</td></tr>
+          <tr><td><code>${VAR}</code></td><td>Parse time</td><td>From the spec's <a href="#spec-variables"><code>variables</code> block</a>, the node's <a href="#nodeconfig-variables"><code>variables</code> stanza</a> in <code>/etc/kanea/kanea.hcl</code>, and built-ins such as <code>KANEA_PROJECT</code>. Node under spec under caller (R30).</td></tr>
           <tr><td><code>${GIT_SHA_SHORT}</code></td><td>Checkout time</td><td>Survives parsing as a literal reference: its value does not exist until a commit is checked out.</td></tr>
           <tr><td><code>${service.&lt;n&gt;.host}</code></td><td>Alloc start</td><td>Becomes <code>&lt;n&gt;.&lt;project&gt;.kanea</code>. Validated at plan time; resolved as a <b>DNS name, never an IP</b>, so load-balancer reprogramming cannot break it.</td></tr>
           <tr><td><code>${service.&lt;n&gt;.port.&lt;p&gt;}</code></td><td>Alloc start</td><td>The named port's frontend port.</td></tr>
@@ -2151,10 +3043,21 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
       the local socket, and ends with a summary of what it built; the dashboard URL, your
       account, the internal DNS address and the subnet layout. Run it once, as root.
     </p>
-    <pre class="plain">sudo kanea init [--data-dir=/var/lib/kanea] [--log-dir=…] [--unit-dir=/etc/systemd/system]
-                [--network=ebpf|netns] [--containerd=…] [--node-cidr=…] [--cluster-cidr=…]
-                [--listen=127.0.0.1:8600] [--listen-cert=…] [--listen-key=…]
-                [--admin-user=…] [--no-start] [--skip-checks] [--skip-units]</pre>
+    <pre class="plain">sudo kanea init [--data-dir=/var/lib/kanea] [--log-dir=/var/log/kanea/allocs]
+                [--unit-dir=/etc/systemd/system] [--prefix=/usr/local/lib/kanea]
+                [--network=ebpf|netns] [--containerd=…|external] [--buildkit=…|off]
+                [--node-cidr=10.244.0.0/24] [--cluster-cidr=10.244.0.0/16]
+                [--node-cidr6=…] [--cluster-cidr6=…] [--service-cidr6=…]
+                [--listen=127.0.0.1:8600|none] [--listen-cert=…] [--listen-key=…]
+                [--reserve=256M] [--admin-user=…] [--timeout=2m]
+                [--bundle=…] [--no-install] [--no-start] [--skip-checks] [--skip-units]</pre>
+    <p>
+      A full walk-through, with an annotated run and what a re-run keeps, is in
+      <a href="#install-init">Installing &rarr; Setting up the node</a>. Note there is no
+      <code>--service-cidr</code> here: the v4 service pool is fixed at
+      <code>10.201.0.0/16</code> and is never rendered into the unit; change it by
+      editing <code>kanead.service</code>.
+    </p>
     <p>
       A non-loopback <code>--listen</code> is served over TLS, and since v0.23 init
       provisions it: with no explicit <code>--listen-cert</code>/<code>--listen-key</code>
@@ -2189,10 +3092,59 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
     </div>
 
     <h4><code>kanea doctor</code></h4>
+    <pre class="plain">kanea doctor [--data-dir=…] [--prefix=…] [--network=ebpf|netns] [--containerd=…]
+             [--buildkit=…|off] [--node-cidr=…] [--cluster-cidr=…] [--service-cidr=…]
+             [--offline]</pre>
     <p>
-      Verifies the node: dependencies and their versions, the containerd socket, bpffs and the
-      cgroup2 mount, kernel version, cgroups v2 and slice placement, the effective memory
-      floor, the build socket, disk headroom and clock synchronisation. Safe to run any time.
+      Verifies the node: dependencies and their versions against the pinned matrix, the
+      containerd socket, bpffs and the cgroup2 mount, kernel version, cgroups v2 and slice
+      placement, the effective memory floor, subnet overlap, the state database's
+      permissions, the build socket, disk headroom and clock synchronisation. It also
+      names known interference, like a firewall FORWARD-drop policy (docker, ufw) eating
+      east-west traffic. Safe to run any time.
+    </p>
+    <p>
+      A failing check exits non-zero; warnings do not. <code>--offline</code> skips the
+      one network probe, which is a reachability check for the pinned artefacts rather
+      than a requirement &mdash; on an air-gapped node it is the expected answer, not a
+      problem.
+    </p>
+
+    <h4><code>kanea install</code></h4>
+    <pre class="plain">kanea install [--list] [--dry-run] [--only=containerd,runc,…] [--force]
+              [--bundle=…] [--containerd=external] [--arch=amd64|arm64]
+              [--prefix=…] [--conf-dir=…] [--data-dir=…] [--run-dir=…]
+              [--unit-dir=…] [--skip-units]
+              [--node-cidr=…] [--cluster-cidr=…] [--node-cidr6=…] [--cluster-cidr6=…]</pre>
+    <p>
+      Places the pinned host components: containerd, <code>runc</code>, rootless
+      <code>buildkitd</code> and the wasmtime shim. <code>kanea init</code> runs this for
+      you, so you normally only reach for it directly to inspect
+      (<code>--list</code>, <code>--dry-run</code>) or to repair one component
+      (<code>--only</code>, <code>--force</code>). Versions and SHA-256 hashes are
+      compiled into the binary and never fetched. Full notes are in
+      <a href="#install-components">Installing &rarr; Host components</a>.
+    </p>
+
+    <h4><code>kanea bundle</code></h4>
+    <pre class="plain">kanea bundle create [--arch=amd64|arm64] [-o=…] [--dir] [--no-images] [--containerd=…]</pre>
+    <p>
+      Builds an offline bundle of the host components on a machine that has a network, for
+      a node that does not. <code>--dir</code> writes a directory instead of a tarball and
+      <code>--no-images</code> omits the image components (leaving the binaries alone).
+      The bundle carries no hashes of its own: it is verified against the installing
+      node's binary. See <a href="#install-airgapped">Air-gapped nodes</a>.
+    </p>
+
+    <h4><code>kanea ca</code></h4>
+    <pre class="plain">kanea ca show [--out=…] [--quiet]   # the CA certificate in PEM
+kanea ca info                       # its subject, fingerprint and validity</pre>
+    <p>
+      <code>show</code> prints the node's own CA certificate, which is what devices need
+      in order to trust <code>self-signed</code> services and the dashboard:
+      <code>kanea ca show &gt; kanea-ca.crt</code>. There is deliberately no
+      <code>kanea ca rotate</code> and no route that returns the CA <i>key</i>: rotation
+      means re-trusting every device, and a command for it would imply it is cheap.
     </p>
 
     <h4><code>kanea upgrade</code></h4>
@@ -2458,13 +3410,17 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
     <p>Normally systemd runs these. The flags are here because <code>systemctl cat</code> will show them to you.</p>
 
     <h4><code>kanea agent</code></h4>
-    <pre class="plain">kanea agent [--config=/etc/kanea/kanea.hcl] [--data-dir=…] [--log-dir=…]
-            [--volume-dir=…] [--socket=…]
+    <pre class="plain">kanea agent [--config=/etc/kanea/kanea.hcl|off] [--data-dir=…] [--log-dir=…]
+            [--volume-dir=…] [--socket=/run/kanea/kanead.sock]
             [--containerd=…] [--network=ebpf|netns] [--node-cidr=…] [--cluster-cidr=…]
-            [--service-cidr=…] [--bpf-dir=…] [--dns-listen=…]
-            [--allowed-host-paths=…] [--passthrough-config=…]
-            [--listen=…] [--listen-cert=…] [--listen-key=…] [--dashboard=true]
-            [--autoscale=true] [--log-level=info]
+            [--service-cidr=10.201.0.0/16] [--bpf-dir=/sys/fs/bpf/kanea]
+            [--dns-listen=…|off] [--dns-upstream=…]
+            [--allowed-host-paths=…|off] [--passthrough-config=…|off]
+            [--listen=…|none] [--listen-cert=…] [--listen-key=…]
+            [--base-domain=…] [--tls-default=acme|self-signed|provided|plaintext]
+            [--tls-certs-config=…] [--acme-email=…] [--edge-group=kanea-edge]
+            [--publish-ports=1024-65535] [--secrets-providers-config=…]
+            [--dashboard=true] [--autoscale=true] [--log-level=info]
             [--backup-s3-endpoint=…] [--backup-s3-region=…] [--backup-s3-access-key=…]
             [--oidc-client-id=…] [--ldap-url=…] [--acme-dns-tsig-key=…]</pre>
     <p>
@@ -2486,38 +3442,42 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
       any bind reaches the directory.
     </p>
     <p>
-      The operator-owned settings live in the server config
+      The operator-owned settings live in the server config,
       <code>/etc/kanea/kanea.hcl</code>: which directories <code>host</code> volumes may
-      come from (R15, a <code>storage { allowed_host_paths = […] }</code> stanza), which
-      devices and sockets are granted to projects (R17, R18,
-      <code>device</code>/<code>socket</code> blocks), and (since v1.61) where the
-      API and dashboard listen (a <code>bind</code> stanza: <code>api_addr</code>, with
-      <code>api_tls</code> choosing among <code>acme</code>; a Let's Encrypt certificate
-      for <code>api_domain</code>, issued and renewed by the same pass that serves your
-      services; <code>self-signed</code> (the node CA, with a real IP SAN when the
-      address is bare; <code>provided</code>) your own
-      <code>api_cert</code>/<code>api_key</code> pair; and <code>plaintext</code>;
-      explicit HTTP, allowed beyond loopback because it was typed and logged loudly;
-      the full field set is in <a href="#arch-dashboard">Exposing the API and
-      dashboard</a>).
-      The file is probed once at
-      startup when it exists; absent means every setting's zero value. It must be a
-      regular file, owned by root (or the daemon's uid), and writable
-      only by its owner: anything else refuses startup, as does a file that does not
-      parse. Stanzas from the fuller PRD §15.1 sketch that this version does not read are
-      warned by name at startup, never silently ignored.
+      come from, which devices and sockets are granted to which projects, where the API
+      and dashboard listen, which resolvers the internal DNS forwards to, and node-wide
+      spec variables. It is read once at startup, refused if anyone but its owner could
+      have written it, and absent by default. The complete reference &mdash; every stanza,
+      every field, the precedence rules and how to apply an edit &mdash; is
+      <a href="#nodeconfig">Node configuration</a>.
     </p>
     <p>
-      <code>--allowed-host-paths</code>, <code>--passthrough-config</code> and
-      <code>--listen</code> remain as
-      explicit overrides: setting one means the corresponding half of the file is not
-      consulted (<code>--passthrough-config</code> names a separate grants file with the
-      same trust check), <code>off</code> on the first two, or <code>--listen none</code>;
-      disables that half regardless of the
-      file, and <code>--config</code> moves or (<code>--config off</code>) disables the
-      file itself. Either way this is deliberately node configuration: a job spec can
-      reference what it permits and can never add to it.
+      Every one of those has a flag that overrides it, and the disable words differ
+      (<code>--listen none</code>, but <code>off</code> elsewhere). The full precedence
+      table is in <a href="#nodeconfig-precedence">Node configuration &rarr; Flags and
+      precedence</a>.
     </p>
+
+    <div class="callout">
+      <b class="label">What init writes into the unit, and what it does not</b>
+      <p>
+        <code>kanea init</code> renders exactly seven of these flags into
+        <code>ExecStart</code>: <code>--data-dir</code>, <code>--log-dir</code>,
+        <code>--network</code>, <code>--node-cidr</code>, <code>--cluster-cidr</code>,
+        <code>--edge-group</code>, and <code>--listen</code> (with its cert pair, and only
+        when <a href="#nodeconfig-bind">the <code>bind</code> stanza</a> does not own the
+        listener). The three <code>*6</code> flags join them only when IPv6 is enabled, so
+        a v4-only unit stays byte-identical.
+      </p>
+      <p>
+        Everything else on this page is set by editing the unit
+        (<code>systemctl edit kanead</code>) or by the server config. That includes two
+        that look like they should be init's, because init has flags by the same name and
+        uses them only for the install: <code>--containerd</code> and
+        <code>--buildkit</code>. A non-default containerd socket or buildkit address
+        needs a unit edit.
+      </p>
+    </div>
 
     <h4><code>kanea edge</code></h4>
     <pre class="plain">kanea edge [--routes=/run/kanea-edge/routes.json] [--certs=…] [--http=:80]
@@ -2575,10 +3535,10 @@ kanea describe shop/web      # the full picture: spec, routes, volumes, allocs, 
       <li><code>kanead</code>: the control plane. Workloads and north-south traffic both
         survive it being down; what stops is <i>change</i>: deploys, scaling, certificate
         renewal, the API and dashboard.</li>
-      <li><code>kanea-edge</code>; the ingress proxy. Deliberately independent of
+      <li><code>kanea-edge</code>: the ingress proxy. Deliberately independent of
         <code>kanead</code> (no <code>After=</code> in either direction): it serves the last
         route snapshot it read from disk whether or not the control plane is up.</li>
-      <li><code>kanea-containerd</code>; Kanea's own containerd, socket at
+      <li><code>kanea-containerd</code>: Kanea's own containerd, socket at
         <code>/run/kanea/containerd.sock</code>. Restarting it does not stop running
         containers (<code>KillMode=process</code>: shims outlive it), but nothing can be
         created or probed while it is down. Absent when the node adopted an existing
@@ -2713,6 +3673,30 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
         <code>ExecStart</code>, then <code>systemctl daemon-reload</code> and restart.
         A re-run of <code>kanea init</code> will not put it back, with
         <code>bind.api_addr</code> declared it renders no listen flags at all.
+      </li>
+      <li>
+        <b><code>kanead</code> will not start on a fresh cloud node.</b> If the journal
+        says <code>/etc/resolv.conf lists only loopback resolvers</code>, the node is
+        older than v0.23.2 and is hitting a fixed bug: systemd-resolved's
+        <code>127.0.0.53</code> stub is the only nameserver a stock Debian or Ubuntu
+        server has, and it was being discarded, leaving no upstreams and a refusal.
+        <code>sudo kanea upgrade</code> is the fix &mdash; the stub is a perfectly good
+        upstream, since <code>kanead</code> forwards from the host's own namespace. A
+        <a href="#nodeconfig-dns"><code>dns</code> stanza</a> pins resolvers if you want
+        to, but it is an override, never a requirement.
+      </li>
+      <li>
+        <b>The server config seems to do nothing.</b> Three things, in order.
+        Did it load? <code>journalctl -u kanead | grep 'server config'</code> shows
+        <code>server config loaded</code> with the path, or nothing at all if the file
+        is absent. Is a stanza being ignored? The same grep shows
+        <code>carries stanzas this version does not read</code> with the offending names
+        &mdash; that is where a misspelled stanza lands, since only unknown attributes
+        <i>inside</i> a read stanza are errors. Is a flag beating it? Look for
+        <code>is not consulted</code>: an explicit flag on the unit always wins, and
+        <code>--config off</code> disables the file entirely. Remember the file is read
+        <b>once</b>, so an edit needs
+        <a href="#nodeconfig-apply"><code>systemctl restart kanead</code></a>.
       </li>
       <li>
         <b>The autoscaler stopped scaling.</b> Its circuit breaker trips on purpose after

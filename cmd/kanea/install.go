@@ -121,7 +121,7 @@ func runInstall(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	o.printf("kanea install; %s\n\n", version)
+	o.printf("kanea install: %s\n\n", version)
 	o.printf("Source: %s\n", source.Describe())
 	o.printf("Prefix: %s\n\n", layout.Prefix)
 
