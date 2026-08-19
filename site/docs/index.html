@@ -39,6 +39,7 @@
     <nav id="toc-list">
     <a class="part" href="#overview">Overview</a>
     <a class="sub" href="#overview-concepts">Concepts</a>
+    <a class="sub" href="#overview-ecs">Coming from ECS or Container Apps</a>
     <a class="sub" href="#overview-naming">Naming</a>
     <a class="sub" href="#overview-lifecycle">Lifecycle</a>
     <a class="sub" href="#overview-deploy">What counts as a deploy</a>
@@ -149,7 +150,8 @@
     <p>
       Kanea borrows from Nomad and Kubernetes and keeps the smallest set of concepts that
       covers the work. If you know either system, the middle columns tell you what maps
-      to what.
+      to what; if you are coming from a managed cloud service, the
+      <a href="#overview-ecs">ECS and Container Apps table</a> is below.
     </p>
 
     <div class="tablewrap">
@@ -174,6 +176,96 @@
       cannot read <code>analytics</code>' secrets even by naming them, its containers live in
       a separate containerd namespace, and its DNS names sit under a separate suffix.
     </p>
+
+
+    <h3 id="overview-ecs">Coming from ECS or Container Apps</h3>
+    <p>
+      The two managed services closest to Kanea in shape are <b>Amazon ECS</b> and
+      <b>Azure Container Apps</b>. (On Azure, Container Apps is the right comparison:
+      AKS is the Kubernetes column above, and Container Instances is a single container
+      with no orchestration around it.) Both map onto Kanea closely enough to be worth a
+      table &mdash; but read the ECS column carefully, because one of its terms means
+      the opposite of what it means here:
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Kanea</th><th>Amazon ECS</th><th>Azure Container Apps</th></tr></thead>
+        <tbody>
+          <tr><td><b>Node</b></td><td>Cluster, plus its container instances</td><td>Environment</td></tr>
+          <tr><td><b>Project</b></td><td>&mdash; (a cluster is the nearest thing)</td><td>Environment, again</td></tr>
+          <tr><td><b>Service</b></td><td>Service</td><td>Container app</td></tr>
+          <tr><td><b>Task</b></td><td>Container definition</td><td>Container</td></tr>
+          <tr><td><b>Alloc</b></td><td><b>Task</b></td><td>Replica</td></tr>
+          <tr><td>Spec file</td><td>Task definition</td><td>App YAML / ARM template</td></tr>
+          <tr><td>Deploy (spec-hash change)</td><td>New task definition revision</td><td>New revision</td></tr>
+          <tr><td><b>Storage</b></td><td>Volume: bind mount, EFS, FSx</td><td>Volume mount: Azure Files, ephemeral</td></tr>
+          <tr><td>Internal DNS</td><td>Service Connect / Cloud Map</td><td>Built-in environment DNS</td></tr>
+          <tr><td><code>expose</code> + the edge</td><td>ALB target group + listener rule</td><td>Ingress</td></tr>
+          <tr><td><code>scaling</code></td><td>Application Auto Scaling</td><td>KEDA scale rules</td></tr>
+          <tr><td><b>Pipeline</b></td><td>CodePipeline + CodeBuild</td><td>ACR Tasks / GitHub Actions</td></tr>
+          <tr><td>Secrets</td><td>Secrets Manager / SSM, by ARN</td><td>Container app secrets / Key Vault</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <b class="label">"Task" means the opposite thing in ECS</b>
+      <p>
+        In ECS a <b>task</b> is a <i>running instance</i> &mdash; the unit a service keeps
+        <code>desiredCount</code> of, and the direct equivalent of a Kubernetes pod. In
+        Kanea that is an <b>alloc</b>. A Kanea <b>task</b> is the <i>container</i> inside
+        a service, which ECS calls a container definition and puts inside a task
+        definition.
+      </p>
+      <p>
+        So "three tasks" means three replicas on ECS and is not a sentence you can say in
+        Kanea, where a service has exactly one task and three allocs. It is the single
+        most reliable way to misread this documentation coming from ECS.
+      </p>
+    </div>
+
+    <h4>Where the mapping breaks down</h4>
+    <ul>
+      <li>
+        <b>Project has no ECS equivalent.</b> ECS groups by cluster and otherwise relies
+        on IAM and tags, so there is no boundary that carries network policy, secret
+        scope and DNS at once the way a Kanea project does. On Container Apps the
+        environment is the closest thing, which is why it appears twice in the table
+        above: it is both the hosting boundary and the network boundary, where Kanea
+        splits those into the node and the project.
+      </li>
+      <li>
+        <b>One node, not a region.</b> Both services schedule across availability zones
+        and survive a machine dying; Kanea v1 is a single machine, and if it stops,
+        everything on it stops. That is the trade the whole design makes, and
+        <a href="#arch-backup">state replication and restore</a> is the answer it offers
+        instead of failover: an encrypted snapshot and change log in S3, restored onto a
+        new box.
+      </li>
+      <li>
+        <b>Nothing is billed per control plane, because there is no control plane to
+        rent.</b> <code>kanead</code> is a process on your machine inside a 256 MiB
+        reservation. The flip side is that patching, capacity and the node's own
+        uptime are yours.
+      </li>
+      <li>
+        <b>Load balancing is in the datapath, not a resource you create.</b> A service
+        gets a virtual IP the moment it exists, and east-west traffic is rewritten at
+        <code>connect()</code> by eBPF rather than crossing a proxy at all. Container
+        Apps gives you ingress built in and is closest here; on ECS the equivalent is a
+        load balancer, target group and listener rules to declare, wire up and pay for.
+        North-south traffic goes through <a href="#arch-edge">the edge</a>, which is a
+        process on the same box, not a product.
+      </li>
+      <li>
+        <b>The spec is one file for the whole project.</b> An ECS deployment is typically
+        a task definition plus a service definition plus target groups plus listener
+        rules, assembled by Terraform or CDK; a Kanea project is one HCL file that
+        <code>kanea plan</code> validates offline, covering the containers, routing,
+        TLS, volumes, scaling and builds together.
+      </li>
+    </ul>
 
     <h3 id="overview-naming">Naming</h3>
     <p>
