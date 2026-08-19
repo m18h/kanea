@@ -31,6 +31,11 @@ type unitOptions struct {
 	reserve string
 	// binary is the absolute path to the kanea executable.
 	binary string
+	// prefix is where `kanea install` placed the host components. kanead's
+	// PATH is rendered from it so the daemon can find `buildctl`, which it
+	// execs by name; systemd's default PATH does not include Kanea's bin dir.
+	// Empty means provision.DefaultPrefix.
+	prefix string
 	// network is kanead's --network mode; empty means the default (ebpf).
 	network string
 	// nodeCIDR and clusterCIDR are rendered into kanead's ExecStart, so the
@@ -159,6 +164,17 @@ func kaneadService(opts unitOptions) string {
 			listenFlags += ` --listen-cert ` + opts.listenCert + ` --listen-key ` + opts.listenKey
 		}
 	}
+	// kanead execs `buildctl` by name when it drives a build, and systemd's
+	// default PATH does not include Kanea's bin dir, so without this line
+	// every build fails with "executable file not found in $PATH" on a node
+	// whose components are installed and healthy. The containerd unit carries
+	// the same line for the same reason (its shim lookup, PRD v1.39); this is
+	// that finding applied to the one binary kanead resolves for itself.
+	prefix := opts.prefix
+	if prefix == "" {
+		prefix = provision.DefaultPrefix
+	}
+	binDir := provision.Layout{Prefix: prefix}.BinDir()
 	return heredoc(`
 		[Unit]
 		Description=Kanea control plane (kanead)
@@ -179,6 +195,7 @@ func kaneadService(opts unitOptions) string {
 		# exec still catches the common failure (a missing or unexecutable
 		# binary) which Type=simple would report as a successful start.
 		Type=exec
+		Environment=PATH=` + binDir + `:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 		ExecStart=` + opts.binary + ` agent --data-dir ` + opts.dataDir + ` --log-dir ` + opts.logDir +
 		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + v6Flags + listenFlags +
 		` --edge-group ` + provision.EdgeUser + `

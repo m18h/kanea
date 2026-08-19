@@ -91,6 +91,14 @@ func serviceAuth(d Desired) *AuthPolicy {
 func (r *Reconciler) resolveAuthEntry(ctx context.Context, d Desired, a *AuthPolicy) (edge.AuthEntry, error) {
 	entry := edge.AuthEntry{Project: d.Project, Service: d.Service}
 
+	// Every branch below resolves a reference, so a nil resolver is a nil
+	// interface method call. An error here costs the caller one 503 route
+	// (fail-closed, R27's rule for missing material); a panic costs the
+	// reconcile loop. registryAuth and ensureSecrets guard the same way.
+	if r.secrets == nil {
+		return entry, fmt.Errorf("route auth names a secret but no secret store is configured")
+	}
+
 	switch {
 	case a.BasicRef != "":
 		entry.Mode = edge.AuthBasic

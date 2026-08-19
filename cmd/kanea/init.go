@@ -222,7 +222,7 @@ func runInit(args []string) error {
 	if !*skipUnits {
 		if err := writeUnits(o, unitOptions{
 			dir: *unitDir, dataDir: *dataDir, logDir: *logDir,
-			reserve: *reserve, binary: executablePath(),
+			reserve: *reserve, binary: executablePath(), prefix: *prefix,
 			network: *networkMode, nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
 			nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
 			listen: unitListen, listenCert: unitListenCert, listenKey: unitListenKey,
@@ -447,7 +447,7 @@ func runDoctor(args []string) error {
 	}
 
 	o := newOut()
-	o.printf("kanea doctor; %s\n\n", version)
+	o.printf("kanea doctor: %s\n\n", version)
 	ok := renderChecks(o, preflight(preflightOptions{
 		dataDir: *dataDir, containerdSocket: *containerdSocket,
 		networkMode:    *networkMode,

@@ -186,8 +186,9 @@ Next:
          sudo kanea init
 
      It checks the node, installs the runtime (containerd, runc and rootless
-     buildkitd, at pinned versions), runs the master-key ceremony and writes
-     the systemd units.
+     buildkitd, at pinned versions), runs the master-key ceremony, writes the
+     systemd units, starts kanead and creates your first admin account. It
+     asks for the dashboard address and a username as it goes.
 
      Have somewhere to record the key before you start: it is shown once,
      and without it every backup is unreadable.
@@ -197,13 +198,7 @@ Next:
      it tomorrow. `kanea install --list` shows the pinned versions first, and
      `--dry-run` verifies every download without writing anything.
 
-  2. Then:
-
-         sudo systemctl daemon-reload
-         sudo systemctl enable --now kanead
-         sudo kanea user add --role admin <name>
-
-     To use the CLI without sudo, join the kanea group and log in again;
+  2. To use the CLI without sudo, join the kanea group and log in again;
      membership is root-equivalent, exactly like docker's:
 
          sudo usermod -aG kanea <user>

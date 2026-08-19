@@ -337,12 +337,49 @@ func checkBuildkit(socket string, layout provision.Layout) checkResult {
 		return warn("buildkit", "buildctl is not installed",
 			"run `kanea install --only buildkit`, or run kanead with --buildkit off")
 	}
+	// Installed is not the same as reachable. kanead execs `buildctl` by name,
+	// and systemd's default PATH does not include Kanea's bin dir, so a node
+	// whose unit predates the fix has the binary sitting right there and still
+	// fails every build with "executable file not found in $PATH". Nothing
+	// rewrites units in place, so this is a re-init finding, like the edge
+	// user's.
+	if f := checkKaneadFindsBuildctl(layout); f != nil {
+		return *f
+	}
 	path := strings.TrimPrefix(socket, "unix://")
 	if _, err := os.Stat(path); err != nil {
 		return warn("buildkit", path+" is not present",
 			"systemctl status kanea-buildkit: builds and GitOps will fail until it answers")
 	}
 	return pass("buildkit", path)
+}
+
+// checkKaneadFindsBuildctl reports a kanead unit that cannot resolve buildctl.
+//
+// nil means "nothing to say": no unit (a dev topology, where kanead inherits
+// the operator's PATH) or an unreadable one, which checkEdgeUser already
+// reports against the same directory.
+func checkKaneadFindsBuildctl(layout provision.Layout) *checkResult {
+	body, err := os.ReadFile(filepath.Join(provision.DefaultUnitDir, "kanead.service")) // #nosec G304; a fixed unit path
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Environment=PATH=") {
+			continue
+		}
+		for _, dir := range strings.Split(strings.TrimPrefix(line, "Environment=PATH="), ":") {
+			if dir == layout.BinDir() {
+				return nil
+			}
+		}
+	}
+	f := warn("buildkit",
+		"kanead.service does not put "+layout.BinDir()+" on PATH, so kanead cannot exec buildctl",
+		"re-run `kanea init` (idempotent) to rewrite the units; until then every build fails "+
+			"with `exec: \"buildctl\": executable file not found in $PATH` even though it is installed")
+	return &f
 }
 
 // checkFUSE verifies what S3 volumes need (§8).
