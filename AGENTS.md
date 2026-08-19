@@ -27,7 +27,7 @@ limits*.
 | Metrics & autoscaling | In-memory TS, three scrapers plus the GPU reader (PRD v1.42), evaluator + guardrails, circuit breaker, Prometheus exporter |
 | GitOps & pipelines | Run objects, git sync (in-process go-git), signed webhooks, BuildKit runner, serialised queue, coordinator, API/CLI/dashboard |
 | Notifications | Event vocabulary, glob filters, SSRF egress guard, five channels, coalescing dispatcher, bounded event feed |
-| MCP server | Hand-written MCP over both transports, 20 tools in three tiers, rolling updates on spec drift |
+| MCP server | Hand-written MCP over both transports, 24 tools in three tiers, rolling updates on spec drift |
 | Hardening & packaging | Encrypted archives, hand-written S3 sink, CDC replication, staged + offline restore, schema migrations, `kanea init` key ceremony, systemd units, DR runbook, host-component installer + offline bundles (PRD v1.30), SPDX SBOMs under the release signature |
 | Functions (wasm) | PRD v1.39: `function` block → lowered service on the wasmtime shim (R25/R26), pinned shim component, event/cron invokers, functions-port dispatcher, `GET /v1/functions` + CLI + dashboard page |
 

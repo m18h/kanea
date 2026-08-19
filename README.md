@@ -466,6 +466,32 @@ end-to-end (TLS on :443 in front, h2c behind). WebSockets need nothing at all.
 pinned matrix, bpffs, disk and clock. `kanea install --list` prints what is
 pinned; `--dry-run` downloads and verifies every artefact without writing.
 
+### AI agents (MCP)
+
+Kanea is an MCP server, over stdio for an agent on the node and streamable HTTP
+at `/mcp` on the API listener for one anywhere else. Twenty-four tools in three
+tiers, and **the tier an agent gets is its credential's role**: a viewer token
+does not see the mutating tools in `tools/list` at all.
+
+```bash
+# On the node: Claude Code, opencode and Codex all take the same command.
+claude mcp add kanea -- kanea mcp
+codex  mcp add kanea -- kanea mcp
+
+# From a laptop: mint a token and point the client at /mcp.
+sudo kanea token create --role viewer --expires-in 720h agent
+claude mcp add --transport http kanea https://192.168.1.10:8600/mcp   --header "Authorization: Bearer $KANEA_TOKEN"
+```
+
+The stdio transport authenticates by unix socket access, which is
+root-equivalent, so an agent on it is always an admin — join the `kanea` group
+or it cannot reach the daemon at all. Use HTTP with a viewer token when you want
+an agent that can diagnose but not deploy. There is **no secrets tool at any
+tier**, the two destructive tools need an explicit `confirm`, and every call is
+audited under the token's id. Full setup, including the opencode and Codex
+config files, is in the
+[MCP docs](https://m18h.github.io/kanea/docs/#mcp).
+
 ### Air-gapped nodes
 
 A node with no egress is a supported installation, not a workaround. Build a

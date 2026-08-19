@@ -108,6 +108,12 @@
     <a class="sub" href="#cli-backup">Backup and restore</a>
     <a class="sub" href="#cli-daemons">Daemons</a>
     <a class="sub" href="#cli-agents">MCP</a>
+    <a class="part" href="#mcp">AI agents (MCP)</a>
+    <a class="sub" href="#mcp-choosing">Which transport</a>
+    <a class="sub" href="#mcp-stdio">stdio, on the node</a>
+    <a class="sub" href="#mcp-http">Streamable HTTP</a>
+    <a class="sub" href="#mcp-tools">The tools</a>
+    <a class="sub" href="#mcp-safety">Deciding what to hand over</a>
     <a class="part" href="#troubleshoot">Troubleshooting</a>
     <a class="sub" href="#troubleshoot-services">Checking services</a>
     <a class="sub" href="#troubleshoot-logs">Viewing logs</a>
@@ -1257,7 +1263,7 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       (node-wide defaults and per-project, each with a test button); plus accounts, API
       tokens and the audit log, one tab each; what belongs to the unit (listen address,
       subnets, DNS, the
-      port policy) is shown read-only with a note saying so. The MCP server exposes 20 tools
+      port policy) is shown read-only with a note saying so. The MCP server exposes 24 tools
       in three tiers (read, mutate, destructive) over stdio and streamable HTTP.
     </p>
     <div class="callout">
@@ -3581,11 +3587,14 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
     </p>
 
     <h3 id="cli-agents">MCP</h3>
-    <pre class="plain">kanea mcp [--verbose]</pre>
+    <pre class="plain">kanea mcp [--socket=/run/kanea/kanead.sock] [--verbose]</pre>
     <p>
-      A stdio MCP server for a local AI agent: 20 tools in read, mutate and destructive
-      tiers. The same server is available over streamable HTTP on the API listener for remote
-      agents.
+      A stdio MCP server for an AI agent running on the node: 24 tools in read, mutate and
+      destructive tiers. The same server is available over streamable HTTP at
+      <code>/mcp</code> on the API listener for agents running anywhere else.
+      <b>Setting it up for Claude Code, opencode or Codex is
+      <a href="#mcp">AI agents (MCP)</a></b>, which has the client configuration for both
+      transports.
     </p>
     <p>
       Tools reach the platform only by making requests against the API's own handler, so an
@@ -3597,6 +3606,263 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
     <h4><code>kanea version</code></h4>
     <p>Prints the version stamped in at build time. <code>kanea upgrade</code> compares it against what the running daemon reports.</p>
 
+
+
+    <!-- ================= mcp ================= -->
+    <h2 id="mcp">AI agents (MCP)</h2>
+
+    <p>
+      Kanea ships a Model Context Protocol server, so an agent can look at the node and
+      operate it through the same API you do. It speaks both transports: <b>stdio</b>, for
+      an agent running on the node itself, and <b>streamable HTTP</b> on the API listener,
+      for one running anywhere else.
+    </p>
+    <p>
+      There is nothing to install. The server is the same <code>kanea</code> binary, and
+      the tools reach the platform only by making requests against the API's own handler
+      &mdash; which is what makes the next section a statement about capability rather
+      than about good intentions.
+    </p>
+
+    <div class="callout">
+      <b class="label">An agent is never more privileged than its credential</b>
+      <p>
+        A tool's only verb is "send this request", so nothing in the MCP server can hold
+        a Store, a secrets store or an auth store, and no tool can do something the token
+        behind it could not do at the REST API. Which tools an agent can even
+        <i>see</i> follows from that token's role, and there is <b>no secrets tool at any
+        tier</b> &mdash; not a redacted one, none.
+      </p>
+    </div>
+
+    <h3 id="mcp-choosing">Which transport</h3>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>stdio</th><th>Streamable HTTP</th></tr></thead>
+        <tbody>
+          <tr><td><b>Command / endpoint</b></td><td><code>kanea mcp</code></td><td><code>https://&lt;node&gt;:8600/mcp</code></td></tr>
+          <tr><td><b>Agent runs</b></td><td>On the node</td><td>Anywhere</td></tr>
+          <tr><td><b>Authenticates by</b></td><td>Unix socket access</td><td>A bearer token</td></tr>
+          <tr><td><b>Needs</b></td><td>root, or <code>kanea</code> group membership</td><td>An API listener (<code>--listen</code> or a <a href="#nodeconfig-bind"><code>bind</code> stanza</a>)</td></tr>
+          <tr><td><b>Role</b></td><td>Always admin: the socket is root-equivalent</td><td>Whatever the token has</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The practical rule: if your editor runs <i>on</i> the node, use stdio. If you are on
+      a laptop and the node is a server &mdash; which includes every Mac, since
+      <code>kanead</code> is Linux-only &mdash; use HTTP. Prefer HTTP when you want the
+      agent to be read-only, because that is the transport where you can choose a role.
+    </p>
+
+    <h3 id="mcp-stdio">stdio, on the node</h3>
+
+    <pre class="plain">kanea mcp [--socket=/run/kanea/kanead.sock] [--verbose]</pre>
+    <p>
+      It talks to <code>kanead</code> over the unix socket and speaks MCP on stdin and
+      stdout. <code>--verbose</code> logs protocol activity to <i>stderr</i>; stdout is
+      the protocol channel, and a single stray line on it corrupts the stream in a way
+      that presents as a client which connects and then does nothing.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">The socket is root-owned, and this is the setup step people miss</b>
+      <p>
+        Your editor runs as you, not as root, so <code>kanea mcp</code> fails to reach the
+        daemon unless you have joined the group <code>kanea init</code> created:
+      </p>
+      <pre class="plain">sudo usermod -aG kanea $USER   # then log out and back in</pre>
+      <p>
+        Membership is <b>root-equivalent</b>, exactly like docker's group. An agent on this
+        transport is therefore always an admin, with every tool available to it. If that
+        is more than you want to hand over, use <a href="#mcp-http">HTTP with a viewer
+        token</a> instead.
+      </p>
+    </div>
+
+    <h4>Claude Code</h4>
+    <pre class="plain">claude mcp add kanea -- kanea mcp</pre>
+    <p>
+      Add <code>--scope project</code> to write it into the repository's
+      <code>.mcp.json</code> instead of your own config, so everyone working on that
+      project gets it. The file form is the usual one:
+    </p>
+    <pre><code>{
+  <span class="s">"mcpServers"</span>: {
+    <span class="s">"kanea"</span>: {
+      <span class="s">"command"</span>: <span class="s">"kanea"</span>,
+      <span class="s">"args"</span>: [<span class="s">"mcp"</span>]
+    }
+  }
+}</code></pre>
+
+    <h4>opencode</h4>
+    <p>
+      In <code>opencode.json</code> at the project root, or your global
+      <code>~/.config/opencode/opencode.json</code>:
+    </p>
+    <pre><code>{
+  <span class="s">"$schema"</span>: <span class="s">"https://opencode.ai/config.json"</span>,
+  <span class="s">"mcp"</span>: {
+    <span class="s">"kanea"</span>: {
+      <span class="s">"type"</span>: <span class="s">"local"</span>,
+      <span class="s">"command"</span>: [<span class="s">"kanea"</span>, <span class="s">"mcp"</span>],
+      <span class="s">"enabled"</span>: <span class="k">true</span>
+    }
+  }
+}</code></pre>
+
+    <h4>Codex</h4>
+    <pre class="plain">codex mcp add kanea -- kanea mcp</pre>
+    <p>
+      Which writes to <code>~/.codex/config.toml</code>; the equivalent by hand is:
+    </p>
+    <pre><code><span class="k">[mcp_servers.kanea]</span>
+<span class="k">command</span> = <span class="s">"kanea"</span>
+<span class="k">args</span>    = [<span class="s">"mcp"</span>]</code></pre>
+
+    <h3 id="mcp-http">Streamable HTTP, from anywhere</h3>
+
+    <p>
+      The same server is mounted at <code>/mcp</code> on the API listener &mdash;
+      deliberately not under <code>/v1</code>, because that path is this API's versioned
+      surface and MCP carries its own version in the <code>initialize</code> handshake. It
+      exists only when the node has an API listener at all: a socket-only node
+      (<code>--listen none</code>) has no HTTP transport to offer.
+    </p>
+    <p>Mint a token for the agent, and choose its role deliberately:</p>
+    <pre class="plain">sudo kanea token create --role viewer agent-readonly    # can look, cannot touch
+sudo kanea token create --role admin  agent-deploy      # can deploy, scale and stop
+sudo kanea token create --role viewer --expires-in 720h agent-30d</pre>
+    <p>
+      The secret is printed to stdout once and is not recoverable, so
+      <code>… > token.txt</code> captures exactly it while the commentary goes to stderr.
+      <code>kanea token ls</code> shows what exists and <code>kanea token rm &lt;id&gt;</code>
+      revokes one.
+    </p>
+
+    <h4>Claude Code</h4>
+    <pre class="plain">claude mcp add --transport http kanea https://192.168.1.10:8600/mcp \
+  --header "Authorization: Bearer $KANEA_TOKEN"</pre>
+
+    <h4>opencode</h4>
+    <pre><code>{
+  <span class="s">"$schema"</span>: <span class="s">"https://opencode.ai/config.json"</span>,
+  <span class="s">"mcp"</span>: {
+    <span class="s">"kanea"</span>: {
+      <span class="s">"type"</span>: <span class="s">"remote"</span>,
+      <span class="s">"url"</span>: <span class="s">"https://192.168.1.10:8600/mcp"</span>,
+      <span class="s">"enabled"</span>: <span class="k">true</span>,
+      <span class="s">"headers"</span>: { <span class="s">"Authorization"</span>: <span class="s">"Bearer &lt;token&gt;"</span> }
+    }
+  }
+}</code></pre>
+
+    <h4>Codex</h4>
+    <pre><code><span class="k">[mcp_servers.kanea]</span>
+<span class="k">url</span> = <span class="s">"https://192.168.1.10:8600/mcp"</span>
+<span class="k">bearer_token_env_var</span> = <span class="s">"KANEA_TOKEN"</span></code></pre>
+
+    <div class="callout warn">
+      <b class="label">Two things that will bite you here</b>
+      <p>
+        <b>A JSON entry with a <code>url</code> and no <code>type</code> is a
+        configuration error</b>, not a remote server. Claude Code reads a typeless entry
+        as stdio and skips it with a message saying so; opencode needs
+        <code>"type": "remote"</code> for the same reason. Copying an
+        <code>mcpServers</code> block from another client is where this usually happens.
+      </p>
+      <p>
+        <b>If the node serves a self-signed certificate</b> &mdash; which it does by
+        default, whether from <code>kanea init</code>'s provisioned pair or the node CA
+        &mdash; a client that does not trust it will fail the TLS handshake before MCP is
+        ever spoken. Install the CA with <code>kanea ca show</code> on the machine running
+        the agent, or point the client at a name covered by an <code>acme</code>
+        certificate.
+      </p>
+    </div>
+
+    <h3 id="mcp-tools">The tools</h3>
+
+    <p>
+      Twenty-four tools in three tiers. <b>The tier an agent gets is its credential's
+      role</b>, and the listing is filtered, not merely refused: a viewer token does not
+      see the mutating tools in <code>tools/list</code> at all, so the model cannot
+      propose calling one.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tier</th><th>Needs</th><th>Tools</th></tr></thead>
+        <tbody>
+          <tr><td><b>Read</b><br>13 tools</td><td>viewer</td><td><code>list_projects</code>, <code>get_project</code>, <code>list_services</code>, <code>get_service</code>, <code>list_allocs</code>, <code>get_logs</code>, <code>get_events</code>, <code>get_node_stats</code>, <code>get_service_stats</code>, <code>list_pipelines</code>, <code>list_storage</code>, <code>list_backups</code>, <code>get_audit</code>*</td></tr>
+          <tr><td><b>Mutate</b><br>9 tools</td><td>admin</td><td><code>plan_spec</code>, <code>apply_spec</code>, <code>scale_service</code>, <code>restart_service</code>, <code>stop_service</code>, <code>deploy_service</code>, <code>run_pipeline</code>, <code>create_backup</code>, <code>test_notification</code></td></tr>
+          <tr><td><b>Destructive</b><br>2 tools</td><td>admin, plus an explicit <code>confirm</code></td><td><code>restore_backup</code>, <code>delete_project</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      * <code>get_audit</code> is the one read tool a viewer cannot actually use: the
+      audit log is admin-only at the API, so the tool is listed but the call comes back
+      403. That is the tier system being advisory and the API being authoritative, in the
+      one place where they disagree.
+    </p>
+
+    <p>
+      A destructive tool called without <code>confirm: true</code> is refused with a
+      result telling the model to call it again <i>only if the operator has explicitly
+      asked for this</i>, and that it cannot be undone. The gate is enforced in the MCP
+      server rather than the API, because it is not an authorization rule &mdash; an
+      admin is allowed to delete a project and the API will let them. It is a rule about
+      agents: a destructive action has to be arrived at deliberately rather than by
+      pattern-matching a tool name, and a human reading the transcript afterwards can see
+      that it was. A refusal comes back as a <i>tool result</i> rather than a JSON-RPC
+      protocol error, because a protocol error is handled by the client library and never
+      reaches the model, which is the one party that has to react to it. An
+      <i>unknown</i> tool is the exception, and deliberately so: that is a bug in the
+      client, not a refusal for a model to reason about.
+    </p>
+    <p>
+      Every call lands in the audit log with the token's id, exactly like a REST call,
+      because it <i>is</i> one. The dashboard's audit tab, <code>GET /v1/audit</code> and
+      the <code>get_audit</code> tool all show it &mdash; which means an agent can read
+      its own trail, and so can you.
+    </p>
+
+    <h3 id="mcp-safety">Deciding what to hand over</h3>
+
+    <ul>
+      <li>
+        <b>Start with a viewer token.</b> It covers the whole diagnostic loop &mdash; what
+        is deployed, what is failing, the logs, the events, the stats, the audit trail
+        &mdash; which is most of what an agent is actually useful for, and it cannot
+        change anything.
+      </li>
+      <li>
+        <b>Give admin only when you want the agent deploying.</b> <code>apply_spec</code>,
+        <code>scale_service</code> and <code>deploy_service</code> are real deploys, with
+        the same rolling-update rules and health gates a human's would have; nothing
+        about a change arriving from an agent makes it a different kind of change.
+      </li>
+      <li>
+        <b>Prefer HTTP with a scoped token over stdio</b> when the distinction matters.
+        The stdio transport authenticates by socket access, and socket access is
+        root-equivalent, so there is no read-only version of it.
+      </li>
+      <li>
+        <b>Set an expiry.</b> <code>kanea token create</code> warns when a token never
+        expires, for good reason: <code>--expires-in 720h</code> costs nothing and bounds
+        the blast radius of a leaked editor config.
+      </li>
+      <li>
+        <b>Secrets are unreachable by construction, so do not plan around them.</b> There
+        is no tool that reads one at any tier; a spec references
+        <code>secret:&lt;project&gt;/&lt;name&gt;</code> and the agent never sees a value.
+      </li>
+    </ul>
 
     <!-- ================= troubleshooting ================= -->
     <h2 id="troubleshoot">Troubleshooting</h2>
