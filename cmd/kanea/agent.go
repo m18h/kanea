@@ -588,8 +588,14 @@ func runAgent(args []string) error {
 		Mounts:        mounts,
 		VolumeUsage:   volumeUsage,
 		Passthrough:   grants,
-		EdgeSnapshot:  routesPath,
-		BaseDomain:    *baseDomain,
+		// Without this the reconciler holds a nil resolver, and every service
+		// that names a `secret:` env ref, a registry credential or route auth
+		// fails its alloc on a node whose secrets store is perfectly healthy.
+		// Every reconciler test supplies its own, which is why nothing caught
+		// the daemon never supplying one.
+		Secrets:      secretStore,
+		EdgeSnapshot: routesPath,
+		BaseDomain:   *baseDomain,
 	})
 	if err != nil {
 		return err
