@@ -166,11 +166,21 @@ socket-only regardless.
 ### On a home network
 
 No public name, no port 80 reachable from the internet, and still real HTTPS. Point
-a wildcard DNS record at the node, run the control plane with a local CA, and
-install that CA once on each device:
+a wildcard DNS record (`*.home.lan`) at the node on your local resolver, run the
+control plane with a local CA, and install that CA once on each device.
+
+`--base-domain` and `--tls-default` are daemon flags that `kanea init` does not write into the unit, so they go
+in a drop-in (`sudo systemctl edit kanead`), which also survives re-running init:
+
+```ini
+[Service]
+ExecStart=
+# copy the existing line from `systemctl cat kanead`, then append:
+ExecStart=/usr/local/bin/kanea agent … --base-domain home.lan --tls-default self-signed
+```
 
 ```bash
-sudo kanead --base-domain home.lan --tls-default self-signed
+sudo systemctl daemon-reload && sudo systemctl restart kanead
 kanea ca show > kanea-ca.crt      # install on your phone, laptop, TV
 ```
 
@@ -192,6 +202,10 @@ network {
   }
 }
 ```
+
+The full DNS story — internal `<service>.<project>` names, the public records you
+create, HTTP-01 versus DNS-01, and split-horizon setups — is in the
+[names and DNS docs](https://m18h.github.io/kanea/docs/#dns).
 
 `mode = "tcp"` relays bytes instead, for Postgres, a game server, or anything
 else that is not HTTP. Which ports a spec may claim is the node's decision

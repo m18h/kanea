@@ -75,6 +75,12 @@
     <a class="sub" href="#nodeconfig-apply">Applying a change</a>
     <a class="sub" href="#nodeconfig-precedence">Flags and precedence</a>
     <a class="sub" href="#nodeconfig-example">A complete file</a>
+    <a class="part" href="#dns">Names and DNS</a>
+    <a class="sub" href="#dns-internal">Internal names</a>
+    <a class="sub" href="#dns-base-domain">The base domain</a>
+    <a class="sub" href="#dns-records">The records you create</a>
+    <a class="sub" href="#dns-certificates">Certificates and the challenge</a>
+    <a class="sub" href="#dns-private">Private networks and homelabs</a>
     <a class="part" href="#spec">Job spec reference</a>
     <a class="sub" href="#spec-top-level">Top level</a>
     <a class="sub" href="#spec-variables">variables</a>
@@ -1780,6 +1786,248 @@ sudo systemctl restart kanead</pre>
 }
 </pre>
     </div>
+
+
+    <!-- ================= dns ================= -->
+    <h2 id="dns">Names and DNS</h2>
+
+    <p>
+      Kanea deals in two separate name spaces, and almost every DNS question comes from
+      them being mistaken for one. One is internal, resolved by Kanea, and needs nothing
+      from you. The other is public, resolved by the world's DNS, and is the only part
+      where you create records.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>Internal</th><th>Public</th></tr></thead>
+        <tbody>
+          <tr><td><b>Looks like</b></td><td><code>web.shop.kanea</code></td><td><code>web.shop.apps.example.com</code></td></tr>
+          <tr><td><b>Resolved by</b></td><td>Kanea's own resolver</td><td>Your DNS provider</td></tr>
+          <tr><td><b>Answers with</b></td><td>The service's virtual IP</td><td>The node's public address</td></tr>
+          <tr><td><b>Reaches</b></td><td>The allocs directly, east-west</td><td><a href="#arch-edge">The edge</a> on :443, then the allocs</td></tr>
+          <tr><td><b>Records you create</b></td><td><b>None.</b> It is automatic</td><td>One wildcard, usually</td></tr>
+          <tr><td><b>Who can use it</b></td><td>Allocs on this node</td><td>Anything that can reach the node</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="dns-internal">Internal names, between services</h3>
+
+    <p>
+      Every alloc gets a generated <code>/etc/resolv.conf</code> pointing at Kanea's
+      resolver, with a search path that makes the short forms work:
+    </p>
+    <pre class="plain">nameserver 10.244.0.1
+search shop.kanea kanea
+options ndots:1 timeout:2 attempts:2</pre>
+    <p>So from a service inside project <code>shop</code>:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>You write</th><th>It resolves</th><th>When to use it</th></tr></thead>
+        <tbody>
+          <tr><td><code>db</code></td><td><code>db.shop.kanea</code></td><td>A service in the same project.</td></tr>
+          <tr><td><code>cache.data</code></td><td><code>cache.data.kanea</code></td><td>A service in another project.</td></tr>
+          <tr><td><code>db.shop.kanea</code></td><td>itself</td><td>When you would rather be explicit.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The address that comes back is the service's virtual IP, and the connection is
+      load-balanced across its healthy allocs at <code>connect()</code> by the datapath
+      &mdash; there is no proxy in the path and no client-side round-robin to get wrong.
+      The resolver lives at the node CIDR's <code>.1</code>
+      (<code>10.244.0.1</code> by default, moving with <code>--node-cidr</code>), and it
+      is an anchor address, never a wildcard.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">Resolving is not reaching</b>
+      <p>
+        A cross-project name resolves for anyone, because DNS is not the security
+        boundary. The datapath is, and it is <b>deny-by-default between projects</b>: the
+        connection is dropped unless the <i>callee</i> lists the caller in
+        <code>allow_from</code>. This presents as a name that resolves fine and a
+        connection that times out, which reads like a network fault rather than a policy
+        decision. If a cross-project call hangs, check <code>allow_from</code> on the
+        service being called before you look at DNS.
+      </p>
+    </div>
+
+    <h3 id="dns-base-domain">The base domain</h3>
+
+    <p>
+      An exposed service's public name is
+      <code>&lt;service&gt;.&lt;project&gt;.&lt;base-domain&gt;</code>, so
+      <code>--base-domain apps.example.com</code> gives the <code>web</code> service in
+      project <code>shop</code> the name <code>web.shop.apps.example.com</code>. A spec
+      can name its own domains instead, with <code>expose { domains = [...] }</code>; the
+      base domain is what it falls back to when it does not.
+    </p>
+
+    <div class="callout warn">
+      <b class="label"><code>kanea init</code> does not set this, and the unit is rewritten</b>
+      <p>
+        <code>--base-domain</code>, <code>--acme-email</code> and
+        <code>--tls-default</code> are daemon flags that init never renders into
+        <code>kanead.service</code> &mdash; it writes only seven, and these are not among
+        them. Without a base domain a service has no generated FQDN at all, so this is
+        the step between "deployed" and "reachable by name".
+      </p>
+      <p>
+        Set them in a <b>drop-in</b>, not by editing the unit: <code>kanea init</code>
+        rewrites <code>kanead.service</code> on every run, so a direct edit is lost the
+        next time you regenerate units, while a drop-in survives.
+        <code>sudo systemctl edit kanead</code> and add:
+      </p>
+      <pre class="plain">[Service]
+ExecStart=
+ExecStart=/usr/local/bin/kanea agent --data-dir /var/lib/kanea \
+  --log-dir /var/log/kanea/allocs --network ebpf \
+  --node-cidr 10.244.0.0/24 --cluster-cidr 10.244.0.0/16 \
+  --edge-group kanea-edge \
+  --base-domain apps.example.com --acme-email you@example.com</pre>
+      <p>
+        The empty <code>ExecStart=</code> is required: systemd appends to that directive
+        otherwise, and a unit with two <code>ExecStart</code> lines fails to start. Copy
+        the existing line from <code>systemctl cat kanead</code> and add to it, rather
+        than retyping it from here &mdash; your node's flags may differ. Then
+        <code>sudo systemctl daemon-reload &amp;&amp; sudo systemctl restart kanead</code>.
+      </p>
+    </div>
+
+    <h3 id="dns-records">The records you create</h3>
+
+    <p>
+      One wildcard covers every service, present and future, which is why it is the usual
+      answer:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Record</th><th>Type</th><th>Points at</th><th>Covers</th></tr></thead>
+        <tbody>
+          <tr><td><code>*.apps.example.com</code></td><td>A</td><td>The node's public IPv4</td><td>Every generated service name</td></tr>
+          <tr><td><code>*.apps.example.com</code></td><td>AAAA</td><td>The node's public IPv6</td><td>The same, for v6 clients</td></tr>
+          <tr><td><code>kanea.example.com</code></td><td>A</td><td>The node's address</td><td>The dashboard, if you gave it a name</td></tr>
+          <tr><td><code>shop.example.com</code></td><td>A</td><td>The node's public IPv4</td><td>One custom <code>domains</code> entry</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The AAAA record is about the <i>node's own</i> public address and has nothing to do
+      with the opt-in container IPv6 feature: the edge binds <code>:443</code> on whatever
+      the host has, so a node with public v6 serves v6 clients whether or not allocs have
+      v6 addresses.
+    </p>
+    <p>
+      The dashboard is not a service and takes no <code>expose</code> block, so it is not
+      covered by the wildcard unless you happen to name it under the base domain. Give it
+      a name with <a href="#nodeconfig-bind"><code>bind.api_domain</code></a> and point a
+      record at the node; without one it is reached by IP, and its certificate is the
+      self-signed pair <code>kanea init</code> provisioned.
+    </p>
+    <p>
+      Nothing needs a record per alloc, and nothing needs a record that changes when you
+      scale or redeploy: the edge routes by <code>Host</code> header and the datapath
+      handles the rest, so the DNS side is static once it is set up.
+    </p>
+
+    <h3 id="dns-certificates">Certificates and the challenge</h3>
+
+    <p>
+      Which ACME challenge Kanea can use decides what you have to arrange, and the two
+      are not interchangeable:
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>HTTP-01 (default)</th><th>DNS-01</th></tr></thead>
+        <tbody>
+          <tr><td><b>Needs</b></td><td>Port 80 reachable from the internet, and the name already resolving to the node</td><td>An RFC 2136 nameserver accepting TSIG-signed updates</td></tr>
+          <tr><td><b>Configure</b></td><td>Nothing beyond <code>--acme-email</code></td><td><code>--acme-dns-server</code> and the TSIG flags</td></tr>
+          <tr><td><b>Wildcard certificates</b></td><td>Impossible &mdash; there is no single host to reach</td><td>Yes</td></tr>
+          <tr><td><b>Works on a private node</b></td><td>No</td><td>Yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      HTTP-01 is the default and needs no configuration: the edge serves the challenge
+      path on <code>:80</code>, and <code>kanead</code> reaches its own edge first to
+      confirm the challenge is actually being served before it asks the CA to try
+      (<code>--acme-verify-url</code>). The record has to exist and point at the node
+      <i>before</i> issuance, so create DNS first, deploy second.
+    </p>
+    <p>DNS-01 is RFC 2136 dynamic update, with TSIG:</p>
+    <pre class="plain">--acme-dns-server ns1.example.com:53
+--acme-dns-zone example.com                      # default: the challenge name's parent
+--acme-dns-tsig-key kanea-updates
+--acme-dns-tsig-secret secret:shared/tsig        # a reference, never the literal
+--acme-dns-tsig-algorithm hmac-sha256.</pre>
+    <p>
+      <b>There is no provider integration</b> &mdash; no Cloudflare, Route 53 or
+      Azure DNS plugin. RFC 2136 is the whole DNS-01 story, which suits BIND, Knot and
+      PowerDNS, and means a provider that only offers a proprietary API needs a zone you
+      run yourself, or a CNAME delegation of <code>_acme-challenge</code> into one.
+      The TSIG secret is <b>required</b> whenever <code>--acme-dns-server</code> is set,
+      and must be a <code>secret:</code> reference: a literal is refused by name, and so
+      is an absent one, because unsigned dynamic updates would let anyone on the network
+      answer a challenge.
+    </p>
+
+    <div class="callout">
+      <b class="label">When Kanea switches to a wildcard</b>
+      <p>
+        Certificates are per service until a node has <b>20</b> generated names, at which
+        point it collapses them into one wildcard for the base domain &mdash; but only if
+        a DNS-01 solver is configured, since HTTP-01 cannot validate a wildcard. The
+        number comes from Let's Encrypt's limit of 50 certificates per registered domain
+        per week, and every redeploy that changes a name spends one.
+      </p>
+      <p>
+        <b>Custom domains are never collapsed.</b> A name you declared in
+        <code>expose { domains }</code> is somebody else's zone, and Kanea has no standing
+        to ask a CA for <code>*.</code> of it. Use <code>--acme-directory staging</code>
+        while you are getting this working: the staging CA has far looser limits, and its
+        certificates are not trusted, which is the point.
+      </p>
+    </div>
+
+    <h3 id="dns-private">Private networks and homelabs</h3>
+
+    <p>
+      No public name, no port 80 from the internet, and still real HTTPS. Two routes, and
+      the difference is whether a browser has to be taught to trust anything:
+    </p>
+    <ul>
+      <li>
+        <b>The node's own CA</b> (<code>--tls-default self-signed</code>). Point a
+        wildcard record on your local resolver &mdash; a Pi-hole, a router, an internal
+        BIND &mdash; at the node, then install the CA once per device with
+        <code>kanea ca show &gt; kanea-ca.crt</code>. No CA to reach, no rate limit to
+        spend, works entirely offline. The cost is one trust-store install per device,
+        and devices you do not administer cannot be taught.
+      </li>
+      <li>
+        <b>Real certificates over DNS-01.</b> If you own a public domain and can run
+        RFC 2136 updates against it, the node gets publicly-trusted certificates for
+        names that resolve only on your LAN. Nothing has to be reachable from the
+        internet, because the challenge is answered in DNS rather than over HTTP. Every
+        device trusts it with no setup.
+      </li>
+    </ul>
+    <p>
+      Either way the record points at the node's <i>LAN</i> address, which is ordinary
+      split-horizon DNS: the name resolves internally and either does not resolve
+      externally or resolves elsewhere. Kanea does not care which, because it never
+      resolves its own public names &mdash; the edge routes on the <code>Host</code>
+      header it is given.
+    </p>
+    <p>
+      Prefer not to deal with names at all? <a href="#spec-network">Publish a port</a>
+      and reach the service at <code>http://&lt;node&gt;:8096</code>. That path needs no
+      DNS and no certificate, and <code>ip_restriction</code> bounds who may use it.
+    </p>
 
     <!-- ================= spec ================= -->
     <h2 id="spec">Job spec reference</h2>
@@ -4055,6 +4303,25 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
         <code>--config off</code> disables the file entirely. Remember the file is read
         <b>once</b>, so an edit needs
         <a href="#nodeconfig-apply"><code>systemctl restart kanead</code></a>.
+      </li>
+      <li>
+        <b>A service has no public name, or the name does not resolve.</b> Three
+        separate things have to be true, and they fail differently.
+        <code>kanea describe</code> shows the domains the service actually claims: if it
+        shows none, the node has no <a href="#dns-base-domain"><code>--base-domain</code></a>
+        &mdash; which <code>kanea init</code> never sets, so it is a drop-in on the unit,
+        not a spec change. If it shows a name that does not resolve, the
+        <a href="#dns-records">DNS record</a> is yours to create; a wildcard covers every
+        service at once. If it resolves but the certificate never issues, the record has
+        to point at the node <i>before</i> issuance for HTTP-01, and
+        <code>--acme-email</code> has to be set or nothing is requested at all.
+      </li>
+      <li>
+        <b>A cross-project call resolves but times out.</b> That is policy, not DNS.
+        Names resolve for everyone because DNS is not the security boundary; the datapath
+        is, and it denies between projects by default. The <i>callee</i> needs
+        <code>allow_from</code> naming the caller. A timeout rather than a refusal is
+        what a dropped packet looks like, which is why this reads as a network fault.
       </li>
       <li>
         <b>The autoscaler stopped scaling.</b> Its circuit breaker trips on purpose after
