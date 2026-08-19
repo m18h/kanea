@@ -94,12 +94,13 @@ brew trust m18h/kanea   # brew ≥ 6 refuses formulae from untrusted third-party
 brew install kanea
 ```
 
-Homebrew ships the CLI, not the node (PRD §5.2.12): on macOS you get the
-authoring half, where `kanea plan` validates job specs with file-and-line
-diagnostics and needs no daemon, while the platform itself runs on Linux. On a
-Linux machine the formula installs the same full binary, but a *node* belongs
-to the script above: root-owned at `/usr/local/bin`, where `kanea upgrade`
-owns the swap. A brew-owned binary upgrades with `brew upgrade kanea`, then
+Homebrew ships the CLI, not the node (PRD §5.2.12) — but the CLI is not the
+authoring half any more. `kanea plan` still validates job specs with
+file-and-line diagnostics and needs no daemon at all, and with `KANEA_URL` and
+a token the same binary drives a remote node completely: deploy, ps, logs,
+exec, scale. A Mac is a first-class client; it is just never the *node*, which
+belongs to the script above: root-owned at `/usr/local/bin`, where
+`kanea upgrade` owns the swap. A brew-owned binary upgrades with `brew upgrade kanea`, then
 `sudo kanea upgrade --no-fetch` for the restart-and-migrate half. The formula
 lives in its own tap repository, [m18h/homebrew-kanea](https://github.com/m18h/homebrew-kanea),
 and is regenerated from each release's `checksums.txt` by a workflow there;
@@ -505,6 +506,41 @@ tier**, the two destructive tools need an explicit `confirm`, and every call is
 audited under the token's id. Full setup, including the opencode and Codex
 config files, is in the
 [MCP docs](https://m18h.github.io/kanea/docs/#mcp).
+
+### Deploying from CI
+
+The CLI is not tied to the node. Point it at a node's HTTPS listener with a
+token and it works from a laptop or a GitLab runner:
+
+```bash
+sudo kanea token create --role admin ci --expires-in 720h   # on the node
+sudo kanea ca show > kanea-ca.crt                           # unless the node uses acme
+```
+
+```yaml
+deploy:
+  variables:
+    KANEA_URL: https://kanea.apps.example.com:8600
+  script:
+    - kanea deploy shop/web "$CI_REGISTRY_IMAGE@$IMAGE_DIGEST"
+  # KANEA_TOKEN masked; KANEA_CA_CERT a file variable, or the PEM itself
+```
+
+`kanea deploy` points a service at a new image and **leaves the rest of its
+spec alone** — it reads the record, changes the image, writes it back, and
+waits for the new image to be running so a failed deploy fails the pipeline.
+Prefer a digest to a tag: a tag can move between two allocs being replaced.
+
+`--role admin` is required to deploy; a viewer token reads and changes nothing.
+`http://` beyond loopback is refused, because a bearer token would cross the
+network in clear text, and there is no skip-verify flag — `KANEA_CA_CERT`
+takes the PEM itself, so a CI secret needs no file step. `kanea upgrade` and
+`kanea mcp` act on the host they run on and refuse a remote endpoint.
+
+Prefer the node to pull? Commit the digest into the project's spec repo and let
+the [git webhook](https://m18h.github.io/kanea/docs/#remote-gitops) fire; no
+token in CI, and a git history of every deploy. Full setup, both ways, is in
+the [remote docs](https://m18h.github.io/kanea/docs/#remote).
 
 ### Air-gapped nodes
 

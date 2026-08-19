@@ -77,18 +77,28 @@ func IsPublicAddr(addr string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("api: bad listen address %q: %w", addr, err)
 	}
-	if host == "" {
-		return true, nil
-	}
+	return IsPublicHost(host), nil
+}
 
+// IsPublicHost is IsPublicAddr's rule over a bare host, with no port to split.
+//
+// Split out so the client's endpoint check (remote.go: refusing a bearer token
+// over plain http beyond loopback) and the daemon's listener check are one
+// derivation. Two implementations of "is this loopback" would eventually
+// disagree, and the disagreement would be a credential crossing a network in
+// clear text because one side thought the host was local.
+func IsPublicHost(host string) bool {
+	if host == "" {
+		return true
+	}
 	if ip, err := netip.ParseAddr(host); err == nil {
-		return !ip.IsLoopback(), nil
+		return !ip.IsLoopback()
 	}
 	// A name, not an address. "localhost" is the one that is knowably loopback;
 	// anything else has to be resolved, and a name that resolves to loopback
 	// today can resolve elsewhere tomorrow. Treating it as public is the safe
 	// reading, and TLS is not a hardship on a host someone gave a name.
-	return host != "localhost", nil
+	return host != "localhost"
 }
 
 // loadTLS reads the listener's certificate.

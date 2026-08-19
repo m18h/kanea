@@ -22,7 +22,7 @@ import (
 // the read path.
 func runDescribe(args []string) error {
 	fs := flag.NewFlagSet("describe", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -32,7 +32,10 @@ func runDescribe(args []string) error {
 	}
 
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 	services, err := client.Services(ctx)
 	if err != nil {
 		return err

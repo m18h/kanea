@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
+	"strings"
 
 	"github.com/m18h/kanea/internal/auth"
 	"github.com/m18h/kanea/internal/backup"
@@ -25,11 +26,22 @@ import (
 	"github.com/m18h/kanea/internal/settings"
 )
 
-// Client talks to a running kanead over its unix socket.
+// Client talks to a running kanead: over its unix socket, or (since v1.82)
+// over a node's network listener with a bearer token. NewClientFor in remote.go
+// builds the second kind; everything below is transport-agnostic.
 type Client struct {
-	http   *http.Client
+	http *http.Client
+	// socket is the unix socket path, and is empty on a remote client. It is
+	// what dialError reads to decide which remedies make sense.
 	socket string
+	// base is the origin every request URL is built on: the dummy authority the
+	// unix transport ignores, or the node's real one.
+	base string
 }
+
+// localBase is the authority a unix-socket request carries. The transport
+// dials the socket and ignores it, but net/http still needs a well-formed URL.
+const localBase = "http://kanead"
 
 // NewClient builds a client for the given socket path.
 func NewClient(socket string) *Client {
@@ -38,8 +50,9 @@ func NewClient(socket string) *Client {
 	}
 	return &Client{
 		socket: socket,
+		base:   localBase,
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: clientTimeout,
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 					return (&net.Dialer{}).DialContext(ctx, "unix", socket)
@@ -49,8 +62,44 @@ func NewClient(socket string) *Client {
 	}
 }
 
-// Socket reports the path this client talks to, for error messages.
-func (c *Client) Socket() string { return trimSocketPrefix(c.socket) }
+// Socket reports the path this client talks to, for error messages. Empty on a
+// remote client, which has no socket to name.
+func (c *Client) Socket() string {
+	if c.socket == "" {
+		return ""
+	}
+	return trimSocketPrefix(c.socket)
+}
+
+// Target is what this client talks to, for display: the socket path locally,
+// the origin remotely.
+func (c *Client) Target() string {
+	if c.socket == "" {
+		return c.base
+	}
+	return c.Socket()
+}
+
+// Remote reports whether this client crosses a network.
+func (c *Client) Remote() bool { return c.socket == "" }
+
+// url is the absolute URL for a route.
+func (c *Client) url(path string) string {
+	if c.base == "" {
+		return localBase + path // a zero-value Client, as some tests build
+	}
+	return c.base + path
+}
+
+// wsURL is url with the scheme swapped for its websocket twin.
+func (c *Client) wsURL(path string) string {
+	base := c.url("")
+	if rest, ok := strings.CutPrefix(base, "https"); ok {
+		return "wss" + rest + path
+	}
+	rest, _ := strings.CutPrefix(base, "http")
+	return "ws" + rest + path
+}
 
 // Health checks that kanead is up. The CLI calls it first so a stopped daemon
 // produces "is kanead running?" rather than a bare dial error.
@@ -156,7 +205,7 @@ func (c *Client) BuildLogs(
 	if follow {
 		path += "?follow=true"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://kanead"+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url(path), nil)
 	if err != nil {
 		return err
 	}
@@ -288,7 +337,7 @@ func (c *Client) Logs(ctx context.Context, opts LogOptions, w io.Writer) (err er
 		q.Set("tail", strconv.Itoa(opts.Tail))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://kanead"+PathLogs+"?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url(PathLogs)+"?"+q.Encode(), nil)
 	if err != nil {
 		return err
 	}
@@ -328,7 +377,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) (er
 		reader = bytes.NewReader(encoded)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, "http://kanead"+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, c.url(path), reader)
 	if err != nil {
 		return err
 	}
@@ -357,6 +406,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) (er
 // the errno, because "permission denied" on a 0600 socket is working as
 // designed and the caller needs to know which door is theirs (§13.1, v1.48).
 func (c *Client) dialError(err error) error {
+	if c.Remote() {
+		return c.remoteDialError(err)
+	}
 	if errors.Is(err, fs.ErrPermission) {
 		return fmt.Errorf("permission denied on %s; run with sudo, or join the %s group "+
 			"(sudo usermod -aG %s $USER, then log in again): %w",
@@ -368,6 +420,27 @@ func (c *Client) dialError(err error) error {
 			c.Socket(), err)
 	}
 	return err
+}
+
+// remoteDialError answers the questions a remote endpoint actually raises.
+//
+// The socket's remedies are nonsense here: there is no group to join, and
+// `kanea agent` would start a daemon on the wrong machine. The two certificate
+// branches are the point: a node serves a self-signed or node-CA certificate by
+// default, so "certificate signed by unknown authority" is where a first remote
+// run stops, and without naming --ca-cert the message gives no way forward.
+func (c *Client) remoteDialError(err error) error {
+	var unknownCA x509.UnknownAuthorityError
+	if errors.As(err, &unknownCA) {
+		return fmt.Errorf("%s presented a certificate from an unknown authority; pass the node's "+
+			"CA with --ca-cert or KANEA_CA_CERT (`kanea ca show` prints it): %w", c.base, err)
+	}
+	var wrongName x509.HostnameError
+	if errors.As(err, &wrongName) {
+		return fmt.Errorf("%s presented a certificate that does not name it; use the address the "+
+			"node's certificate was issued for: %w", c.base, err)
+	}
+	return fmt.Errorf("cannot reach kanead at %s: %w", c.base, err)
 }
 
 func decodeError(resp *http.Response) error {
@@ -586,7 +659,7 @@ func (c *Client) StageRestore(ctx context.Context, archive string, skipReplay bo
 // operator redirects into `kanea-ca.crt` and hands to a device's trust store.
 // Wrapping it would mean every caller has to unwrap it again.
 func (c *Client) CACertificate(ctx context.Context) (body []byte, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://kanead"+PathCerts+"/ca", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url(PathCerts+"/ca"), nil)
 	if err != nil {
 		return nil, err
 	}

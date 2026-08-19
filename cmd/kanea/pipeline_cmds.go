@@ -18,7 +18,7 @@ import (
 // runBuild implements `kanea build [project/]service`.
 func runBuild(args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
 	deploy := fs.Bool("deploy", true, "deploy the built digest when the build succeeds")
 	follow := fs.Bool("follow", true, "stream the build log until it finishes")
@@ -30,7 +30,10 @@ func runBuild(args []string) error {
 	}
 
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	// One resolver for every service-targeting command (v1.56): build used
 	// to carry its own stricter splitter, which was the one place a unique
@@ -133,7 +136,7 @@ func runProject(args []string) error {
 // runProjectSync implements `kanea project sync <project>`.
 func runProjectSync(args []string) error {
 	fs := flag.NewFlagSet("project sync", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -141,7 +144,11 @@ func runProjectSync(args []string) error {
 		return errors.New("usage: kanea project sync <project>")
 	}
 
-	result, err := api.NewClient(*socket).Sync(context.Background(), fs.Arg(0))
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	result, err := client.Sync(context.Background(), fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -171,7 +178,7 @@ func runProjectSync(args []string) error {
 // runProjectBuilds implements `kanea project builds <project>`.
 func runProjectBuilds(args []string) error {
 	fs := flag.NewFlagSet("project builds", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	service := fs.String("service", "", "only this service")
 	limit := fs.Int("limit", gitops.DefaultRunListLimit, "how many runs to list")
 	if err := fs.Parse(args); err != nil {
@@ -181,7 +188,11 @@ func runProjectBuilds(args []string) error {
 		return errors.New("usage: kanea project builds <project>")
 	}
 
-	runs, err := api.NewClient(*socket).Runs(context.Background(), fs.Arg(0), *service, *limit)
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	runs, err := client.Runs(context.Background(), fs.Arg(0), *service, *limit)
 	if err != nil {
 		return err
 	}

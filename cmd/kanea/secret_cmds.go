@@ -45,7 +45,7 @@ func runSecret(args []string) error {
 // same reasoning that keeps mount credentials out of argv (§8).
 func runSecretPut(args []string) error {
 	fs := flag.NewFlagSet("secret put", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	from := fs.String("from-file", "", "read the value from a file instead of stdin")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -64,7 +64,11 @@ func runSecretPut(args []string) error {
 	}
 
 	// The client bounds the request itself (30s), matching every other command.
-	if err := api.NewClient(*socket).PutSecret(context.Background(), path, value); err != nil {
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	if err := client.PutSecret(context.Background(), path, value); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(os.Stdout, "wrote %s (%d bytes)\n", path, len(value))
@@ -97,7 +101,7 @@ func readSecretValue(fromFile string) ([]byte, error) {
 
 func runSecretList(args []string) error {
 	fs := flag.NewFlagSet("secret ls", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -106,7 +110,11 @@ func runSecretList(args []string) error {
 		prefix = fs.Arg(0)
 	}
 
-	infos, err := api.NewClient(*socket).ListSecrets(context.Background(), prefix)
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	infos, err := client.ListSecrets(context.Background(), prefix)
 	if err != nil {
 		return err
 	}
@@ -134,12 +142,16 @@ func runSecretList(args []string) error {
 // runSecretProviders prints external-provider sync status (PRD §5.2.13).
 func runSecretProviders(args []string) error {
 	fs := flag.NewFlagSet("secret providers", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	providers, err := api.NewClient(*socket).SecretProviders(context.Background())
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	providers, err := client.SecretProviders(context.Background())
 	if err != nil {
 		return err
 	}
@@ -180,7 +192,7 @@ func runSecretProviders(args []string) error {
 
 func runSecretDelete(args []string) error {
 	fs := flag.NewFlagSet("secret rm", flag.ContinueOnError)
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
+	ep := endpointFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -188,7 +200,11 @@ func runSecretDelete(args []string) error {
 		return errors.New("usage: kanea secret rm <project>/<name>")
 	}
 
-	if err := api.NewClient(*socket).DeleteSecret(context.Background(), fs.Arg(0)); err != nil {
+	client, cerr := ep.client()
+	if cerr != nil {
+		return cerr
+	}
+	if err := client.DeleteSecret(context.Background(), fs.Arg(0)); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(os.Stdout, "removed %s\n", fs.Arg(0))

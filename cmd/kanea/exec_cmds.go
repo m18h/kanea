@@ -21,7 +21,7 @@ import (
 // command that was asked for whether or not the session established.
 func runExec(args []string) error {
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
 	alloc := fs.String("alloc", "", "alloc id (default: the first running alloc of the service)")
 	user := fs.String("user", "", "numeric uid to run as (default: the workload's own)")
@@ -38,7 +38,10 @@ func runExec(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	client := api.NewClient(*socket)
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	// The service resolves like every other service-targeting command
 	// (v1.56). Before this, a bare name with no --project scanned allocs

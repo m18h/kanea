@@ -34,7 +34,7 @@ import (
 // release notes win.
 func runUpgrade(args []string) error {
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	skipBackup := fs.Bool("skip-backup", false,
 		"do not take a backup first (the schema migration takes its own local copy either way)")
 	dryRun := fs.Bool("dry-run", false, "print what would run and stop")
@@ -54,7 +54,15 @@ func runUpgrade(args []string) error {
 
 	o := newOut()
 	ctx := context.Background()
-	client := api.NewClient(*socket)
+	if err := ep.local("upgrade",
+		"it restarts this machine's kanead and kanea-edge units and installs a binary over "+
+			"this machine's"); err != nil {
+		return err
+	}
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
 
 	installed, err := client.Health(ctx)
 	if err != nil {
@@ -240,7 +248,7 @@ func isNotConfigured(err error) bool {
 // error, and a command whose useful output is a URL should print the URL.
 func runUI(args []string) error {
 	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
-	socket := socketFlag(fs)
+	ep := endpointFlags(fs)
 	addr := fs.String("addr", "", "dashboard address (default: ask the daemon)")
 	open := fs.Bool("open", false, "open it in a browser")
 	if err := fs.Parse(args); err != nil {
@@ -249,7 +257,10 @@ func runUI(args []string) error {
 
 	target := *addr
 	if target == "" {
-		client := api.NewClient(*socket)
+		client, err := ep.client()
+		if err != nil {
+			return err
+		}
 		health, err := client.Health(context.Background())
 		if err != nil {
 			return fmt.Errorf("cannot reach kanead to ask where the dashboard is: %w", err)
