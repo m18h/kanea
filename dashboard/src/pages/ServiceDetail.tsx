@@ -553,8 +553,9 @@ function ScaleDialog({
           {bounded ? (
             <>
               {' · '}
-              allowed <span className="font-mono">{bounds.min}</span>–
-              <span className="font-mono">{bounds.max}</span>
+              allowed <span className="font-mono">
+                {bounds.min}-{bounds.max}
+              </span>
             </>
           ) : null}
         </p>

@@ -52,7 +52,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             leaves it, with a gutter that grows a little on large screens
             rather than a centred column with empty margins. What this page
             shows is tables, allocation rows and time-series charts, and every
-            one of them is worth more width — a max-width would spend a 32"
+            one of them is worth more width. A max-width would spend a 32"
             monitor on whitespace. The charts follow, because UPlotChart sizes
             itself from a ResizeObserver rather than from a fixed pixel width. */}
         <main className="flex-1 overflow-y-auto">

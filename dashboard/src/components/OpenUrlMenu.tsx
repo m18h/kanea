@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
  * before, and a reusable one is a set of promises about keyboard behaviour
  * (roving focus, typeahead, arrow keys) that this needs none of. What it is
  * instead: a disclosure holding real links, so Tab already walks them, Enter
- * already follows them, and the only behaviour written by hand is closing —
+ * already follows them, and the only behaviour written by hand is closing:
  * on Escape, on an outside press, and on choosing something.
  *
  * For the same reason it carries `aria-expanded` but not `role="menu"`:

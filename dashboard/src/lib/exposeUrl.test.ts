@@ -5,8 +5,8 @@ import type { Service } from '@/lib/api'
 /**
  * The public addresses the detail page's Open control offers.
  *
- * A service can have several — `expose` takes a list of domains, and since
- * v1.50 the block itself can repeat — so this returns all of them. The rule
+ * A service can have several: `expose` takes a list of domains, and since
+ * v1.50 the block itself can repeat, so this returns all of them. The rule
  * that matters most is when an address is *omitted*: a wrong URL is worse than
  * an absent one, and an expose with no domains has an address the dashboard
  * cannot resolve, because the generated FQDN needs the node's base domain and
