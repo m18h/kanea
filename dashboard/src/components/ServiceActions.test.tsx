@@ -234,6 +234,24 @@ describe('ServiceActions open', () => {
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
   })
 
+  it('offers a choice when the service answers on more than one address', () => {
+    const many = {
+      ...withScaling(2),
+      Expose: { Port: 3000, Domains: ['shop.example.com', 'www.shop.example.com'] },
+      extra_exposes: [{ Port: 3000, Domains: ['admin.example.com'] }],
+    } as Service
+    renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, many)
+
+    fireEvent.click(screen.getByRole('button', { name: /Open/ }))
+    for (const url of [
+      'https://shop.example.com',
+      'https://www.shop.example.com',
+      'https://admin.example.com',
+    ]) {
+      expect(screen.getByRole('link', { name: url })).toBeTruthy()
+    }
+  })
+
   it('is offered to a viewer: opening a public URL needs no role', () => {
     renderActions(
       { deploying: false, updated: 2, total: 2 },

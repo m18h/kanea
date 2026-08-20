@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  ExternalLink,
   Loader2,
   Minus,
   Pencil,
@@ -33,9 +32,10 @@ import { useSession } from '@/hooks/useSession'
 import { allocSubject, seedFromHistory, seriesKey, useSeries, useTimedSeries } from '@/hooks/useSeries'
 import { seriesStatus } from '@/lib/seriesStatus'
 import { scaleBounds } from '@/lib/scale'
-import { exposeUrl } from '@/lib/exposeUrl'
+import { exposeUrls } from '@/lib/exposeUrl'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
+import { OpenUrlMenu } from '@/components/OpenUrlMenu'
 import { Link } from '@/lib/router'
 import {
   Topic,
@@ -351,7 +351,7 @@ export function ServiceActions({
   const disabled = !admin || busy !== null || converging
   const title = admin ? undefined : 'Requires the admin role'
   const bounds = scaleBounds(desired)
-  const url = exposeUrl(desired)
+  const urls = exposeUrls(desired)
   const spinner = (name: string) =>
     busy === name || (initiated === name && converging) ? (
       <Loader2 size={14} className="animate-spin" />
@@ -373,16 +373,9 @@ export function ServiceActions({
       ) : null}
       {/* Opening a public URL is navigation, not a mutation, so it is not
           gated on the admin role the write buttons need. It is absent rather
-          than disabled when there is no URL to open: see exposeUrl for the two
+          than disabled when there is nothing to open: see exposeUrls for the
           cases, one of which the dashboard cannot resolve for a viewer. */}
-      {url ? (
-        <a href={url} target="_blank" rel="noopener noreferrer">
-          <Button size="sm" variant="outline" title={`Open ${url} in a new tab`}>
-            <ExternalLink size={14} />
-            Open
-          </Button>
-        </a>
-      ) : null}
+      <OpenUrlMenu urls={urls} />
       <Link to={`/services/${project}/${service}/edit`}>
         <Button size="sm" variant="outline">
           <Pencil size={14} />
