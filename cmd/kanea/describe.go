@@ -89,8 +89,28 @@ func describeSpec(o *out, svc reconciler.Desired) {
 	} else if svc.Runtime == "" {
 		o.printf("Capabilities baseline (default)\n")
 	}
+	// Empty is "the node decides" (R33), which is what an omitted field means
+	// and what most specs will have; printing it would be noise.
+	if svc.PullPolicy != "" {
+		o.printf("Pull policy  %s\n", svc.PullPolicy)
+	}
 	if len(svc.DependsOn) > 0 {
 		o.printf("Depends on   %s\n", strings.Join(svc.DependsOn, ", "))
+	}
+	for i := range svc.Init {
+		step := svc.Init[i]
+		label := "Init"
+		if i > 0 {
+			label = ""
+		}
+		detail := fmt.Sprintf("%d. %s  %s", i+1, step.Name, step.Image)
+		if len(step.Command) > 0 {
+			detail += fmt.Sprintf("  %s", strings.Join(step.Command, " "))
+		}
+		if step.Timeout > 0 {
+			detail += fmt.Sprintf("  (timeout %s)", step.Timeout)
+		}
+		o.printf("%-12s %s\n", label, detail)
 	}
 	update := svc.Update.Strategy
 	if update == "" {
@@ -207,8 +227,12 @@ func describeAllocs(o *out, svc reconciler.Desired, allocs []reconciler.AllocRec
 		if !a.CreatedAt.IsZero() {
 			age = shortDuration(time.Since(a.CreatedAt))
 		}
+		state := string(a.State)
+		if a.State == reconciler.AllocInit && a.InitName != "" {
+			state = fmt.Sprintf("init %d/%d %s", a.InitStep+1, len(svc.Init), a.InitName)
+		}
 		o.printf("  %s\t%s\t%s\t%d\t%s\t%s\n",
-			a.ID, a.State, health, a.Restarts, allocReason(a), age)
+			a.ID, state, health, a.Restarts, allocReason(a), age)
 	}
 	o.endTable()
 }
@@ -227,6 +251,8 @@ var reasonLabels = map[reconciler.ExitReason]string{
 	reconciler.ExitNetworkFailed:     "NetworkFailed",
 	reconciler.ExitCreateFailed:      "CreateFailed",
 	reconciler.ExitStartFailed:       "StartFailed",
+	reconciler.ExitInitFailed:        "InitFailed",
+	reconciler.ExitInitTimeout:       "InitTimeout",
 }
 
 // allocReason renders why an alloc last stopped, or why it has not started.

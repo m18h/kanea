@@ -36,6 +36,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
+
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // DefaultPath is where the server config is probed when --config does not
@@ -45,7 +47,7 @@ const DefaultPath = "/etc/kanea/kanea.hcl"
 // readBlocks are the top-level block types some decoder consumes: storage,
 // bind and variables here, device/socket by internal/passthrough over the
 // same file.
-var readBlocks = map[string]bool{"storage": true, "device": true, "socket": true, "bind": true, "variables": true, "dns": true}
+var readBlocks = map[string]bool{"storage": true, "device": true, "socket": true, "bind": true, "variables": true, "dns": true, "images": true}
 
 // Config is the subset of PRD §15.1 this version reads.
 type Config struct {
@@ -65,6 +67,11 @@ type Config struct {
 	// --dns-upstream wins (the v1.51 doctrine); nil when the file or the
 	// stanza is absent, which means the host's own resolv.conf.
 	DNSUpstreams []string
+	// ImagePullPolicy is the images stanza's pull_policy (R33, v1.84): the
+	// node's default for a service that declares none. An explicit
+	// --image-pull-policy wins (the v1.51 doctrine); "" when the file or the
+	// stanza is absent, which means runtime.PullIfNotPresent.
+	ImagePullPolicy string
 	// Ignored names the top-level blocks and attributes the file carries
 	// and no decoder reads, for the startup warning.
 	Ignored []string
@@ -113,6 +120,7 @@ type hclRoot struct {
 	Bind      *hclBind      `hcl:"bind,block"`
 	Variables *hclVariables `hcl:"variables,block"`
 	DNS       *hclDNS       `hcl:"dns,block"`
+	Images    *hclImages    `hcl:"images,block"`
 	Remain    hcl.Body      `hcl:",remain"`
 }
 
@@ -120,6 +128,12 @@ type hclRoot struct {
 // inside a read stanza is an error, like storage's and bind's.
 type hclDNS struct {
 	Upstreams []string `hcl:"upstreams,optional"`
+}
+
+// hclImages reads the images stanza (v1.84, §6.2 R33): the node's default for
+// where a service's images may come from. No remain body, like the rest.
+type hclImages struct {
+	PullPolicy string `hcl:"pull_policy,optional"`
 }
 
 // hclVariables carries the variables stanza's body raw: its attribute names
@@ -240,6 +254,26 @@ func Parse(filename string, src []byte) (*Config, error) {
 			paths = append(paths, p)
 		}
 		cfg.AllowedHostPaths = paths
+	}
+	if root.Images != nil {
+		// The same closed set jobspec enforces on a spec, checked here so the
+		// node's own default cannot be a word nothing understands. "always" is
+		// refused: it lowers to per-service auto-update (R19), which is a
+		// decision about one service's tag, and a node-wide default that
+		// turned auto-update on for every service would be a policy nobody
+		// asked for.
+		policy := strings.TrimSpace(root.Images.PullPolicy)
+		switch policy {
+		case "", runtime.PullIfNotPresent, runtime.PullNever:
+			cfg.ImagePullPolicy = policy
+		case runtime.PullAlways:
+			return nil, fmt.Errorf("images: pull_policy %q is not a node default: it turns on "+
+				"image auto-update for one service (PRD §6.2 R19/R33), which is a per-service "+
+				"decision. Declare it on the service's task instead", policy)
+		default:
+			return nil, fmt.Errorf("images: pull_policy %q is not a policy; it must be %q or %q",
+				policy, runtime.PullIfNotPresent, runtime.PullNever)
+		}
 	}
 	if root.DNS != nil {
 		upstreams, err := validateDNSUpstreams(root.DNS.Upstreams)

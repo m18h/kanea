@@ -342,6 +342,9 @@ func (c *Client) Logs(ctx context.Context, opts LogOptions, w io.Writer) (err er
 	if opts.Tail > 0 {
 		q.Set("tail", strconv.Itoa(opts.Tail))
 	}
+	if opts.Container != "" {
+		q.Set("container", opts.Container)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url(PathLogs)+"?"+q.Encode(), nil)
 	if err != nil {

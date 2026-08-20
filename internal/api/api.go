@@ -167,6 +167,10 @@ type LogOptions struct {
 	Follow bool
 	// Tail is how many trailing lines to send before following. Zero means all.
 	Tail int
+	// Container names an init container (R32) whose log to read instead of the
+	// task's. It is a *step name*, resolved server-side against the service's
+	// own declared sequence: no client ever names a container id.
+	Container string
 }
 
 // PollInterval is how often a following log stream checks for new output.

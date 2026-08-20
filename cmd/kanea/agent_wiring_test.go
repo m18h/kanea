@@ -33,6 +33,11 @@ func TestTheAgentWiresEveryOptionalReconcilerDependency(t *testing.T) {
 		"Breaker":     "the reconciler has no circuit breaker",
 		"Emit":        "no notification is ever published",
 		"VolumeUsage": "volume budgets are never measured",
+		// R33's node default. Its zero value happens to behave like the
+		// historical default, which is exactly why a missing wire here would
+		// be invisible: `images { pull_policy = "never" }` would be accepted,
+		// logged, and then quietly ignored on every pull.
+		"DefaultPullPolicy": "the images stanza and --image-pull-policy are silently ignored",
 	}
 
 	fset := token.NewFileSet()

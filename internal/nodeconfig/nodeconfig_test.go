@@ -493,3 +493,55 @@ func TestParseRefusesAnUnknownAttributeInsideDNS(t *testing.T) {
 		t.Fatal("a typo inside a read stanza must be an error, not a warning")
 	}
 }
+
+// ---- the images stanza (v1.84, §6.2 R33) ----
+
+func TestParseReadsTheImagesStanza(t *testing.T) {
+	for _, policy := range []string{"if-not-present", "never"} {
+		cfg, err := Parse("kanea.hcl", []byte(`images { pull_policy = "`+policy+`" }`))
+		if err != nil {
+			t.Fatalf("Parse %s: %v", policy, err)
+		}
+		if cfg.ImagePullPolicy != policy {
+			t.Errorf("ImagePullPolicy = %q, want %q", cfg.ImagePullPolicy, policy)
+		}
+	}
+}
+
+// Absent means if-not-present, which is what every node did before v1.84. The
+// empty string carries that: the daemon resolves it, so the file does not have
+// to name a default nobody typed.
+func TestParseWithoutAnImagesStanzaMeansTheHistoricalDefault(t *testing.T) {
+	cfg, err := Parse("kanea.hcl", []byte(`storage { allowed_host_paths = ["/srv"] }`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.ImagePullPolicy != "" {
+		t.Fatalf("ImagePullPolicy = %q, want empty when the stanza is absent", cfg.ImagePullPolicy)
+	}
+}
+
+// "always" means per-service auto-update (R19). A node-wide default that turned
+// auto-update on for every service would be a policy nobody asked for, so it is
+// refused here rather than quietly reinterpreted.
+func TestParseRefusesAlwaysAsANodeDefault(t *testing.T) {
+	_, err := Parse("kanea.hcl", []byte(`images { pull_policy = "always" }`))
+	if err == nil {
+		t.Fatal(`images { pull_policy = "always" } must be refused as a node default`)
+	}
+	if !strings.Contains(err.Error(), "per-service") {
+		t.Errorf("the refusal should explain why; got %v", err)
+	}
+}
+
+func TestParseRefusesAnUnknownPullPolicy(t *testing.T) {
+	if _, err := Parse("kanea.hcl", []byte(`images { pull_policy = "sometimes" }`)); err == nil {
+		t.Fatal("an unknown pull policy must be refused at parse")
+	}
+}
+
+func TestParseRefusesAnUnknownAttributeInsideImages(t *testing.T) {
+	if _, err := Parse("kanea.hcl", []byte(`images { pull = "never" }`)); err == nil {
+		t.Fatal("a typo inside a read stanza must be an error, not a warning")
+	}
+}

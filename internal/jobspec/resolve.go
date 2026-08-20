@@ -33,7 +33,28 @@ func resolveEnv(spec *Spec, root *hclRoot, opts Options) hcl.Diagnostics {
 		if svc == nil || svc.Task == nil || len(raw.Tasks) == 0 {
 			continue // structural errors already reported
 		}
-		diags = append(diags, resolveServiceEnv(spec, svc, raw.Tasks[0].Env, opts)...)
+		task := svc.Task
+		targets := []envTarget{{
+			expr:   raw.Tasks[0].Env,
+			assign: func(env map[string]string) { task.Env = env },
+		}}
+		// An init container's env resolves under exactly the same rules (R32):
+		// it shares the alloc's network namespace, so ${service.db.host} in a
+		// wait-for-database step is a real address and therefore a real
+		// dependency edge. Skipping these would let a step reference a service
+		// that R10 then never orders it behind, which is the failure the edge
+		// exists to prevent.
+		for n := range raw.Inits {
+			if n >= len(svc.Inits) {
+				break // conversion reported the mismatch
+			}
+			init := svc.Inits[n]
+			targets = append(targets, envTarget{
+				expr:   raw.Inits[n].Env,
+				assign: func(env map[string]string) { init.Env = env },
+			})
+		}
+		diags = append(diags, resolveServiceEnv(spec, svc, targets, opts)...)
 	}
 	// A lowered function's env resolves under the same rules: it can reference
 	// its project's services (${service.db.host} in a webhook fanout is the
@@ -44,22 +65,42 @@ func resolveEnv(spec *Spec, root *hclRoot, opts Options) hcl.Diagnostics {
 		if svc == nil || svc.Task == nil {
 			continue
 		}
-		diags = append(diags, resolveServiceEnv(spec, svc, raw.Env, opts)...)
+		task := svc.Task
+		diags = append(diags, resolveServiceEnv(spec, svc, []envTarget{{
+			expr:   raw.Env,
+			assign: func(env map[string]string) { task.Env = env },
+		}}, opts)...)
 	}
 	return diags
 }
 
+// envTarget is one env expression and where its evaluated value goes. A
+// service has one for its task and one per init block, and every one of them
+// contributes reference edges to the service as a whole.
+type envTarget struct {
+	expr   hcl.Expression
+	assign func(map[string]string)
+}
+
 // resolveServiceEnv evaluates one service's env expression and records its
 // reference edges.
-func resolveServiceEnv(spec *Spec, svc *Service, envExpr hcl.Expression, opts Options) hcl.Diagnostics {
+func resolveServiceEnv(spec *Spec, svc *Service, targets []envTarget, opts Options) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	if envExpr == nil {
-		return diags
-	}
 
 	// Collect and check references before evaluating: our diagnostics name
 	// the missing service and port, HCL's would say "unsupported attribute".
-	refs, refDiags := collectRefs(spec, svc, envExpr)
+	// Every target contributes, because the edge set belongs to the service
+	// rather than to whichever block happened to write the reference.
+	var refs []ServiceRef
+	var refDiags hcl.Diagnostics
+	for _, t := range targets {
+		if t.expr == nil {
+			continue
+		}
+		found, d := collectRefs(spec, svc, t.expr)
+		refs = append(refs, found...)
+		refDiags = append(refDiags, d...)
+	}
 	diags = append(diags, refDiags...)
 	svc.Refs = refs
 
@@ -76,10 +117,15 @@ func resolveServiceEnv(spec *Spec, svc *Service, envExpr hcl.Expression, opts Op
 	ctx := varContext(opts.Vars)
 	ctx.Variables["service"] = serviceContext(spec, svc.Project)
 
-	env, evalDiags := evalEnv(envExpr, ctx)
-	diags = append(diags, evalDiags...)
-	if !evalDiags.HasErrors() {
-		svc.Task.Env = env
+	for _, t := range targets {
+		if t.expr == nil {
+			continue
+		}
+		env, evalDiags := evalEnv(t.expr, ctx)
+		diags = append(diags, evalDiags...)
+		if !evalDiags.HasErrors() {
+			t.assign(env)
+		}
 	}
 	return diags
 }

@@ -6,6 +6,9 @@ export function allocStateVariant(state: string): NonNullable<BadgeProps['varian
   switch (state) {
     case 'running':
       return 'ok'
+    // `init` is an alloc running its init sequence (R32): on its way up, not
+    // in trouble, so it reads like `pending`, which is what it is.
+    case 'init':
     case 'backoff':
     case 'pending':
       return 'warn'
@@ -33,6 +36,8 @@ const reasonLabels: Record<string, string> = {
   network_failed: 'NetworkFailed',
   create_failed: 'CreateFailed',
   start_failed: 'StartFailed',
+  init_failed: 'InitFailed',
+  init_timeout: 'InitTimeout',
 }
 
 export interface ExitReason {

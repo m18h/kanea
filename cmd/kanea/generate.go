@@ -11,6 +11,7 @@ import (
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -122,6 +123,10 @@ func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Conf
 		return refuse("its capability grants")
 	case len(svc.Command) > 0:
 		return refuse("its command override")
+	case len(svc.Init) > 0:
+		// A function block has no init field (R25/R32): the wasm runtime runs
+		// one module, so there is no second container to run.
+		return refuse("its init containers")
 	case svc.Scaling != nil:
 		return refuse("its scaling policy")
 	case svc.ReadOnlyRootfs:
@@ -280,6 +285,7 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 		block.AppendNewline()
 	}
 
+	writeInits(block, svc)
 	if err := writeTask(block, svc); err != nil {
 		return err
 	}
@@ -379,8 +385,12 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 // `cpu = 0` would be legal but would read as a declaration nobody made.
 // Reports whether it wrote anything.
 func writeResources(block *hclwrite.Body, svc *reconciler.Desired) bool {
-	cpu := int64(svc.Resources.CPUMillis) * NominalCoreMHz / 1000
-	mem := svc.Resources.MemoryBytes >> 20
+	return writeResourceValues(block, svc.Resources)
+}
+
+func writeResourceValues(block *hclwrite.Body, r runtime.Resources) bool {
+	cpu := int64(r.CPUMillis) * NominalCoreMHz / 1000
+	mem := r.MemoryBytes >> 20
 	if cpu <= 0 && mem <= 0 {
 		return false
 	}
@@ -407,6 +417,9 @@ func writeTask(block *hclwrite.Body, svc *reconciler.Desired) error {
 		task.SetAttributeValue("capabilities", stringList(svc.Capabilities))
 	}
 	setOptionalString(task, "registry_auth_ref", svc.RegistryAuthRef)
+	// Empty means "the node decides" (R33) and must regenerate as an omission,
+	// or a spec generated on one node would pin the other node's default.
+	setOptionalString(task, "pull_policy", svc.PullPolicy)
 
 	if len(svc.Env) > 0 {
 		keys := make([]string, 0, len(svc.Env))
@@ -644,4 +657,55 @@ func stringMap(m map[string]string) cty.Value {
 		out[k] = cty.StringVal(v)
 	}
 	return cty.ObjectVal(out)
+}
+
+// writeInits regenerates a service's init blocks, in order (PRD §6.2 R32).
+//
+// They go before the task because that is the order they run in, and a spec is
+// read by people. Everything here round-trips: the fields an init block has are
+// exactly the fields the record carries, which is why there is no refusal case
+// for one the way there is for volumes.
+func writeInits(block *hclwrite.Body, svc *reconciler.Desired) {
+	for i := range svc.Init {
+		step := svc.Init[i]
+		body := block.AppendNewBlock("init", []string{step.Name}).Body()
+		setOptionalString(body, "image", step.Image)
+		if len(step.Command) > 0 {
+			body.SetAttributeValue("command", stringList(step.Command))
+		}
+		if len(step.Capabilities) > 0 {
+			body.SetAttributeValue("capabilities", stringList(step.Capabilities))
+		}
+		setOptionalString(body, "registry_auth_ref", step.RegistryAuthRef)
+		setOptionalString(body, "pull_policy", step.PullPolicy)
+		if step.Timeout > 0 {
+			body.SetAttributeValue("timeout", cty.StringVal(step.Timeout.String()))
+		}
+		if len(step.Env) > 0 {
+			keys := make([]string, 0, len(step.Env))
+			for k := range step.Env {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			pairs := make(map[string]cty.Value, len(keys))
+			for _, k := range keys {
+				pairs[k] = cty.StringVal(step.Env[k])
+			}
+			body.SetAttributeValue("env", cty.ObjectVal(pairs))
+		}
+		writeResourceValues(body, step.Resources)
+		if u := step.User; u != nil {
+			user := body.AppendNewBlock("user", nil).Body()
+			user.SetAttributeValue("uid", cty.NumberIntVal(int64(u.UID)))
+			user.SetAttributeValue("gid", cty.NumberIntVal(int64(u.GID)))
+			if len(u.AdditionalGIDs) > 0 {
+				groups := make([]cty.Value, 0, len(u.AdditionalGIDs))
+				for _, g := range u.AdditionalGIDs {
+					groups = append(groups, cty.NumberIntVal(int64(g)))
+				}
+				user.SetAttributeValue("groups", cty.ListVal(groups))
+			}
+		}
+		block.AppendNewline()
+	}
 }

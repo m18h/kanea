@@ -36,6 +36,12 @@ var (
 	ErrAlreadyExists = errors.New("runtime: alloc already exists")
 	// ErrInvalidSpec marks a spec this driver refuses to run.
 	ErrInvalidSpec = errors.New("runtime: invalid alloc spec")
+	// ErrImageNotPresent means the image is absent from this node's content
+	// store and the alloc's pull policy forbids fetching it (PRD §6.2 R33,
+	// pull_policy = "never"). It is its own error because the operator's next
+	// step is to preload the image or change the policy, and a registry error
+	// would send them to look at a registry the node never contacted.
+	ErrImageNotPresent = errors.New("runtime: image is not present and the pull policy forbids pulling")
 	// ErrNoExec means the alloc's runtime has no exec primitive. The wasmtime
 	// shim is one: a wasm sandbox holds exactly one instance, so `kanea exec`
 	// against a function fails here with the reason rather than surfacing a
@@ -48,6 +54,37 @@ var (
 // containerd-shim-wasmtime-v1 on its own PATH, which is why the generated
 // containerd unit sets Environment=PATH (internal/provision/units.go).
 const RuntimeWasmtime = "io.containerd.wasmtime.v1"
+
+// Pull policies (PRD §6.2 R33). The zero value is PullIfNotPresent, which is
+// what every alloc created before v1.84 did.
+const (
+	// PullIfNotPresent uses the node's content store and fetches only what is
+	// absent. The default, and the behaviour the driver has always had.
+	PullIfNotPresent = "if-not-present"
+	// PullNever refuses to reach the network: absent means ErrImageNotPresent.
+	PullNever = "never"
+	// PullAlways never reaches the driver. It lowers at parse time to R19
+	// auto-update, which resolves the tag and pins the digest so every replica
+	// rolls together; re-pulling per alloc create would let two replicas of one
+	// spec hash run different bytes. The constant lives here so validators on
+	// both sides of the apply seam share one spelling.
+	PullAlways = "always"
+)
+
+// InitMeta marks an AllocSpec as one of an alloc's init containers (PRD §6.2
+// R32) and carries what the labels, the id and the log file need to name it.
+//
+// Nil means the alloc's own task, which is what every spec meant before v1.84.
+type InitMeta struct {
+	// AllocID is the alloc this step belongs to. It owns the network namespace
+	// this container joins and the secrets tree it mounts; this container's own
+	// ID is derived from it and is deliberately not an alloc id (see InitID).
+	AllocID string
+	// Ordinal is the step's position in the service's declaration order.
+	Ordinal int
+	// Name is the init block's label: a DNS-1123 label, unique in its service.
+	Name string
+}
 
 // AllocSpec is everything needed to run one alloc. The reconciler derives it
 // from a validated job spec; the driver does not consult the Store or the job
@@ -107,6 +144,12 @@ type AllocSpec struct {
 	ReadOnlyRootfs bool
 	// LogPath receives the task's stdout and stderr.
 	LogPath string
+	// Init marks this spec as one of an alloc's init containers rather than
+	// the alloc's own task (PRD §6.2 R32). It changes three things and nothing
+	// else: the container's labels, and the fact that NetnsPath names the
+	// alloc's namespace rather than one derived from this container's ID. An
+	// init spec carries no Devices and no granted sockets, and Validate says so.
+	Init *InitMeta
 }
 
 // User is the uid/gid an alloc's process runs as (PRD §6.2 R23).
@@ -199,7 +242,20 @@ type Status struct {
 	// declared none (unbounded, R11 v1.58). It is what separates "exceeded its
 	// own limit" from "hit the node's collective ceiling" (§5.2.11).
 	MemoryLimit uint64
+	// Role is RoleInit for one of an alloc's init containers (PRD §6.2 R32)
+	// and empty for an alloc's own task.
+	//
+	// Empty means "the alloc's task", never "unknown": every container created
+	// before v1.84 carries no such label, and reading absence as unknown would
+	// make an upgrade forget what every running container is.
+	Role string
 }
+
+// IsInit reports whether this status describes an init container rather than
+// an alloc's own task. Every consumer of a container listing must branch on it:
+// an init container has no alloc record, so anything reasoning about allocs
+// would read a running migration as an orphan and destroy it.
+func (s Status) IsInit() bool { return s.Role == RoleInit }
 
 // ExecOptions describes an attached exec.
 //

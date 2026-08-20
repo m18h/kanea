@@ -331,6 +331,70 @@ and `s3` could not carry one anyway. Mounts notify too: `volume.mount_failed`
 when one will not establish or stops answering, `volume.mount_recovered` when
 the supervisor gets it back.
 
+### Setup before a service starts
+
+A schema migration, a `chown` of a directory Kanea just created, a config
+render: an `init` block runs to completion before the workload starts.
+
+```hcl
+service "api" {
+  project = "shop"
+
+  init "migrate" {
+    image   = "registry.example.com/shop/api-migrate:1.4"
+    command = ["/bin/migrate", "up"]
+    env     = { DATABASE_URL = "secret:shop/database-url" }
+    timeout = "5m"
+  }
+
+  task "app" {
+    image = "registry.example.com/shop/api:1.4"
+  }
+}
+```
+
+Blocks run **in declaration order, one at a time**, and the task is created only
+once the last has exited zero. Each step shares the alloc's network namespace
+(so `${service.postgres.host}` resolves, which is what makes a wait-for-database
+step possible), its volumes, and its secrets — and declares everything else for
+itself: its own image, command, env, resources, `user` and capabilities. Running
+as root to fix a directory the task will own as uid 999 is the canonical use, so
+nothing is inherited from `task`.
+
+A step's output is its own: `kanea logs shop/api -c migrate`. A step that runs
+and fails, or outlives its `timeout`, fails the alloc and spends the restart
+budget, so a broken migration stops after `attempts` instead of hammering a
+database; a step that could not be *pulled* is retried without spending it,
+because nothing ran.
+
+**Init containers must be idempotent.** A half-run sequence is abandoned rather
+than resumed, and a sequence re-runs on every alloc creation — a deploy, a crash
+restart, a spec change — for the same reason the namespace and the secrets are
+rebuilt.
+
+### Where images come from
+
+`pull_policy` on a `task` or an `init` block says whether Kanea may reach a
+registry: `if-not-present` (the default), `never`, or `always`.
+
+`never` is for a node whose images are already there — see [air-gapped
+nodes](#air-gapped-nodes) — where the default's pull-and-fail blames a registry
+the node was never going to contact. Set the node-wide default in
+`/etc/kanea/kanea.hcl`:
+
+```hcl
+images {
+  pull_policy = "never"
+}
+```
+
+`always` does **not** re-pull at every container creation; that would let two
+replicas of one spec run different bytes. It turns on image auto-update, so the
+tag is polled, a moved digest is pinned, and **every replica rolls together**
+through `max_parallel`, `min_healthy` and the health check. It is task-only, and
+inherits auto-update's rules: not beside a `build` block, a tag rather than a
+digest.
+
 ### Shared variables
 
 Declare a value once and reference it anywhere in a spec as `${name}`, or as a
@@ -581,7 +645,10 @@ would be a bundle that authenticates itself. Releases publish one per
 architecture, covered by the same signed `checksums.txt`.
 
 This covers Kanea's own components; your workload images still come from a
-registry the node can reach.
+registry the node can reach — or, on a node where they are preloaded, from
+nowhere at all: `images { pull_policy = "never" }` makes an absent image fail
+immediately and by name instead of timing out against a registry the node
+cannot reach.
 
 ## Requirements
 
@@ -618,7 +685,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.81) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.84) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

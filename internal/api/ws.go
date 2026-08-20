@@ -74,6 +74,15 @@ type ClientFrame struct {
 	Service string `json:"service,omitempty"`
 	// Tail is how many existing log lines to send before following.
 	Tail int `json:"tail,omitempty"`
+	// Container names an init container (R32) whose log to follow instead of
+	// the task's, by its *block name*: the server resolves it against the
+	// service's own declared sequence, so a client never names a container id.
+	//
+	// Unlike Tail this IS part of the subscription key: Tail asks for more of
+	// the same stream, while this asks for a different one, and keying them
+	// together would make a panel switching between steps replace a
+	// subscription that is still wanted.
+	Container string `json:"container,omitempty"`
 	// History asks a stats or node subscription to carry a seed on its first
 	// frame (v1.79). Absent means no seed, so a pre-v1.79 client's subscribe
 	// frame is byte-identical to what it always sent and gets the frames it
@@ -474,7 +483,14 @@ func subscriptionKey(f ClientFrame) string {
 	if f.Project == "" && f.Service == "" {
 		return f.Topic
 	}
-	return f.Topic + ":" + f.Project + "/" + f.Service
+	key := f.Topic + ":" + f.Project + "/" + f.Service
+	// Container selects a different stream rather than more of one (R32), so
+	// it belongs in the key. Appended only when set, so every pre-v1.84
+	// subscription keeps the key it always had.
+	if f.Container != "" {
+		key += ":" + f.Container
+	}
+	return key
 }
 
 // maxSubscriptions bounds one connection's live feeds (K-18): every

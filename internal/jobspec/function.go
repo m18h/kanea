@@ -235,7 +235,10 @@ func convertFunction(f *hclFunction) (*Service, hcl.Diagnostics) {
 	if f.Update != nil {
 		svc.Update = &Update{
 			Strategy: f.Update.Strategy, MaxParallel: f.Update.MaxParallel, MinHealthy: f.Update.MinHealthy,
-			Auto: f.Update.Auto, Interval: f.Update.Interval, Deadline: f.Update.Deadline,
+			Interval: f.Update.Interval, Deadline: f.Update.Deadline,
+		}
+		if f.Update.Auto != nil {
+			svc.Update.Auto, svc.Update.AutoDeclared = *f.Update.Auto, true
 		}
 	}
 	if f.Restart != nil {

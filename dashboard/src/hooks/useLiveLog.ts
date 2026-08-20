@@ -31,8 +31,16 @@ export interface LogState {
   droppedByDaemon: number
 }
 
-/** useLiveLog follows one service's logs over the shared socket. */
-export function useLiveLog(project: string, service: string, tail = 200): LogState {
+/**
+ * useLiveLog follows one service's logs over the shared socket.
+ *
+ * `container` names an init container (R32) to follow instead of the task, by
+ * its block name; empty follows the task. It is part of the subscription key
+ * server-side, because it selects a different stream rather than more of the
+ * same one, so switching steps opens a new feed rather than replacing a wanted
+ * one.
+ */
+export function useLiveLog(project: string, service: string, tail = 200, container = ''): LogState {
   const [state, setState] = useState<LogState>({
     lines: [],
     error: null,
@@ -55,7 +63,7 @@ export function useLiveLog(project: string, service: string, tail = 200): LogSta
     pendingDaemonDrops.current = 0
 
     const unsubscribe = liveSocket().subscribe(
-      { topic: Topic.Logs, project, service, tail },
+      { topic: Topic.Logs, project, service, tail, container },
       (frame) => {
         if (frame.type === 'error') {
           setState((prev) => ({ ...prev, error: frame.error ?? 'unknown error' }))
@@ -98,7 +106,7 @@ export function useLiveLog(project: string, service: string, tail = 200): LogSta
       unsubscribe()
       clearInterval(flush)
     }
-  }, [project, service, tail])
+  }, [project, service, tail, container])
 
   return state
 }

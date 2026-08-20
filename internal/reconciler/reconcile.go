@@ -226,6 +226,14 @@ type Config struct {
 	// domains (PRD §7.2). It is node configuration, not spec content: one
 	// wildcard DNS record for it makes every service routable.
 	BaseDomain string
+	// DefaultPullPolicy is the node's answer for a service that declares none
+	// (jobspec R33, §15.1's images stanza). Empty means
+	// runtime.PullIfNotPresent, which is what every node did before v1.84.
+	//
+	// Resolved here rather than in toDesired for the reason Expose.TLSMode is
+	// (R20): conversion runs client-side, so a node default baked in there
+	// would make one spec mean different things on two machines.
+	DefaultPullPolicy string
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -260,6 +268,7 @@ type Reconciler struct {
 	authSink      AuthSink
 	edgeSnapshot  string
 	baseDomain    string
+	pullPolicy    string
 }
 
 // New builds a Reconciler.
@@ -310,6 +319,7 @@ func New(cfg Config) (*Reconciler, error) {
 		edgeSnapshot:  cfg.EdgeSnapshot,
 		authSink:      cfg.Auth,
 		baseDomain:    strings.Trim(cfg.BaseDomain, "."),
+		pullPolicy:    cfg.DefaultPullPolicy,
 	}, nil
 }
 
@@ -372,7 +382,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	if err != nil {
 		return result, fmt.Errorf("load alloc records: %w", err)
 	}
-	actual, err := r.loadActual(ctx, desired, records)
+	actual, initActual, err := r.loadActual(ctx, desired, records)
 	if err != nil {
 		return result, fmt.Errorf("load actual state: %w", err)
 	}
@@ -380,7 +390,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	// Read the datapath before planning: health checks need alloc addresses, and
 	// the planner needs the health verdicts to gate dependents.
 	attachments := r.attachments(ctx)
-	world := World{Desired: desired, Records: records, Actual: actual, Now: r.now()}
+	world := World{
+		Desired: desired, Records: records, Actual: actual,
+		InitActual: initActual, Now: r.now(),
+	}
 	// Tell the usage sampler what exists. Cheap (one slice build and a pointer
 	// store) and idempotent, so it rides the pass rather than needing a loop of
 	// its own: the sampler does the expensive part on its own schedule.
@@ -460,10 +473,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	// Skipped when nothing was applied, which is the overwhelmingly common case:
 	// a steady-state pass should not cost an extra round trip per project.
 	if result.Applied > 0 {
-		if actual, err := r.loadActual(ctx, desired, records); err != nil {
+		if actual, initActual, err := r.loadActual(ctx, desired, records); err != nil {
 			r.log.Warn("cannot re-read alloc state after applying actions", "error", err)
 		} else {
-			world.Actual = actual
+			world.Actual, world.InitActual = actual, initActual
 		}
 		// The allocs just created are attached by now, and the ones just
 		// removed are not.
@@ -793,6 +806,14 @@ func (r *Reconciler) recordStartFailure(ctx context.Context, action Action, caus
 	if !ok {
 		return // not a create-path failure: a teardown, a removal, a bad action
 	}
+	// An ActionRemoveInit carries the *init container's* id in AllocID and
+	// names no service (R32), so there is no alloc record for it to annotate;
+	// proceeding would mint one keyed on an empty service name. Today that
+	// branch returns a plain error and never reaches here, and this is what
+	// keeps that true if it ever grows a failedAt.
+	if action.Service == "" {
+		return
+	}
 
 	record, err := r.loadRecord(ctx, action.Project, action.Service, action.Index)
 	switch {
@@ -838,6 +859,22 @@ func Observe(w World) map[string]AllocRecord {
 		byService[d.Project+"/"+d.Service] = d
 	}
 
+	// Init sequences are observed from the records rather than from w.Actual:
+	// an alloc part-way through one has no main container, so it appears in
+	// neither map the loop below walks (R32).
+	for id, record := range w.Records {
+		if record.State != AllocInit {
+			continue
+		}
+		desired, isDesired := byService[record.Project+"/"+record.Service]
+		if !isDesired || record.Index >= desired.Count {
+			continue // being scaled in or removed; the planner tears it down
+		}
+		if updated, ok := observeInit(w, desired, record); ok {
+			changed[id] = updated
+		}
+	}
+
 	for id, status := range w.Actual {
 		record, ok := w.Records[id]
 		if !ok {
@@ -861,13 +898,23 @@ func Observe(w World) map[string]AllocRecord {
 			if record.State != AllocRunning {
 				record.State = AllocRunning
 				record.NextRestartAt = time.Time{}
+				// The sequence is over the moment the task is running. Clearing
+				// it here rather than only in create() also covers the crash
+				// window: kanead dying between starting the task and writing
+				// the record leaves an AllocInit record beside a running
+				// container, and this is the pass that reconciles the two.
+				record.InitStep, record.InitName = 0, ""
+				record.InitStartedAt = time.Time{}
 				record.UpdatedAt = w.Now
 				changed[id] = record
 			}
 
 		case runtime.StateStopped:
 			// Only interesting if we thought it was running: that is a crash.
-			if record.State != AllocRunning && record.State != AllocPending {
+			// AllocInit counts: a main container that exists at all means the
+			// sequence finished, so its exit is an ordinary crash.
+			if record.State != AllocRunning && record.State != AllocPending &&
+				record.State != AllocInit {
 				continue
 			}
 			if !isDesired || record.Index >= desired.Count {
@@ -929,7 +976,7 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 		// The two kinds do the same thing here and differ in what create makes
 		// of the record they leave behind: a crash spends the restart budget, a
 		// deploy starts a new one.
-		if err := r.teardown(ctx, desired, action); err != nil {
+		if err := r.teardown(ctx, w, desired, action); err != nil {
 			return err
 		}
 		return r.create(ctx, desired, action)
@@ -937,12 +984,40 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 	case ActionRemove:
 		return r.remove(ctx, w, desired, ok, action)
 
+	case ActionInitStep:
+		if !ok {
+			return fmt.Errorf("no desired state for %s", action.AllocID)
+		}
+		return r.advanceInit(ctx, desired, action)
+
+	case ActionRemoveInit:
+		// AllocID is the init container's own id here. Removal only: the
+		// alloc's netns, secrets and volumes are shared and outlive any one
+		// step, so tearing them down would cut the sequence off at the knees.
+		if err := r.driver.Remove(ctx, action.Project, action.AllocID); err != nil {
+			return fmt.Errorf("remove init container: %w", err)
+		}
+		return nil
+
 	default:
 		return fmt.Errorf("unknown action %q", action.Kind)
 	}
 }
 
-func (r *Reconciler) create(ctx context.Context, desired Desired, action Action) error {
+// prepareAlloc does everything an alloc needs before any of its containers can
+// be created: the resolver, the images, the volumes, the grants, the secrets
+// tree and the network attachment.
+//
+// It is shared by create() and by advanceInit() (R32), and every step of it is
+// idempotent, which is what lets an init sequence resume after a kanead
+// restart: the daemon that starts step 3 may not be the one that started
+// step 0. It takes *Desired because ensureVolumes and ensurePassthrough resolve
+// node-local paths into it, and the spec cannot be built until they have.
+func (r *Reconciler) prepareAlloc(
+	ctx context.Context, desired *Desired, action Action,
+) (runtime.AllocSpec, allocSecrets, error) {
+	var sec allocSecrets
+
 	// Which resolver an alloc talks to is a property of the node, not the job,
 	// so it is filled in here rather than carried through the Store.
 	if path, err := r.resolvConfFor(desired.Project); err != nil {
@@ -955,60 +1030,97 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 		desired.ResolvConfPath = path
 	}
 
-	auth, err := r.registryAuth(ctx, desired)
+	auth, err := r.registryAuth(ctx, *desired)
 	if err != nil {
 		// Credentials are part of getting the image, and that is how it reads to
 		// whoever has to fix it.
-		return failedAt(phaseImage, err)
+		return runtime.AllocSpec{}, sec, failedAt(phaseImage, err)
 	}
 	// RunImage, not Image: a service with auto-update on declares a tag and
 	// runs the digest that tag resolved to (R19).
 	if _, err := r.driver.EnsureImage(ctx, runtime.ImageRef{
 		Project: desired.Project, Ref: desired.RunImage(), Auth: auth,
+		Policy: r.effectivePullPolicy(desired.PullPolicy),
 	}); err != nil {
-		return failedAt(phaseImage, err)
+		return runtime.AllocSpec{}, sec, failedAt(phaseImage, err)
+	}
+	// Every init image too, before any of them runs (R32).
+	//
+	// The main image first and the steps before step 0 is deliberate on both
+	// counts: discovering a typo in the third block after two irreversible
+	// database steps have run is exactly the failure this ordering avoids, and
+	// so is running a five-minute migration for a task whose own image does not
+	// exist. Pulling is cheap and side-effect-free; a half-applied migration is
+	// neither. Nothing is re-pulled at the step itself beyond a local lookup.
+	for i := range desired.Init {
+		if err := r.ensureInitImage(ctx, *desired, desired.Init[i]); err != nil {
+			return runtime.AllocSpec{}, sec, failedAt(phaseImage, err)
+		}
 	}
 	// Volumes before the spec, not just before the task. Directories have to
 	// exist so the runtime does not create a bind-mount source as a root-owned
 	// directory at an unpredictable moment, and a host volume's real path is
 	// only known once the allowlist has resolved it, so the spec cannot be
 	// built until that has happened.
-	if err := r.ensureVolumes(ctx, desired, action.Index); err != nil {
-		return failedAt(phaseVolume, err)
+	if err := r.ensureVolumes(ctx, *desired, action.Index); err != nil {
+		return runtime.AllocSpec{}, sec, failedAt(phaseVolume, err)
 	}
 	// Grants resolve here for the same reason: a device node's real path is a
 	// node-local fact the spec cannot carry, and it has to be known before the
 	// spec is built.
-	if err := r.ensurePassthrough(desired); err != nil {
-		return failedAt(phasePassthrough, err)
+	if err := r.ensurePassthrough(*desired); err != nil {
+		return runtime.AllocSpec{}, sec, failedAt(phasePassthrough, err)
 	}
 	// And env secrets resolve at exactly this point (PRD §6.2 R3): the record
 	// keeps the references, the alloc gets per-alloc tmpfs files and a mount
 	// presenting them, and the spec's env carries the file paths (or the
 	// inlined values, for the weaker secret-env: form). A reference that does
 	// not resolve fails the alloc honestly, like a missing image.
-	secretsEnv, secretsMount, err := r.ensureSecrets(ctx, desired,
+	sec, err = r.ensureSecrets(ctx, *desired,
 		AllocID(desired.Project, desired.Service, action.Index))
 	if err != nil {
-		return failedAt(phaseSecrets, err)
+		return runtime.AllocSpec{}, sec, failedAt(phaseSecrets, err)
 	}
 
-	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
-	if secretsEnv != nil {
-		spec.Env = secretsEnv
+	spec := AllocSpecFor(*desired, action.Index, r.logDir, r.volumeDir)
+	if sec.Env != nil {
+		spec.Env = sec.Env
 	}
-	if secretsMount != nil {
-		spec.Mounts = append(spec.Mounts, *secretsMount)
+	if sec.Mount != nil {
+		spec.Mounts = append(spec.Mounts, *sec.Mount)
 	}
 	// Network before task: an alloc must never run without its network, and the
 	// datapath denies an attachment whose identity is not yet written (§5.2.5).
 	if r.network != nil {
 		if err := r.network.Attach(ctx, spec); err != nil {
-			return failedAt(phaseNetwork, err)
+			return runtime.AllocSpec{}, sec, failedAt(phaseNetwork, err)
 		}
 	} else {
 		spec.NetnsPath = ""
 	}
+	return spec, sec, nil
+}
+
+func (r *Reconciler) create(ctx context.Context, desired Desired, action Action) error {
+	spec, sec, err := r.prepareAlloc(ctx, &desired, action)
+	if err != nil {
+		return err
+	}
+
+	// The sequence starts here and create returns: the netns, the volumes and
+	// the secrets tree are in place and every step joins them, so nothing below
+	// is needed until the last step has exited zero. The pass moves on to other
+	// services rather than waiting (R32).
+	//
+	// action.Init is set by planInit alone, and only with InitDone: the
+	// sequence already ran and this create is the one that finally builds the
+	// task. Anything else - a first create, a restart, a deploy - starts at
+	// step 0, which is what makes a sequence re-run on every alloc creation.
+	sequenceDone := action.Init != nil && action.Init.Op == InitDone
+	if len(desired.Init) > 0 && !sequenceDone {
+		return r.startInitStep(ctx, desired, action, spec, sec, 0)
+	}
+
 	if err := r.driver.Create(ctx, spec); err != nil {
 		return failedAt(phaseCreate, err)
 	}
@@ -1022,6 +1134,10 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 		Image: desired.Image, SpecHash: SpecHash(desired),
 		State: AllocRunning, CreatedAt: now, UpdatedAt: now,
 	}
+	// The sequence is over; a running alloc must not keep pointing at a step.
+	// The zero values are what omitempty needs to drop the keys entirely, so a
+	// service with no init blocks writes exactly the record it wrote before
+	// v1.84 (the R23 rule, applied to the record's wire format).
 	if existing, err := r.loadRecord(ctx, desired.Project, desired.Service, action.Index); err == nil {
 		// Whether the history carries over is decided by the spec, not by the
 		// action kind: an alloc created from a different spec than the one that
@@ -1226,7 +1342,27 @@ func (r *Reconciler) ensurePassthrough(d Desired) error {
 	return nil
 }
 
-func (r *Reconciler) teardown(ctx context.Context, desired Desired, action Action) error {
+func (r *Reconciler) teardown(ctx context.Context, w World, desired Desired, action Action) error {
+	// Init containers first (R32). They live in the alloc's network namespace
+	// and may be mid-write to its volumes, so every reason the main container
+	// goes before Detach, discardSecrets and UnstageHost applies to them one
+	// container wider.
+	//
+	// Swept by what exists under this alloc's prefix rather than by the spec's
+	// list: a half-run sequence a deploy is abandoning has steps whose names
+	// the new spec no longer contains, and iterating the current spec would
+	// leave exactly those behind.
+	for id, status := range w.InitActual {
+		if status.AllocID != action.AllocID {
+			continue
+		}
+		if err := r.driver.Stop(ctx, action.Project, id, r.stopGrace); err != nil {
+			return fmt.Errorf("stop init container %s: %w", id, err)
+		}
+		if err := r.driver.Remove(ctx, action.Project, id); err != nil {
+			return fmt.Errorf("remove init container %s: %w", id, err)
+		}
+	}
 	if err := r.driver.Stop(ctx, action.Project, action.AllocID, r.stopGrace); err != nil {
 		return fmt.Errorf("stop: %w", err)
 	}
@@ -1258,7 +1394,7 @@ func (r *Reconciler) teardown(ctx context.Context, desired Desired, action Actio
 }
 
 func (r *Reconciler) remove(ctx context.Context, w World, desired Desired, stillDeclared bool, action Action) error {
-	if err := r.teardown(ctx, desired, action); err != nil {
+	if err := r.teardown(ctx, w, desired, action); err != nil {
 		return err
 	}
 
@@ -1374,7 +1510,9 @@ func (r *Reconciler) loadRecord(ctx context.Context, project, service string, in
 // loadActual asks the driver about every project that appears in desired state
 // or in the records: the latter so an alloc whose service was deleted is still
 // discovered and cleaned up.
-func (r *Reconciler) loadActual(ctx context.Context, desired []Desired, records map[string]AllocRecord) (map[string]runtime.Status, error) {
+func (r *Reconciler) loadActual(
+	ctx context.Context, desired []Desired, records map[string]AllocRecord,
+) (map[string]runtime.Status, map[string]InitStatus, error) {
 	projects := map[string]struct{}{}
 	for _, d := range desired {
 		projects[d.Project] = struct{}{}
@@ -1384,16 +1522,35 @@ func (r *Reconciler) loadActual(ctx context.Context, desired []Desired, records 
 	}
 
 	out := map[string]runtime.Status{}
+	inits := map[string]InitStatus{}
 	for _, project := range sortedKeys(projects) {
 		statuses, err := r.driver.List(ctx, project)
 		if err != nil {
-			return nil, fmt.Errorf("list %s: %w", project, err)
+			return nil, nil, fmt.Errorf("list %s: %w", project, err)
 		}
 		for _, s := range statuses {
+			// The partition, and it is the whole safety property of R32's
+			// container identity: everything downstream of Actual reasons about
+			// allocs, and an init container has no alloc record, so leaving one
+			// in Actual would make planOrphans destroy a running migration on
+			// the pass after it started.
+			if s.IsInit() {
+				allocID, ok := runtime.AllocIDOf(s.ID)
+				if !ok {
+					// Labelled init, unparseable id: not something this
+					// package created, so leave it alone rather than invent a
+					// removal for a container it cannot attribute.
+					r.log.Warn("ignoring init-labelled container with an unrecognised id",
+						"project", project, "container", s.ID)
+					continue
+				}
+				inits[s.ID] = InitStatus{Status: s, Project: project, AllocID: allocID}
+				continue
+			}
 			out[s.ID] = s
 		}
 	}
-	return out, nil
+	return out, inits, nil
 }
 
 func desiredFor(w World, action Action) (Desired, bool) {
