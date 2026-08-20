@@ -122,7 +122,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <BackChip to="/services">Services</BackChip>
-          <PageHeader title={<span className="font-mono">{service}</span>} subtitle={key} />
+          <PageHeader title={<span className="font-mono">{key}</span>} />
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }, (_, i) => (
@@ -163,8 +163,14 @@ export function ServiceDetail({ project, service }: { project: string; service: 
             ) : null}
           </div>
         </div>
+        {/* The title is the service's full name, project included: a service
+            name is only unique inside its project, so `web` alone names two
+            different things on a node running `shop` and `blog`. It is also
+            the form every other surface uses - PipelineDetail's title, the
+            CLI's `project/service` argument, the stats subject below - so the
+            page's name now matches what you would type to reach it. */}
         <PageHeader
-          title={<span className="font-mono">{service}</span>}
+          title={<span className="font-mono">{key}</span>}
           subtitle={
             <span className="inline-flex items-center gap-3">
               {status ? <StatusDot tone={status.tone} label={status.word} /> : null}
