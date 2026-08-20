@@ -68,12 +68,15 @@ describe('ServiceActions', () => {
 })
 
 /**
- * Scaling from the detail page (the stepper beside Restart).
+ * Scaling from the detail page: a Scale button that opens a dialog.
  *
  * The rule under test is not "does a click fire a request" but "does the
- * stepper stop where the daemon would refuse". `handleScale` in internal/api
- * answers an out-of-range count with 409 rather than clamping it, so a stepper
+ * picker stop where the daemon would refuse". `handleScale` in internal/api
+ * answers an out-of-range count with 409 rather than clamping it, so a control
  * that offered the click would be handing the operator a guaranteed failure.
+ *
+ * And nothing is written while the dialog is open: a replica count is a
+ * decision, so the draft stays local until Scale is pressed.
  */
 describe('ServiceActions scaling', () => {
   afterEach(() => {
@@ -95,44 +98,114 @@ describe('ServiceActions scaling', () => {
     return calls
   }
 
-  it('scales up and down by one, through the ordinary scale route', () => {
+  /** openScale clicks the toolbar button and returns the dialog's controls. */
+  function openScale() {
+    fireEvent.click(screen.getByRole('button', { name: /Scale$/ }))
+    return {
+      more: screen.getByRole('button', { name: 'More replicas' }),
+      fewer: screen.getByRole('button', { name: 'Fewer replicas' }),
+      input: screen.getByRole('spinbutton', { name: 'Replicas' }),
+    }
+  }
+
+  it('opens a dialog and writes nothing until Scale is pressed', () => {
     const calls = captureScale()
     renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, withScaling(2))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Scale up' }))
+    const { more } = openScale()
+    fireEvent.click(more)
+    fireEvent.click(more)
+    // Two clicks on the picker, and production is untouched.
+    expect(calls).toHaveLength(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Scale to 4' }))
+    expect(calls).toHaveLength(1)
     expect(calls[0]?.url).toContain('/v1/services/shop/web/scale')
-    expect(calls[0]?.body).toContain('"count":3')
+    expect(calls[0]?.body).toContain('"count":4')
   })
 
-  it('will not step below one: zero is a stop, and Stop owns it', () => {
+  it('takes a typed count', () => {
+    const calls = captureScale()
+    renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, withScaling(2))
+
+    const { input } = openScale()
+    fireEvent.change(input, { target: { value: '7' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Scale to 7' }))
+    expect(calls[0]?.body).toContain('"count":7')
+  })
+
+  it('refuses to submit an unchanged count', () => {
+    renderActions({ deploying: false, updated: 3, total: 3 }, adminSession, withScaling(3))
+    const { more } = openScale()
+    // The submit names the decision it commits, so it is distinguishable from
+    // the toolbar button that opened the dialog.
+    expect(screen.getByRole('button', { name: 'Scale to 3' })).toHaveProperty('disabled', true)
+    fireEvent.click(more)
+    expect(screen.getByRole('button', { name: 'Scale to 4' })).toHaveProperty('disabled', false)
+  })
+
+  it('will not go below one: zero is a stop, and Stop owns it', () => {
     renderActions({ deploying: false, updated: 1, total: 1 }, adminSession, withScaling(1))
-    expect(screen.getByRole('button', { name: 'Scale down' })).toHaveProperty('disabled', true)
-    expect(screen.getByRole('button', { name: 'Scale up' })).toHaveProperty('disabled', false)
-    // Stop is still the way to zero.
-    expect(screen.getByRole('button', { name: /Stop/ })).toHaveProperty('disabled', false)
+    const { fewer } = openScale()
+    expect(fewer).toHaveProperty('disabled', true)
+    expect(screen.getByText(/Scaling to zero is stopping/)).toBeTruthy()
   })
 
   it('stops at the autoscale ceiling the daemon would refuse past', () => {
     const scaling = { min: 2, max: 4, metrics: [{ name: 'cpu', target: 70 }] }
     renderActions({ deploying: false, updated: 4, total: 4 }, adminSession, withScaling(4, scaling))
-    expect(screen.getByRole('button', { name: 'Scale up' })).toHaveProperty('disabled', true)
-    expect(screen.getByRole('button', { name: 'Scale down' })).toHaveProperty('disabled', false)
+    const { more, fewer } = openScale()
+    expect(more).toHaveProperty('disabled', true)
+    expect(fewer).toHaveProperty('disabled', false)
+    // The range is stated, not just enforced.
+    expect(screen.getByText(/allowed/)).toBeTruthy()
   })
 
-  it('stops at the autoscale floor as well', () => {
+  it('stops at the autoscale floor as well, and says what the autoscaler will do', () => {
     const scaling = { min: 2, max: 4, metrics: [{ name: 'cpu', target: 70 }] }
     renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, withScaling(2, scaling))
-    expect(screen.getByRole('button', { name: 'Scale down' })).toHaveProperty('disabled', true)
+    const { fewer } = openScale()
+    expect(fewer).toHaveProperty('disabled', true)
+    expect(screen.getByText(/until the next autoscale decision/)).toBeTruthy()
   })
 
-  it('a viewer cannot scale', () => {
+  // The case that decides whether this control is usable on an autoscaling
+  // service: its count moves every few seconds, and re-seeding the draft from
+  // it would wipe whatever was typed, over and over.
+  it('keeps a typed count when the live count moves underneath it', () => {
+    const view = renderActions(
+      { deploying: false, updated: 3, total: 3 },
+      adminSession,
+      withScaling(3, { min: 2, max: 10, metrics: [{ name: 'cpu', target: 70 }] }),
+    )
+    const { input } = openScale()
+    fireEvent.change(input, { target: { value: '8' } })
+
+    // The autoscaler moves 3 -> 4 while the dialog is open.
+    view.rerender(
+      <SessionContext.Provider value={adminSession}>
+        <Router>
+          <ServiceActions
+            project="shop"
+            service="web"
+            desired={withScaling(4, { min: 2, max: 10, metrics: [{ name: 'cpu', target: 70 }] })}
+            rollout={{ deploying: false, updated: 4, total: 4 }}
+          />
+        </Router>
+      </SessionContext.Provider>,
+    )
+
+    expect(screen.getByRole('button', { name: 'Scale to 8' })).toHaveProperty('disabled', false)
+    expect(screen.getByText(/Currently/).textContent).toContain('4')
+  })
+
+  it('a viewer cannot open the dialog at all', () => {
     renderActions(
       { deploying: false, updated: 2, total: 2 },
       { ...adminSession, session: { subject: 'v', role: 'viewer', via: 'session' } },
       withScaling(2),
     )
-    expect(screen.getByRole('button', { name: 'Scale up' })).toHaveProperty('disabled', true)
-    expect(screen.getByRole('button', { name: 'Scale down' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: /Scale$/ })).toHaveProperty('disabled', true)
   })
 })
 
