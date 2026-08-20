@@ -125,6 +125,62 @@ service "web" {
 	}
 }
 
+func TestPidsResources(t *testing.T) {
+	// R11 (v1.88): pids takes a declared value, zero means what omission
+	// means (the default cap), and a negative is refused.
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    resources {
+      pids = 2048
+    }
+  }
+}
+`)
+	res := spec.ServiceByName("shop", "web").Task.Resources
+	if res.Pids != 2048 {
+		t.Errorf("pids = %d, want 2048", res.Pids)
+	}
+	if res.CPU != 0 || res.Memory != 0 {
+		t.Errorf("declaring pids must not conjure cpu/memory limits: %+v", res)
+	}
+	if !spec.ServiceByName("shop", "web").Task.ResourcesDeclared {
+		t.Error("ResourcesDeclared = false for a pids-only block; plan could not distinguish omission")
+	}
+
+	zero := parse(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    resources { pids = 0 }
+  }
+}
+`)
+	if got := zero.ServiceByName("shop", "web").Task.Resources.Pids; got != 0 {
+		t.Errorf("pids = 0 declared = 0 (the default), got %d", got)
+	}
+
+	if out := parseErr(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    resources { pids = -1 }
+  }
+}
+`); !strings.Contains(out, "cannot be negative") {
+		t.Errorf("negative pids must be refused, got:\n%s", out)
+	}
+}
 func TestBuildPathValidation(t *testing.T) {
 	// build.context and build.dockerfile name paths *inside the checkout*;
 	// absolute and ".." forms name the node's filesystem and are refused at

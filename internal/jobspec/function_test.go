@@ -281,6 +281,16 @@ func TestFunctionRefusals(t *testing.T) {
 			 trigger "http" {}`,
 			"capabilities",
 		},
+		// R25/R11 (v1.88): resources.pids is a parse-shallow-looking but real
+		// schema field, so it needs an explicit refusal; the sandbox's caps
+		// are fixed.
+		{
+			"pids in resources",
+			`module = "example.com/fn:1"
+			 resources { pids = 128 }
+			 trigger "http" {}`,
+			"pids",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

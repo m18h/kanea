@@ -23,8 +23,9 @@ import (
 // declarative system.
 const NominalCoreMHz = 1000
 
-// DefaultPidsLimit is applied to every alloc; the job spec has no field for it
-// yet, and PRD §5.2.11 requires one on every container.
+// DefaultPidsLimit is the cap every alloc carries when the spec does not
+// declare resources.pids; PRD §5.2.11 requires a cap on every container,
+// declared or not (R11, v1.88).
 const DefaultPidsLimit = 256
 
 // toDesired converts a validated job spec into the reconciler's desired state.
@@ -47,6 +48,13 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 				svc.Project, svc.Name)
 		}
 
+		// DefaultPidsLimit fills in only when the spec did not declare one:
+		// that is what keeps an omitted resources.pids hashing as it always
+		// did (the R23 lesson).
+		pids := svc.Task.Resources.Pids
+		if pids == 0 {
+			pids = DefaultPidsLimit
+		}
 		desired := reconciler.Desired{
 			Project:      svc.Project,
 			Service:      svc.Name,
@@ -65,7 +73,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			Resources: runtime.Resources{
 				CPUMillis:   svc.Task.Resources.CPU * 1000 / NominalCoreMHz,
 				MemoryBytes: int64(svc.Task.Resources.Memory) << 20,
-				PidsLimit:   DefaultPidsLimit,
+				PidsLimit:   int64(pids),
 			},
 		}
 		desired.Scaling = convertScaling(svc)
@@ -459,7 +467,9 @@ func convertInits(inits []*jobspec.InitContainer) []reconciler.InitContainer {
 			Resources: runtime.Resources{
 				CPUMillis:   i.Resources.CPU * 1000 / NominalCoreMHz,
 				MemoryBytes: int64(i.Resources.Memory) << 20,
-				PidsLimit:   DefaultPidsLimit,
+				// A step inherits the alloc's cap at projection (reconciler
+				// initSpecFor): jobspec refuses pids on init blocks (R32).
+				PidsLimit: 0,
 			},
 		}
 		if i.Timeout != "" {

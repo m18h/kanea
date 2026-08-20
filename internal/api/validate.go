@@ -181,6 +181,19 @@ func validateDesired(svc reconciler.Desired) error {
 			key, totalFiles, jobspec.MaxServiceFileBytes)
 	}
 
+	// R11 (v1.88) on the pids cap: the parser refuses a negative one; the
+	// same refusal lands here for records that never saw the parser.
+	if svc.Resources.PidsLimit < 0 {
+		return fmt.Errorf("service %s: resources.pids cannot be negative; "+
+			"omitted (or 0) takes the default cap", key)
+	}
+	for _, step := range svc.Init {
+		if step.Resources.PidsLimit != 0 && step.Resources.PidsLimit != runtime.DefaultPidsLimit {
+			return fmt.Errorf("service %s: init step %q declares a pids cap; a step inherits "+
+				"the alloc's cap (PRD §6.2 R32)", key, step.Name)
+		}
+	}
+
 	// R25: a non-default runtime gets the whole refusal list, not two of
 	// seven - it is the whole list, and init containers and files make it
 	// nine. A record carrying Runtime beside any of these reached the Store
@@ -215,6 +228,9 @@ func validateDesired(svc reconciler.Desired) error {
 		case len(svc.Files) > 0:
 			return fmt.Errorf("service %s names runtime %q and declares files; the wasm runtime "+
 				"has no mount primitive (PRD §6.2 R25)", key, svc.Runtime)
+		case svc.Resources.PidsLimit != 0 && svc.Resources.PidsLimit != runtime.DefaultPidsLimit:
+			return fmt.Errorf("service %s names runtime %q and declares a pids cap; the wasm "+
+				"sandbox's caps are fixed (PRD §6.2 R25)", key, svc.Runtime)
 		}
 	}
 
