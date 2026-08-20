@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/containerd/containerd/v2/core/containers"
@@ -17,6 +18,51 @@ import (
 // floor of 5 leaves headroom and matches the id lengths the reconciler mints.
 // Catching a too-short id here turns a downstream failure into a clear error.
 const MinAllocIDLength = 5
+
+// Container-label keys and roles (PRD §6.2 R32). A container with no
+// LabelRole is the alloc's own task: that is what every container created
+// before v1.84 is, so absence must never read as "unknown".
+const (
+	LabelRole = "kanea.role"
+	RoleInit  = "init"
+)
+
+// initIDInfix separates an alloc id from the step it carries.
+//
+// The dot is load-bearing. An alloc id is "<project>-<service>-<index>" where
+// both names are DNS-1123 labels (lowercase alphanumerics and dashes) and the
+// index is digits, so a dot cannot occur in one; with a dash instead, an init
+// block named "1" on alloc "shop-web-0" would yield "shop-web-0-init-0-1",
+// which is a perfectly well-formed alloc id for project "shop", service
+// "web-0-init-0", index 1. World.Actual is keyed by id, so that collision is a
+// live alloc silently overwritten by a migration's status.
+const initIDInfix = ".init."
+
+// InitID is the containerd id of one init container: "<alloc>.init.<n>.<name>".
+//
+// The ordinal is in it so a sweep can work by prefix and a listing reads in
+// order; the name is in it so the log file and `ctr containers ls` are legible.
+func InitID(allocID string, ordinal int, name string) string {
+	return allocID + initIDInfix + strconv.Itoa(ordinal) + "." + name
+}
+
+// AllocIDOf returns the alloc an init container id belongs to, and whether the
+// id was one. It is the inverse of InitID and is safe precisely because an
+// alloc id contains no dot.
+func AllocIDOf(id string) (string, bool) {
+	i := strings.Index(id, initIDInfix)
+	if i <= 0 {
+		return "", false
+	}
+	return id[:i], true
+}
+
+// looksLikeInitID is the id-shape half of the role check, used only when the
+// label could not be read at all.
+func looksLikeInitID(id string) bool {
+	_, ok := AllocIDOf(id)
+	return ok
+}
 
 // invalidID is (uid_t)-1, which is a sentinel rather than a user (PRD §6.2 R23).
 const invalidID uint32 = 1<<32 - 1
@@ -82,6 +128,22 @@ func (s AllocSpec) Validate() error {
 		if !filepath.IsAbs(m.Source) || !filepath.IsAbs(m.Destination) {
 			return fmt.Errorf("%w: alloc %s mount %s -> %s: both paths must be absolute",
 				ErrInvalidSpec, s.ID, m.Source, m.Destination)
+		}
+	}
+	if s.Init != nil {
+		// R32 gives an init block no `device` and no `socket` field, so a spec
+		// carrying either did not come from the parser. Refuse rather than
+		// honour it: delegating an R17/R18 grant to a step would widen the
+		// grant surface for something nobody asked for.
+		if len(s.Devices) > 0 {
+			return fmt.Errorf("%w: init container %s declares devices; an init block has no "+
+				"device grant (PRD §6.2 R32)", ErrInvalidSpec, s.ID)
+		}
+		if s.Init.AllocID == "" {
+			return fmt.Errorf("%w: init container %s names no alloc", ErrInvalidSpec, s.ID)
+		}
+		if s.Init.Name == "" {
+			return fmt.Errorf("%w: init container %s has no step name", ErrInvalidSpec, s.ID)
 		}
 	}
 	for _, d := range s.Devices {

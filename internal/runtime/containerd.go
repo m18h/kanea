@@ -98,6 +98,14 @@ func (d *containerdDriver) EnsureImage(ctx context.Context, img ImageRef) (strin
 		return "", fmt.Errorf("look up image %s: %w", ref, err)
 	}
 
+	// R33: the node was told not to reach for the network. Say that, rather
+	// than attempting a pull and reporting whatever the registry says about a
+	// request it was never going to be allowed to make.
+	if img.Policy == PullNever {
+		return "", fmt.Errorf("%w: %s is absent from this node and pull_policy is %q",
+			ErrImageNotPresent, ref, PullNever)
+	}
+
 	opts := []containerd.RemoteOpt{containerd.WithPullUnpack}
 	if len(img.Auth) > 0 {
 		resolver, err := resolverFor(img.Auth)
@@ -282,6 +290,17 @@ func (d *containerdDriver) statusOf(ctx context.Context, container containerd.Co
 	out := Status{ID: container.ID(), State: StateUnknown}
 	if info, err := container.Info(ctx); err == nil {
 		out.Image = info.Image
+		// Free: the labels ride on the Info call the image already needed.
+		// An absent kanea.role means the alloc's own task, which is what every
+		// container created before v1.84 is (PRD §6.2 R32).
+		out.Role = info.Labels[LabelRole]
+	}
+	if out.Role == "" && looksLikeInitID(out.ID) {
+		// Belt and braces for the Info-failed path above, where no label is
+		// readable at all: the id shape is the assertion at the point of use,
+		// the same duplication withinBase gives the reconciler. Getting this
+		// wrong the other way would let planOrphans destroy a running step.
+		out.Role = RoleInit
 	}
 
 	task, err := container.Task(ctx, nil)
@@ -596,12 +615,23 @@ func snapshotID(allocID string) string { return allocID + "-snap" }
 // labels make allocs attributable without consulting the Store: useful when
 // reconciling drift and when a human is looking at `ctr containers ls`.
 func labels(spec AllocSpec) map[string]string {
-	return map[string]string{
+	out := map[string]string{
 		"kanea":         "true",
 		"kanea.project": spec.Project,
 		"kanea.service": spec.Service,
 		"kanea.alloc":   spec.ID,
 	}
+	if spec.Init == nil {
+		return out
+	}
+	// An init container's kanea.alloc names the *alloc*, not itself: the sweep
+	// that removes leftovers walks by that label, and it must find a step whose
+	// own name is long gone from the spec (PRD §6.2 R32).
+	out["kanea.alloc"] = spec.Init.AllocID
+	out[LabelRole] = RoleInit
+	out["kanea.init.name"] = spec.Init.Name
+	out["kanea.init.ordinal"] = strconv.Itoa(spec.Init.Ordinal)
+	return out
 }
 
 func mapState(s containerd.ProcessStatus) State {

@@ -129,6 +129,9 @@ func runAgent(args []string) error {
 			datapath.HostInterface+" address; \"off\" disables)")
 	dnsUpstream := fs.String("dns-upstream", "",
 		"comma-separated upstream resolvers for external names (default: the host's)")
+	imagePullPolicy := fs.String("image-pull-policy", "",
+		"node default for where images may come from: if-not-present (default) or never "+
+			"(PRD §6.2 R33; a service's own task.pull_policy wins)")
 	baseDomain := fs.String("base-domain", "",
 		"domain exposed services get an FQDN under, e.g. apps.example.com (PRD §7.2)")
 	edgeRoutes := fs.String("edge-routes", edge.DefaultSnapshotPath,
@@ -336,6 +339,16 @@ func runAgent(args []string) error {
 	if len(nodeCfg.Ignored) > 0 {
 		logger.Warn("server config carries stanzas this version does not read",
 			"config", nodeCfg.Path, "ignored", nodeCfg.Ignored)
+	}
+
+	// The node's default pull policy (R33, v1.84). Precedence is v1.51's,
+	// verbatim: the flag wins and says so, the images stanza otherwise, and
+	// if-not-present when neither, which is what every node did before v1.84.
+	// A service's own task.pull_policy wins over all of it; this is the answer
+	// for a record that declares none.
+	pullPolicy, err := resolveNodePullPolicy(*imagePullPolicy, nodeCfg.ImagePullPolicy, nodeCfg.Path, logger)
+	if err != nil {
+		return err
 	}
 
 	// The internal resolver, after the server config so the dns stanza can
@@ -596,6 +609,11 @@ func runAgent(args []string) error {
 		Secrets:      secretStore,
 		EdgeSnapshot: routesPath,
 		BaseDomain:   *baseDomain,
+		// R33's node default. Without it every record that declares no policy
+		// would fall to the driver's zero value, which happens to be the same
+		// behaviour today - so a missing wire here is invisible until someone
+		// sets `images { pull_policy = "never" }` and the node keeps pulling.
+		DefaultPullPolicy: pullPolicy,
 	})
 	if err != nil {
 		return err
@@ -1285,5 +1303,38 @@ func fanOut(ctx context.Context, in <-chan struct{}, out ...chan<- struct{}) {
 				}
 			}
 		}
+	}
+}
+
+// resolveNodePullPolicy applies §15.1's precedence to R33's node default: an
+// explicit flag wins (and says so, or the operator cannot tell which of two
+// sources is in force), the images stanza otherwise, and if-not-present when
+// neither, which is what every node did before v1.84.
+//
+// "always" is refused as a node default here as it is in the stanza: it means
+// per-service auto-update (R19), and turning that on for every service on a
+// node is not a default anybody asked for.
+func resolveNodePullPolicy(flag, fromFile, configPath string, logger *slog.Logger) (string, error) {
+	switch flag {
+	case "":
+		if fromFile != "" {
+			logger.Info("image pull policy from server config",
+				"config", configPath, "policy", fromFile)
+			return fromFile, nil
+		}
+		return runtime.PullIfNotPresent, nil
+	case runtime.PullIfNotPresent, runtime.PullNever:
+		if fromFile != "" {
+			logger.Info("server config images stanza is not consulted (--image-pull-policy wins)",
+				"config", configPath)
+		}
+		return flag, nil
+	case runtime.PullAlways:
+		return "", fmt.Errorf("--image-pull-policy %q is not a node default: it turns on image "+
+			"auto-update for one service (PRD §6.2 R19/R33). Declare it on the service's task",
+			flag)
+	default:
+		return "", fmt.Errorf("--image-pull-policy %q is not a policy; it must be %q or %q",
+			flag, runtime.PullIfNotPresent, runtime.PullNever)
 	}
 }

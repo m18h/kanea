@@ -10,6 +10,8 @@ import (
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/m18h/kanea/internal/runtime"
 )
 
 // Options configures parsing.
@@ -149,6 +151,7 @@ type hclService struct {
 	Count        *int             `hcl:"count,optional"`
 	DependsOn    []string         `hcl:"depends_on,optional"`
 	Build        *hclBuild        `hcl:"build,block"`
+	Inits        []hclInit        `hcl:"init,block"`
 	Tasks        []hclTask        `hcl:"task,block"`
 	Network      *hclNetwork      `hcl:"network,block"`
 	Exposes      []hclExpose      `hcl:"expose,block"`
@@ -186,10 +189,39 @@ type hclTask struct {
 	// RegistryAuthRef is the *pull* credential (R19). Distinct from the build
 	// block's field of the same name, which pushes: a project may well read a
 	// public base image and push to a private registry, or the reverse.
-	RegistryAuthRef string      `hcl:"registry_auth_ref,optional"`
-	Devices         []hclDevice `hcl:"device,block"`
-	Sockets         []hclSocket `hcl:"socket,block"`
-	DefRange        hcl.Range   `hcl:",def_range"`
+	RegistryAuthRef string `hcl:"registry_auth_ref,optional"`
+	// PullPolicy is R33: where this image may come from. Empty means the node
+	// decides (§15.1's images stanza), the same shape expose.tls.mode has,
+	// because this file is parsed client-side and a node default resolved here
+	// would make one spec mean different things on two machines.
+	PullPolicy string      `hcl:"pull_policy,optional"`
+	Devices    []hclDevice `hcl:"device,block"`
+	Sockets    []hclSocket `hcl:"socket,block"`
+	DefRange   hcl.Range   `hcl:",def_range"`
+}
+
+// hclInit is one init container: a step of a service, run to completion before
+// its task (R32).
+//
+// What it does NOT have is as much of the rule as what it does: no build,
+// device, socket, health_check, expose, scaling, count, depends_on or network
+// field, so declaring one is HCL's own "block not expected here" at the exact
+// line. An init container is a step, not a service (R25's pattern).
+type hclInit struct {
+	Name            string         `hcl:"name,label"`
+	Image           string         `hcl:"image,optional"`
+	Command         []string       `hcl:"command,optional"`
+	Capabilities    []string       `hcl:"capabilities,optional"`
+	Env             hcl.Expression `hcl:"env,optional"`
+	Resources       *hclResources  `hcl:"resources,block"`
+	User            *hclUser       `hcl:"user,block"`
+	RegistryAuthRef string         `hcl:"registry_auth_ref,optional"`
+	PullPolicy      string         `hcl:"pull_policy,optional"`
+	// Timeout bounds one step. Empty or zero is no timeout (R11's rule), and a
+	// declared one is a floor rather than a deadline: the kill lands within a
+	// reconcile pass.
+	Timeout  string    `hcl:"timeout,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclResources struct {
@@ -369,8 +401,11 @@ type hclUpdate struct {
 	Strategy    string `hcl:"strategy,optional"`
 	MaxParallel int    `hcl:"max_parallel,optional"`
 	MinHealthy  string `hcl:"min_healthy,optional"`
-	// Auto follows the tag task.image declares (R19). Off unless written.
-	Auto     bool   `hcl:"auto,optional"`
+	// Auto follows the tag task.image declares (R19). Off unless written, and
+	// a *bool rather than a bool because R33 needs to tell a declared `false`
+	// from an absent block: `pull_policy = "always"` lowers to auto-update, and
+	// declaring both is a contradiction rather than a silent winner.
+	Auto     *bool  `hcl:"auto,optional"`
 	Interval string `hcl:"interval,optional"`
 	Deadline string `hcl:"deadline,optional"`
 }
@@ -607,6 +642,10 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 		})
 	}
 
+	for i := range s.Inits {
+		out.Inits = append(out.Inits, convertInit(&s.Inits[i]))
+	}
+
 	if s.Build != nil {
 		out.Build = &Build{
 			Context:         s.Build.Context,
@@ -690,7 +729,32 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 	if s.Update != nil {
 		out.Update = &Update{
 			Strategy: s.Update.Strategy, MaxParallel: s.Update.MaxParallel, MinHealthy: s.Update.MinHealthy,
-			Auto: s.Update.Auto, Interval: s.Update.Interval, Deadline: s.Update.Deadline,
+			Interval: s.Update.Interval, Deadline: s.Update.Deadline,
+		}
+		if s.Update.Auto != nil {
+			out.Update.Auto, out.Update.AutoDeclared = *s.Update.Auto, true
+		}
+	}
+	// R33: `pull_policy = "always"` lowers here, at parse, to R19 auto-update.
+	//
+	// It is one mechanism rather than two spellings of one: re-pulling at every
+	// alloc create would let two replicas of one spec hash run different bytes,
+	// while pinning the resolved digest rolls every replica together through
+	// the update policy, which is what asking for "always" actually means. The
+	// lowering happens before validation so R19's own refusals (beside a build
+	// block, without a tag, on a digest) apply unchanged; they name pull_policy
+	// when that is what was written, via Update.AutoFrom.
+	if out.Task != nil && out.Task.PullPolicy == runtime.PullAlways {
+		if out.Update == nil {
+			out.Update = &Update{}
+		}
+		out.Update.AutoFrom = "pull_policy"
+		// Deliberately does not clobber an explicit `auto = false`: that
+		// combination is a contradiction validateAutoUpdate refuses by name,
+		// and overwriting the declared value here would destroy the evidence
+		// and silently pick a winner.
+		if !out.Update.AutoDeclared {
+			out.Update.Auto = true
 		}
 	}
 	if s.Restart != nil {
@@ -707,6 +771,7 @@ func convertTask(t *hclTask) *Task {
 		Command:         t.Command,
 		Capabilities:    t.Capabilities,
 		RegistryAuthRef: t.RegistryAuthRef,
+		PullPolicy:      t.PullPolicy,
 		Env:             map[string]string{},
 		// Resources stay zero unless declared: zero means unbounded (R11,
 		// v1.58); the alloc gets no per-alloc quota and is bounded by the
@@ -745,6 +810,44 @@ func convertTask(t *hclTask) *Task {
 			Name: s.Name, Grant: s.Grant, MountPath: s.MountPath,
 			ReadOnly: s.ReadOnly, DefRange: s.DefRange,
 		})
+	}
+	return out
+}
+
+// convertInit carries one init block across. Like convertTask it copies what
+// was written and checks nothing: the range and vocabulary rules are
+// validateInits' job, and narrowing here would turn a value the operator has
+// to be told about into one that silently became legal.
+func convertInit(i *hclInit) *InitContainer {
+	out := &InitContainer{
+		DefRange:        i.DefRange,
+		Name:            i.Name,
+		Image:           i.Image,
+		Command:         i.Command,
+		Capabilities:    i.Capabilities,
+		RegistryAuthRef: i.RegistryAuthRef,
+		PullPolicy:      i.PullPolicy,
+		Timeout:         i.Timeout,
+		Env:             map[string]string{},
+		// Resources stay zero unless declared: R11's unbounded, no default.
+	}
+	if i.User != nil {
+		out.User = &User{Groups: i.User.Groups, DefRange: i.User.DefRange}
+		if i.User.UID != nil {
+			out.User.UID = *i.User.UID
+		}
+		if i.User.GID != nil {
+			out.User.GID = *i.User.GID
+		}
+	}
+	if i.Resources != nil {
+		out.ResourcesDeclared = true
+		if i.Resources.CPU != nil {
+			out.Resources.CPU = *i.Resources.CPU
+		}
+		if i.Resources.Memory != nil {
+			out.Resources.Memory = *i.Resources.Memory
+		}
 	}
 	return out
 }

@@ -21,6 +21,12 @@ type ImageRef struct {
 	// Auth is nil for a public registry, which is the common case and the only
 	// case that worked before v1.32.
 	Auth []byte
+	// Policy is R33's pull policy: empty or PullIfNotPresent is the historical
+	// behaviour, PullNever refuses to reach the network. PullAlways never
+	// arrives here (it lowers to R19 auto-update at parse time) and is read as
+	// PullIfNotPresent if it somehow does, because the alternative is a driver
+	// re-pulling per alloc create behind the record's back.
+	Policy string
 }
 
 // dockerConfig is the subset of a docker config.json that carries credentials.

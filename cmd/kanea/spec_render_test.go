@@ -171,6 +171,51 @@ service "search" {
   }
 }
 
+# Init containers and pull policy (v1.84, R32/R33). Both must survive the trip:
+# an init block silently dropped by the generator would apply as a service whose
+# migration never runs.
+service "orders" {
+  project = "shop"
+  count   = 1
+
+  init "fix-perms" {
+    image        = "busybox:1.36"
+    command      = ["chown", "-R", "999:999", "/data"]
+    capabilities = ["CAP_CHOWN"]
+    timeout      = "1m"
+  }
+
+  init "migrate" {
+    image       = "registry.example.com/shop/orders-migrate:2.1.0"
+    command     = ["/bin/migrate", "up"]
+    pull_policy = "never"
+
+    env = {
+      DATABASE_URL = "secret:shop/database-url"
+    }
+
+    user {
+      uid = 999
+      gid = 999
+    }
+
+    resources {
+      cpu    = 200
+      memory = 128
+    }
+  }
+
+  task "app" {
+    image       = "registry.example.com/shop/orders:2.1.0"
+    pull_policy = "if-not-present"
+
+    resources {
+      cpu    = 500
+      memory = 512
+    }
+  }
+}
+
 service "voice" {
   project = "shop"
   count   = 1
@@ -204,8 +249,8 @@ service "voice" {
 // cannot survive the trip must refuse generation, never drift.
 func TestGeneratedSpecRoundTripsToTheSameDesired(t *testing.T) {
 	original, pipelines := renderText(t, roundTripSpec)
-	if len(original) != 4 {
-		t.Fatalf("services = %d, want 4", len(original))
+	if len(original) != 5 {
+		t.Fatalf("services = %d, want 5", len(original))
 	}
 
 	text, err := toHCL(original, pipelines)

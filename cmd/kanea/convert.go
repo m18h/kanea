@@ -53,6 +53,8 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			Count:        svc.Count,
 			Image:        image,
 			Command:      svc.Task.Command,
+			PullPolicy:   svc.Task.PullPolicy,
+			Init:         convertInits(svc.Inits),
 			Capabilities: jobspec.NormalizeCapabilities(svc.Task.Capabilities),
 			Env:          svc.Task.Env,
 			// The pull credential is a reference the node resolves, never a
@@ -430,4 +432,42 @@ func storageResource(st *jobspec.Storage) storage.Resource {
 		Path:     st.Path,
 		Create:   st.Create,
 	}
+}
+
+// convertInits carries a service's init blocks into the record (PRD §6.2 R32).
+//
+// Capabilities go through NormalizeCapabilities exactly as the task's do: the
+// R13 baseline is applied at projection time, never written into the record,
+// or a default in the Store would re-hash every capability-less step at
+// upgrade (the R23 lesson).
+func convertInits(inits []*jobspec.InitContainer) []reconciler.InitContainer {
+	if len(inits) == 0 {
+		return nil // nil, not an empty slice: omitempty must drop the key
+	}
+	out := make([]reconciler.InitContainer, 0, len(inits))
+	for _, i := range inits {
+		step := reconciler.InitContainer{
+			Name:            i.Name,
+			Image:           i.Image,
+			Command:         i.Command,
+			Capabilities:    jobspec.NormalizeCapabilities(i.Capabilities),
+			Env:             i.Env,
+			User:            convertUser(i.User),
+			RegistryAuthRef: i.RegistryAuthRef,
+			PullPolicy:      i.PullPolicy,
+			Resources: runtime.Resources{
+				CPUMillis:   i.Resources.CPU * 1000 / NominalCoreMHz,
+				MemoryBytes: int64(i.Resources.Memory) << 20,
+				PidsLimit:   DefaultPidsLimit,
+			},
+		}
+		if i.Timeout != "" {
+			// Already known to parse: validateInits ran first.
+			if d, err := jobspec.ParseDuration(i.Timeout); err == nil {
+				step.Timeout = d
+			}
+		}
+		out = append(out, step)
+	}
+	return out
 }

@@ -1006,6 +1006,67 @@ encoding. It would be several times smaller and it would be a second shape
 for the same series, which is the drift this codebase pays for elsewhere;
 the bound is on how much may be asked for, not on how it is spelled.
 
+### 3.23 Init containers (A01, A05, A08; PRD v1.84, §6.2 R32/R33)
+
+**An alloc can now be more than one container, and the second one is
+repo-controlled code with the first one's namespaces.** An `init` block names
+its own image, runs inside the alloc's network namespace, mounts the alloc's
+volumes at the same paths, and sees the alloc's secrets tree - so a compromised
+step image is inside the alloc's blast radius before the workload exists, and
+GitOps deploys specs automatically, which is what makes this worth stating
+rather than assuming.
+
+The controls are the ones the task already has, applied to a step rather than
+relaxed for one. **Capabilities go through R13's permitted set**, projected by
+the same `effectiveCapabilities` the task's list goes through, so a step cannot
+declare what a task cannot; the seccomp profile is resolved against the step's
+own effective set, which for a `["none"]` step is tighter than the task's.
+**Resources, PID/IPC/UTS/mount/cgroup namespaces and `no-new-privileges` are
+per container**, so a step's own `memory.max` bounds it and a fork bomb in a
+migration meets the same `pids.max`. And the alloc-wide bounds still hold: a
+step runs under `kanea-workloads.slice`, so the collective ceiling (§5.2.11)
+covers it.
+
+Three things are deliberately *narrower* for a step than for a task, and each
+is a refusal rather than an omission:
+
+- **No device and no socket grants.** R32 gives an `init` block no field for
+  either, `initSpecFor` drops the task's rather than inheriting them, and
+  `runtime.AllocSpec.Validate` refuses an init spec that carries one. A granted
+  runtime socket is root on the node (§3.x, R18), and delegating it to every
+  step of every service with a grant would widen that authority silently, for
+  something nobody asked for.
+- **No `read_only_rootfs` inheritance.** A step whose job is to write into a
+  volume is the common case, and the task's rootfs policy is a decision about
+  the task.
+- **Secrets are per reader.** A step's referenced secrets are materialised in
+  its own subtree (`…/<alloc>/init/<step>/`) as 0400 files owned by *that
+  step's* uid, not the task's. The task's own files keep the path R3 documents,
+  byte for byte. Sharing one file would mean exactly one of the two could read
+  it, and the whole point of a step is that it often runs as a different user.
+
+**A step running as root beside a task running as 999 is the feature, not a
+gap.** The canonical init container exists to `chown` a directory the workload
+will own unprivileged; `resolveVolumeOwnership` therefore stays keyed to
+`task.user` and deliberately does not consider a step's. What that means for a
+reader of a spec: an `init` block with no `user` runs as its *image's* `USER`,
+which for most base images is root, so a step is worth the same review a
+`user { uid = 0 }` task would get.
+
+**`pull_policy` is not a security control and is not claimed as one.**
+`never` bounds where an image may come from on *this node* (§15.1's `images`
+stanza, or `--image-pull-policy`), which is an availability and air-gap
+property: it stops a node reaching a registry it should not, and it does
+nothing about what is already in the content store. Image *authenticity* is
+still a digest in the spec, exactly as it was.
+
+**What a step cannot do that a task cannot either:** reach another project's
+secrets (R5 is checked per step, at parse and at the apply seam, through the
+same exported core), name a host path, or claim a node port. And the reconcile
+loop's own exposure is unchanged: nothing waits on a step, so a hung migration
+costs its own alloc and nothing else - the bound is the step's `timeout`, and
+an absent one is visible in `kanea ps` rather than silent.
+
 ---
 
 ## 4. Attack walkthroughs

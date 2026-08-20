@@ -55,6 +55,23 @@ type Desired struct {
 	// in the Store would be a secret at rest in the one place §15.3 ships off
 	// the node.
 	RegistryAuthRef string `json:"registry_auth_ref,omitempty"`
+	// PullPolicy is jobspec R33: where this image may come from
+	// (runtime.PullIfNotPresent / runtime.PullNever). Empty means the node
+	// decides, the Expose.TLSMode shape, because toDesired runs client-side.
+	//
+	// It is deliberately NOT SpecHash material: where an image may be fetched
+	// from is not baked into a container, so flipping it must not roll a
+	// service. runtime.PullAlways never reaches here; it lowers to Update.Auto
+	// at parse time.
+	PullPolicy string `json:"pull_policy,omitempty"`
+	// Init are the service's init containers, in declaration order (jobspec
+	// R32). They run one at a time, to completion, before the alloc's own task
+	// is created, sharing its network namespace, volumes and secrets tmpfs.
+	//
+	// omitempty is load-bearing: this is SpecHash material, and a record with
+	// no init blocks must serialize exactly as it did before v1.84 or
+	// upgrading kanead rolls every container on the node (the R23 lesson).
+	Init []InitContainer `json:"init,omitempty"`
 	// Command overrides the image entrypoint when non-empty.
 	Command []string
 	// Capabilities is the validated *declared* list (jobspec R13): grants on
@@ -630,6 +647,12 @@ const (
 	AllocFailed AllocState = "failed"
 	// AllocStopped means the alloc was intentionally stopped.
 	AllocStopped AllocState = "stopped"
+	// AllocInit means the alloc's shared setup is done and its init containers
+	// are running to completion, in order, before its task exists (R32).
+	//
+	// One state, not one per step: every reader of an AllocState has to learn
+	// each new value, so which step it is on is a field rather than a state.
+	AllocInit AllocState = "init"
 )
 
 // ExitReason classifies why an alloc stopped, or why it never started (PRD
@@ -679,7 +702,56 @@ const (
 	// ExitStartFailed means the container was created and the task would not
 	// start: most often a command that is not executable in the image.
 	ExitStartFailed ExitReason = "start_failed"
+
+	// ExitInitFailed means an init container ran and exited non-zero (R32).
+	//
+	// It is on the ran-and-failed side of the split above, so unlike the
+	// create-path reasons it spends R29's restart budget: a workload ran and
+	// failed, and a migration that will never succeed must stop retrying.
+	ExitInitFailed ExitReason = "init_failed"
+	// ExitInitTimeout means an init container outlived its declared timeout
+	// and was killed (R32). Same side of the split, for the same reason: a
+	// step that hangs is the workload failing, and a hang is if anything a
+	// stronger signal than a non-zero exit.
+	ExitInitTimeout ExitReason = "init_timeout"
 )
+
+// InitContainer is one step of a service, run to completion before its task
+// (jobspec R32).
+//
+// It is a value on Desired rather than a record of its own: an init container
+// has no independent lifecycle, no health and no address, and giving it a Store
+// kind would make it something the planner reasons about separately from the
+// alloc it belongs to. Every field is SpecHash material except PullPolicy and
+// Timeout, which hashableInit strips.
+type InitContainer struct {
+	// Name is a DNS-1123 label, unique within its service. It composes into a
+	// containerd id (runtime.InitID) and a log file name.
+	Name string `json:"name"`
+	// Image is required: an init container has no build block.
+	Image string `json:"image"`
+	// Command overrides the image entrypoint when non-empty (R12's rule).
+	Command []string `json:"command,omitempty"`
+	// Capabilities is the declared list, projected through
+	// effectiveCapabilities exactly as the task's is: the baseline is never
+	// written into the record.
+	Capabilities []string          `json:"capabilities,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	// User is this step's own identity, independent of the task's: running as
+	// root to chown a directory the task owns as 999 is the canonical use.
+	User *runtime.User `json:"user,omitempty"`
+	// Resources are R11's: zero is unbounded and no default is filled in.
+	Resources runtime.Resources `json:"resources"`
+	// RegistryAuthRef is this step's pull credential, R5-scoped.
+	RegistryAuthRef string `json:"registry_auth_ref,omitempty"`
+	// PullPolicy is R33's, minus "always". Not SpecHash material.
+	PullPolicy string `json:"pull_policy,omitempty"`
+	// Timeout bounds this step; zero is no timeout (R11's rule). It is a floor
+	// rather than a deadline, because the kill lands within one reconcile pass.
+	// Not SpecHash material: how long a step may take is not baked into a
+	// container, and raising it must not roll the alloc.
+	Timeout time.Duration `json:"timeout,omitempty"`
+}
 
 // AllocRecord is the durable per-alloc state, stored under store.KindAlloc.
 // It outlives kanead: restart bookkeeping must survive a control-plane restart,
@@ -722,6 +794,25 @@ type AllocRecord struct {
 	LastExitMessage string `json:"last_exit_message,omitempty"`
 	// NextRestartAt is when the alloc may be restarted; zero means immediately.
 	NextRestartAt time.Time `json:"next_restart_at,omitzero"`
+	// InitStep, InitName and InitStartedAt track an alloc's init sequence
+	// (R32). They are meaningful while State is AllocInit, and afterwards while
+	// LastExitReason names an init failure, so `kanea describe` can say which
+	// step it was.
+	//
+	// The record is a clock, not the truth: which step is live is derived from
+	// the init containers that actually exist, because a lost record write
+	// must not re-run a finished migration. What cannot be derived is
+	// InitStartedAt, and that is the whole reason these are durable: a timeout
+	// measured from the daemon's own start would silently reset on every
+	// kanead restart, so a five-minute step would never time out on a node
+	// that restarts more often than that.
+	//
+	// All three carry omitempty/omitzero: AllocRecord is CDC-replicated and is
+	// the API's wire format directly, so a pre-v1.84 record must serialize
+	// byte-identically.
+	InitStep      int       `json:"init_step,omitempty"`
+	InitName      string    `json:"init_name,omitempty"`
+	InitStartedAt time.Time `json:"init_started_at,omitzero"`
 	// Healthy reports the last health-check verdict.
 	//
 	// It is only ever written by a probe, so an alloc of a service that declares
@@ -781,6 +872,14 @@ const (
 	ActionReplace ActionKind = "replace"
 	// ActionRemove tears an alloc down completely.
 	ActionRemove ActionKind = "remove"
+	// ActionInitStep starts (or adopts) one init container of an alloc whose
+	// earlier steps have completed (R32). At most one per alloc per pass: the
+	// loop advances the sequence rather than waiting for it.
+	ActionInitStep ActionKind = "init-step"
+	// ActionRemoveInit deletes one init container the alloc no longer expects:
+	// a step killed by its timeout, a leftover from a crashed kanead, a step
+	// whose block was renamed away, or a sequence a deploy abandoned.
+	ActionRemoveInit ActionKind = "remove-init"
 )
 
 // Action is one unit of convergence work.
@@ -793,6 +892,11 @@ type Action struct {
 	// Reason explains why the planner emitted this action. It goes into events
 	// and logs; "why did my container restart" must always be answerable.
 	Reason string
+	// Init carries the step decision for ActionInitStep, and is nil for every
+	// other kind. For ActionRemoveInit, AllocID holds the init container's own
+	// id rather than the alloc's, because that is what the driver is asked to
+	// remove.
+	Init *InitAction
 }
 
 // AllocKey builds the Store key for an alloc.

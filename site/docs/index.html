@@ -87,6 +87,7 @@
     <a class="sub" href="#spec-project">project</a>
     <a class="sub" href="#spec-storage">storage</a>
     <a class="sub" href="#spec-service">service</a>
+    <a class="sub" href="#spec-init">init</a>
     <a class="sub" href="#spec-task">task</a>
     <a class="sub" href="#spec-passthrough">device and socket</a>
     <a class="sub" href="#spec-network">network</a>
@@ -1428,7 +1429,7 @@ sudo systemctl restart kanead</pre>
 
     <h3 id="nodeconfig-stanzas">What may go in it</h3>
 
-    <p>Six stanzas are read. Everything else is accepted and warned about by name.</p>
+    <p>Seven stanzas are read. Everything else is accepted and warned about by name.</p>
 
     <div class="tablewrap">
       <table>
@@ -1437,6 +1438,7 @@ sudo systemctl restart kanead</pre>
           <tr><td><a href="#nodeconfig-bind"><code>bind</code></a></td><td>once</td><td>Where the API and dashboard listen, and how that listener gets its certificate.</td></tr>
           <tr><td><a href="#nodeconfig-storage"><code>storage</code></a></td><td>once</td><td>Which host directories a <code>host</code> volume may mount.</td></tr>
           <tr><td><a href="#nodeconfig-dns"><code>dns</code></a></td><td>once</td><td>Which resolvers the internal DNS forwards external names to.</td></tr>
+          <tr><td><a href="#nodeconfig-images"><code>images</code></a></td><td>once</td><td>The node's default for where a service's images may come from.</td></tr>
           <tr><td><a href="#nodeconfig-variables"><code>variables</code></a></td><td>once</td><td>Node-wide defaults for spec variables.</td></tr>
           <tr><td><a href="#nodeconfig-grants"><code>device</code></a></td><td>many</td><td>A named device grant, and the projects that may claim it.</td></tr>
           <tr><td><a href="#nodeconfig-grants"><code>socket</code></a></td><td>many</td><td>A named socket grant, and the projects that may claim it.</td></tr>
@@ -1694,6 +1696,29 @@ sudo systemctl restart kanead</pre>
       behalf from the host's own namespace.
     </p>
 
+    <h3 id="nodeconfig-images">images: the default pull policy</h3>
+
+    <p>
+      Where images may come from for a service that does not say
+      (<a href="#spec-pull-policy">R33</a>). The one case this exists for is a node
+      that is not supposed to reach a registry at all &mdash; air-gapped, or with
+      images preloaded by an offline bundle &mdash; where the default's slow
+      pull-and-fail blames a registry the node was never going to contact:
+    </p>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">images</span> {
+  <span class="k">pull_policy</span> = <span class="s">"never"</span>        <span class="c"># "if-not-present" (default) | "never"</span>
+}</code></pre>
+    <p>
+      Precedence is the file's usual one: <code>--image-pull-policy</code> on
+      <code>kanead</code> wins and says so in the log, this stanza is next, and
+      <code>if-not-present</code> when neither &mdash; which is what every node did
+      before the field existed. A service's own <code>task.pull_policy</code> wins
+      over all of it. <code>always</code> is <b>refused here</b>: it means
+      per-service auto-update, and turning that on for every service on a node is
+      not a default anybody asked for.
+    </p>
+
     <h3 id="nodeconfig-variables">variables: node-wide spec defaults</h3>
 
     <p>
@@ -1791,7 +1816,7 @@ sudo systemctl restart kanead</pre>
           <tr><td><code>server config loaded</code></td><td>The file was found, trusted and parsed. It carries the path.</td></tr>
           <tr><td><code>server config carries stanzas this version does not read</code></td><td>Something in the file is being ignored, and the message names it. A misspelled stanza shows up here rather than as an error.</td></tr>
           <tr><td><code>dns upstreams from server config</code><br><code>api/dashboard listener from server config</code></td><td>That stanza won and is in effect. These are the positive confirmations, and their absence is as informative as their presence.</td></tr>
-          <tr><td><code>… is not consulted (--flag wins)</code></td><td>A flag on the unit is overriding that half of the file &mdash; there is one of these for <code>--dns-upstream</code>, <code>--listen</code>, <code>--allowed-host-paths</code> and <code>--passthrough-config</code>. This is the single most common cause of a stanza appearing to do nothing; see <a href="#nodeconfig-precedence">precedence</a>.</td></tr>
+          <tr><td><code>… is not consulted (--flag wins)</code></td><td>A flag on the unit is overriding that half of the file &mdash; there is one of these for <code>--dns-upstream</code>, <code>--image-pull-policy</code>, <code>--listen</code>, <code>--allowed-host-paths</code> and <code>--passthrough-config</code>. This is the single most common cause of a stanza appearing to do nothing; see <a href="#nodeconfig-precedence">precedence</a>.</td></tr>
         </tbody>
       </table>
     </div>
@@ -1814,6 +1839,7 @@ sudo systemctl restart kanead</pre>
           <tr><td><code>storage</code></td><td><code>--allowed-host-paths</code></td><td><code>--allowed-host-paths off</code></td><td>No host volumes</td></tr>
           <tr><td><code>device</code>, <code>socket</code></td><td><code>--passthrough-config &lt;file&gt;</code></td><td><code>--passthrough-config off</code></td><td>No grants</td></tr>
           <tr><td><code>dns</code></td><td><code>--dns-upstream</code></td><td><code>--dns-listen off</code> (disables the resolver)</td><td>The host's <code>resolv.conf</code></td></tr>
+          <tr><td><code>images</code></td><td><code>--image-pull-policy</code></td><td><i>n/a &mdash; there is always a policy</i></td><td><code>if-not-present</code></td></tr>
           <tr><td><code>variables</code></td><td><i>none &mdash; file-only</i></td><td><code>--config off</code></td><td>No node variables</td></tr>
           <tr><td><i>the whole file</i></td><td><code>--config &lt;file&gt;</code></td><td><code>--config off</code></td><td><code>/etc/kanea/kanea.hcl</code> if it exists</td></tr>
         </tbody>
@@ -2338,11 +2364,126 @@ service "web" {
           <tr><td><code>env</code></td><td>map</td><td>Values may be <code>secret:</code> references or <code>${service.…}</code> interpolations.</td></tr>
           <tr><td><code>resources</code></td><td>block</td><td><code>cpu</code> in MHz (1000 = one core), <code>memory</code> in MiB. An omitted limit is unbounded: all cores / all allocatable memory.</td></tr>
           <tr><td><code>registry_auth_ref</code></td><td>string</td><td><code>secret:</code> reference to a docker <code>config.json</code> used to <b>pull</b> the image. Project-scoped like every other reference (R5).</td></tr>
+          <tr><td><code>pull_policy</code></td><td>string</td><td>Where the image may come from (R33): <code>if-not-present</code> (default), <code>never</code>, or <code>always</code>. Omit it to take the node's default. See below.</td></tr>
           <tr><td><code>device</code></td><td>block</td><td>Requests a host device the operator granted, by name (R17). See below.</td></tr>
           <tr><td><code>socket</code></td><td>block</td><td>Requests a host unix socket the operator granted, by name (R18). See below.</td></tr>
         </tbody>
       </table>
     </div>
+
+    <h3 id="spec-init">init</h3>
+    <p>
+      Setup that has to finish before the workload starts: a schema migration, a
+      <code>chown</code> of a freshly-created volume, a config render. A service
+      may declare any number of <code>init</code> blocks; they run <b>in
+      declaration order, one at a time, to completion</b>, and the task is
+      created only once the last has exited zero (R32).
+    </p>
+    <p>
+      Each step <b>shares the alloc</b>: the same network namespace (so
+      <code>${service.…}</code> and internal DNS resolve exactly as they do for
+      the task, which is what makes a wait-for-database step possible), the same
+      volumes at the same mount paths, and the same secrets. Everything else it
+      declares for itself, and nothing is inherited from <code>task</code>.
+    </p>
+    <pre><code><span class="k">service</span> <span class="s">"api"</span> {
+  <span class="c"># Runs as root to fix a directory the task will own as 999.</span>
+  <span class="k">init</span> <span class="s">"fix-perms"</span> {
+    <span class="k">image</span>        = <span class="s">"busybox:1.36"</span>
+    <span class="k">command</span>      = [<span class="s">"chown"</span>, <span class="s">"-R"</span>, <span class="s">"999:999"</span>, <span class="s">"/data"</span>]
+    <span class="k">capabilities</span> = [<span class="s">"CAP_CHOWN"</span>]
+    <span class="k">timeout</span>      = <span class="s">"1m"</span>
+  }
+
+  <span class="k">init</span> <span class="s">"migrate"</span> {
+    <span class="k">image</span>   = <span class="s">"registry.example.com/shop/api-migrate:1.4"</span>
+    <span class="k">command</span> = [<span class="s">"/bin/migrate"</span>, <span class="s">"up"</span>]
+
+    <span class="k">env</span> = {
+      <span class="k">DATABASE_URL</span> = <span class="s">"secret:shop/database-url"</span>
+      <span class="k">DATABASE_HOST</span> = <span class="s">"${service.postgres.host}"</span>   <span class="c"># a real dependency edge</span>
+    }
+
+    <span class="k">timeout</span> = <span class="s">"5m"</span>
+  }
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"registry.example.com/shop/api:1.4"</span>
+    <span class="k">user</span> { <span class="k">uid</span> = 999 }
+  }
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>image</code></td><td>string</td><td><b>Required.</b> Unlike a task an init container has no <code>build</code> block, so there is no pipeline to produce one.</td></tr>
+          <tr><td><code>command</code></td><td>list(string)</td><td>Overrides the image entrypoint. An argument array, never a shell string (R12's rule).</td></tr>
+          <tr><td><code>env</code></td><td>map</td><td><code>secret:</code> references and <code>${service.…}</code> interpolations work exactly as they do on a task.</td></tr>
+          <tr><td><code>resources</code></td><td>block</td><td>Its own. An omitted limit is unbounded (R11); nothing is inherited from the task.</td></tr>
+          <tr><td><code>user</code></td><td>block</td><td>Its own numeric identity (R23). Independent of <code>task.user</code> on purpose: running as root to <code>chown</code> a directory the task owns as 999 is the canonical use.</td></tr>
+          <tr><td><code>capabilities</code></td><td>list(string)</td><td>R13's baseline and permitted set, same rule as a task's.</td></tr>
+          <tr><td><code>registry_auth_ref</code></td><td>string</td><td>This step's pull credential, project-scoped like every other reference (R5).</td></tr>
+          <tr><td><code>pull_policy</code></td><td>string</td><td>R33's, minus <code>always</code>: there is one pinned-image field and it belongs to the task.</td></tr>
+          <tr><td><code>timeout</code></td><td>string</td><td>Bounds this step. Omit it for no timeout. A <b>floor, not a deadline</b>: the kill lands within one reconcile pass.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <b>Init containers must be idempotent.</b> That is a requirement, not
+      advice: a half-run sequence is abandoned rather than resumed, and a
+      sequence re-runs from the first step on every alloc creation &mdash; a
+      deploy, a crash restart, a spec change &mdash; for the same reason the
+      network namespace and the secrets are rebuilt.
+    </p>
+    <p>
+      There is deliberately no <code>device</code>, <code>socket</code>,
+      <code>health_check</code>, <code>expose</code>, <code>scaling</code>,
+      <code>count</code>, <code>depends_on</code>, <code>network</code> or
+      <code>build</code> field on an <code>init</code> block. An init container
+      is a step, not a service, and the absence is the refusal.
+    </p>
+    <p>
+      A step's output goes to its own log: <code>kanea logs shop/api -c
+      migrate</code>. A step that <b>runs and exits non-zero</b>, or outlives
+      its timeout, fails the alloc and spends the restart budget (R29), so a
+      broken migration stops after <code>attempts</code> rather than hammering a
+      database forever; a step that could not be <i>pulled or created</i> is
+      retried every pass without spending it, because nothing ran.
+    </p>
+
+    <h3 id="spec-pull-policy">pull_policy</h3>
+    <p>
+      Where an image may come from (R33), on a <code>task</code> or on an
+      <code>init</code> block. Three values:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Value</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>if-not-present</code></td><td>Use the node's content store, pull only what is absent. The default, and what every spec did before this field existed.</td></tr>
+          <tr><td><code>never</code></td><td>Use the content store or fail the alloc, naming the policy. For air-gapped nodes and ones whose images are preloaded: a pull attempt there is a slow failure that blames a registry the node was never going to contact.</td></tr>
+          <tr><td><code>always</code></td><td>Re-resolve the tag and, when the digest has moved, <b>pin it and roll every replica</b> through the update policy. Task only.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>always</code> does <i>not</i> mean re-pull at every container
+      creation. That would let two replicas of one spec run different bytes,
+      which is exactly what &ldquo;a deploy is a spec-hash mismatch&rdquo; exists
+      to prevent. It lowers to <code>update { auto = true }</code>, so the tag is
+      polled, a moved digest is pinned, and every replica rolls together through
+      <code>max_parallel</code>, <code>min_healthy</code> and the health check.
+      That also means it inherits auto-update's refusals: it cannot sit beside a
+      <code>build</code> block, needs a tag rather than a digest, and cannot be
+      combined with <code>update { auto = false }</code>.
+    </p>
+    <p>
+      Omitting <code>pull_policy</code> takes the node's default, which an
+      operator sets in <code>/etc/kanea/kanea.hcl</code>:
+    </p>
+    <pre><code><span class="k">images</span> {
+  <span class="k">pull_policy</span> = <span class="s">"never"</span>       <span class="c"># or --image-pull-policy, which wins</span>
+}</code></pre>
 
     <h3 id="spec-passthrough">device and socket</h3>
     <p>
@@ -2743,8 +2884,10 @@ removed shop/legacy-worker
 
     <h3 id="spec-rules">Validation rules</h3>
     <p>
-      Sixteen rules, all enforced at parse or plan time with file/line/column diagnostics.
-      They are numbered because the error messages cite them.
+      The rules a spec is checked against, all enforced at parse or plan time with
+      file/line/column diagnostics. They are numbered because the error messages
+      cite them, and the numbering is the PRD's; the cards below cover the ones
+      most people meet, not every rule the parser knows.
     </p>
 
     <div class="rule"><b>R1</b><div><p><b>Names are DNS-1123 labels.</b> Project and service names: lowercase alphanumeric and <code>-</code>, alphanumeric at both ends, ≤ 63 characters. Parse errors abort the run.</p></div></div>
@@ -2765,6 +2908,8 @@ removed shop/legacy-worker
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous; declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
     <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device: checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
     <div class="rule"><b>R18</b><div><p><b><code>task.socket</code> is R17 for unix sockets, and is privilege delegation.</b> <code>mount_path</code> is validated as absolute, clean and <code>..</code>-free, may not sit under <code>/dev</code>, <code>/proc</code> or <code>/sys</code>, and may not collide with another socket or a volume. The bind carries <code>nosuid</code>, <code>noexec</code> and <code>nodev</code>. <b>None of that makes it safe and none of it is meant to</b>: a container holding the container runtime's socket can create containers without the hardening defaults, so the grant is equivalent to root on the node. The server config is the only control over it, which is why it is project-scoped and empty by default.</p></div></div>
+    <div class="rule"><b>R32</b><div><p><b><code>init</code> blocks run to completion before the task.</b> In declaration order, one at a time; the task is created only once the last has exited zero. Each shares the alloc's network namespace, volumes and secrets, and declares its own image, command, env, resources, user, capabilities and timeout &mdash; nothing is inherited from <code>task</code>. There is no <code>device</code>, <code>socket</code>, <code>health_check</code>, <code>expose</code>, <code>scaling</code>, <code>count</code>, <code>depends_on</code>, <code>network</code> or <code>build</code> field: an init container is a step, not a service. Names are DNS-1123 labels, unique within a service, and compose into a container id and a log file. <b>They must be idempotent</b>: a half-run sequence is abandoned rather than resumed, and a sequence re-runs on every alloc creation. A step that ran and failed, or outlived its <code>timeout</code>, spends the restart budget (R29); one that could not be pulled or created is retried every pass without spending it, because nothing ran.</p></div></div>
+    <div class="rule"><b>R33</b><div><p><b><code>pull_policy</code> says where an image may come from.</b> <code>if-not-present</code> (the default), <code>never</code> (content store only &mdash; the air-gapped case) or <code>always</code>. <code>always</code> is not a per-create re-pull, which would let two replicas of one spec run different bytes: it lowers to <code>update { auto = true }</code>, so a moved digest is pinned and every replica rolls together, and it inherits that rule's refusals. It is refused on an <code>init</code> block, because there is one pinned-image field and it belongs to the task. The node supplies the default through <code>/etc/kanea/kanea.hcl</code>'s <code>images</code> stanza; an omitted policy means "the node decides".</p></div></div>
     <div class="rule"><b>R19</b><div><p><b><code>update.auto</code> follows the tag the service declares.</b> Off by default. Kanea re-resolves <code>task.image</code>'s tag every <code>interval</code> (default 6h, minimum 5m) and pins the digest behind it when it moves; the declared tag is never overwritten, because it is what the next poll re-reads. The pinned digest is server-owned and survives <code>kanea apply</code>: except when you edit <code>image</code> or turn <code>auto</code> off, which both hand authority back to the spec. <b>A failed update reverts</b> to the digest that was running if the new one has not converged within <code>deadline</code>: converged means healthy where a <code>check</code> block exists, and running without crash-looping where it does not. Refused on a digest-pinned image and on a service with a <code>build</code> block.</p></div></div>
 
     <h3 id="spec-example">Full example</h3>
@@ -3854,12 +3999,13 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>Health, recent events, current and desired counts, and the scaling picture.</p>
 
     <h4><code>kanea logs</code></h4>
-    <pre class="plain">kanea logs [--project=p] &lt;[project/]service&gt; [-f] [--tail=N] [--alloc=ID]</pre>
+    <pre class="plain">kanea logs [--project=p] &lt;[project/]service&gt; [-f] [--tail=N] [--alloc=ID] [-c NAME]</pre>
     <p>
       Merged across allocs by default; <code>--alloc</code> narrows to one.
-      <code>--tail</code> shows the last N lines before following. Log drains are
-      non-blocking with drop counters: a slow reader can never stall a workload's
-      <code>write()</code>.
+      <code>--tail</code> shows the last N lines before following. <code>-c</code>
+      reads an <a href="#spec-init">init container</a>'s log instead of the
+      task's, by its block name. Log drains are non-blocking with drop counters:
+      a slow reader can never stall a workload's <code>write()</code>.
     </p>
 
     <h4><code>kanea exec</code></h4>

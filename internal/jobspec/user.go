@@ -47,6 +47,11 @@ func resolveVolumeOwnership(spec *Spec) {
 			if _, refused := ownershipRefusedBy[st.Type]; refused {
 				continue
 			}
+			// Deliberately svc.Task.User and never an init block's (R32): the
+			// canonical init container runs as root precisely to chown a
+			// directory the task will then own as somebody else, so letting a
+			// step's user decide the volume's ownership would invert the
+			// feature. Do not "fix" this to consider Inits.
 			if svc.Task != nil && svc.Task.User != nil {
 				if v.UID == nil {
 					uid := svc.Task.User.UID
@@ -83,34 +88,44 @@ func applyDefaultMode(v *Volume) {
 // image has a user by that number is the image's business: a spec that names
 // one the image does not know still runs, which is the point of numeric IDs.
 func validateUser(svc *Service) hcl.Diagnostics {
-	u := svc.Task.User
+	return validateUserBlock(fmt.Sprintf("Task %q", svc.Task.Name), svc.Name, svc.Task.User)
+}
+
+// validateUserBlock is R23's rule over one user block, wherever it was written.
+//
+// It takes a description of the container rather than the service, because an
+// init block carries its own user (R32) and the two must be checked by one
+// implementation: R23 is about what a uid is, not about which block named it.
+// The canonical init container exists precisely to run as a *different* user
+// than its task, so the rule has to be independent of the task to be right.
+func validateUserBlock(where, service string, u *User) hcl.Diagnostics {
 	if u == nil {
 		return nil
 	}
 	var diags hcl.Diagnostics
 
-	diags = append(diags, checkID(svc, "uid", u.UID, u.DefRange)...)
-	diags = append(diags, checkID(svc, "gid", u.GID, u.DefRange)...)
+	diags = append(diags, checkID(where, service, "uid", u.UID, u.DefRange)...)
+	diags = append(diags, checkID(where, service, "gid", u.GID, u.DefRange)...)
 
 	if len(u.Groups) > MaxGroups {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Too many supplementary groups",
-			Detail: fmt.Sprintf("Task %q of service %q names %d supplementary groups; at most %d "+
+			Detail: fmt.Sprintf("%s of service %q names %d supplementary groups; at most %d "+
 				"are allowed. Every one of them is copied into the OCI spec of every alloc.",
-				svc.Task.Name, svc.Name, len(u.Groups), MaxGroups),
+				where, service, len(u.Groups), MaxGroups),
 			Subject: u.DefRange.Ptr(),
 		})
 	}
 	seen := map[int]bool{}
 	for _, g := range u.Groups {
-		diags = append(diags, checkID(svc, "group", g, u.DefRange)...)
+		diags = append(diags, checkID(where, service, "group", g, u.DefRange)...)
 		if seen[g] {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  "Duplicate supplementary group",
-				Detail: fmt.Sprintf("Task %q of service %q names group %d more than once.",
-					svc.Task.Name, svc.Name, g),
+				Detail: fmt.Sprintf("%s of service %q names group %d more than once.",
+					where, service, g),
 				Subject: u.DefRange.Ptr(),
 			})
 		}
@@ -120,23 +135,23 @@ func validateUser(svc *Service) hcl.Diagnostics {
 }
 
 // checkID bounds one uid, gid or supplementary group.
-func checkID(svc *Service, what string, id int, rng hcl.Range) hcl.Diagnostics {
+func checkID(where, service, what string, id int, rng hcl.Range) hcl.Diagnostics {
 	switch {
 	case id < 0:
 		return hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid " + what,
-			Detail: fmt.Sprintf("Task %q of service %q declares %s %d; it must not be negative.",
-				svc.Task.Name, svc.Name, what, id),
+			Detail: fmt.Sprintf("%s of service %q declares %s %d; it must not be negative.",
+				where, service, what, id),
 			Subject: rng.Ptr(),
 		}}
 	case id > MaxID:
 		return hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid " + what,
-			Detail: fmt.Sprintf("Task %q of service %q declares %s %d; the largest allowed is %d. "+
+			Detail: fmt.Sprintf("%s of service %q declares %s %d; the largest allowed is %d. "+
 				"%d is (uid_t)-1, which the kernel reserves to mean \"unchanged\".",
-				svc.Task.Name, svc.Name, what, id, MaxID, MaxID+1),
+				where, service, what, id, MaxID, MaxID+1),
 			Subject: rng.Ptr(),
 		}}
 	}
