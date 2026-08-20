@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/reconciler"
@@ -159,6 +160,9 @@ func TestApplyRefusesTheFullR25List(t *testing.T) {
 		{"scaling", func(d *reconciler.Desired) {
 			d.Scaling = &reconciler.ScalingPolicy{Max: 4}
 		}},
+		{"init containers", func(d *reconciler.Desired) {
+			d.Init = []reconciler.InitContainer{{Name: "warm", Image: "busybox:1.36"}}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := wasm()
@@ -207,6 +211,104 @@ func TestApplyRefusesABadPipelineProject(t *testing.T) {
 		[]gitops.Config{{Project: "../../etc"}})
 	if err == nil || !strings.Contains(err.Error(), "DNS-1123") {
 		t.Fatalf("a traversal pipeline project applied: %v", err)
+	}
+}
+
+// TestApplyReEnforcesR32AndR33 is the apply-seam half of the init-container and
+// pull-policy rules (PRD v1.84). The HCL parser is one way a record reaches the
+// Store; PUT /v1/services is another, and every parse-time invariant that
+// matters has to hold for both. Each check below shares its exported core with
+// the parse-time half, so the two cannot drift.
+func TestApplyReEnforcesR32AndR33(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	withStep := func(mutate func(*reconciler.InitContainer)) reconciler.Desired {
+		d := testService("web", 1)
+		step := reconciler.InitContainer{Name: "migrate", Image: "migrate:1"}
+		mutate(&step)
+		d.Init = []reconciler.InitContainer{step}
+		return d
+	}
+
+	for _, tc := range []struct {
+		name    string
+		desired reconciler.Desired
+		want    string
+	}{
+		{"init name is not a label", withStep(func(s *reconciler.InitContainer) {
+			s.Name = "Not_A_Label"
+		}), "DNS-1123"},
+		{"init has no image", withStep(func(s *reconciler.InitContainer) {
+			s.Image = ""
+		}), "no image"},
+		{"init capability outside the permitted set", withStep(func(s *reconciler.InitContainer) {
+			s.Capabilities = []string{"CAP_SYS_ADMIN"}
+		}), "cannot be granted"},
+		{"init cross-project secret", withStep(func(s *reconciler.InitContainer) {
+			s.Env = map[string]string{"A": "secret:other/b"}
+		}), "belongs to another project"},
+		{"init cross-project registry credential", withStep(func(s *reconciler.InitContainer) {
+			s.RegistryAuthRef = "secret:other/registry"
+		}), "belongs to another project"},
+		{`init pull_policy = "always"`, withStep(func(s *reconciler.InitContainer) {
+			s.PullPolicy = "always"
+		}), "belongs to the task"},
+		{"init negative timeout", withStep(func(s *reconciler.InitContainer) {
+			s.Timeout = -time.Second
+		}), "negative timeout"},
+		{"unknown task pull policy", func() reconciler.Desired {
+			d := testService("web", 1)
+			d.PullPolicy = "sometimes"
+			return d
+		}(), "not a policy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := h.client.Apply(ctx, []reconciler.Desired{tc.desired}, nil)
+			if err == nil {
+				t.Fatal("expected a refusal, got none")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal must name the problem.\n  want substring: %s\n  got: %v",
+					tc.want, err)
+			}
+		})
+	}
+}
+
+// TestApplyRefusesDuplicateInitNames: a step name composes into a container id
+// and a log file name, so two steps sharing one is two containers sharing an
+// identity.
+func TestApplyRefusesDuplicateInitNames(t *testing.T) {
+	h := newHarness(t)
+	d := testService("web", 1)
+	d.Init = []reconciler.InitContainer{
+		{Name: "migrate", Image: "a:1"},
+		{Name: "migrate", Image: "b:1"},
+	}
+	_, err := h.client.Apply(context.Background(), []reconciler.Desired{d}, nil)
+	if err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("duplicate init names applied: %v", err)
+	}
+}
+
+// TestApplyAcceptsACleanInitSequence, so the refusals above are refusing
+// something rather than everything.
+func TestApplyAcceptsACleanInitSequence(t *testing.T) {
+	h := newHarness(t)
+	d := testService("web", 1)
+	d.PullPolicy = "if-not-present"
+	d.Init = []reconciler.InitContainer{{
+		Name:         "migrate",
+		Image:        "migrate:1",
+		Command:      []string{"/bin/migrate", "up"},
+		Capabilities: []string{"CAP_CHOWN"},
+		Env:          map[string]string{"URL": "secret:shop/database-url"},
+		PullPolicy:   "never",
+		Timeout:      5 * time.Minute,
+	}}
+	if _, err := h.client.Apply(context.Background(), []reconciler.Desired{d}, nil); err != nil {
+		t.Fatalf("a clean init sequence was refused: %v", err)
 	}
 }
 

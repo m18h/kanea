@@ -18,8 +18,8 @@ func ServiceHost(project, service string) string {
 	return fmt.Sprintf("%s.%s.%s", service, project, InternalDomain)
 }
 
-// resolveEnv evaluates every task's env with a context that exposes the other
-// services in the same project, and records the reference edges it finds.
+// resolveEnv evaluates every container's env with a context that exposes the
+// other services in the same project, and records the reference edges it finds.
 //
 // This is the second pass: it needs the first pass's output (every service's
 // name and ports) to build that context, which is exactly why references are
@@ -33,8 +33,29 @@ func resolveEnv(spec *Spec, root *hclRoot, opts Options) hcl.Diagnostics {
 		if svc == nil || svc.Task == nil || len(raw.Tasks) == 0 {
 			continue // structural errors already reported
 		}
-		diags = append(diags, resolveServiceEnv(spec, svc, raw.Tasks[0].Env, opts)...)
-		diags = append(diags, resolveServiceFiles(spec, svc, &root.Services[i], opts)...)
+		task := svc.Task
+		targets := []envTarget{{
+			expr:   raw.Tasks[0].Env,
+			assign: func(env map[string]string) { task.Env = env },
+		}}
+		// An init container's env resolves under exactly the same rules (R32):
+		// it shares the alloc's network namespace, so ${service.db.host} in a
+		// wait-for-database step is a real address and therefore a real
+		// dependency edge. Skipping these would let a step reference a service
+		// that R10 then never orders it behind, which is the failure the edge
+		// exists to prevent.
+		for n := range raw.Inits {
+			if n >= len(svc.Inits) {
+				break // conversion reported the mismatch
+			}
+			init := svc.Inits[n]
+			targets = append(targets, envTarget{
+				expr:   raw.Inits[n].Env,
+				assign: func(env map[string]string) { init.Env = env },
+			})
+		}
+		diags = append(diags, resolveServiceEnv(spec, svc, targets, opts)...)
+		diags = append(diags, resolveServiceFiles(spec, svc, raw, opts)...)
 	}
 	// A lowered function's env resolves under the same rules: it can reference
 	// its project's services (${service.db.host} in a webhook fanout is the
@@ -45,28 +66,47 @@ func resolveEnv(spec *Spec, root *hclRoot, opts Options) hcl.Diagnostics {
 		if svc == nil || svc.Task == nil {
 			continue
 		}
-		diags = append(diags, resolveServiceEnv(spec, svc, raw.Env, opts)...)
+		task := svc.Task
+		diags = append(diags, resolveServiceEnv(spec, svc, []envTarget{{
+			expr:   raw.Env,
+			assign: func(env map[string]string) { task.Env = env },
+		}}, opts)...)
 	}
 	return diags
 }
 
-// resolveServiceEnv evaluates one service's env expression and records its
+// envTarget is one env expression and where its evaluated value goes. A
+// service has one for its task and one per init block, and every one of them
+// contributes reference edges to the service as a whole.
+type envTarget struct {
+	expr   hcl.Expression
+	assign func(map[string]string)
+}
+
+// resolveServiceEnv evaluates a service's env expressions and records its
 // reference edges.
-func resolveServiceEnv(spec *Spec, svc *Service, envExpr hcl.Expression, opts Options) hcl.Diagnostics {
+func resolveServiceEnv(spec *Spec, svc *Service, targets []envTarget, opts Options) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	if envExpr == nil {
-		return diags
-	}
 
 	// Collect and check references before evaluating: our diagnostics name
 	// the missing service and port, HCL's would say "unsupported attribute".
-	//
-	// The env groups this service takes contribute too (R34): a group is
+	// Every target contributes, because the edge set belongs to the service
+	// rather than to whichever block happened to write the reference.
+	var refs []ServiceRef
+	var refDiags hcl.Diagnostics
+	for _, t := range targets {
+		if t.expr == nil {
+			continue
+		}
+		found, d := collectRefs(spec, svc, t.expr)
+		refs = append(refs, found...)
+		refDiags = append(refDiags, d...)
+	}
+	// The env groups this service takes contribute too (R34). A group is
 	// evaluated once *per consuming service*, so a ${service.db.host} inside
-	// one is this service's reference and this service's dependency edge. A
-	// group evaluated once for the whole spec could not be either, because the
-	// reference namespace is project-scoped.
-	refs, refDiags := collectRefs(spec, svc, envExpr)
+	// one is this service's reference and this service's dependency edge - and
+	// it could be neither if a group were evaluated once for the whole spec,
+	// because the reference namespace is project-scoped.
 	for _, g := range svc.EnvFrom {
 		group := spec.EnvGroupByName(g)
 		if group == nil {
@@ -94,9 +134,12 @@ func resolveServiceEnv(spec *Spec, svc *Service, envExpr hcl.Expression, opts Op
 	ctx := varContext(opts.Vars)
 	ctx.Variables["service"] = serviceContext(spec, svc.Project)
 
-	// Defaults then specialize, the R20/R30 shape: the groups in the order
-	// env_from lists them, then the service's own env on top.
-	merged := map[string]string{}
+	// The groups, in the order env_from lists them, evaluated once for the
+	// service: their values do not vary per container. Every container of the
+	// alloc then layers its own env on top - env_from is a statement about the
+	// service, so scoping it to the task alone would make it mean something
+	// narrower than where it is written (R34).
+	base := map[string]string{}
 	for _, g := range svc.EnvFrom {
 		group := spec.EnvGroupByName(g)
 		if group == nil {
@@ -105,17 +148,29 @@ func resolveServiceEnv(spec *Spec, svc *Service, envExpr hcl.Expression, opts Op
 		groupEnv, groupDiags := evalEnvGroup(group, ctx)
 		diags = append(diags, groupDiags...)
 		for k, v := range groupEnv {
-			merged[k] = v
+			base[k] = v
 		}
 	}
 
-	env, evalDiags := evalEnv(envExpr, ctx)
-	diags = append(diags, evalDiags...)
-	if !evalDiags.HasErrors() {
+	for _, t := range targets {
+		if t.expr == nil {
+			continue
+		}
+		env, evalDiags := evalEnv(t.expr, ctx)
+		diags = append(diags, evalDiags...)
+		if evalDiags.HasErrors() {
+			continue
+		}
+		// Defaults then specialize, the R20/R30 shape. Copied per target so
+		// one container's env cannot leak into another's.
+		merged := make(map[string]string, len(base)+len(env))
+		for k, v := range base {
+			merged[k] = v
+		}
 		for k, v := range env {
 			merged[k] = v
 		}
-		svc.Task.Env = merged
+		t.assign(merged)
 	}
 	return diags
 }

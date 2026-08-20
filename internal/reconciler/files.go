@@ -45,9 +45,20 @@ const (
 	MaxRenderedAllocBytes = 1 << 20
 )
 
-// allocFiles is one alloc's materialised files: the mounts to add to its spec.
+// allocFiles is one alloc's materialised files: the mounts to add to its spec,
+// and the per-init-step overrides for the ones carrying a secret.
+//
+// InitMounts exists for materializeSecrets' reason, and it is the same reason:
+// a secret-bearing file is 0400 owned by its *reader*, and R32 makes an init
+// step's user deliberately independent of the task's - so one shared inode is
+// readable by exactly one of them, and the other sees a missing credential
+// rather than a permission problem. A plain file needs no entry: it is
+// world-readable, and every container of the alloc binds the same one.
 type allocFiles struct {
 	Mounts []runtime.Mount
+	// InitMounts is keyed by step name; absent when that step needs no
+	// override, which is every step of a service with no secret-bearing file.
+	InitMounts map[string][]runtime.Mount
 }
 
 // ensureFiles materialises a service's files for one alloc.
@@ -92,20 +103,45 @@ func (r *Reconciler) ensureFiles(ctx context.Context, d Desired, allocID string)
 				"this alloc's files render to more than %d bytes (PRD §21)", MaxRenderedAllocBytes)
 		}
 
-		source, err := r.writeFile(d, f, body, secretDir)
+		source, err := r.writeFile(d, f, body, d.User, secretDir, "")
 		if err != nil {
 			return allocFiles{}, err
 		}
-		out.Mounts = append(out.Mounts, runtime.Mount{
-			Source:      source,
-			Destination: f.Path,
-			ReadOnly:    true,
-			// A file block delivers configuration, never a program, which is
-			// what lets these be unconditional rather than mode-dependent.
-			Options: []string{"nosuid", "noexec", "nodev"},
-		})
+		out.Mounts = append(out.Mounts, fileMountAt(source, f.Path))
+
+		// A secret-bearing file needs one copy per reader, because it is 0400
+		// owned by that reader and R32 makes a step's user independent of the
+		// task's. A plain file is world-readable, so every container binds the
+		// same inode and there is nothing to override.
+		if !f.HasSecrets() {
+			continue
+		}
+		for _, step := range d.Init {
+			stepSource, err := r.writeFile(d, f, body, step.User, secretDir,
+				filepath.Join("init", step.Name))
+			if err != nil {
+				return allocFiles{}, err
+			}
+			if out.InitMounts == nil {
+				out.InitMounts = map[string][]runtime.Mount{}
+			}
+			out.InitMounts[step.Name] = append(out.InitMounts[step.Name],
+				fileMountAt(stepSource, f.Path))
+		}
 	}
 	return out, nil
+}
+
+// fileMountAt is the one place a file's mount options are written down.
+func fileMountAt(source, path string) runtime.Mount {
+	return runtime.Mount{
+		Source:      source,
+		Destination: path,
+		ReadOnly:    true,
+		// A file block delivers configuration, never a program, which is what
+		// lets these be unconditional rather than mode-dependent.
+		Options: []string{"nosuid", "noexec", "nodev"},
+	}
 }
 
 // renderFile substitutes a file's placeholders.
@@ -133,7 +169,9 @@ func (r *Reconciler) renderFile(ctx context.Context, f FileMount) ([]byte, error
 }
 
 // writeFile puts one rendered file on disk and returns its host path.
-func (r *Reconciler) writeFile(d Desired, f FileMount, body []byte, secretDir string) (string, error) {
+func (r *Reconciler) writeFile(
+	d Desired, f FileMount, body []byte, reader *runtime.User, secretDir, subdir string,
+) (string, error) {
 	mode, err := fileMode(f)
 	if err != nil {
 		return "", err
@@ -168,10 +206,11 @@ func (r *Reconciler) writeFile(d Desired, f FileMount, body []byte, secretDir st
 	if fellBack {
 		r.warnFilesTmpfsFallback(r.filesDir)
 	}
-	if err := os.MkdirAll(secretDir, 0o700); err != nil {
+	dir := filepath.Join(secretDir, subdir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("file %q: %w", f.Name, err)
 	}
-	path := filepath.Join(secretDir, f.Name)
+	path := filepath.Join(dir, f.Name)
 	if err := os.WriteFile(path, body, mode); err != nil {
 		return "", fmt.Errorf("file %q: %w", f.Name, err)
 	}
@@ -179,8 +218,8 @@ func (r *Reconciler) writeFile(d Desired, f FileMount, body []byte, secretDir st
 	// somebody else reads as a missing credential rather than as a permission
 	// problem. Written 0400 root-owned first, so it is unreadable in between.
 	uid, gid := 0, 0
-	if d.User != nil {
-		uid, gid = int(d.User.UID), int(d.User.GID)
+	if reader != nil {
+		uid, gid = int(reader.UID), int(reader.GID)
 	}
 	if err := os.Chown(path, uid, gid); err != nil {
 		return "", fmt.Errorf("file %q: %w", f.Name, err)

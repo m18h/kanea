@@ -364,3 +364,55 @@ func TestFilesMountAfterVolumes(t *testing.T) {
 			fileAt, volumeAt)
 	}
 }
+
+// TestAnInitStepBindsItsOwnCopyOfASecretBearingFile.
+//
+// A secret-bearing file is 0400 owned by *its reader* (R35), and R32 makes an
+// init step's user deliberately independent of the task's — the canonical step
+// runs as root to chown a directory the task owns as somebody else. So a step
+// binding the task's copy would get a file it cannot open, which surfaces as a
+// missing credential rather than as a permission problem. A plain file is
+// world-readable and shared, so it must NOT be overridden.
+func TestAnInitStepBindsItsOwnCopyOfASecretBearingFile(t *testing.T) {
+	h, _, tmpfs := filesHarness(t, fakeSecrets{"secret:shop/pw": []byte("v")})
+
+	me := &runtime.User{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())} // #nosec G115: real ids
+	nonce := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	d := desired(1)
+	d.User = me
+	d.Init = []reconciler.InitContainer{{Name: "migrate", Image: "migrate:1", User: me}}
+	d.Files = []reconciler.FileMount{
+		{Name: "plain", Path: "/etc/plain.conf", Content: []byte("x")},
+		{
+			Name: "pgpass", Path: "/etc/pgpass",
+			Content:    []byte("pw=" + secrets.PlaceholderText(nonce, 0)),
+			SecretRefs: []string{"secret:shop/pw"}, Nonce: nonce,
+		},
+	}
+	h.setDesired(t, d)
+	h.reconcile(t)
+
+	allocID := reconciler.AllocID("shop", "web", 0)
+	stepSpec, ok := h.driver.specs[runtime.InitID(allocID, 0, "migrate")]
+	if !ok {
+		t.Fatalf("the init step was not created: %v", h.driver.calls)
+	}
+
+	sources := map[string]string{}
+	for _, m := range stepSpec.Mounts {
+		sources[m.Destination] = m.Source
+	}
+	wantOwn := filepath.Join(tmpfs, allocID, "init", "migrate", "pgpass")
+	if sources["/etc/pgpass"] != wantOwn {
+		t.Errorf("the step binds %q for the secret-bearing file, want its own copy at %q",
+			sources["/etc/pgpass"], wantOwn)
+	}
+	if _, err := os.Stat(wantOwn); err != nil {
+		t.Errorf("the step's own copy was never written: %v", err)
+	}
+	// The plain file is one shared world-readable inode; overriding it would
+	// be a copy per step for no reason.
+	if strings.Contains(sources["/etc/plain.conf"], "init") {
+		t.Errorf("a plain file was copied per step: %q", sources["/etc/plain.conf"])
+	}
+}

@@ -307,6 +307,7 @@ func fieldsLostByImageApply(d reconciler.Desired) []string {
 	add(d.Check != nil, "health check")
 	add(d.Scaling != nil, "scaling")
 	add(len(d.Capabilities) > 0, "capabilities")
+	add(len(d.Init) > 0, "init containers")
 	add(len(d.Files) > 0, "config files")
 	add(d.Function != nil, "function config")
 	return lost
@@ -977,6 +978,8 @@ func runLogs(args []string) error {
 	alloc := fs.String("alloc", "", "a single alloc id")
 	follow := fs.Bool("f", false, "follow the stream")
 	tail := fs.Int("tail", 0, "show only the last N lines before following")
+	container := fs.String("c", "",
+		"read an init container's log instead of the task's, by its block name (PRD §6.2 R32)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1016,7 +1019,7 @@ func runLogs(args []string) error {
 
 	return client.Logs(ctx, api.LogOptions{
 		Project: proj, Service: service, AllocID: *alloc,
-		Follow: *follow, Tail: *tail,
+		Follow: *follow, Tail: *tail, Container: *container,
 		// Scrubbed (K-45): a workload's log line can carry terminal control
 		// sequences, and the operator's terminal is not the workload's.
 	}, scrubTerminal{os.Stdout})

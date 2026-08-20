@@ -477,10 +477,11 @@ func (s *Server) feedLogs(frame ClientFrame) feedFunc {
 			tail = maxTailLines
 		}
 		opts := LogOptions{
-			Project: frame.Project,
-			Service: frame.Service,
-			Tail:    tail,
-			Follow:  true,
+			Project:   frame.Project,
+			Service:   frame.Service,
+			Tail:      tail,
+			Follow:    true,
+			Container: frame.Container,
 		}
 
 		f := &logFollower{
@@ -586,12 +587,15 @@ func (f *logFollower) resync(ctx context.Context) {
 		if _, ok := f.tails[alloc.ID]; ok {
 			continue
 		}
-		path, err := logPathFor(f.server.logDir, alloc.ID)
+		path, err := f.pathFor(ctx, alloc)
 		if err != nil {
 			// Same refusal as the REST tail: a traversal-shaped ID in the
 			// Store is skipped, never read outside the log directory.
 			f.server.log.Warn("refusing log path", "alloc", alloc.ID, "error", err)
 			continue
+		}
+		if path == "" {
+			continue // this alloc's service declares no such step
 		}
 		// prefix=false: the alloc id travels in the frame, so the dashboard can
 		// attribute a line without parsing it back out of the text.
@@ -627,6 +631,30 @@ func (f *logFollower) resync(ctx context.Context) {
 }
 
 // add registers a tailer and the line writer that accumulates its output.
+// pathFor answers where one alloc's log lives for this subscription: the
+// task's, or a named init container's (R32).
+//
+// The step name comes from the client; the ordinal and the container id do not.
+// It is resolved against the service's *own* declared sequence, so the query
+// can only ever select among containers this service actually declares, and the
+// containment assertion then runs on the composed result. An empty path with no
+// error means this alloc's service has no such step, which is a skip rather
+// than a failure: a name may match some of a multi-service selection.
+func (f *logFollower) pathFor(ctx context.Context, alloc reconciler.AllocRecord) (string, error) {
+	if f.opts.Container == "" {
+		return logPathFor(f.server.logDir, alloc.ID)
+	}
+	svc, err := f.server.serviceOf(ctx, alloc.Project, alloc.Service)
+	if err != nil {
+		return "", nil
+	}
+	ordinal, ok := resolveInitStep(svc, f.opts.Container)
+	if !ok {
+		return "", nil
+	}
+	return initLogPathFor(f.server.logDir, alloc.ID, ordinal, f.opts.Container)
+}
+
 func (f *logFollower) add(t *tailer) {
 	if f.writers == nil {
 		f.writers = map[string]*lineWriter{}

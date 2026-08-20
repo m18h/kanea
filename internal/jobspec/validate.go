@@ -14,6 +14,7 @@ import (
 
 	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/secrets"
 )
 
@@ -544,6 +545,7 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		}
 
 		diags = append(diags, validateTask(svc)...)
+		diags = append(diags, validateInits(svc)...)
 		// Files are service-level, so they are checked here rather than off
 		// validateTask's fan-out: that one returns early for a task-less
 		// service, and a rule that silently stops running is worse than one
@@ -706,6 +708,15 @@ func validateTask(svc *Service) hcl.Diagnostics {
 			Detail: fmt.Sprintf("Service %q declares resources.memory = %d MiB; it cannot be negative. "+
 				"Omit the field (or declare 0) for all allocatable memory.", svc.Name, task.Resources.Memory),
 			Subject: task.DefRange.Ptr(),
+		})
+	}
+
+	if err := CheckPullPolicy(task.PullPolicy, true); err != nil {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid pull policy",
+			Detail:   fmt.Sprintf("Service %q: %s", svc.Name, err),
+			Subject:  task.DefRange.Ptr(),
 		})
 	}
 
@@ -1200,8 +1211,36 @@ func validateRestart(svc *Service) hcl.Diagnostics {
 // the registry can be reached, which is a node question and a runtime one.
 func validateAutoUpdate(svc *Service) hcl.Diagnostics {
 	up := svc.Update
-	if up == nil || !up.Auto {
+	if up == nil {
 		return nil
+	}
+
+	// R33: `pull_policy = "always"` and an explicit `auto = false` are two
+	// answers to one question. Checked before the not-enabled return below,
+	// because the contradiction is precisely the case where auto is off.
+	// Refuse rather than pick a winner: R21's dropped-control rule, applied to
+	// a spec arguing with itself.
+	if up.AutoFrom == "pull_policy" && up.AutoDeclared && !up.Auto {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  "Pull policy contradicts update.auto",
+			Detail: fmt.Sprintf("Service %q sets task.pull_policy = %q, which turns on image "+
+				"auto-update, while update.auto is declared false. They are two answers to one "+
+				"question; remove one.", svc.Name, runtime.PullAlways),
+			Subject: svc.DefRange.Ptr(),
+		}}
+	}
+	if !up.Auto {
+		return nil
+	}
+
+	// What the operator actually wrote. R33 lowers `pull_policy = "always"` to
+	// auto-update at parse, and a diagnostic naming `update.auto` for a spec
+	// that says `pull_policy` sends someone to look for a block they never
+	// wrote. Every message below goes through `wrote`.
+	wrote := "update.auto"
+	if up.AutoFrom == "pull_policy" {
+		wrote = `pull_policy = "always"`
 	}
 
 	reject := func(summary, detail string) hcl.Diagnostics {
@@ -1218,12 +1257,12 @@ func validateAutoUpdate(svc *Service) hcl.Diagnostics {
 	// loser is whichever ran second, which is not a thing to debug at 3am.
 	if svc.Build != nil {
 		return reject("Auto-update conflicts with build",
-			"update.auto follows a tag in a registry, but this service builds its own image "+
-				"and the pipeline pins the digest it produces (§10.2). Remove one of them.")
+			fmt.Sprintf("%s follows a tag in a registry, but this service builds its own image "+
+				"and the pipeline pins the digest it produces (§10.2). Remove one of them.", wrote))
 	}
 	if svc.Task == nil || svc.Task.Image == "" {
 		return reject("Auto-update needs an image",
-			"update.auto re-resolves task.image, and this service does not declare one.")
+			fmt.Sprintf("%s re-resolves task.image, and this service does not declare one.", wrote))
 	}
 	// A digest does not move, so following one is a contradiction rather than a
 	// no-op, and reading it as a no-op would leave someone believing their
@@ -1231,8 +1270,8 @@ func validateAutoUpdate(svc *Service) hcl.Diagnostics {
 	if strings.Contains(svc.Task.Image, "@") {
 		return reject("Auto-update needs a tag, not a digest",
 			fmt.Sprintf("task.image is %q, which is pinned to a digest. A digest never moves, "+
-				"so there is nothing for update.auto to follow: declare a tag instead.",
-				svc.Task.Image))
+				"so there is nothing for %s to follow: declare a tag instead.",
+				svc.Task.Image, wrote))
 	}
 
 	if up.Interval != "" {

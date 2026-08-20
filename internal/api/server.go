@@ -1187,6 +1187,14 @@ func (s *Server) handleListAllocs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, AllocsResponse{Allocs: filtered})
 }
 
+// serviceOf loads one service record, for a handler that needs the declared
+// spec rather than the alloc's own state.
+func (s *Server) serviceOf(ctx context.Context, project, service string) (reconciler.Desired, error) {
+	svc, _, err := store.GetValue[reconciler.Desired](
+		ctx, s.store, store.KindService, project+"/"+service)
+	return svc, err
+}
+
 // handleLogs streams alloc logs. Output is plain text, not JSON: it goes
 // straight to a terminal, and a human tailing logs should not have to decode
 // anything.
@@ -1201,6 +1209,10 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(q.Get("tail")); err == nil {
 		opts.Tail = n
 	}
+	// R32: `?container=<init name>` reads a step's log instead of the task's.
+	// The name is resolved against the service's own declared sequence below;
+	// nothing here takes a container id from a client.
+	initName := q.Get("container")
 
 	allocs, err := s.selectAllocs(r.Context(), opts)
 	if err != nil {
@@ -1210,6 +1222,24 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if len(allocs) == 0 {
 		writeError(w, http.StatusNotFound, errors.New("no matching allocs"))
 		return
+	}
+	var initOrdinals map[string]int
+	if initName != "" {
+		initOrdinals = map[string]int{}
+		for _, alloc := range allocs {
+			svc, err := s.serviceOf(r.Context(), alloc.Project, alloc.Service)
+			if err != nil {
+				continue
+			}
+			if ordinal, ok := resolveInitStep(svc, initName); ok {
+				initOrdinals[alloc.ID] = ordinal
+			}
+		}
+		if len(initOrdinals) == 0 {
+			writeError(w, http.StatusNotFound, fmt.Errorf(
+				"no init container named %q on the matching services", initName))
+			return
+		}
 	}
 	if opts.Follow {
 		// A following stream holds a goroutine and a log fd per alloc for as
@@ -1229,7 +1259,19 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	tails := make([]*tailer, 0, len(allocs))
 	for _, alloc := range allocs {
-		path, err := logPathFor(s.logDir, alloc.ID)
+		label := alloc.ID
+		var path string
+		var err error
+		if initName != "" {
+			ordinal, ok := initOrdinals[alloc.ID]
+			if !ok {
+				continue // this alloc's service declares no such step
+			}
+			label = alloc.ID + "/" + initName
+			path, err = initLogPathFor(s.logDir, alloc.ID, ordinal, initName)
+		} else {
+			path, err = logPathFor(s.logDir, alloc.ID)
+		}
 		if err != nil {
 			// A traversal-shaped ID in the Store means the record pre-dates
 			// the apply seam's name validation; skip it rather than read
@@ -1237,7 +1279,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			s.log.Warn("refusing log path", "alloc", alloc.ID, "error", err)
 			continue
 		}
-		t, err := newTailer(path, alloc.ID, opts.Tail, prefix)
+		t, err := newTailer(path, label, opts.Tail, prefix)
 		if err != nil {
 			// A missing log file is normal for an alloc that never started.
 			s.log.Debug("no log file", "alloc", alloc.ID, "error", err)

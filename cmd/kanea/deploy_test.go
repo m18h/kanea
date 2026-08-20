@@ -74,6 +74,20 @@ func TestFieldsLostByImageApplyNamesWhatWouldGo(t *testing.T) {
 	}
 }
 
+// TestAnImageApplyWouldLoseInitContainers. `kanea run --image` builds a
+// Desired from nothing, so applying it over a service with an init sequence
+// would silently delete the migration that has to run before it starts (R32).
+func TestAnImageApplyWouldLoseInitContainers(t *testing.T) {
+	svc := reconciler.Desired{
+		Project: "shop", Service: "api", Count: 1, Image: "api:1",
+		Init: []reconciler.InitContainer{{Name: "migrate", Image: "migrate:1"}},
+	}
+	if !containsString(fieldsLostByImageApply(svc), "init containers") {
+		t.Errorf("fieldsLostByImageApply did not name init containers; got %v",
+			fieldsLostByImageApply(svc))
+	}
+}
+
 // TestABareServiceLosesNothing keeps the documented quickstart idempotent.
 //
 // `kanea run --image nginx --name web --project demo` is a first-class path,

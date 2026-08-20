@@ -45,6 +45,19 @@ export const scalingPolicySchema = z.object({
   cooldown: z.string().optional(),
 })
 
+// One init container: a step run to completion before the task (R32). The
+// outer key is PascalCase (Desired's field is untagged) while the inner fields
+// carry json tags, the same split every nested type here has.
+export const initContainerSchema = z.object({
+  name: z.string(),
+  image: z.string(),
+  command: z.array(z.string()).nullish(),
+  // Nanoseconds, because Go marshals a time.Duration as its integer count.
+  // Zero (or absent) is no timeout, never "immediate" (R11's rule).
+  timeout: z.number().optional(),
+  pull_policy: z.string().optional(),
+})
+
 export const serviceSchema = z.object({
   Project: z.string(),
   Service: z.string(),
@@ -55,6 +68,12 @@ export const serviceSchema = z.object({
   Publish: z.array(publishSchema).nullish(),
   DependsOn: z.array(z.string()).nullish(),
   Scaling: scalingPolicySchema.nullish(),
+  // v1.84: init containers (R32) and where images may come from (R33). Both
+  // absent on every record written before the fields existed, and pull_policy
+  // is empty whenever the node's own default applies - which is not a value to
+  // render as "none".
+  Init: z.array(initContainerSchema).nullish(),
+  pull_policy: z.string().optional(),
   // v1.39: a service lowered from a `function` block. The marker is what the
   // Functions page filters on and the Services page filters out: one record,
   // shown on exactly one page. Both fields carry lowercase json tags.
@@ -65,6 +84,8 @@ export const serviceSchema = z.object({
   // daemon simply never shows rollout progress.
   spec_hash: z.string().optional(),
 })
+
+export type InitContainer = z.infer<typeof initContainerSchema>
 
 export const servicesResponseSchema = z.object({
   services: z.array(serviceSchema).nullish(),
@@ -96,6 +117,12 @@ export const allocSchema = z.object({
   // The hash of the spec this alloc was created from (empty on adopted
   // records). The planner's staleness rule reads it; so does lib/rollout.
   spec_hash: z.string().optional(),
+  // Which init step an alloc in the `init` state is on (R32). init_step is a
+  // zero-based ordinal, so it is absent when the alloc is on the first step:
+  // read it as 0, never as "missing".
+  init_step: z.number().optional(),
+  init_name: z.string().optional(),
+  init_started_at: z.string().optional(),
 })
 
 export const allocsResponseSchema = z.object({
@@ -296,6 +323,12 @@ export interface SubscribeRequest {
   project?: string
   service?: string
   tail?: number
+  /**
+   * Follow an init container's log instead of the task's (R32), by its block
+   * name. Unlike `tail` this IS part of the subscription key server-side: it
+   * selects a different stream rather than more of the same one.
+   */
+  container?: string
   /**
    * Ask the stats or node topic to seed this subscription's first frame with
    * its recent history (v1.79), so a chart draws its shape before a second

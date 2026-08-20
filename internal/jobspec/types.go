@@ -203,6 +203,9 @@ type Service struct {
 	// Files are the content Kanea materialises and bind-mounts (R35).
 	Files []*File
 	Build *Build
+	// Inits are the service's init containers, in declaration order (R32).
+	// They run one at a time, to completion, before Task is created.
+	Inits []*InitContainer
 	Task  *Task
 	// Network declares the container ports other services and the edge address.
 	Network *Network
@@ -329,10 +332,62 @@ type Task struct {
 	// RegistryAuthRef names the secret holding a docker config.json used to
 	// pull the image (R19). Project-scoped like every other reference (R5).
 	RegistryAuthRef string
+	// PullPolicy is R33's "where may this image come from": PullIfNotPresent,
+	// PullNever or PullAlways. Empty means the node decides (§15.1), the
+	// expose.tls.mode shape, because this parse runs client-side.
+	PullPolicy string
 	// Devices are host devices the task requests by grant name (R17).
 	Devices []*Device
 	// Sockets are host unix sockets the task requests by grant name (R18).
 	Sockets []*Socket
+	// DefRange is where this block was declared, for diagnostics.
+	DefRange hcl.Range
+}
+
+// InitContainer is one step of a service, run to completion before its task
+// (R32).
+//
+// It shares the alloc's network namespace, its volumes and its secrets tmpfs,
+// and declares everything else for itself: nothing is inherited from Task. The
+// fields it does not have are the rule as much as the ones it does; there is no
+// build, device, socket, health check, expose, scaling, count, depends_on or
+// network here, because an init container is a step rather than a service.
+//
+// Init containers must be idempotent. A half-run sequence is abandoned rather
+// than resumed, and a sequence re-runs from the first step on every alloc
+// creation, for the same reason the netns and the secrets tree are rebuilt.
+type InitContainer struct {
+	// Name is a DNS-1123 label, unique within its service. It composes into a
+	// containerd id and a log file name, which is why it is checked like a
+	// service name rather than treated as free text.
+	Name string
+	// Image is required: an init container has no build block, so R8's
+	// wait-for-the-first-build does not apply to one.
+	Image string
+	// Command overrides the image entrypoint (R12's rule, unchanged): an
+	// argument array, never a shell string.
+	Command []string
+	// Capabilities are grants added to the R13 baseline, "none" starts from
+	// nothing, and only the permitted set may be declared. The canonical init
+	// container asks for CAP_CHOWN to fix a directory the task will own.
+	Capabilities []string
+	Env          map[string]string
+	// User is R23's numeric identity, and it is deliberately independent of
+	// task.user: the point of a chown step is to run as root while the task
+	// runs as somebody else. Nil means the init image's own USER stands.
+	User *User
+	// Resources are R11's: zero is unbounded and no default is filled in.
+	Resources         Resources
+	ResourcesDeclared bool
+	// RegistryAuthRef is this step's pull credential, R5-scoped like the rest.
+	RegistryAuthRef string
+	// PullPolicy is R33's, minus "always": there is one pinned-image field and
+	// it belongs to the task, so "always" on a step is refused by name.
+	PullPolicy string
+	// Timeout bounds this step. Empty means no timeout (R11's rule again), and
+	// a declared one is a floor rather than a deadline, because the kill lands
+	// within one reconcile pass.
+	Timeout string
 	// DefRange is where this block was declared, for diagnostics.
 	DefRange hcl.Range
 }
@@ -767,6 +822,16 @@ type Update struct {
 	// moves. Off by default: following a moving tag is the one thing §14 A08
 	// otherwise refuses, so it is stated explicitly or not at all.
 	Auto bool
+	// AutoDeclared records that the spec wrote `auto` explicitly, so a declared
+	// `false` is distinguishable from an absent block. R33 needs the
+	// distinction: `pull_policy = "always"` lowers to Auto, and lowering it
+	// over an explicit `auto = false` would be the spec silently losing an
+	// argument with itself.
+	AutoDeclared bool
+	// AutoFrom names the field that turned Auto on when it was not `auto`
+	// itself ("pull_policy", R33). Diagnostics use it so an operator is told
+	// about the field they wrote rather than the one it lowered to.
+	AutoFrom string
 	// Interval is how often the registry is polled. Empty means the default.
 	Interval string
 	// Deadline is how long a new digest has to converge before it is reverted

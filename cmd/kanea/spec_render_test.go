@@ -172,10 +172,10 @@ service "search" {
   }
 }
 
-# Env groups and config files (v1.85, R34/R35). Both must survive the trip: a
-# file silently dropped by the generator would apply as a service whose config
-# is missing, and an env group that did not merge would apply as a service
-# missing half its environment.
+# Init containers, pull policy, env groups and config files (v1.84/v1.85,
+# R32-R35), on one service so the trip exercises them together. Any of them
+# silently dropped by the generator would apply as a service missing a
+# migration, an environment or its config.
 env_group "common" {
   LOG_LEVEL = "info"
   REGION    = "eu-central-1"
@@ -186,6 +186,33 @@ service "orders" {
   count    = 1
   env_from = ["common"]
 
+  init "fix-perms" {
+    image        = "busybox:1.36"
+    command      = ["chown", "-R", "999:999", "/data"]
+    capabilities = ["CAP_CHOWN"]
+    timeout      = "1m"
+  }
+
+  init "migrate" {
+    image       = "registry.example.com/shop/orders-migrate:2.1.0"
+    command     = ["/bin/migrate", "up"]
+    pull_policy = "never"
+
+    env = {
+      DATABASE_URL = "secret:shop/database-url"
+    }
+
+    user {
+      uid = 999
+      gid = 999
+    }
+
+    resources {
+      cpu    = 200
+      memory = 128
+    }
+  }
+
   file "app-conf" {
     path    = "/etc/orders/app.conf"
     content = <<-EOT
@@ -195,9 +222,16 @@ service "orders" {
   }
 
   task "app" {
-    image = "registry.example.com/shop/orders:2.1.0"
+    image       = "registry.example.com/shop/orders:2.1.0"
+    pull_policy = "if-not-present"
+
     env = {
       LOG_LEVEL = "debug"
+    }
+
+    resources {
+      cpu    = 500
+      memory = 512
     }
   }
 }

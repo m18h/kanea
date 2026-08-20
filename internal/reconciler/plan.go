@@ -26,6 +26,13 @@ type World struct {
 	Records map[string]AllocRecord
 	// Actual is what the runtime reports, keyed by alloc id.
 	Actual map[string]runtime.Status
+	// InitActual is what the runtime reports for init containers, keyed by
+	// init container id (runtime.InitID). Separate from Actual rather than
+	// mixed into it, and that separation is the feature's safety property:
+	// every consumer of Actual reasons about allocs, and an init container has
+	// no alloc record, so planOrphans would read a running migration as an
+	// orphan and destroy it on the pass after it started.
+	InitActual map[string]InitStatus
 	// Now is the reference time for backoff decisions.
 	Now time.Time
 }
@@ -86,6 +93,12 @@ func Plan(w World) []Action {
 	// the same from here, and all three should converge to "gone".
 	actions = append(actions, planOrphans(w, desiredByService, wanted)...)
 
+	// Init containers are swept separately, by what exists under each alloc's
+	// own prefix rather than by the spec's list (R32). They deliberately never
+	// go through planOrphans: an init container has no alloc record, so that
+	// function would read a running migration as an orphan.
+	actions = append(actions, initContainersToReap(w, desiredByService)...)
+
 	sort.SliceStable(actions, func(i, j int) bool {
 		if actions[i].AllocID != actions[j].AllocID {
 			return actions[i].AllocID < actions[j].AllocID
@@ -114,6 +127,26 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 		return nil
 	}
 
+	// An alloc in its init sequence. Deliberately *after* the stale test above
+	// and before everything below: a deploy must not wait out the old spec's
+	// migrations before noticing it is a deploy.
+	if hasRecord && record.State == AllocInit {
+		if stale {
+			// ActionRestart rather than the ActionCreate the !isActual branch
+			// below would emit, because only teardown sweeps the half-run
+			// sequence - and without that sweep a step whose name the new spec
+			// still uses would be *adopted* by its id while running the old
+			// spec's image. ActionReplace would be wrong for the opposite
+			// reason: an alloc mid-init is not serving, so charging it to the
+			// rolling budget would let one stuck migration stall a deploy.
+			act := base
+			act.Kind = ActionRestart
+			act.Reason = "spec changed during init"
+			return []Action{act}
+		}
+		return planInit(w, d, base, record)
+	}
+
 	// Nothing exists yet: first deploy, or a scale-out.
 	if !isActual {
 		// A backoff is a wait for the same alloc to be worth trying again. A new
@@ -131,6 +164,26 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 			act := base
 			act.Kind = ActionWait
 			act.Reason = "waiting for " + strings.Join(blocked, ", ") + " to become healthy"
+			return []Action{act}
+		}
+		// An alloc that failed during its init sequence has no main container,
+		// so without this it would take the ActionCreate path below - and
+		// create() increments Restarts only for ActionRestart, so the budget
+		// would never be spent and a broken migration would retry forever.
+		// ActionRestart tears down (sweeping the half-run sequence) and
+		// re-creates, which is exactly what is wanted, and it counts.
+		//
+		// Unconditional on Restarts, deliberately: it is zero on the *first*
+		// init failure (Observe records the failure and arms the backoff but
+		// never increments the counter - create does, and only for
+		// ActionRestart), so a `Restarts > 0` guard here would make the first
+		// retry an ActionCreate that counts nothing and every later one the
+		// same, which is the unbounded loop this branch exists to close.
+		if hasRecord && !stale && isInitFailure(record.LastExitReason) {
+			act := base
+			act.Kind = ActionRestart
+			act.Reason = fmt.Sprintf("restarting after init %q %s (attempt %d)",
+				record.InitName, initVerb(record.LastExitReason), record.Restarts+1)
 			return []Action{act}
 		}
 		reason := "alloc missing"
@@ -220,6 +273,34 @@ func hashableVolumes(volumes []Volume) []Volume {
 	return out
 }
 
+// hashableInit is hashableVolumes' shape, applied to init containers (R32).
+//
+// An init block is hashed whole, so the two fields that are not container state
+// have to be stripped: PullPolicy (where the image may come from, R33) and
+// Timeout (how long the step may take). Changing either must not roll a
+// service, for the reason Expose, Publish and R31's budget are out of the
+// material entirely.
+// hashableFiles canonicalises a service's files for hashing (jobspec R35).
+//
+// Two things happen here and both are load-bearing.
+//
+// **The nonce is canonicalised away.** It is fresh on every parse and it lives
+// It copies before it strips, like hashableVolumes: mutating the caller's
+// Desired from inside a hash function would silently rewrite the record the
+// reconciler is about to project.
+func hashableInit(inits []InitContainer) []InitContainer {
+	if len(inits) == 0 {
+		return nil
+	}
+	out := make([]InitContainer, len(inits))
+	copy(out, inits)
+	for i := range out {
+		out[i].PullPolicy = ""
+		out[i].Timeout = 0
+	}
+	return out
+}
+
 // hashableFiles canonicalises a service's files for hashing (jobspec R35).
 //
 // Two things happen here and both are load-bearing.
@@ -237,9 +318,7 @@ func hashableVolumes(volumes []Volume) []Volume {
 // Name is cleared because the container never sees it: it names the block in
 // diagnostics and on disk, so renaming one is free, which is right.
 //
-// It copies before it strips, like hashableVolumes: mutating the caller's
-// Desired from inside a hash function would silently rewrite the record the
-// reconciler is about to project.
+// It copies before it strips, for hashableInit's reason.
 func hashableFiles(files []FileMount) []FileMount {
 	if len(files) == 0 {
 		return nil
@@ -301,15 +380,19 @@ func SpecHash(d Desired) string {
 		// resolved paths are unexported and never marshalled.
 		Devices []DeviceRequest `json:"devices,omitempty"`
 		Sockets []SocketRequest `json:"sockets,omitempty"`
+		// Init containers are baked into the alloc as much as the task is:
+		// changing a migration's image or command must roll (R32). omitempty
+		// is what keeps every pre-v1.84 record hashing exactly as it did.
+		Init []InitContainer `json:"init,omitempty"`
+		// A file's content is placed in the container at create and nothing
+		// re-renders it for a running one, so editing a config file rolling
+		// the service is the feature (R35) - the opposite call from R31's size
+		// and R33's pull policy, and for the opposite reason.
+		Files []FileMount `json:"files,omitempty"`
 		// Generation is not baked into anything. It is here so that an operator
 		// asking for a restart produces a spec that differs, and therefore rolls
 		// through exactly the machinery a real deploy does.
-		// A file's content is placed in the container at create and nothing
-		// re-renders it for a running one, so editing a config file rolling
-		// the service is the feature - the opposite call from R31's size and
-		// R33's pull policy, and for the opposite reason.
-		Files      []FileMount `json:"files,omitempty"`
-		Generation int         `json:"generation,omitempty"`
+		Generation int `json:"generation,omitempty"`
 		// The runtime decides which shim runs the container, so changing it
 		// has to roll the allocs. omitempty is load-bearing exactly as it is
 		// for User: every pre-v1.39 record hashes with the field absent, and
@@ -326,6 +409,7 @@ func SpecHash(d Desired) string {
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
 		Files:   hashableFiles(d.Files),
 		Devices: d.Devices, Sockets: d.Sockets,
+		Init:       hashableInit(d.Init),
 		Generation: d.Generation,
 		Runtime:    d.Runtime,
 	}
@@ -464,6 +548,13 @@ func planOrphans(w World, desiredByService map[string]Desired, wanted map[string
 	}
 
 	for id, status := range w.Actual {
+		// Belt and braces. loadActual partitions init containers into
+		// InitActual so none should be here, but the cost of a mistake is a
+		// running migration destroyed on the pass after it started, and the
+		// check is one comparison (R32).
+		if status.IsInit() {
+			continue
+		}
 		if rec, ok := w.Records[id]; ok {
 			consider(id, rec.Project, rec.Service, rec.Index)
 			continue
@@ -706,6 +797,15 @@ func DiffScoped(current, desired []Desired, pruneProjects []string) []string {
 		}
 		if have.Resources != want.Resources {
 			changes = append(changes, fmt.Sprintf("resources %+v -> %+v", have.Resources, want.Resources))
+		}
+		// Init containers are spec-hash material (R32), so changing a
+		// migration's image or command rolls every alloc; a plan that did not
+		// say so would show a redeploy with no visible cause. Compared through
+		// hashableInit, so adjusting a step's timeout or pull policy - neither
+		// of which rolls anything - does not print a change either.
+		if !reflect.DeepEqual(hashableInit(have.Init), hashableInit(want.Init)) {
+			changes = append(changes, fmt.Sprintf("init containers %s -> %s",
+				describeInit(have.Init), describeInit(want.Init)))
 		}
 		if !sameEnv(have.Env, want.Env) {
 			changes = append(changes, "env changed")

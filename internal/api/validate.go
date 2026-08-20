@@ -8,6 +8,7 @@ import (
 
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/secrets"
 )
 
@@ -73,6 +74,57 @@ func validateDesired(svc reconciler.Desired) error {
 		}
 	}
 
+	// R33: the policy vocabulary is closed, and "always" is a task-only word
+	// (there is one pinned-image field and it belongs to the task).
+	if err := jobspec.CheckPullPolicy(svc.PullPolicy, true); err != nil {
+		return fmt.Errorf("service %s: %w", key, err)
+	}
+
+	// R32: every rule validateInits applies at plan, applied again here for a
+	// record that never met the parser. Each goes through the same exported
+	// core as its parse-time half, so the two cannot drift.
+	initNames := make(map[string]struct{}, len(svc.Init))
+	for _, step := range svc.Init {
+		if !jobspec.IsName(step.Name) {
+			return fmt.Errorf("service %s: init container name %q is not a DNS-1123 label; "+
+				"it composes into a container id and a log file name", key, step.Name)
+		}
+		if _, dup := initNames[step.Name]; dup {
+			return fmt.Errorf("service %s: init container %q is declared more than once", key, step.Name)
+		}
+		initNames[step.Name] = struct{}{}
+		if step.Image == "" {
+			return fmt.Errorf("service %s: init container %q has no image; unlike a task it has "+
+				"no build block (PRD §6.2 R32)", key, step.Name)
+		}
+		if err := jobspec.CheckCapabilities(step.Capabilities); err != nil {
+			return fmt.Errorf("service %s: init container %q: %w", key, step.Name, err)
+		}
+		if err := jobspec.CheckPullPolicy(step.PullPolicy, false); err != nil {
+			return fmt.Errorf("service %s: init container %q: %w", key, step.Name, err)
+		}
+		if step.Timeout < 0 {
+			return fmt.Errorf("service %s: init container %q declares a negative timeout; omit it "+
+				"for no timeout at all (PRD §6.2 R32)", key, step.Name)
+		}
+		if ref := step.RegistryAuthRef; ref != "" {
+			if err := jobspec.CheckSecretRefScope(ref, svc.Project,
+				fmt.Sprintf("init %q registry_auth_ref", step.Name)); err != nil {
+				return fmt.Errorf("service %s: %w", key, err)
+			}
+		}
+		for name, value := range step.Env {
+			ref, _, ok := secrets.ParseEnvRef(value)
+			if !ok {
+				continue
+			}
+			if err := jobspec.CheckSecretRefScope(ref, svc.Project,
+				fmt.Sprintf("env %s of init %q", name, step.Name)); err != nil {
+				return fmt.Errorf("service %s: %w", key, err)
+			}
+		}
+	}
+
 	// R35: every rule validateFiles applies at parse, applied again here for a
 	// record that never met the parser. The NUL check matters more at this seam
 	// than at the other one: content arrives base64-encoded here, so a NUL is
@@ -130,7 +182,8 @@ func validateDesired(svc reconciler.Desired) error {
 	}
 
 	// R25: a non-default runtime gets the whole refusal list, not two of
-	// seven. A record carrying Runtime beside any of these reached the Store
+	// seven - it is the whole list, and init containers and files make it
+	// nine. A record carrying Runtime beside any of these reached the Store
 	// without the parser's function lowering, and the runtime's own guarantees
 	// (no volumes, no devices, no way to grant) depend on the list being
 	// complete. The runtime name itself and the exec-probe refusal stay in
@@ -155,6 +208,10 @@ func validateDesired(svc reconciler.Desired) error {
 		case svc.Scaling != nil:
 			return fmt.Errorf("service %s names runtime %q and declares scaling; function scaling "+
 				"is event-driven, not replica-count (PRD §6.2 R25)", key, svc.Runtime)
+		case len(svc.Init) > 0:
+			return fmt.Errorf("service %s names runtime %q and declares init containers; the wasm "+
+				"runtime runs one module and has no second container to run (PRD §6.2 R25)",
+				key, svc.Runtime)
 		case len(svc.Files) > 0:
 			return fmt.Errorf("service %s names runtime %q and declares files; the wasm runtime "+
 				"has no mount primitive (PRD §6.2 R25)", key, svc.Runtime)
@@ -196,4 +253,31 @@ func logPathFor(logDir, allocID string) (string, error) {
 		return "", fmt.Errorf("alloc id %q escapes the log directory", allocID)
 	}
 	return path, nil
+}
+
+// initLogPathFor is logPathFor for one of an alloc's init containers (R32).
+//
+// The step is named rather than passed as an id: the caller supplies a name it
+// found in the *record's own* Desired.Init, and the id is composed here, so a
+// query string can never name a container directly. The containment assertion
+// then runs on the composed result, which is what it is for.
+func initLogPathFor(logDir, allocID string, ordinal int, name string) (string, error) {
+	id := runtime.InitID(allocID, ordinal, name)
+	path := filepath.Join(logDir, id+".log")
+	rel, err := filepath.Rel(logDir, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("init container id %q escapes the log directory", id)
+	}
+	return path, nil
+}
+
+// resolveInitStep finds a named step in a service's declared sequence. The
+// name comes from a client; the ordinal and the id do not.
+func resolveInitStep(svc reconciler.Desired, name string) (int, bool) {
+	for i := range svc.Init {
+		if svc.Init[i].Name == name {
+			return i, true
+		}
+	}
+	return 0, false
 }

@@ -399,7 +399,66 @@ mount | grep /run/kanea/host-volumes                       # the binds exist
 
 ---
 
-## 10. Env groups and config files (v1.85, §6.2 R34/R35)
+## 10. Init containers end to end (v1.84, §6.2 R32/R33)
+
+The state machine is a pure function over a `World`, so the planner's every
+transition is unit-tested against fixtures a node cannot easily produce: a step
+running past its timeout, a vanished container mid-sequence, a spec change
+between steps. What no test here can answer is the half that is a conversation
+with containerd and the kernel:
+
+> **does a second container of the same alloc actually join that alloc's
+> network namespace, mount its volumes, and see its secrets — and does the
+> reconcile loop keep serving every other service while a five-minute step
+> runs?**
+
+Everything about the design assumes yes. `initSpecFor` hands runc the alloc's
+`NetnsPath` rather than one derived from the step's own id, the volume mounts
+and the secrets bind come across from the alloc's spec unchanged, and the pass
+returns after starting a step rather than waiting on it. Each of those is the
+v1.53 genre: dev mode has no runc, so a wrong netns path or a mount that lands
+empty is invisible until the first systemd node runs a migration.
+
+Seven checks, on a node installed the ordinary way (`install.sh` + `kanea init`):
+
+```bash
+# The canonical shape: root fixes a directory the task will own as 999, then a
+# migration reaches the database by name, then the task starts.
+cat > init.hcl <<'EOF'
+project "val" {}
+
+storage "d" { type = "local" }
+
+service "db" {
+  project = "val"
+  count   = 1
+  task "db" {
+    image = "postgres:17-alpine"
+    env   = { POSTGRES_PASSWORD = "val" }
+  }
+  network { port "pg" { container = 5432 } }
+  health_check "up" { type = "tcp", port = "pg" }
+}
+
+service "app" {
+  project = "val"
+  count   = 2
+
+  volume "data" { storage = "d", mount_path = "/data" }
+
+  init "fix-perms" {
+    image        = "busybox:1.36"
+    command      = ["sh", "-c", "chown -R 999:999 /data && echo fixed"]
+    capabilities = ["CAP_CHOWN"]
+    timeout      = "1m"
+  }
+
+  init "wait-db" {
+    image   = "busybox:1.36"
+    command = ["sh", "-c", "until nc -z $HOST 5432; do sleep 1; done; echo up"]
+    env     = { HOST = "${service.db.host}" }
+    timeout = "2m"
+## 11. Env groups and config files (v1.85, §6.2 R34/R35)
 
 The parse half is unit-tested hard, including the three properties that make a
 secret placeholder unforgeable. What no test here can answer is the half that is
@@ -449,6 +508,64 @@ service "web" {
 
   task "app" {
     image = "nginx:1.27-alpine"
+    user { uid = 999, gid = 999 }
+  }
+}
+EOF
+kanea run init.hcl
+
+# ① the sequence is visible while it runs, and names the step
+kanea describe val/app     # STATE: init 2/2 wait-db
+kanea ps                   # the other services keep their states; nothing stalls
+
+# ② each step's output is its own log
+kanea logs val/app -c fix-perms   # "fixed"
+kanea logs val/app -c wait-db     # "up"  <- proves the shared netns and DNS
+
+# ③ the task started after the last step, as uid 999, into a chowned directory
+kanea exec val/app -- id          # uid=999
+kanea exec val/app -- ls -ld /data
+
+# ④ a failing step spends the restart budget rather than looping forever
+#    (change fix-perms's command to `exit 1` and re-apply)
+kanea describe val/app     # REASON: InitFailed: init "fix-perms" (1 of 2) exited with code 1
+                           # then backoff 10s / 30s / 1m / 5m, then STATE failed
+
+# ⑤ a hung step is killed and classified, within a reconcile interval of its
+#    timeout (command = ["sleep", "600"], timeout = "30s")
+kanea describe val/app     # REASON: InitTimeout: … exceeded its 30s timeout
+
+# ⑥ a restart mid-sequence waits rather than re-running a finished step
+#    (start a long step, then:)
+sudo systemctl restart kanead
+kanea describe val/app     # still on the same step; step 1 does not run again
+sudo ctr -n kanea-val containers ls | grep '\.init\.'   # completed steps kept
+
+# ⑦ pull_policy = "never" fails by name on an absent image, and starts on a
+#    preloaded one
+printf 'images {\n  pull_policy = "never"\n}\n' | sudo tee /etc/kanea/kanea.hcl
+sudo systemctl restart kanead
+kanea run init.hcl         # REASON: ImageFailed: … pull_policy is "never"
+sudo ctr -n kanea-val images pull docker.io/library/busybox:1.36
+kanea run init.hcl         # starts, with no registry reachable
+```
+
+Two things to watch for that the checks above will not spell out. The alloc must
+**never appear as an LB backend while it is in `init`** (`backendsFor` gates on
+the *main* container reporting running, so `curl` against the VIP during a
+sequence must refuse at connect, not hang); and `kanea ps` for the *other*
+services on the node must keep updating throughout ⑤, which is the whole
+"the pass never waits" claim.
+
+| Check | Result | Date | Node |
+|---|---|---|---|
+| ① the sequence is visible and names the live step | | | |
+| ② each step's log is readable with `-c` | | | |
+| ③ the task runs as its own user into the chowned volume | | | |
+| ④ a failed step spends the restart budget | | | |
+| ⑤ a hung step is killed and classified `init_timeout` | | | |
+| ⑥ a kanead restart resumes without re-running finished steps | | | |
+| ⑦ `pull_policy = "never"` refuses and preloading works | | | |
     user { uid = 101, gid = 101 }
   }
 }

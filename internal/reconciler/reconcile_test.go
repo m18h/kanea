@@ -71,8 +71,28 @@ func (f *fakeDriver) Create(_ context.Context, spec runtime.AllocSpec) error {
 		return err
 	}
 	f.specs[spec.ID] = spec
-	f.allocs[spec.ID] = runtime.Status{ID: spec.ID, State: runtime.StateCreated, Image: spec.Image}
+	status := runtime.Status{ID: spec.ID, State: runtime.StateCreated, Image: spec.Image}
+	// The real driver stamps kanea.role and reads it back in statusOf; the fake
+	// must too, or every init container arrives in World.Actual and the tests
+	// would prove the opposite of what the partition exists for (R32).
+	if spec.Init != nil {
+		status.Role = runtime.RoleInit
+	}
+	f.allocs[spec.ID] = status
 	return nil
+}
+
+// exit stops a container with a code, the way a workload that ran and failed
+// leaves it. The reconciler cannot produce this itself: the fake's Start always
+// succeeds, so a test that needs a failure states it.
+func (f *fakeDriver) exit(id string, code uint32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if status, ok := f.allocs[id]; ok {
+		status.State = runtime.StateStopped
+		status.ExitCode = code
+		f.allocs[id] = status
+	}
 }
 
 func (f *fakeDriver) Start(_ context.Context, _, id string) error {

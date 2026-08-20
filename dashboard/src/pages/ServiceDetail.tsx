@@ -33,6 +33,7 @@ import {
   servicesResponseSchema,
   statsSampleSchema,
   type Alloc,
+  type InitContainer,
   type AllocStats,
   type EdgeBreakdown,
   type KaneaEvent,
@@ -226,7 +227,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
             </CardContent>
           </Card>
 
-          <LogPanel project={project} service={service} />
+          <LogPanel project={project} service={service} inits={desired?.Init ?? []} />
 
           <EdgePanel edge={stats.data?.edge} />
         </div>
@@ -513,6 +514,21 @@ function SpecPanel({ desired }: { desired: Service | undefined }) {
             {(desired.DependsOn ?? []).join(', ')}
           </KeyValue>
         ) : null}
+        {/* Empty means the node's default applies (R33), which is not a value
+            to render: showing "none" would claim a policy nobody declared. */}
+        {desired.pull_policy ? (
+          <KeyValue label="Pull policy" mono>
+            {desired.pull_policy}
+          </KeyValue>
+        ) : null}
+        {(desired.Init ?? []).length > 0 ? (
+          <KeyValue label="Init" mono>
+            {/* In declaration order, which is run order (R32). */}
+            <span className="break-all">
+              {(desired.Init ?? []).map((step) => step.name).join(' → ')}
+            </span>
+          </KeyValue>
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -736,8 +752,25 @@ function AllocRow({
 }
 
 /** LogPanel streams the service's output over the shared socket. */
-function LogPanel({ project, service }: { project: string; service: string }) {
-  const { lines, error, dropped, droppedByDaemon } = useLiveLog(project, service)
+function LogPanel({
+  project,
+  service,
+  inits,
+}: {
+  project: string
+  service: string
+  inits: InitContainer[]
+}) {
+  // Which container's log this panel is following: '' is the task, otherwise an
+  // init container's block name (R32). Each step writes its own file, so this
+  // opens a different feed rather than filtering one.
+  const [selected, setSelected] = useState('')
+  // Derived rather than reset in an effect: a step removed from the spec while
+  // this panel is open would otherwise leave the picker on a name the daemon
+  // no longer resolves and a stream that never fills, and correcting it in an
+  // effect costs a second render to say what one expression already knows.
+  const container = inits.some((i) => i.name === selected) ? selected : ''
+  const { lines, error, dropped, droppedByDaemon } = useLiveLog(project, service, 200, container)
   const [filter, setFilter] = useState('')
   const [follow, setFollow] = useState(true)
 
@@ -770,6 +803,24 @@ function LogPanel({ project, service }: { project: string; service: string }) {
         aria-label="Filter log lines"
         className="rounded-md border bg-background px-2 py-1 text-xs"
       />
+      {inits.length > 0 ? (
+        <label className="flex items-center gap-1 text-xs text-muted-foreground">
+          Container
+          <select
+            value={container}
+            onChange={(e) => setSelected(e.target.value)}
+            aria-label="Which container's log to follow"
+            className="rounded-md border bg-background px-2 py-1 text-xs"
+          >
+            <option value="">task</option>
+            {inits.map((step) => (
+              <option key={step.name} value={step.name}>
+                {step.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <label className="flex items-center gap-1 text-xs text-muted-foreground">
         <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
         Follow
@@ -782,7 +833,9 @@ function LogPanel({ project, service }: { project: string; service: string }) {
       <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
         <div className="flex items-baseline gap-2">
           <CardTitle>Logs</CardTitle>
-          <span className="font-mono text-xs text-muted-foreground">tail · all allocs · live</span>
+          <span className="font-mono text-xs text-muted-foreground">
+            tail · all allocs · live{container ? ` · init "${container}"` : ''}
+          </span>
         </div>
         <div className="flex items-center gap-2">{logControls}</div>
       </CardHeader>
@@ -794,10 +847,20 @@ function LogPanel({ project, service }: { project: string; service: string }) {
           follow={follow}
           onFollowChange={setFollow}
           tintSeverity
-          toolbar={{ copy: true, download: { filename: `${project}-${service}.log` }, expand: true }}
+          toolbar={{
+            copy: true,
+            download: { filename: `${project}-${service}${container ? `-${container}` : ''}.log` },
+            expand: true,
+          }}
           title={`${project}/${service}; logs`}
           controls={logControls}
-          emptyText={lines.length === 0 ? 'Waiting for output…' : 'No lines match the filter.'}
+          emptyText={
+            lines.length === 0
+              ? container
+                ? `Waiting for init "${container}"…`
+                : 'Waiting for output…'
+              : 'No lines match the filter.'
+          }
           notice={
             dropped > 0 || droppedByDaemon > 0 ? (
               // Two gaps with two causes, said separately: one is this tab
