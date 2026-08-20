@@ -618,6 +618,37 @@ shows every restart or deploy as **rollout progress**, which is the planner's
 own spec-hash rule on the wire. It also opens a **shell into any running alloc**
 from the browser, over the same exec websocket the CLI uses.
 
+The actions on that page write desired state and let the reconciler converge,
+so none of them is a second path to the runtime. **Scale** opens a picker for
+the replica count; where a service declares a `scaling` block the picker stops
+at that policy's bounds, because the API refuses a count outside them rather
+than clamping it, and it says so:
+
+```
+Currently 3 · allowed 2-10
+Autoscales between 2 and 10: a manual count outside that is refused,
+and one inside it stands until the next autoscale decision.
+```
+
+Scaling to zero is Stop's job, which asks for confirmation first. **Open**
+follows the service's public address in a new tab, and offers a menu when
+there is more than one, which happens whenever `expose` lists several domains
+or the block itself repeats:
+
+```
+https://shop.example.com
+https://www.shop.example.com
+https://admin.example.com
+```
+
+The scheme is `https` unless the route declares `tls { mode = "plaintext" }`.
+A route with no domains is left out: the edge serves it at a name generated
+under `--base-domain`, and reading that needs an admin-only route, so the
+address would be a guess for anyone else.
+
+Every table pages at 20, 50 or 100 rows, and the pager stays out of the way
+until a list is longer than a page.
+
 Every chart **arrives with its history already in it**: the recent window rides
 the first frame of the same subscription that carries the live samples, so a
 page draws its shape immediately instead of growing one point per scrape, and
@@ -813,7 +844,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.86) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.87) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |
