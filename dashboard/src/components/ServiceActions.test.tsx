@@ -104,7 +104,7 @@ describe('ServiceActions scaling', () => {
     return {
       more: screen.getByRole('button', { name: 'More replicas' }),
       fewer: screen.getByRole('button', { name: 'Fewer replicas' }),
-      input: screen.getByRole('spinbutton', { name: 'Replicas' }),
+      readout: screen.getByRole('status'),
     }
   }
 
@@ -112,9 +112,11 @@ describe('ServiceActions scaling', () => {
     const calls = captureScale()
     renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, withScaling(2))
 
-    const { more } = openScale()
+    const { more, readout } = openScale()
+    expect(readout.textContent).toBe('2')
     fireEvent.click(more)
     fireEvent.click(more)
+    expect(readout.textContent).toBe('4')
     // Two clicks on the picker, and production is untouched.
     expect(calls).toHaveLength(0)
 
@@ -122,16 +124,6 @@ describe('ServiceActions scaling', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]?.url).toContain('/v1/services/shop/web/scale')
     expect(calls[0]?.body).toContain('"count":4')
-  })
-
-  it('takes a typed count', () => {
-    const calls = captureScale()
-    renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, withScaling(2))
-
-    const { input } = openScale()
-    fireEvent.change(input, { target: { value: '7' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Scale to 7' }))
-    expect(calls[0]?.body).toContain('"count":7')
   })
 
   it('refuses to submit an unchanged count', () => {
@@ -171,15 +163,17 @@ describe('ServiceActions scaling', () => {
 
   // The case that decides whether this control is usable on an autoscaling
   // service: its count moves every few seconds, and re-seeding the draft from
-  // it would wipe whatever was typed, over and over.
-  it('keeps a typed count when the live count moves underneath it', () => {
+  // it would wipe the operator's choice, over and over.
+  it('keeps the chosen count when the live count moves underneath it', () => {
     const view = renderActions(
       { deploying: false, updated: 3, total: 3 },
       adminSession,
       withScaling(3, { min: 2, max: 10, metrics: [{ name: 'cpu', target: 70 }] }),
     )
-    const { input } = openScale()
-    fireEvent.change(input, { target: { value: '8' } })
+    const { more, readout } = openScale()
+    fireEvent.click(more)
+    fireEvent.click(more)
+    expect(readout.textContent).toBe('5')
 
     // The autoscaler moves 3 -> 4 while the dialog is open.
     view.rerender(
@@ -195,7 +189,7 @@ describe('ServiceActions scaling', () => {
       </SessionContext.Provider>,
     )
 
-    expect(screen.getByRole('button', { name: 'Scale to 8' })).toHaveProperty('disabled', false)
+    expect(screen.getByRole('button', { name: 'Scale to 5' })).toHaveProperty('disabled', false)
     expect(screen.getByText(/Currently/).textContent).toContain('4')
   })
 

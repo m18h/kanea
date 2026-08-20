@@ -15,7 +15,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { ChartSkeleton, TableSkeleton } from '@/components/Skeletons'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { BackChip } from '@/components/BackChip'
@@ -495,7 +494,11 @@ function ScaleDialog({
 
   const bounded = Number.isFinite(bounds.max)
   const clamp = (n: number) => Math.min(Math.max(n, bounds.min), bounds.max)
-  const valid = Number.isInteger(draft) && draft >= bounds.min && draft <= bounds.max
+  // The buttons cannot leave the range, but the *starting* value can already
+  // be outside it: a service running twelve replicas when a policy capping it
+  // at ten is applied afterwards. Submitting that would be refused by the
+  // daemon, so it is refused here first.
+  const valid = draft >= bounds.min && draft <= bounds.max
   const unchanged = draft === current
 
   return (
@@ -512,18 +515,19 @@ function ScaleDialog({
           >
             <Minus size={16} />
           </Button>
-          <Input
-            type="number"
-            aria-label="Replicas"
-            className="h-10 w-24 text-center font-mono text-lg tabular-nums"
-            value={String(draft)}
-            min={bounds.min}
-            {...(bounded ? { max: bounds.max } : {})}
-            // Typed input is taken as written and judged by `valid` rather
-            // than clamped as you type: clamping mid-keystroke turns "10" into
-            // "1" the moment the 1 lands.
-            onChange={(e) => setDraft(Number.parseInt(e.target.value, 10))}
-          />
+          {/* A readout, not a field. The count is chosen with the two
+              buttons, which cannot express an out-of-range or half-typed
+              value, so there is nothing here to validate and nothing to
+              mis-type. role="status" is what makes the change audible to a
+              screen reader: pressing a button that silently rewrites a number
+              elsewhere on screen is exactly what a live region is for. */}
+          <span
+            role="status"
+            aria-live="polite"
+            className="w-24 text-center font-mono text-lg tabular-nums"
+          >
+            {draft}
+          </span>
           <Button
             size="sm"
             variant="outline"
