@@ -6,8 +6,9 @@ import { useRouter } from '@/hooks/useRouter'
 
 /**
  * AppShell is the signed-in frame: fixed sidebar, independently scrolling
- * main column. Below md the sidebar becomes an overlay drawer behind a top
- * bar, closed again on every navigation.
+ * main column, and a content area that is fluid rather than boxed. Below md
+ * the sidebar becomes an overlay drawer behind a top bar, closed again on
+ * every navigation.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { path } = useRouter()
@@ -47,10 +48,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="text-sm font-semibold">kanea</span>
         </div>
 
+        {/* Fluid, not boxed: the content column fills the width the sidebar
+            leaves it, with a gutter that grows a little on large screens
+            rather than a centred column with empty margins. What this page
+            shows is tables, allocation rows and time-series charts, and every
+            one of them is worth more width — a max-width would spend a 32"
+            monitor on whitespace. The charts follow, because UPlotChart sizes
+            itself from a ResizeObserver rather than from a fixed pixel width. */}
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[1100px] space-y-4 px-4 py-6 md:px-6 md:py-8">
-            {children}
-          </div>
+          <div className="space-y-4 px-4 py-6 md:px-6 md:py-8 xl:px-8">{children}</div>
         </main>
       </div>
     </div>
