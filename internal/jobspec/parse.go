@@ -12,6 +12,17 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
+// SourceReader resolves a `file` block's `source` (R35).
+//
+// specPath is the spec file the block was declared in, as the parser knows it;
+// rel is the block's `source`, already refused at parse if it is absolute, is
+// not clean, or contains a `..` segment. An implementation is still expected to
+// enforce containment at the point of use, because those checks are lexical and
+// a symlink is not.
+type SourceReader interface {
+	ReadSpecFile(specPath, rel string) ([]byte, error)
+}
+
 // Options configures parsing.
 type Options struct {
 	// Vars are caller-supplied ${VAR} substitutions: a pipeline's checkout
@@ -23,6 +34,22 @@ type Options struct {
 	// variables block specializes and Vars overrides. Client-side callers fill
 	// this from GET /v1/vars; server-side callers from the loaded nodeconfig.
 	NodeVars map[string]string
+	// Files resolves a `file` block's `source` (R35), relative to the spec that
+	// declared it.
+	//
+	// It is a seam rather than an os.ReadFile inside this package, and that is
+	// a security rule rather than plumbing. A spec is parsed in three places
+	// and only one of them has a directory beside it: the GitOps sync reads
+	// blobs straight out of a commit tree with no working tree at all, and the
+	// dashboard's spec editor (and MCP) parse an in-memory string *inside
+	// kanead, as root*. A parser that opened files itself would therefore make
+	// POST /v1/spec/render an arbitrary file read as root for any signed-in
+	// user, embedded into a record they could read straight back.
+	//
+	// Nil means `source` is refused by name: a caller with no root has no way
+	// to answer, and guessing one would be a read from wherever the parse
+	// happens to be running.
+	Files SourceReader
 	// BaseDomain is the server's `base_domain` (§15.1). An expose block that
 	// omits `domains` gets <service>.<project>.<base_domain> (§7.2).
 	//
@@ -55,11 +82,41 @@ type hclRoot struct {
 	// field exists so the schema owns the block rather than the remain
 	// catch-all swallowing it.
 	Variables []hclVariables `hcl:"variables,block"`
-	Remain    hcl.Body       `hcl:",remain"`
+	// EnvGroups are R34's shared environments. Like Variables, the attribute
+	// names inside are the author's to choose, so the body is captured raw and
+	// evaluated per consuming service in pass 2 (envgroup.go) rather than
+	// decoded here.
+	EnvGroups []hclEnvGroup `hcl:"env_group,block"`
+	Remain    hcl.Body      `hcl:",remain"`
+}
+
+// hclEnvGroup is one shared environment (R34). The body is raw for the reason
+// hclVariables' is: the names belong to the spec author.
+type hclEnvGroup struct {
+	Name     string    `hcl:"name,label"`
+	Body     hcl.Body  `hcl:",remain"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclVariables struct {
 	Body hcl.Body `hcl:",remain"`
+}
+
+// hclFile is one file Kanea materialises and bind-mounts (R35).
+//
+// content is an hcl.Expression rather than a string for the same reason task
+// env is: it may carry ${service.*} and ${secret.*}, and the second of those is
+// only in scope during pass 2, where the reference list can be collected.
+type hclFile struct {
+	Name    string         `hcl:"name,label"`
+	Path    string         `hcl:"path"`
+	Mode    string         `hcl:"mode,optional"`
+	Content hcl.Expression `hcl:"content,optional"`
+	// Source names a file beside the spec, read at parse and embedded. It is
+	// resolved by Options.Files and never by ambient filesystem access: two of
+	// the three parse sites have no directory, and one of them is kanead.
+	Source   string    `hcl:"source,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 type hclStorage struct {
@@ -143,13 +200,17 @@ type hclSMTP struct {
 }
 
 type hclService struct {
-	Name         string           `hcl:"name,label"`
-	Project      string           `hcl:"project,optional"`
-	Description  string           `hcl:"description,optional"`
-	Count        *int             `hcl:"count,optional"`
-	DependsOn    []string         `hcl:"depends_on,optional"`
+	Name        string   `hcl:"name,label"`
+	Project     string   `hcl:"project,optional"`
+	Description string   `hcl:"description,optional"`
+	Count       *int     `hcl:"count,optional"`
+	DependsOn   []string `hcl:"depends_on,optional"`
+	// EnvFrom names the env groups this service takes, in precedence order:
+	// later wins, and the task's own env wins over all of them (R34).
+	EnvFrom      []string         `hcl:"env_from,optional"`
 	Build        *hclBuild        `hcl:"build,block"`
 	Tasks        []hclTask        `hcl:"task,block"`
+	Files        []hclFile        `hcl:"file,block"`
 	Network      *hclNetwork      `hcl:"network,block"`
 	Exposes      []hclExpose      `hcl:"expose,block"`
 	HealthChecks []hclHealthCheck `hcl:"health_check,block"`
@@ -470,6 +531,12 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 			DefRange: st.DefRange,
 		})
 	}
+	for i := range root.EnvGroups {
+		g := &root.EnvGroups[i]
+		spec.EnvGroups = append(spec.EnvGroups, &EnvGroup{
+			Name: g.Name, Body: g.Body, DefRange: g.DefRange,
+		})
+	}
 	for i := range root.Services {
 		svc, svcDiags := convertService(&root.Services[i])
 		diags = append(diags, svcDiags...)
@@ -494,6 +561,25 @@ func parseFiles(opts Options, files []*hcl.File, diags hcl.Diagnostics) (*Spec, 
 	// than in convertService because it needs the storage a volume names, which
 	// is spec-level and a service does not have.
 	resolveVolumeOwnership(spec)
+
+	// `source` bytes are read here, before pass 2, so a file's content is
+	// present whichever way it was declared and everything downstream sees one
+	// kind (R35). It runs through Options.Files rather than the filesystem,
+	// because two of the three parse sites have no directory and one of them
+	// is kanead running as root.
+	for i := range root.Services {
+		svc := spec.ServiceByName(root.Services[i].Project, root.Services[i].Name)
+		if svc != nil {
+			diags = append(diags, validateFileDeclaration(svc, &root.Services[i])...)
+		}
+	}
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	diags = append(diags, resolveFileSources(spec, opts)...)
+	if diags.HasErrors() {
+		return nil, diags
+	}
 
 	// Pass 2: evaluate env with a context that knows every service's DNS name
 	// and ports, and record the reference edges while doing it (R9, R10).
@@ -580,6 +666,14 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 		Description: s.Description,
 		Count:       DefaultCount,
 		DependsOn:   s.DependsOn,
+		EnvFrom:     s.EnvFrom,
+	}
+	for i := range s.Files {
+		f := &s.Files[i]
+		out.Files = append(out.Files, &File{
+			Name: f.Name, Path: f.Path, Mode: f.Mode,
+			Source: f.Source, DefRange: f.DefRange,
+		})
 	}
 	if s.Count != nil {
 		out.Count = *s.Count

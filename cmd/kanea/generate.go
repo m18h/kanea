@@ -122,6 +122,9 @@ func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Conf
 		return refuse("its capability grants")
 	case len(svc.Command) > 0:
 		return refuse("its command override")
+	case len(svc.Files) > 0:
+		// A function block has no file field (R25/R35).
+		return refuse("its config files")
 	case svc.Scaling != nil:
 		return refuse("its scaling policy")
 	case svc.ReadOnlyRootfs:
@@ -280,6 +283,9 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 		block.AppendNewline()
 	}
 
+	if err := writeFiles(block, svc); err != nil {
+		return err
+	}
 	if err := writeTask(block, svc); err != nil {
 		return err
 	}
@@ -644,4 +650,35 @@ func stringMap(m map[string]string) cty.Value {
 		out[k] = cty.StringVal(v)
 	}
 	return cty.ObjectVal(out)
+}
+
+// writeFiles regenerates a service's file blocks (jobspec R35).
+//
+// A file that interpolates a secret is refused by name rather than emitted,
+// and the reason is mechanical: hclwrite escapes `${` as `$${` when it writes a
+// string literal, so a regenerated ${secret.shop["x"]} would come back as
+// *literal text* on the next parse. The spec would still apply - as a service
+// whose config file contains the placeholder syntax instead of the password.
+// That is exactly the silent drift the refusal list exists to prevent, and it
+// is the same call the generator already makes for volume blocks.
+//
+// Plain content is safe in both directions: hclwrite escapes `${` on the way
+// out and HCL unescapes `$${` on the way back, so a config file full of
+// dollar-braces (nginx, prometheus) round-trips unchanged.
+func writeFiles(block *hclwrite.Body, svc *reconciler.Desired) error {
+	for i := range svc.Files {
+		f := svc.Files[i]
+		if f.HasSecrets() {
+			return fmt.Errorf("cannot generate a spec for %s/%s: file %q interpolates a secret, "+
+				"which the generator cannot write back without turning it into literal text; "+
+				"edit the original spec file",
+				svc.Project, svc.Service, f.Name)
+		}
+		body := block.AppendNewBlock("file", []string{f.Name}).Body()
+		body.SetAttributeValue("path", cty.StringVal(f.Path))
+		setOptionalString(body, "mode", f.Mode)
+		body.SetAttributeValue("content", cty.StringVal(string(f.Content)))
+		block.AppendNewline()
+	}
+	return nil
 }

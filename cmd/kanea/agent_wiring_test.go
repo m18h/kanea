@@ -33,6 +33,10 @@ func TestTheAgentWiresEveryOptionalReconcilerDependency(t *testing.T) {
 		"Breaker":     "the reconciler has no circuit breaker",
 		"Emit":        "no notification is ever published",
 		"VolumeUsage": "volume budgets are never measured",
+		// R35's plain-file tree. Its zero value is not a working default: a
+		// service declaring any file fails its alloc, and the failure would be
+		// a daemon-wiring bug wearing a spec error's clothes.
+		"PlainFilesDir": "every service that declares a config file fails to start",
 	}
 
 	fset := token.NewFileSet()

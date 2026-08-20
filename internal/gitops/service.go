@@ -407,6 +407,10 @@ func parseCheckout(project string, checkout Checkout, opts jobspec.Options) (*jo
 	if len(checkout.Specs) == 0 {
 		return nil, fmt.Errorf("%w (commit %s)", ErrNoSpecs, ShortID(checkout.Commit))
 	}
+	// The commit's own tree resolves any `file` source (R35). Set per checkout
+	// rather than on the stored options: the reader is the commit's, and a
+	// stale one would read a file from a revision this sync is not applying.
+	opts.Files = checkout.Files
 	spec, diags := jobspec.ParseContents(opts, checkout.Specs)
 	if diags.HasErrors() {
 		return nil, fmt.Errorf("parse specs at %s: %s", ShortID(checkout.Commit), diags.Error())

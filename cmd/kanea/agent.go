@@ -59,6 +59,11 @@ const (
 	volumeSubdir = "volumes"
 	// resolvSubdir holds the generated per-project resolv.conf files.
 	resolvSubdir = "resolv"
+	// filesSubdir holds spec-declared config files that interpolate no secret
+	// (jobspec R35). Under the data directory rather than under the tmpfs root
+	// beside the secret-bearing ones: that root becomes a mount point on first
+	// use, and a tmpfs mounted over a directory hides what is already in it.
+	filesSubdir = "files"
 	// credentialSubdir holds transient mount credential files.
 	credentialSubdir = "credentials"
 	// edgeRoutesOff disables publishing the edge route table.
@@ -581,6 +586,7 @@ func runAgent(args []string) error {
 		ServiceCIDR:   *serviceCIDR,
 		ServiceCIDR6:  *serviceCIDR6,
 		ResolvConfDir: filepath.Join(*dataDir, resolvSubdir),
+		PlainFilesDir: filepath.Join(*dataDir, filesSubdir),
 		Nameserver:    nameserverOf(dns),
 		Prober:        reconciler.NewProber(driver),
 		Breaker:       breaker,

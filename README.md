@@ -331,6 +331,90 @@ and `s3` could not carry one anyway. Mounts notify too: `volume.mount_failed`
 when one will not establish or stops answering, `volume.mount_recovered` when
 the supervisor gets it back.
 
+### Sharing an environment
+
+`variables` substitutes `${name}` into text you write, so putting `LOG_LEVEL`
+into ten services still means writing the key ten times. An **env group** is
+declared once and *taken*:
+
+```hcl
+env_group "common" {
+  LOG_LEVEL = "info"
+  REGION    = "eu-central-1"
+}
+
+env_group "db" {
+  DATABASE_HOST = "${service.postgres.host}"
+  DATABASE_URL  = "secret:shop/database-url"
+}
+
+service "api" {
+  project  = "shop"
+  env_from = ["common", "db"]
+
+  task "app" {
+    image = "registry.example.com/shop/api:1.4"
+    env   = { LOG_LEVEL = "debug" }     # the service's own env wins
+  }
+}
+```
+
+Groups apply in the order `env_from` lists them, and the task's own `env` wins
+over all of them. It is **opt-in per service** rather than project-wide on
+purpose: env is baked into a container, so a shared value changing rolls every
+service that takes it — and that blast radius should be something the spec
+states, not something a service inherits by living in a project.
+
+A group is evaluated **once per service that takes it**, which is why
+`${service.postgres.host}` inside one resolves to the *taking* service's project
+and creates that service's dependency edge. A `secret:` in a group is checked
+against every consumer, so a group carrying `shop`'s credential is refused for a
+service in another project.
+
+### Config files
+
+Content Kanea places in the container, instead of baking it into an image or
+mounting a host volume and putting the file there yourself:
+
+```hcl
+service "web" {
+  project = "shop"
+
+  file "nginx" {
+    path   = "/etc/nginx/conf.d/app.conf"
+    source = "./nginx.conf"        # read when the spec is parsed, embedded
+  }
+
+  file "pgpass" {
+    path    = "/etc/app/pgpass"
+    mode    = "0400"
+    content = "db:5432:app:${secret.shop["database-password"]}"
+  }
+}
+```
+
+Files are mounted read-only, `nosuid,noexec,nodev`, after volumes — so a file at
+a path inside a volume wins. An execute bit in `mode` is refused: a `file` block
+delivers configuration, not a program.
+
+**A secret in a file's content never enters Kanea's state.**
+`${secret.<scope>.<name>}` resolves at parse to an opaque placeholder; the
+record keeps the *reference*, exactly as it does for an env var, and the value
+is substituted on the node when the container is created. So a rotation lands at
+the next replacement, and the credential is not in the Store, in a backup
+archive, or in `GET /v1/services`. A file carrying one is placed 0400 on a tmpfs
+of its own, owned by the workload's user.
+
+Two things worth knowing before you write one. `${...}` is HCL's own
+interpolation, so a literal dollar-brace — which nginx and prometheus configs
+are full of — is written `$${...}`. And `source` is read **where the spec is
+parsed**: from the directory beside the file for `kanea run`, and out of the
+commit for a synced repository. The dashboard's spec editor parses text rather
+than files, so it refuses `source` and wants `content`.
+
+Content is capped at 64 KiB per file and 128 KiB per service: a service record
+is replicated in full on every deploy.
+
 ### Shared variables
 
 Declare a value once and reference it anywhere in a spec as `${name}`, or as a
@@ -618,7 +702,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.81) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.85) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

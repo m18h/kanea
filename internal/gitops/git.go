@@ -16,11 +16,14 @@ import (
 	"github.com/go-git/go-billy/v5/memfs"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/go-git/go-git/v5/storage/memory"
+
+	"github.com/m18h/kanea/internal/jobspec"
 )
 
 // Git-backed projects (PRD §10.1).
@@ -74,6 +77,52 @@ type Checkout struct {
 	Author string
 	// At is the commit timestamp.
 	At time.Time
+	// Files resolves a `file` block's `source` against the commit's own tree
+	// (jobspec R35). It is nil when nothing was checked out.
+	//
+	// A tree lookup rather than a working tree is not a convenience: there is
+	// no working tree here at all (Materialize exists only for builds), and a
+	// tree lookup *cannot* escape the repository, which is a stronger property
+	// than any path check over a checkout. A symlink is a distinct entry mode
+	// and is refused as one, so the v1.75 hazard - a checkout writes symlink
+	// blobs verbatim and something later resolves them - is dodged rather than
+	// defended against.
+	Files jobspec.SourceReader
+}
+
+// treeReader resolves spec-relative paths out of a commit tree.
+type treeReader struct{ tree *object.Tree }
+
+// ReadSpecFile reads rel relative to the directory of the spec that declared
+// it, as a path inside the commit.
+func (t treeReader) ReadSpecFile(specPath, rel string) ([]byte, error) {
+	// path, not filepath: a git tree is slash-separated whatever the host is.
+	target := path.Join(path.Dir(specPath), rel)
+	if target == ".." || strings.HasPrefix(target, "../") {
+		return nil, fmt.Errorf("%s is outside the repository", rel)
+	}
+	entry, err := t.tree.FindEntry(target)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", rel, err)
+	}
+	// Regular files only. A symlink entry's blob holds its target as text, so
+	// reading one would embed a path where content was meant - and refusing by
+	// mode is exact, unlike inspecting bytes.
+	if entry.Mode != filemode.Regular && entry.Mode != filemode.Executable {
+		return nil, fmt.Errorf("%s is not a regular file in the repository", rel)
+	}
+	file, err := t.tree.File(target)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", rel, err)
+	}
+	if file.Size > int64(jobspec.MaxFileBytes) {
+		return nil, fmt.Errorf("%s is larger than %d bytes (PRD §21)", rel, jobspec.MaxFileBytes)
+	}
+	content, err := file.Contents()
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", rel, err)
+	}
+	return []byte(content), nil
 }
 
 // SpecPaths returns the spec file paths in sorted order.
@@ -234,6 +283,7 @@ func (s *Syncer) Fetch(ctx context.Context, src Source) (Checkout, error) {
 		Commit:  head.Hash().String(),
 		Ref:     head.Name().Short(),
 		Specs:   specs,
+		Files:   treeReader{tree: tree},
 		Message: strings.SplitN(strings.TrimSpace(commit.Message), "\n", 2)[0],
 		Author:  commit.Author.Name,
 		At:      commit.Author.When,

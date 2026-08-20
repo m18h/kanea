@@ -226,6 +226,17 @@ type Config struct {
 	// domains (PRD §7.2). It is node configuration, not spec content: one
 	// wildcard DNS record for it makes every service routable.
 	BaseDomain string
+	// FilesDir is the tmpfs root for spec-declared files that interpolate a
+	// secret (jobspec R35). Empty takes DefaultFilesDir.
+	FilesDir string
+	// PlainFilesDir is where files that interpolate nothing are written, under
+	// the data directory beside the generated resolv.conf files.
+	//
+	// Deliberately NOT a subdirectory of FilesDir: that one becomes a tmpfs
+	// mount point the first time any alloc needs one, and a tmpfs mounted over
+	// a directory hides everything already written under it. A plain file
+	// written before the first secret-bearing file would simply vanish.
+	PlainFilesDir string
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -260,6 +271,8 @@ type Reconciler struct {
 	authSink      AuthSink
 	edgeSnapshot  string
 	baseDomain    string
+	filesDir      string
+	plainFilesDir string
 }
 
 // New builds a Reconciler.
@@ -278,6 +291,9 @@ func New(cfg Config) (*Reconciler, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.FilesDir == "" {
+		cfg.FilesDir = DefaultFilesDir
 	}
 	if cfg.SecretsDir == "" {
 		cfg.SecretsDir = DefaultSecretsDir
@@ -310,6 +326,8 @@ func New(cfg Config) (*Reconciler, error) {
 		edgeSnapshot:  cfg.EdgeSnapshot,
 		authSink:      cfg.Auth,
 		baseDomain:    strings.Trim(cfg.BaseDomain, "."),
+		filesDir:      cfg.FilesDir,
+		plainFilesDir: cfg.PlainFilesDir,
 	}, nil
 }
 
@@ -993,6 +1011,15 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 		return failedAt(phaseSecrets, err)
 	}
 
+	// Spec-declared files, after secrets so both trees exist before the spec is
+	// built, and appended to Mounts last so a file at a path inside a volume
+	// wins - the reverse would make "declare a file at a path" mean something
+	// else (R35).
+	files, err := r.ensureFiles(ctx, desired, AllocID(desired.Project, desired.Service, action.Index))
+	if err != nil {
+		return failedAt(phaseFiles, err)
+	}
+
 	spec := AllocSpecFor(desired, action.Index, r.logDir, r.volumeDir)
 	if secretsEnv != nil {
 		spec.Env = secretsEnv
@@ -1000,6 +1027,7 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	if secretsMount != nil {
 		spec.Mounts = append(spec.Mounts, *secretsMount)
 	}
+	spec.Mounts = append(spec.Mounts, files.Mounts...)
 	// Network before task: an alloc must never run without its network, and the
 	// datapath denies an attachment whose identity is not yet written (§5.2.5).
 	if r.network != nil {
@@ -1244,6 +1272,9 @@ func (r *Reconciler) teardown(ctx context.Context, desired Desired, action Actio
 	// The alloc's secrets are per-alloc tmpfs files (PRD §6.2 R3): they die
 	// with the alloc, not at the next boot.
 	r.discardSecrets(action.AllocID)
+	// The alloc's secret-bearing files go with it, for the same reason. The
+	// plain tree is shared by every alloc of the service and is left alone.
+	r.discardFiles(action.AllocID)
 	// Staged host-volume binds die with the alloc too (K-20): the staging
 	// tree is per-alloc, and a leaked bind pins a directory nobody owns.
 	if r.mounts != nil {

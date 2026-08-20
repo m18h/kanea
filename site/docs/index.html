@@ -87,6 +87,8 @@
     <a class="sub" href="#spec-project">project</a>
     <a class="sub" href="#spec-storage">storage</a>
     <a class="sub" href="#spec-service">service</a>
+    <a class="sub" href="#spec-env-group">env_group</a>
+    <a class="sub" href="#spec-file">file</a>
     <a class="sub" href="#spec-task">task</a>
     <a class="sub" href="#spec-passthrough">device and socket</a>
     <a class="sub" href="#spec-network">network</a>
@@ -2344,6 +2346,122 @@ service "web" {
       </table>
     </div>
 
+    <h3 id="spec-env-group">env_group</h3>
+    <p>
+      An environment declared once and <b>taken</b> by the services that want
+      it. <a href="#spec-variables"><code>variables</code></a> substitutes
+      <code>${name}</code> into text you write, so sharing an environment with
+      them still means writing every key in every service; a group is injected.
+    </p>
+    <pre><code><span class="k">env_group</span> <span class="s">"common"</span> {
+  <span class="k">LOG_LEVEL</span> = <span class="s">"info"</span>
+  <span class="k">REGION</span>    = <span class="s">"eu-central-1"</span>
+}
+
+<span class="k">env_group</span> <span class="s">"db"</span> {
+  <span class="k">DATABASE_HOST</span> = <span class="s">"${service.postgres.host}"</span>
+  <span class="k">DATABASE_URL</span>  = <span class="s">"secret:shop/database-url"</span>
+}
+
+<span class="k">service</span> <span class="s">"api"</span> {
+  <span class="k">project</span>  = <span class="s">"shop"</span>
+  <span class="k">env_from</span> = [<span class="s">"common"</span>, <span class="s">"db"</span>]
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"registry.example.com/shop/api:1.4"</span>
+    <span class="k">env</span>   = { <span class="k">LOG_LEVEL</span> = <span class="s">"debug"</span> }   <span class="c"># the service's own env wins</span>
+  }
+}</code></pre>
+    <p>
+      Groups apply in the order <code>env_from</code> lists them, then the
+      task's own <code>env</code> on top. It is <b>opt-in per service</b> rather
+      than project-wide deliberately: environment is baked into a container, so
+      a shared value changing rolls every service that takes it, and a blast
+      radius that size should be something a spec states rather than something
+      a service inherits by living in a project.
+    </p>
+    <div class="callout">
+      <b class="label">A group is evaluated once per service that takes it</b>
+      <p>
+        Not once per spec, and the difference is visible. The
+        <code>${service.…}</code> namespace is scoped to a project, so the
+        <code>db</code> group above resolves to <code>postgres.shop.kanea</code>
+        for a service in <code>shop</code> and to a different address for one in
+        another project. It also means the dependency edge lands on the
+        <i>taking</i> service, which is what makes it start behind
+        <code>postgres</code>. And a <code>secret:</code> in a group is scoped
+        against <b>every consumer</b>: a group carrying <code>shop</code>'s
+        credential is refused for a service in another project.
+      </p>
+    </div>
+
+    <h3 id="spec-file">file</h3>
+    <p>
+      Content Kanea places in the container, instead of baking it into an image
+      or mounting a host volume and putting the file there yourself.
+    </p>
+    <pre><code><span class="k">service</span> <span class="s">"web"</span> {
+  <span class="k">file</span> <span class="s">"nginx"</span> {
+    <span class="k">path</span>   = <span class="s">"/etc/nginx/conf.d/app.conf"</span>
+    <span class="k">source</span> = <span class="s">"./nginx.conf"</span>        <span class="c"># read at parse, embedded in the record</span>
+  }
+
+  <span class="k">file</span> <span class="s">"pgpass"</span> {
+    <span class="k">path</span>    = <span class="s">"/etc/app/pgpass"</span>
+    <span class="k">mode</span>    = <span class="s">"0400"</span>
+    <span class="k">content</span> = <span class="s">"db:5432:app:${secret.shop[\"database-password\"]}"</span>
+  }
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>path</code></td><td>string</td><td><b>Required.</b> Absolute, clean, <code>..</code>-free. Refused under <code>/dev</code>, <code>/proc</code>, <code>/sys</code>, at <code>/etc/resolv.conf</code>, and where a volume or socket already mounts.</td></tr>
+          <tr><td><code>content</code></td><td>string</td><td>Inline. <code>${service.…}</code> and <code>${secret.…}</code> interpolate; a literal dollar-brace is <code>$${…}</code>.</td></tr>
+          <tr><td><code>source</code></td><td>string</td><td>A path beside the spec, read at parse and embedded. Relative only. Mutually exclusive with <code>content</code>.</td></tr>
+          <tr><td><code>mode</code></td><td>string</td><td>Octal. Default <code>0644</code>, or <code>0400</code> for a file interpolating a secret. An execute bit is refused: a file block delivers configuration, not a program.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Files are mounted <b>read-only</b> with <code>nosuid,noexec,nodev</code>,
+      and <b>after volumes</b> — so a file at a path inside a volume wins, which
+      is what "declare a file at a path" has to mean.
+    </p>
+    <div class="callout">
+      <b class="label">A secret in a file never enters Kanea's state</b>
+      <p>
+        <code>${secret.&lt;scope&gt;.&lt;name&gt;}</code> resolves when the spec
+        is parsed to an opaque placeholder. The stored record keeps the
+        <i>reference</i>, exactly as it does for an environment variable, and
+        the value is substituted on the node when the container is created — so
+        a rotation lands at the next replacement, and the credential is not in
+        the state database, in a backup archive, or in
+        <code>GET /v1/services</code>. A file carrying one is written
+        <code>0400</code> onto a tmpfs of its own, owned by the workload's user.
+      </p>
+      <p>
+        Use the bracket form for any name that is not a bare identifier, which
+        is most of them: <code>${secret.shop["database-password"]}</code>.
+      </p>
+    </div>
+    <div class="callout">
+      <b class="label">Where <code>source</code> can be read</b>
+      <p>
+        From the directory beside the spec for <code>kanea run</code>, and out
+        of the commit for a synced repository. The dashboard's spec editor and
+        the MCP spec tools parse <i>text</i> rather than files — inside the
+        daemon — so they refuse <code>source</code> by name and want
+        <code>content</code>. That refusal is the feature: a parser that opened
+        files there would be reading the node's filesystem as root on behalf of
+        whoever is signed in.
+      </p>
+    </div>
+    <p>
+      Content is capped at <b>64 KiB per file and 128 KiB per service</b>: a
+      service record is replicated in full on every deploy.
+    </p>
+
     <h3 id="spec-passthrough">device and socket</h3>
     <p>
       A GPU for transcoding, a USB dongle, or the container runtime's socket for
@@ -2765,6 +2883,8 @@ removed shop/legacy-worker
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous; declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
     <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device: checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
     <div class="rule"><b>R18</b><div><p><b><code>task.socket</code> is R17 for unix sockets, and is privilege delegation.</b> <code>mount_path</code> is validated as absolute, clean and <code>..</code>-free, may not sit under <code>/dev</code>, <code>/proc</code> or <code>/sys</code>, and may not collide with another socket or a volume. The bind carries <code>nosuid</code>, <code>noexec</code> and <code>nodev</code>. <b>None of that makes it safe and none of it is meant to</b>: a container holding the container runtime's socket can create containers without the hardening defaults, so the grant is equivalent to root on the node. The server config is the only control over it, which is why it is project-scoped and empty by default.</p></div></div>
+    <div class="rule"><b>R34</b><div><p><b>An <code>env_group</code> is declared once and <i>taken</i> by a service.</b> A top-level block names environment variables; a service opts in with <code>env_from = ["common", "db"]</code>, and the groups apply in that order with the task's own <code>env</code> on top. Opt-in per service rather than project-wide, because environment is baked into a container and a shared value changing rolls every service that takes it. A group is evaluated <b>once per consuming service</b>: <code>${service.…}</code> is project-scoped, so one group taken from two projects resolves differently, and the dependency edge lands on the service that took it. A <code>secret:</code> inside a group is scoped against every consumer, so a group carrying one project's credential is refused for a service in another.</p></div></div>
+    <div class="rule"><b>R35</b><div><p><b>A <code>file</code> block puts content in a container, and a secret in it stays a reference.</b> <code>path</code> is absolute, clean and <code>..</code>-free, refused where a volume or socket already mounts and under the system paths a volume destination is; the bind is read-only with <code>nosuid,noexec,nodev</code>, and an execute bit in <code>mode</code> is refused. Files mount after volumes, so one inside a volume's path wins. Exactly one of <code>content</code> and <code>source</code>; <code>source</code> is read where the spec is parsed and is refused where there is no directory (the dashboard editor, MCP), because a parser reading files there would be reading the node's filesystem as root. <code>${secret.&lt;scope&gt;.&lt;name&gt;}</code> resolves to an opaque placeholder at parse and is substituted on the node at container create, so the value never enters the state database, a backup, or the API; such a file is written <code>0400</code> on a tmpfs of its own. Content is SpecHash material — editing a config file rolls the service, which is the feature — and is capped at 64 KiB per file and 128 KiB per service.</p></div></div>
     <div class="rule"><b>R19</b><div><p><b><code>update.auto</code> follows the tag the service declares.</b> Off by default. Kanea re-resolves <code>task.image</code>'s tag every <code>interval</code> (default 6h, minimum 5m) and pins the digest behind it when it moves; the declared tag is never overwritten, because it is what the next poll re-reads. The pinned digest is server-owned and survives <code>kanea apply</code>: except when you edit <code>image</code> or turn <code>auto</code> off, which both hand authority back to the spec. <b>A failed update reverts</b> to the digest that was running if the new one has not converged within <code>deadline</code>: converged means healthy where a <code>check</code> block exists, and running without crash-looping where it does not. Refused on a digest-pinned image and on a service with a <code>build</code> block.</p></div></div>
 
     <h3 id="spec-example">Full example</h3>

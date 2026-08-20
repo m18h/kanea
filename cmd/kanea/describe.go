@@ -155,6 +155,30 @@ func describeRoutes(o *out, svc reconciler.Desired) {
 	}
 }
 
+// describeFiles lists a service's config files (jobspec R35).
+//
+// Path, mode, size and which secrets it interpolates - never the content. It is
+// repo-controlled text (K-45), it can be 64 KiB, and a secret-bearing file's
+// bytes carry NUL-delimited placeholders that would write control characters to
+// a terminal. The references are safe and useful: they are names, not values.
+func describeFiles(o *out, svc reconciler.Desired) {
+	for i := range svc.Files {
+		f := svc.Files[i]
+		mode := f.Mode
+		if mode == "" {
+			mode = "0644 (default)"
+			if f.HasSecrets() {
+				mode = "0400 (default)"
+			}
+		}
+		line := fmt.Sprintf("file %s: %s  %s  %d bytes", f.Name, f.Path, mode, len(f.Content))
+		if f.HasSecrets() {
+			line += "  secrets: " + strings.Join(f.SecretRefs, ", ")
+		}
+		o.printf("  %s\n", line)
+	}
+}
+
 func describeStorage(o *out, svc reconciler.Desired) {
 	if len(svc.Volumes) == 0 && len(svc.Devices) == 0 && len(svc.Sockets) == 0 {
 		return
@@ -174,6 +198,7 @@ func describeStorage(o *out, svc reconciler.Desired) {
 	for _, s := range svc.Sockets {
 		o.printf("  socket %s: grant %q -> %s\n", s.Name, s.Grant, s.MountPath)
 	}
+	describeFiles(o, svc)
 }
 
 func describeAllocs(o *out, svc reconciler.Desired, allocs []reconciler.AllocRecord) {

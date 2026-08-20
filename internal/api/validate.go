@@ -73,6 +73,62 @@ func validateDesired(svc reconciler.Desired) error {
 		}
 	}
 
+	// R35: every rule validateFiles applies at parse, applied again here for a
+	// record that never met the parser. The NUL check matters more at this seam
+	// than at the other one: content arrives base64-encoded here, so a NUL is
+	// perfectly expressible, and it is what keeps a secret placeholder
+	// inexpressible by anything but the parser.
+	seenFile := map[string]struct{}{}
+	seenPath := map[string]struct{}{}
+	for _, v := range svc.Volumes {
+		seenPath[v.MountPath] = struct{}{}
+	}
+	for _, sock := range svc.Sockets {
+		seenPath[sock.MountPath] = struct{}{}
+	}
+	totalFiles := 0
+	for _, f := range svc.Files {
+		if !jobspec.IsName(f.Name) {
+			return fmt.Errorf("service %s: file name %q is not a DNS-1123 label", key, f.Name)
+		}
+		if _, dup := seenFile[f.Name]; dup {
+			return fmt.Errorf("service %s: file %q is declared more than once", key, f.Name)
+		}
+		seenFile[f.Name] = struct{}{}
+		if err := jobspec.CheckFilePath(f.Name, f.Path); err != nil {
+			return fmt.Errorf("service %s: %w", key, err)
+		}
+		if _, dup := seenPath[f.Path]; dup {
+			return fmt.Errorf("service %s: file %q mounts at %q, which is already mounted",
+				key, f.Name, f.Path)
+		}
+		seenPath[f.Path] = struct{}{}
+		if err := jobspec.CheckFileContent(f.Name, f.Content, f.Nonce, len(f.SecretRefs)); err != nil {
+			return fmt.Errorf("service %s: %w", key, err)
+		}
+		if err := jobspec.CheckFileMode(f.Name, f.Mode, len(f.SecretRefs) > 0); err != nil {
+			return fmt.Errorf("service %s: %w", key, err)
+		}
+		// R5 over every reference a placeholder can index into. A forged
+		// placeholder could only ever select one of these, which is why the
+		// table is the authority and the bytes are inert.
+		for _, ref := range f.SecretRefs {
+			if err := jobspec.CheckSecretRefScope(ref, svc.Project,
+				fmt.Sprintf("file %q", f.Name)); err != nil {
+				return fmt.Errorf("service %s: %w", key, err)
+			}
+		}
+		if f.Nonce == "" && len(f.SecretRefs) > 0 {
+			return fmt.Errorf("service %s: file %q names secret references with no nonce; "+
+				"its placeholders could not be substituted", key, f.Name)
+		}
+		totalFiles += len(f.Content)
+	}
+	if totalFiles > jobspec.MaxServiceFileBytes {
+		return fmt.Errorf("service %s declares %d bytes of file content; the limit is %d (PRD §21)",
+			key, totalFiles, jobspec.MaxServiceFileBytes)
+	}
+
 	// R25: a non-default runtime gets the whole refusal list, not two of
 	// seven. A record carrying Runtime beside any of these reached the Store
 	// without the parser's function lowering, and the runtime's own guarantees
@@ -99,6 +155,9 @@ func validateDesired(svc reconciler.Desired) error {
 		case svc.Scaling != nil:
 			return fmt.Errorf("service %s names runtime %q and declares scaling; function scaling "+
 				"is event-driven, not replica-count (PRD §6.2 R25)", key, svc.Runtime)
+		case len(svc.Files) > 0:
+			return fmt.Errorf("service %s names runtime %q and declares files; the wasm runtime "+
+				"has no mount primitive (PRD §6.2 R25)", key, svc.Runtime)
 		}
 	}
 

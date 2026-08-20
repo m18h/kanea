@@ -66,6 +66,12 @@ type Desired struct {
 	Capabilities []string
 	// Env is the fully resolved environment for each alloc.
 	Env map[string]string
+	// Files are content Kanea materialises and bind-mounts (jobspec R35).
+	//
+	// omitempty is load-bearing: this is SpecHash material, and a record with
+	// no files must serialize exactly as it did before v1.85 or upgrading
+	// kanead re-hashes and rolls every container on the node (the R23 lesson).
+	Files []FileMount `json:"files,omitempty"`
 	// User is the numeric identity the workload runs as (jobspec R23). Nil
 	// means the image's own USER stands: the pre-R23 meaning of every record
 	// already in a Store, which is why it is a pointer and why SpecHash omits
@@ -672,6 +678,12 @@ const (
 	// (PRD §6.2 R3): the alloc is failed rather than started on a literal
 	// "secret:…" string or a missing credential.
 	ExitSecretsFailed ExitReason = "secrets_failed"
+	// ExitFilesFailed means a spec-declared file could not be materialised
+	// (jobspec R35): a secret reference that did not resolve, or content that
+	// rendered past §21's ceiling. One reason rather than two, and the message
+	// names which file and why - classifying by inspecting an error string is
+	// the antipattern applyPhase exists to prevent.
+	ExitFilesFailed ExitReason = "files_failed"
 	// ExitNetworkFailed means the datapath attachment failed (§5.2.5).
 	ExitNetworkFailed ExitReason = "network_failed"
 	// ExitCreateFailed means containerd refused to create the container.
@@ -680,6 +692,40 @@ const (
 	// start: most often a command that is not executable in the image.
 	ExitStartFailed ExitReason = "start_failed"
 )
+
+// FileMount is one file placed in the container's filesystem (jobspec R35).
+//
+// Content holds placeholders, never secret values: R3's rule that the record
+// keeps a reference applies to bytes exactly as it does to an env var, so a
+// rotation lands at the next replacement and a restart re-resolves. The record
+// is CDC-replicated and readable over the API; a resolved credential in it
+// would be a secret at rest in the one place §15.3 ships off the node.
+type FileMount struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	// Mode is octal ("0644"); empty takes the default for its kind.
+	Mode string `json:"mode,omitempty"`
+	// Content is the rendered bytes with secret placeholders in place.
+	Content []byte `json:"content,omitempty"`
+	// SecretRefs are the references the placeholders index into, in
+	// placeholder order. Non-empty is what makes a file secret-bearing, and
+	// that is a property of the record rather than a scan over the bytes.
+	SecretRefs []string `json:"secret_refs,omitempty"`
+	// ContentBytes is how long Content was, set only on the websocket feed's
+	// elided view so a client can render a size for a file whose bytes it was
+	// not sent. It is never stored: json:"-" would hide it from the wire too,
+	// and omitempty keeps it out of every record that is not an elided view.
+	ContentBytes int `json:"content_bytes,omitempty"`
+	// Nonce is the per-parse value the placeholders carry. It is canonicalised
+	// away before hashing: it lives inside Content, so hashing verbatim would
+	// give an unchanged spec a new hash on every parse.
+	Nonce string `json:"nonce,omitempty"`
+}
+
+// HasSecrets reports whether this file interpolates anything. It decides which
+// tree the file is materialised into and with what mode, and it is read from
+// the record rather than derived from the bytes.
+func (f FileMount) HasSecrets() bool { return len(f.SecretRefs) > 0 }
 
 // AllocRecord is the durable per-alloc state, stored under store.KindAlloc.
 // It outlives kanead: restart bookkeeping must survive a control-plane restart,

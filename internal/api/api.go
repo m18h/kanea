@@ -146,6 +146,41 @@ func serviceViews(services []reconciler.Desired) []ServiceView {
 	return views
 }
 
+// elidedServiceViews is serviceViews with every file's content dropped, for the
+// websocket feed (jobspec R35).
+//
+// The feed ships every service's whole record to every subscriber on every
+// store-index change, so a service carrying the per-service maximum of file
+// content would put that much into a send buffer whose overflow closes the
+// connection - the v1.70 defect, in a new place. Content is the one field in a
+// record that is bulk bytes and that nothing on a live dashboard reads.
+//
+// It is elided **always, never conditionally**: a client that sometimes gets
+// content cannot tell an elided file from an empty one, and ContentBytes is
+// what it renders instead.
+//
+// GET /v1/services deliberately keeps the content. There is no per-service GET,
+// so `kanea deploy` round-trips the whole record through the list; eliding it
+// there would make every deploy silently delete every config file on the node.
+func elidedServiceViews(services []reconciler.Desired) []ServiceView {
+	views := serviceViews(services)
+	for i := range views {
+		if len(views[i].Files) == 0 {
+			continue
+		}
+		// Copied before it is stripped: Desired is embedded by value, but
+		// Files is a slice and its backing array is the Store's.
+		files := make([]reconciler.FileMount, len(views[i].Files))
+		copy(files, views[i].Files)
+		for j := range files {
+			files[j].ContentBytes = len(files[j].Content)
+			files[j].Content = nil
+		}
+		views[i].Files = files
+	}
+	return views
+}
+
 // AllocsResponse lists alloc records, newest state first.
 type AllocsResponse struct {
 	Allocs []reconciler.AllocRecord `json:"allocs"`
