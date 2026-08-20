@@ -18,6 +18,18 @@ func ensureSecretsTmpfs(dir string) (bool, error) {
 	return false, nil
 }
 
+// ensureFilesTmpfs is the same for spec-declared files (R35).
+func ensureFilesTmpfs(dir string) (bool, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return false, fmt.Errorf("files dir: %w", err)
+	}
+	return false, nil
+}
+
+// warnFilesTmpfsFallback never fires here, for warnSecretsTmpfsFallback's
+// reason: the whole platform is already the fallback.
+func (r *Reconciler) warnFilesTmpfsFallback(string) {}
+
 // warnSecretsTmpfsFallback never fires here: the whole platform is already
 // the fallback, and nothing new is being said.
 func (r *Reconciler) warnSecretsTmpfsFallback(string) {}

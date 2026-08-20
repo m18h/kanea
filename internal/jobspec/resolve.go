@@ -18,8 +18,8 @@ func ServiceHost(project, service string) string {
 	return fmt.Sprintf("%s.%s.%s", service, project, InternalDomain)
 }
 
-// resolveEnv evaluates every task's env with a context that exposes the other
-// services in the same project, and records the reference edges it finds.
+// resolveEnv evaluates every container's env with a context that exposes the
+// other services in the same project, and records the reference edges it finds.
 //
 // This is the second pass: it needs the first pass's output (every service's
 // name and ports) to build that context, which is exactly why references are
@@ -55,6 +55,7 @@ func resolveEnv(spec *Spec, root *hclRoot, opts Options) hcl.Diagnostics {
 			})
 		}
 		diags = append(diags, resolveServiceEnv(spec, svc, targets, opts)...)
+		diags = append(diags, resolveServiceFiles(spec, svc, raw, opts)...)
 	}
 	// A lowered function's env resolves under the same rules: it can reference
 	// its project's services (${service.db.host} in a webhook fanout is the
@@ -82,7 +83,7 @@ type envTarget struct {
 	assign func(map[string]string)
 }
 
-// resolveServiceEnv evaluates one service's env expression and records its
+// resolveServiceEnv evaluates a service's env expressions and records its
 // reference edges.
 func resolveServiceEnv(spec *Spec, svc *Service, targets []envTarget, opts Options) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -101,6 +102,22 @@ func resolveServiceEnv(spec *Spec, svc *Service, targets []envTarget, opts Optio
 		refs = append(refs, found...)
 		refDiags = append(refDiags, d...)
 	}
+	// The env groups this service takes contribute too (R34). A group is
+	// evaluated once *per consuming service*, so a ${service.db.host} inside
+	// one is this service's reference and this service's dependency edge - and
+	// it could be neither if a group were evaluated once for the whole spec,
+	// because the reference namespace is project-scoped.
+	for _, g := range svc.EnvFrom {
+		group := spec.EnvGroupByName(g)
+		if group == nil {
+			continue // validateEnvGroups reports the undeclared name
+		}
+		for _, expr := range envGroupExprs(group) {
+			found, d := collectExprRefs(spec, svc, expr, "")
+			refs = append(refs, found...)
+			refDiags = append(refDiags, d...)
+		}
+	}
 	diags = append(diags, refDiags...)
 	svc.Refs = refs
 
@@ -117,17 +134,131 @@ func resolveServiceEnv(spec *Spec, svc *Service, targets []envTarget, opts Optio
 	ctx := varContext(opts.Vars)
 	ctx.Variables["service"] = serviceContext(spec, svc.Project)
 
+	// The groups, in the order env_from lists them, evaluated once for the
+	// service: their values do not vary per container. Every container of the
+	// alloc then layers its own env on top - env_from is a statement about the
+	// service, so scoping it to the task alone would make it mean something
+	// narrower than where it is written (R34).
+	base := map[string]string{}
+	for _, g := range svc.EnvFrom {
+		group := spec.EnvGroupByName(g)
+		if group == nil {
+			continue
+		}
+		groupEnv, groupDiags := evalEnvGroup(group, ctx)
+		diags = append(diags, groupDiags...)
+		for k, v := range groupEnv {
+			base[k] = v
+		}
+	}
+
 	for _, t := range targets {
 		if t.expr == nil {
 			continue
 		}
 		env, evalDiags := evalEnv(t.expr, ctx)
 		diags = append(diags, evalDiags...)
-		if !evalDiags.HasErrors() {
-			t.assign(env)
+		if evalDiags.HasErrors() {
+			continue
+		}
+		// Defaults then specialize, the R20/R30 shape. Copied per target so
+		// one container's env cannot leak into another's.
+		merged := make(map[string]string, len(base)+len(env))
+		for k, v := range base {
+			merged[k] = v
+		}
+		for k, v := range env {
+			merged[k] = v
+		}
+		t.assign(merged)
+	}
+	return diags
+}
+
+// resolveServiceFiles renders each `file` block's content (R35).
+//
+// It runs in pass 2 for two reasons: content may reference ${service.*}, which
+// only exists here, and ${secret.*} needs the per-file reference table that
+// secretContext builds. A reference in a file is a dependency edge like any
+// other, for the reason an init container's is: the rendered file names a peer's
+// address, and a service whose config points at something must start behind it.
+func resolveServiceFiles(spec *Spec, svc *Service, raw *hclService, opts Options) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	for i := range svc.Files {
+		if i >= len(raw.Files) {
+			break // conversion reported the mismatch
+		}
+		f, rawFile := svc.Files[i], &raw.Files[i]
+		where := fmt.Sprintf("file %q of service %q", f.Name, svc.Name)
+
+		// `source` bytes were already read into Content; only an inline
+		// `content` expression needs rendering. gohcl leaves an unset optional
+		// hcl.Expression as a *literal null* rather than nil, so a nil check
+		// alone would try to render a source-backed file and fail converting
+		// null to a string.
+		if rawFile.Content == nil || exprIsNull(rawFile.Content) {
+			continue
+		}
+
+		for _, ref := range collectFileRefs(spec, svc, rawFile.Content) {
+			svc.Refs = append(svc.Refs, ref)
+			svc.Dependencies = sortUnique(append(svc.Dependencies, ref.Service))
+		}
+
+		interp, err := newSecretInterp()
+		if err != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Cannot render file content",
+				Detail:   fmt.Sprintf("%s: %s", where, err),
+				Subject:  f.DefRange.Ptr(),
+			})
+			continue
+		}
+
+		ctx := varContext(opts.Vars)
+		ctx.Variables["service"] = serviceContext(spec, svc.Project)
+		secretVal, secretDiags := secretContext(rawFile.Content, svc.Project, where, interp)
+		diags = append(diags, secretDiags...)
+		if secretDiags.HasErrors() {
+			continue
+		}
+		ctx.Variables[SecretNamespace] = secretVal
+
+		val, evalDiags := rawFile.Content.Value(ctx)
+		diags = append(diags, evalDiags...)
+		if evalDiags.HasErrors() {
+			continue
+		}
+		text, convErr := convert.Convert(val, cty.String)
+		if convErr != nil || text.IsNull() {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Invalid file content",
+				Detail:   fmt.Sprintf("%s: content must be a string.", where),
+				Subject:  f.DefRange.Ptr(),
+			})
+			continue
+		}
+
+		f.Content = []byte(text.AsString())
+		f.SecretRefs = interp.refs
+		if len(interp.refs) > 0 {
+			f.Nonce = interp.nonce
 		}
 	}
 	return diags
+}
+
+// collectFileRefs is collectExprRefs with the diagnostics dropped.
+//
+// They are dropped deliberately: the expression is evaluated immediately
+// afterwards, and HCL reports an unresolvable reference against the same range
+// with the same information, so keeping both would put two errors on one line.
+func collectFileRefs(spec *Spec, svc *Service, expr hcl.Expression) []ServiceRef {
+	refs, _ := collectExprRefs(spec, svc, expr, "") //nolint:errcheck // see above
+	return refs
 }
 
 // serviceContext builds the `service` variable: every service in the project,
@@ -184,15 +315,35 @@ func collectRefs(spec *Spec, svc *Service, envExpr hcl.Expression) ([]ServiceRef
 		if v, keyDiags := pair.Key.Value(nil); !keyDiags.HasErrors() && v.Type() == cty.String {
 			envKey = v.AsString()
 		}
-		for _, traversal := range pair.Value.Variables() {
-			if traversal.RootName() != "service" {
-				continue
-			}
-			ref, refDiags := parseServiceRef(spec, svc, traversal, envKey)
-			diags = append(diags, refDiags...)
-			if !refDiags.HasErrors() {
-				refs = append(refs, ref)
-			}
+		found, pairDiags := collectExprRefs(spec, svc, pair.Value, envKey)
+		refs = append(refs, found...)
+		diags = append(diags, pairDiags...)
+	}
+	return refs, diags
+}
+
+// collectExprRefs walks one expression for `service.*` traversals.
+//
+// It is the per-expression core collectRefs applies to each entry of an env
+// map, and it is also what an env group's values and a file's content go
+// through: those are single expressions rather than maps, so hcl.ExprMap would
+// simply return nothing for them - which is how a group's reference silently
+// stopped being a dependency edge the first time this was written.
+func collectExprRefs(
+	spec *Spec, svc *Service, expr hcl.Expression, envKey string,
+) ([]ServiceRef, hcl.Diagnostics) {
+	var (
+		refs  []ServiceRef
+		diags hcl.Diagnostics
+	)
+	for _, traversal := range expr.Variables() {
+		if traversal.RootName() != "service" {
+			continue
+		}
+		ref, refDiags := parseServiceRef(spec, svc, traversal, envKey)
+		diags = append(diags, refDiags...)
+		if !refDiags.HasErrors() {
+			refs = append(refs, ref)
 		}
 	}
 	return refs, diags

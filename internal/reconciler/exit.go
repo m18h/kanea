@@ -107,6 +107,7 @@ var (
 	phaseVolume      = applyPhase{ExitVolumeFailed, "volumes"}
 	phasePassthrough = applyPhase{ExitPassthroughFailed, "grants"}
 	phaseSecrets     = applyPhase{ExitSecretsFailed, "secrets"}
+	phaseFiles       = applyPhase{ExitFilesFailed, "files"}
 	phaseNetwork     = applyPhase{ExitNetworkFailed, "network"}
 	phaseCreate      = applyPhase{ExitCreateFailed, "create"}
 	phaseStart       = applyPhase{ExitStartFailed, "start"}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/secrets"
 )
 
 // World is everything the planner needs to decide. It is a value, not an
@@ -279,7 +280,11 @@ func hashableVolumes(volumes []Volume) []Volume {
 // Timeout (how long the step may take). Changing either must not roll a
 // service, for the reason Expose, Publish and R31's budget are out of the
 // material entirely.
+// hashableFiles canonicalises a service's files for hashing (jobspec R35).
 //
+// Two things happen here and both are load-bearing.
+//
+// **The nonce is canonicalised away.** It is fresh on every parse and it lives
 // It copies before it strips, like hashableVolumes: mutating the caller's
 // Desired from inside a hash function would silently rewrite the record the
 // reconciler is about to project.
@@ -293,6 +298,40 @@ func hashableInit(inits []InitContainer) []InitContainer {
 		out[i].PullPolicy = ""
 		out[i].Timeout = 0
 	}
+	return out
+}
+
+// hashableFiles canonicalises a service's files for hashing (jobspec R35).
+//
+// Two things happen here and both are load-bearing.
+//
+// **The nonce is canonicalised away.** It is fresh on every parse and it lives
+// *inside* Content, so hashing the bytes verbatim would give an unchanged spec
+// a different hash every time and roll every file-bearing service on every
+// apply. Clearing the Nonce field alone would not help: the value is in the
+// content. `TestTwoParsesOfOneSpecHashIdentically` is the regression.
+//
+// **Files are sorted by path.** A file block's declaration order carries no
+// meaning (unlike an init step's, where order *is* the semantics), so
+// reordering two blocks must not roll an alloc.
+//
+// Name is cleared because the container never sees it: it names the block in
+// diagnostics and on disk, so renaming one is free, which is right.
+//
+// It copies before it strips, for hashableInit's reason.
+func hashableFiles(files []FileMount) []FileMount {
+	if len(files) == 0 {
+		return nil
+	}
+	out := make([]FileMount, len(files))
+	copy(out, files)
+	for i := range out {
+		out[i].Content = secrets.CanonicalPlaceholders(
+			out[i].Content, out[i].Nonce, len(out[i].SecretRefs))
+		out[i].Nonce = ""
+		out[i].Name = ""
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
 
@@ -341,14 +380,19 @@ func SpecHash(d Desired) string {
 		// resolved paths are unexported and never marshalled.
 		Devices []DeviceRequest `json:"devices,omitempty"`
 		Sockets []SocketRequest `json:"sockets,omitempty"`
-		// Generation is not baked into anything. It is here so that an operator
-		// asking for a restart produces a spec that differs, and therefore rolls
-		// through exactly the machinery a real deploy does.
 		// Init containers are baked into the alloc as much as the task is:
 		// changing a migration's image or command must roll (R32). omitempty
 		// is what keeps every pre-v1.84 record hashing exactly as it did.
-		Init       []InitContainer `json:"init,omitempty"`
-		Generation int             `json:"generation,omitempty"`
+		Init []InitContainer `json:"init,omitempty"`
+		// A file's content is placed in the container at create and nothing
+		// re-renders it for a running one, so editing a config file rolling
+		// the service is the feature (R35) - the opposite call from R31's size
+		// and R33's pull policy, and for the opposite reason.
+		Files []FileMount `json:"files,omitempty"`
+		// Generation is not baked into anything. It is here so that an operator
+		// asking for a restart produces a spec that differs, and therefore rolls
+		// through exactly the machinery a real deploy does.
+		Generation int `json:"generation,omitempty"`
 		// The runtime decides which shim runs the container, so changing it
 		// has to roll the allocs. omitempty is load-bearing exactly as it is
 		// for User: every pre-v1.39 record hashes with the field absent, and
@@ -363,6 +407,7 @@ func SpecHash(d Desired) string {
 		Command: d.Command, Capabilities: d.Capabilities,
 		Env: d.Env, User: d.User, Resources: d.Resources, Volumes: hashableVolumes(d.Volumes),
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
+		Files:   hashableFiles(d.Files),
 		Devices: d.Devices, Sockets: d.Sockets,
 		Init:       hashableInit(d.Init),
 		Generation: d.Generation,

@@ -66,7 +66,7 @@ func loadSpec(
 		return nil, nil, nil, errors.New("give a job spec file, or --image with --name and --project")
 	}
 
-	spec, diags := jobspec.ParseFiles(jobspec.Options{NodeVars: nodeVars.vars}, files...)
+	spec, diags := jobspec.ParseFiles(jobspec.Options{NodeVars: nodeVars.vars, Files: dirReader{}}, files...)
 	if diags.HasErrors() {
 		// Diagnostics carry file:line:column; print them as-is and fail without
 		// adding a second, vaguer error on top.
@@ -308,6 +308,7 @@ func fieldsLostByImageApply(d reconciler.Desired) []string {
 	add(d.Scaling != nil, "scaling")
 	add(len(d.Capabilities) > 0, "capabilities")
 	add(len(d.Init) > 0, "init containers")
+	add(len(d.Files) > 0, "config files")
 	add(d.Function != nil, "function config")
 	return lost
 }

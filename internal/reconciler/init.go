@@ -308,7 +308,7 @@ func initOrdinalOf(id, allocID string, d Desired) int {
 // step a grant nobody wrote down (runtime.AllocSpec.Validate refuses it too).
 func initSpecFor(
 	allocSpec runtime.AllocSpec, d Desired, ordinal int, step InitContainer,
-	env map[string]string, logDir string,
+	env map[string]string, fileMounts []runtime.Mount, logDir string,
 ) runtime.AllocSpec {
 	spec := allocSpec
 	spec.ID = InitIDFor(allocSpec.ID, ordinal, step.Name)
@@ -330,6 +330,12 @@ func initSpecFor(
 	spec.ReadOnlyRootfs = false
 	spec.Devices = nil
 	spec.Mounts = dropGrantedSockets(allocSpec.Mounts, d)
+	// A secret-bearing file is 0400 owned by *its reader* (R35), and this step's
+	// user is deliberately independent of the task's (R32) - so the step binds
+	// its own copy rather than the task's, which it could not read. Keyed by
+	// destination, so a plain file (one shared world-readable inode) is left
+	// exactly as the alloc has it.
+	spec.Mounts = overrideMounts(spec.Mounts, fileMounts)
 
 	spec.Env = step.Env
 	if env != nil {
@@ -389,10 +395,11 @@ func dropGrantedSockets(mounts []runtime.Mount, d Desired) []runtime.Mount {
 // container and not yet returned.
 func (r *Reconciler) startInitStep(
 	ctx context.Context, d Desired, action Action,
-	allocSpec runtime.AllocSpec, sec allocSecrets, ordinal int,
+	allocSpec runtime.AllocSpec, sec allocSecrets, files allocFiles, ordinal int,
 ) error {
 	step := d.Init[ordinal]
-	spec := initSpecFor(allocSpec, d, ordinal, step, sec.InitEnv[step.Name], r.logDir)
+	spec := initSpecFor(allocSpec, d, ordinal, step,
+		sec.InitEnv[step.Name], files.InitMounts[step.Name], r.logDir)
 
 	if err := r.ensureInitImage(ctx, d, step); err != nil {
 		return failedAt(phaseImage, err)
@@ -487,11 +494,11 @@ func (r *Reconciler) advanceInit(ctx context.Context, desired Desired, action Ac
 			action.Init.Ordinal, desired.Init[action.Init.Ordinal].Name)
 	}
 
-	spec, sec, err := r.prepareAlloc(ctx, &desired, action)
+	spec, sec, files, err := r.prepareAlloc(ctx, &desired, action)
 	if err != nil {
 		return err
 	}
-	return r.startInitStep(ctx, desired, action, spec, sec, action.Init.Ordinal)
+	return r.startInitStep(ctx, desired, action, spec, sec, files, action.Init.Ordinal)
 }
 
 // ensureInitImage pulls one step's image under its own credential and policy.
@@ -550,4 +557,27 @@ func (r *Reconciler) effectivePullPolicy(declared string) string {
 		return r.pullPolicy
 	}
 	return runtime.PullIfNotPresent
+}
+
+// overrideMounts replaces mounts whose destination one of the overrides claims.
+//
+// Replacement rather than append: two binds on one destination is one of them
+// silently winning, and which one would depend on runc's ordering.
+func overrideMounts(mounts, overrides []runtime.Mount) []runtime.Mount {
+	if len(overrides) == 0 {
+		return mounts
+	}
+	byDest := make(map[string]runtime.Mount, len(overrides))
+	for _, m := range overrides {
+		byDest[m.Destination] = m
+	}
+	out := make([]runtime.Mount, 0, len(mounts))
+	for _, m := range mounts {
+		if override, ok := byDest[m.Destination]; ok {
+			out = append(out, override)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }

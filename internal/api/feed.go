@@ -348,7 +348,7 @@ func (s *Server) feedServices(ctx context.Context, emit emitFunc) {
 		if err != nil {
 			return nil, err
 		}
-		return ServicesResponse{Services: serviceViews(services)}, nil
+		return ServicesResponse{Services: elidedServiceViews(services)}, nil
 	})
 }
 

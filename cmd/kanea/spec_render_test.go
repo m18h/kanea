@@ -9,6 +9,7 @@ import (
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
+	"github.com/m18h/kanea/internal/secrets"
 )
 
 // renderText runs the real renderer over one file, as the API routes do.
@@ -171,12 +172,19 @@ service "search" {
   }
 }
 
-# Init containers and pull policy (v1.84, R32/R33). Both must survive the trip:
-# an init block silently dropped by the generator would apply as a service whose
-# migration never runs.
+# Init containers, pull policy, env groups and config files (v1.84/v1.85,
+# R32-R35), on one service so the trip exercises them together. Any of them
+# silently dropped by the generator would apply as a service missing a
+# migration, an environment or its config.
+env_group "common" {
+  LOG_LEVEL = "info"
+  REGION    = "eu-central-1"
+}
+
 service "orders" {
-  project = "shop"
-  count   = 1
+  project  = "shop"
+  count    = 1
+  env_from = ["common"]
 
   init "fix-perms" {
     image        = "busybox:1.36"
@@ -205,9 +213,21 @@ service "orders" {
     }
   }
 
+  file "app-conf" {
+    path    = "/etc/orders/app.conf"
+    content = <<-EOT
+      # A literal $${DOLLAR_BRACE} must survive both directions.
+      listen = 8080
+    EOT
+  }
+
   task "app" {
     image       = "registry.example.com/shop/orders:2.1.0"
     pull_policy = "if-not-present"
+
+    env = {
+      LOG_LEVEL = "debug"
+    }
 
     resources {
       cpu    = 500
@@ -264,7 +284,7 @@ func TestGeneratedSpecRoundTripsToTheSameDesired(t *testing.T) {
 	}
 
 	for i := range original {
-		want, got := original[i], regenerated[i]
+		want, got := canonicalFiles(original[i]), canonicalFiles(regenerated[i])
 		// The server-owned fields the apply path carries are not spec fields
 		// and are zero on both sides here; everything else must match exactly.
 		if !reflect.DeepEqual(want, got) {
@@ -531,4 +551,29 @@ service "api" {
 		t.Errorf("grpc service did not round-trip.\nwant: %+v\ngot:  %+v\ngenerated:\n%s",
 			original[0], regenerated[0], text)
 	}
+}
+
+// canonicalFiles normalises a record's file placeholders for comparison.
+//
+// A regenerated spec is parsed afresh, so its secret placeholders carry a new
+// nonce — by design, since the nonce is what makes them unforgeable. Comparing
+// raw bytes would therefore fail on every file that interpolates a secret,
+// which is exactly the carve-out that hides a genuinely dropped field.
+//
+// So both sides go through the *same* canonicaliser the SpecHash uses. If that
+// function ever stops erasing the nonce, this test and the hash break together
+// rather than drifting apart.
+func canonicalFiles(d reconciler.Desired) reconciler.Desired {
+	if len(d.Files) == 0 {
+		return d
+	}
+	files := make([]reconciler.FileMount, len(d.Files))
+	copy(files, d.Files)
+	for i := range files {
+		files[i].Content = secrets.CanonicalPlaceholders(
+			files[i].Content, files[i].Nonce, len(files[i].SecretRefs))
+		files[i].Nonce = ""
+	}
+	d.Files = files
+	return d
 }

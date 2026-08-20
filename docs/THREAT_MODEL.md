@@ -1066,6 +1066,71 @@ same exported core), name a host path, or claim a node port. And the reconcile
 loop's own exposure is unchanged: nothing waits on a step, so a hung migration
 costs its own alloc and nothing else - the bound is the step's `timeout`, and
 an absent one is visible in `kanea ps` rather than silent.
+### 3.24 Spec-supplied content on the node (A01, A03, A05; PRD v1.85, §6.2 R35)
+
+**R35 is the first thing that lets a spec put literal bytes on a node**, and a
+spec is not a trusted document: GitOps applies one automatically, so anything a
+spec can declare, anyone who can push to a synced repository can declare. Two
+distinct exposures follow, and they have different answers.
+
+**Where the bytes come from.** `source` is read by a caller-supplied
+`SourceReader` and never by ambient filesystem access, and that is the security
+control rather than a plumbing choice. A spec is parsed in three places and only
+one has a directory: the syncer reads blobs out of a commit tree, and the
+dashboard's spec editor and the MCP spec tools parse an in-memory string
+**inside `kanead`, as root**. An `os.ReadFile` inside the parser would therefore
+make `POST /v1/spec/render` an arbitrary file read as root for any signed-in
+user — `source = "/etc/kanea/api.key"` — embedded into a record they read back
+from `GET /v1/services`. Those two callers supply no reader, so `source` is
+refused there by name. The CLI's reader is rooted at the spec's own directory
+and refuses a symlink **component by component**, not only on the leaf, because
+the lexical containment check alone was the K-01 hole. The syncer's reader is a
+tree lookup, which cannot leave the repository at all, and refuses a symlink by
+entry *mode* — stronger than the v1.75 defence, since there is no working tree
+for a symlink blob to be written into.
+
+**Where the bytes go.** Every file is bind-mounted **read-only** with
+`nosuid,noexec,nodev`, and an execute bit in `mode` is refused outright, which
+is what lets `noexec` be unconditional rather than mode-dependent: a `file`
+block delivers configuration, not a program. A path gets the refusals a volume
+destination gets — absolute, clean, `..`-free, not under `/dev`, `/proc` or
+`/sys`, not `/etc/resolv.conf` — plus a collision check against every volume
+and socket mount path, because two things on one path means one silently wins.
+Files mount *after* volumes so a file inside a volume's mount path wins, which
+is what "declare a file at a path" has to mean. One residual, stated rather than
+defended: a file bind over a path the **image** holds as a directory fails
+`ENOTDIR` at task create, with no way to attribute it to the block.
+
+**A secret in content never becomes state.** `${secret.<scope>.<name>}` resolves
+at parse to a placeholder; the record carries the placeholder and an R5-scoped
+reference list, and the reconciler substitutes at alloc create — R3's rule for
+an env var, applied to bytes. The alternative (resolve at parse, embed the
+value) would put a credential in bbolt, in the change log, in every S3 segment
+and archive, and in `GET /v1/services` for any authenticated viewer. Three
+independent properties make the placeholder unforgeable against content an
+attacker controls: the **nonce is drawn after the content is read**, so the
+marker cannot be typed in advance; **NUL is refused in content**, so no
+author-supplied text can form a marker at all; and a marker names an **index
+into a list every entry of which was already R5-scoped**, so a perfect forgery
+buys only the ability to repeat a reference that was permitted. Errors name the
+file and the reference and never the value, the surrounding bytes, or an offset
+into content, because an error string is a place a credential escapes to a log.
+
+**Resource bounds are part of the rule, not an afterthought.** A `Desired`
+record had no size bound at all before this, and it is CDC-replicated with a
+second full copy in the change log. 64 KiB per file, 128 KiB per service and
+512 KiB per apply are checked at plan and again at the apply seam; 256 KiB per
+rendered file and 1 MiB per rendered alloc are checked on the node **before the
+first write**, because substitution grows content and a plan-time bound does not
+bound what is written. Secret-bearing files get a 16 MiB tmpfs of their own
+rather than the 4 MiB secrets tmpfs, so a config file cannot exhaust credential
+delivery for a service in another project that declares no files.
+
+**What is deliberately not claimed.** File content is visible to any
+authenticated caller of `GET /v1/services`, exactly as env values and volume
+declarations are; it is spec, not secret, and the secret half is the reference.
+And the websocket feed elides content — a resource decision (v1.70's send
+buffer), not a confidentiality one.
 
 ---
 

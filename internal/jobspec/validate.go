@@ -56,7 +56,9 @@ func Validate(spec *Spec) hcl.Diagnostics {
 	diags = append(diags, validateSpecVersion(spec)...)
 	diags = append(diags, validateProjects(spec)...)
 	diags = append(diags, validateStorages(spec)...)
+	diags = append(diags, validateEnvGroups(spec)...)
 	diags = append(diags, validateServices(spec)...)
+	diags = append(diags, validateSpecFileBudget(spec)...)
 	diags = append(diags, validateExposedDomains(spec)...)
 	diags = append(diags, validatePublishedPorts(spec)...)
 	diags = append(diags, validateDependencies(spec)...)
@@ -544,6 +546,11 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 
 		diags = append(diags, validateTask(svc)...)
 		diags = append(diags, validateInits(svc)...)
+		// Files are service-level, so they are checked here rather than off
+		// validateTask's fan-out: that one returns early for a task-less
+		// service, and a rule that silently stops running is worse than one
+		// that never existed.
+		diags = append(diags, validateFiles(svc)...)
 		diags = append(diags, validateBuild(svc)...)
 		diags = append(diags, validatePorts(svc)...)
 		diags = append(diags, validateHealthChecks(svc)...)

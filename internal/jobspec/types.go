@@ -31,6 +31,8 @@ type Spec struct {
 	Services    []*Service
 	// Storages are the named storage resources services mount (PRD §8).
 	Storages []*Storage
+	// EnvGroups are the shared environments services take with env_from (R34).
+	EnvGroups []*EnvGroup
 	// BaseDomain is the server's `base_domain`, carried from Options so that
 	// validation can generate the auto-FQDNs of §7.2 and check them for
 	// collisions (R16). Empty when the spec was parsed without server config.
@@ -90,6 +92,16 @@ func (s *Spec) StorageByName(name string) *Storage {
 	for _, st := range s.Storages {
 		if st.Name == name {
 			return st
+		}
+	}
+	return nil
+}
+
+// EnvGroupByName returns the named shared environment, or nil (R34).
+func (s *Spec) EnvGroupByName(name string) *EnvGroup {
+	for _, g := range s.EnvGroups {
+		if g.Name == name {
+			return g
 		}
 	}
 	return nil
@@ -183,6 +195,13 @@ type Service struct {
 	Description string
 	// Count is the desired alloc count. Defaults to 1.
 	Count int
+	// EnvFrom names the env groups this service takes (R34), in precedence
+	// order: later wins, and the task's own env wins over all of them. The
+	// groups are merged into Task.Env at parse, so nothing downstream of the
+	// parser knows they existed.
+	EnvFrom []string
+	// Files are the content Kanea materialises and bind-mounts (R35).
+	Files []*File
 	Build *Build
 	// Inits are the service's init containers, in declaration order (R32).
 	// They run one at a time, to completion, before Task is created.
@@ -217,6 +236,56 @@ type Service struct {
 	// ordinary service, and the marker everything downstream branches on.
 	Function *Function
 	// DefRange is where this block was declared, for diagnostics.
+	DefRange hcl.Range
+}
+
+// File is content Kanea places in the container's filesystem (R35).
+//
+// Content is []byte rather than string because it is bytes: a config file is
+// whatever the author wrote, and a string invites the assumption that it is
+// text worth printing. It is never printed.
+type File struct {
+	// Name is a DNS-1123 label, unique within its service. It names the block
+	// in diagnostics and on disk; the container only ever sees Path.
+	Name string
+	// Path is where the file appears inside the container: absolute, clean,
+	// `..`-free, and refused where a volume or socket already mounts.
+	Path string
+	// Mode is the file's permission bits as an octal string ("0644"). Empty
+	// takes the default for its kind: 0644 for a plain file, 0400 for one
+	// carrying a secret reference. An execute bit is refused: a file block
+	// delivers configuration, not a program.
+	Mode string
+	// Content is the rendered bytes, with every ${secret.*} replaced by an
+	// opaque placeholder. The secret's value is never here, which is the whole
+	// design (R3's rule, applied to content instead of an env var).
+	Content []byte
+	// SecretRefs are the `secret:<scope>/<name>` references the placeholders
+	// index into, in placeholder order. R5-scoped at parse and again at the
+	// apply seam.
+	SecretRefs []string
+	// Source is the path beside the spec the content was read from, kept only
+	// for diagnostics and for `kanea plan` to say where bytes came from. It is
+	// not carried to the record: where bytes came from is not what they are.
+	Source string
+	// Nonce is the per-parse random value the placeholders carry, hex-encoded.
+	// It is what makes a placeholder unforgeable against arbitrary content, and
+	// it is canonicalised away before hashing or a fresh parse would roll every
+	// file-bearing service on every apply.
+	Nonce string
+	// DefRange is where this block was declared, for diagnostics.
+	DefRange hcl.Range
+}
+
+// EnvGroup is a shared environment services opt into (R34).
+//
+// The values stay as an unevaluated body: a group may reference ${service.*},
+// the reference namespace is project-scoped, and so one group taken from two
+// projects must resolve twice, differently. Evaluation happens once per
+// consuming service in pass 2.
+type EnvGroup struct {
+	Name     string
+	Body     hcl.Body
 	DefRange hcl.Range
 }
 

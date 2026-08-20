@@ -31,8 +31,28 @@ import (
 // The bool reports "fell back to a plain directory". The caller warns through
 // its own logger.
 func ensureSecretsTmpfs(dir string) (bool, error) {
+	return ensureTmpfs(dir, "size=4M,mode=0700", "secrets")
+}
+
+// ensureFilesTmpfs is the same, for the tree spec-declared files carrying a
+// secret are materialised into (R35).
+//
+// A separate mount rather than a bigger secrets one, deliberately: the secrets
+// tmpfs is shared by every alloc on the node and sized for credentials, so a
+// config file filling it would surface as secrets_failed on a service in
+// another project that declares no files at all.
+func ensureFilesTmpfs(dir string) (bool, error) {
+	// 16 MiB: the per-service content budget (§21) times enough allocs to be
+	// generous, and a ceiling rather than a reservation, so the footprint pays
+	// only for what is written. Bigger than the secrets tmpfs because config
+	// files legitimately are, and separate from it so that being wrong about
+	// this number cannot fail credential delivery.
+	return ensureTmpfs(dir, "size=16M,mode=0700", "files")
+}
+
+func ensureTmpfs(dir, opts, what string) (bool, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return false, fmt.Errorf("secrets dir: %w", err)
+		return false, fmt.Errorf("%s dir: %w", what, err)
 	}
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(dir, &stat); err != nil {
@@ -42,14 +62,15 @@ func ensureSecretsTmpfs(dir string) (bool, error) {
 		return false, nil
 	}
 	// #nosec G204: a fixed directory, a fixed filesystem, no input.
-	err := syscall.Mount("tmpfs", dir, "tmpfs", 0, "size=4M,mode=0700")
+	err := syscall.Mount("tmpfs", dir, "tmpfs", 0, opts)
 	switch {
 	case err == nil:
 		return false, nil
 	case errors.Is(err, unix.EPERM):
 		return true, nil
 	default:
-		return false, fmt.Errorf("mount tmpfs at %s (R3 keeps secrets in RAM, so this must work): %w", dir, err)
+		return false, fmt.Errorf("mount tmpfs at %s (%s must stay in RAM, so this must work): %w",
+			dir, what, err)
 	}
 }
 
@@ -57,6 +78,19 @@ func ensureSecretsTmpfs(dir string) (bool, error) {
 // the only place it fires, and it fires on every environment-secret create
 // there.
 var secretsTmpfsFallbackWarned atomic.Bool
+
+// filesTmpfsFallbackWarned is the files tree's own once-flag: the two trees
+// fall back independently, and one warning standing for both would hide it.
+var filesTmpfsFallbackWarned atomic.Bool
+
+// warnFilesTmpfsFallback says the soft failure out loud, once.
+func (r *Reconciler) warnFilesTmpfsFallback(dir string) {
+	if filesTmpfsFallbackWarned.Swap(true) {
+		return
+	}
+	r.log.Warn("files directory is not tmpfs (no CAP_SYS_ADMIN; dev or test mode): "+
+		"a config file interpolating a secret would hit the directory on disk", "dir", dir)
+}
 
 // warnSecretsTmpfsFallback says the soft failure out loud, once.
 func (r *Reconciler) warnSecretsTmpfsFallback(dir string) {

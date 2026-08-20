@@ -311,3 +311,44 @@ func TestApplyAcceptsACleanInitSequence(t *testing.T) {
 		t.Fatalf("a clean init sequence was refused: %v", err)
 	}
 }
+
+// TestTheFeedElidesFileContentAndTheListDoesNot (PRD v1.85, R35).
+//
+// Two opposite requirements that must not be conflated. The websocket feed
+// ships every service's whole record to every subscriber on every store-index
+// change, so bulk bytes there are the v1.70 send-buffer defect in a new place.
+// But GET /v1/services must keep the content: there is no per-service GET, so
+// `kanea deploy` round-trips the whole record through the list, and eliding it
+// there would make every deploy silently delete every config file on the node.
+func TestTheFeedElidesFileContentAndTheListDoesNot(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	d := testService("web", 1)
+	d.Files = []reconciler.FileMount{{
+		Name: "conf", Path: "/etc/app.conf", Content: []byte("listen=8080"),
+	}}
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{d}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The REST list keeps the bytes: a deploy reads through it.
+	services, err := h.client.Services(ctx)
+	if err != nil {
+		t.Fatalf("services: %v", err)
+	}
+	var listed *reconciler.Desired
+	for i := range services {
+		if services[i].Service == "web" {
+			listed = &services[i]
+		}
+	}
+	if listed == nil || len(listed.Files) != 1 {
+		t.Fatalf("the service or its file is missing from the list: %+v", listed)
+	}
+	if string(listed.Files[0].Content) != "listen=8080" {
+		t.Errorf("GET /v1/services elided file content (%q); `kanea deploy` round-trips "+
+			"through this list, so every deploy would delete every config file",
+			listed.Files[0].Content)
+	}
+}

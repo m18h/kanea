@@ -458,6 +458,52 @@ service "app" {
     command = ["sh", "-c", "until nc -z $HOST 5432; do sleep 1; done; echo up"]
     env     = { HOST = "${service.db.host}" }
     timeout = "2m"
+## 11. Env groups and config files (v1.85, §6.2 R34/R35)
+
+The parse half is unit-tested hard, including the three properties that make a
+secret placeholder unforgeable. What no test here can answer is the half that is
+a conversation with runc and the kernel:
+
+> **does a bind-mounted file actually appear at its path, with the right mode
+> and owner, when the parent directory does not exist in the image — and does a
+> secret-bearing one really live on a tmpfs rather than on disk?**
+
+Everything about the design assumes yes. runc creates a missing mountpoint
+before binding and does so before the rootfs is remounted read-only; the
+secret-bearing tree is a tmpfs mounted lazily on first use; the plain tree lives
+under the data dir precisely so that mount cannot hide it. Each is the v1.53
+genre: dev mode has no runc and no `CAP_SYS_ADMIN`, so a wrong path, a mode that
+does not apply, or a file written to disk instead of RAM is invisible until the
+first systemd node runs one.
+
+```bash
+cat > files.hcl <<'EOF'
+project "val" {}
+
+env_group "common" {
+  LOG_LEVEL = "info"
+}
+
+service "web" {
+  project  = "val"
+  count    = 2
+  env_from = ["common"]
+
+  file "nginx" {
+    path    = "/etc/nginx/conf.d/default.conf"
+    content = <<-EOT
+      server {
+        listen 8080;
+        # a literal dollar-brace, which must survive as one
+        proxy_set_header Host $${host};
+      }
+    EOT
+  }
+
+  file "pgpass" {
+    path    = "/etc/app/pgpass"
+    mode    = "0400"
+    content = "db:5432:app:${secret.val["password"]}"
   }
 
   task "app" {
@@ -520,3 +566,53 @@ services on the node must keep updating throughout ⑤, which is the whole
 | ⑤ a hung step is killed and classified `init_timeout` | | | |
 | ⑥ a kanead restart resumes without re-running finished steps | | | |
 | ⑦ `pull_policy = "never"` refuses and preloading works | | | |
+    user { uid = 101, gid = 101 }
+  }
+}
+EOF
+kanea secret put val/password 's3cr3t'
+kanea run files.hcl
+
+# ① the plain file is at its path, world-readable, read-only, and the parent
+#    directory did not exist in the image for the second one
+kanea exec val/web -- cat /etc/nginx/conf.d/default.conf   # ${host}, not $${host}
+kanea exec val/web -- stat -c '%a %U' /etc/nginx/conf.d/default.conf   # 644
+kanea exec val/web -- sh -c 'echo x >> /etc/nginx/conf.d/default.conf' # read-only
+
+# ② the secret-bearing file is 0400, owned by the workload, and on a tmpfs
+kanea exec val/web -- stat -c '%a %u' /etc/app/pgpass      # 400 101
+kanea exec val/web -- cat /etc/app/pgpass                  # …:app:s3cr3t
+findmnt -no FSTYPE /run/kanea/files                        # tmpfs
+grep -r s3cr3t /var/lib/kanea/ ; echo "exit=$?"            # must find nothing
+
+# ③ the value is nowhere in the platform's own state
+kanea describe val/web            # names the reference, never the value
+curl -s .../v1/services | grep -c s3cr3t                   # 0
+kanea backup create && kanea backup verify <id>            # then grep the archive
+
+# ④ rotation lands at the next replacement, not before
+kanea secret put val/password 'rotated'
+kanea exec val/web -- cat /etc/app/pgpass                  # still s3cr3t
+kanea restart val/web
+kanea exec val/web -- cat /etc/app/pgpass                  # rotated
+
+# ⑤ an unresolvable reference fails the alloc before any container exists
+kanea secret rm val/password && kanea restart val/web
+kanea describe val/web                                     # REASON: files_failed
+
+# ⑥ an unchanged spec re-applied rolls nothing
+kanea run files.hcl && kanea ps                            # same alloc ids, no restarts
+
+# ⑦ the plain tree survives the tmpfs being mounted after it
+#    (deploy a plain-file-only service first, then one with a secret file)
+```
+
+| Check | Result | Date | Node |
+|---|---|---|---|
+| ① a plain file mounts at its path, 0644, read-only | | | |
+| ② a secret file is 0400, owned by the workload, on tmpfs | | | |
+| ③ the value is absent from the Store, the API and a backup | | | |
+| ④ a rotation lands at the next replacement | | | |
+| ⑤ an unresolvable reference fails the alloc `files_failed` | | | |
+| ⑥ re-applying an unchanged spec rolls nothing | | | |
+| ⑦ the plain tree is not hidden by the files tmpfs | | | |

@@ -234,6 +234,17 @@ type Config struct {
 	// (R20): conversion runs client-side, so a node default baked in there
 	// would make one spec mean different things on two machines.
 	DefaultPullPolicy string
+	// FilesDir is the tmpfs root for spec-declared files that interpolate a
+	// secret (jobspec R35). Empty takes DefaultFilesDir.
+	FilesDir string
+	// PlainFilesDir is where files that interpolate nothing are written, under
+	// the data directory beside the generated resolv.conf files.
+	//
+	// Deliberately NOT a subdirectory of FilesDir: that one becomes a tmpfs
+	// mount point the first time any alloc needs one, and a tmpfs mounted over
+	// a directory hides everything already written under it. A plain file
+	// written before the first secret-bearing file would simply vanish.
+	PlainFilesDir string
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -269,6 +280,8 @@ type Reconciler struct {
 	edgeSnapshot  string
 	baseDomain    string
 	pullPolicy    string
+	filesDir      string
+	plainFilesDir string
 }
 
 // New builds a Reconciler.
@@ -287,6 +300,9 @@ func New(cfg Config) (*Reconciler, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.FilesDir == "" {
+		cfg.FilesDir = DefaultFilesDir
 	}
 	if cfg.SecretsDir == "" {
 		cfg.SecretsDir = DefaultSecretsDir
@@ -320,6 +336,8 @@ func New(cfg Config) (*Reconciler, error) {
 		authSink:      cfg.Auth,
 		baseDomain:    strings.Trim(cfg.BaseDomain, "."),
 		pullPolicy:    cfg.DefaultPullPolicy,
+		filesDir:      cfg.FilesDir,
+		plainFilesDir: cfg.PlainFilesDir,
 	}, nil
 }
 
@@ -1015,8 +1033,9 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 // node-local paths into it, and the spec cannot be built until they have.
 func (r *Reconciler) prepareAlloc(
 	ctx context.Context, desired *Desired, action Action,
-) (runtime.AllocSpec, allocSecrets, error) {
+) (runtime.AllocSpec, allocSecrets, allocFiles, error) {
 	var sec allocSecrets
+	var files allocFiles
 
 	// Which resolver an alloc talks to is a property of the node, not the job,
 	// so it is filled in here rather than carried through the Store.
@@ -1034,7 +1053,7 @@ func (r *Reconciler) prepareAlloc(
 	if err != nil {
 		// Credentials are part of getting the image, and that is how it reads to
 		// whoever has to fix it.
-		return runtime.AllocSpec{}, sec, failedAt(phaseImage, err)
+		return runtime.AllocSpec{}, sec, files, failedAt(phaseImage, err)
 	}
 	// RunImage, not Image: a service with auto-update on declares a tag and
 	// runs the digest that tag resolved to (R19).
@@ -1042,7 +1061,7 @@ func (r *Reconciler) prepareAlloc(
 		Project: desired.Project, Ref: desired.RunImage(), Auth: auth,
 		Policy: r.effectivePullPolicy(desired.PullPolicy),
 	}); err != nil {
-		return runtime.AllocSpec{}, sec, failedAt(phaseImage, err)
+		return runtime.AllocSpec{}, sec, files, failedAt(phaseImage, err)
 	}
 	// Every init image too, before any of them runs (R32).
 	//
@@ -1054,7 +1073,7 @@ func (r *Reconciler) prepareAlloc(
 	// neither. Nothing is re-pulled at the step itself beyond a local lookup.
 	for i := range desired.Init {
 		if err := r.ensureInitImage(ctx, *desired, desired.Init[i]); err != nil {
-			return runtime.AllocSpec{}, sec, failedAt(phaseImage, err)
+			return runtime.AllocSpec{}, sec, files, failedAt(phaseImage, err)
 		}
 	}
 	// Volumes before the spec, not just before the task. Directories have to
@@ -1063,13 +1082,13 @@ func (r *Reconciler) prepareAlloc(
 	// only known once the allowlist has resolved it, so the spec cannot be
 	// built until that has happened.
 	if err := r.ensureVolumes(ctx, *desired, action.Index); err != nil {
-		return runtime.AllocSpec{}, sec, failedAt(phaseVolume, err)
+		return runtime.AllocSpec{}, sec, files, failedAt(phaseVolume, err)
 	}
 	// Grants resolve here for the same reason: a device node's real path is a
 	// node-local fact the spec cannot carry, and it has to be known before the
 	// spec is built.
 	if err := r.ensurePassthrough(*desired); err != nil {
-		return runtime.AllocSpec{}, sec, failedAt(phasePassthrough, err)
+		return runtime.AllocSpec{}, sec, files, failedAt(phasePassthrough, err)
 	}
 	// And env secrets resolve at exactly this point (PRD §6.2 R3): the record
 	// keeps the references, the alloc gets per-alloc tmpfs files and a mount
@@ -1079,7 +1098,17 @@ func (r *Reconciler) prepareAlloc(
 	sec, err = r.ensureSecrets(ctx, *desired,
 		AllocID(desired.Project, desired.Service, action.Index))
 	if err != nil {
-		return runtime.AllocSpec{}, sec, failedAt(phaseSecrets, err)
+		return runtime.AllocSpec{}, sec, files, failedAt(phaseSecrets, err)
+	}
+
+	// Spec-declared files, after secrets so both trees exist before the spec is
+	// built, and appended to Mounts last so a file at a path inside a volume
+	// wins - the reverse would make "declare a file at a path" mean something
+	// else (R35).
+	files, err = r.ensureFiles(ctx, *desired,
+		AllocID(desired.Project, desired.Service, action.Index))
+	if err != nil {
+		return runtime.AllocSpec{}, sec, files, failedAt(phaseFiles, err)
 	}
 
 	spec := AllocSpecFor(*desired, action.Index, r.logDir, r.volumeDir)
@@ -1089,20 +1118,21 @@ func (r *Reconciler) prepareAlloc(
 	if sec.Mount != nil {
 		spec.Mounts = append(spec.Mounts, *sec.Mount)
 	}
+	spec.Mounts = append(spec.Mounts, files.Mounts...)
 	// Network before task: an alloc must never run without its network, and the
 	// datapath denies an attachment whose identity is not yet written (§5.2.5).
 	if r.network != nil {
 		if err := r.network.Attach(ctx, spec); err != nil {
-			return runtime.AllocSpec{}, sec, failedAt(phaseNetwork, err)
+			return runtime.AllocSpec{}, sec, files, failedAt(phaseNetwork, err)
 		}
 	} else {
 		spec.NetnsPath = ""
 	}
-	return spec, sec, nil
+	return spec, sec, files, nil
 }
 
 func (r *Reconciler) create(ctx context.Context, desired Desired, action Action) error {
-	spec, sec, err := r.prepareAlloc(ctx, &desired, action)
+	spec, sec, files, err := r.prepareAlloc(ctx, &desired, action)
 	if err != nil {
 		return err
 	}
@@ -1118,7 +1148,7 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	// step 0, which is what makes a sequence re-run on every alloc creation.
 	sequenceDone := action.Init != nil && action.Init.Op == InitDone
 	if len(desired.Init) > 0 && !sequenceDone {
-		return r.startInitStep(ctx, desired, action, spec, sec, 0)
+		return r.startInitStep(ctx, desired, action, spec, sec, files, 0)
 	}
 
 	if err := r.driver.Create(ctx, spec); err != nil {
@@ -1380,6 +1410,9 @@ func (r *Reconciler) teardown(ctx context.Context, w World, desired Desired, act
 	// The alloc's secrets are per-alloc tmpfs files (PRD §6.2 R3): they die
 	// with the alloc, not at the next boot.
 	r.discardSecrets(action.AllocID)
+	// The alloc's secret-bearing files go with it, for the same reason. The
+	// plain tree is shared by every alloc of the service and is left alone.
+	r.discardFiles(action.AllocID)
 	// Staged host-volume binds die with the alloc too (K-20): the staging
 	// tree is per-alloc, and a leaked bind pins a directory nobody owns.
 	if r.mounts != nil {

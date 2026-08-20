@@ -55,6 +55,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			Command:      svc.Task.Command,
 			PullPolicy:   svc.Task.PullPolicy,
 			Init:         convertInits(svc.Inits),
+			Files:        convertFiles(svc.Files),
 			Capabilities: jobspec.NormalizeCapabilities(svc.Task.Capabilities),
 			Env:          svc.Task.Env,
 			// The pull credential is a reference the node resolves, never a
@@ -468,6 +469,30 @@ func convertInits(inits []*jobspec.InitContainer) []reconciler.InitContainer {
 			}
 		}
 		out = append(out, step)
+	}
+	return out
+}
+
+// convertFiles carries a service's file blocks into the record (jobspec R35).
+//
+// `Source` deliberately does not travel: the bytes were read at parse, and
+// where they came from is not what they are. A record naming a path would also
+// be a record the node might be tempted to read, which is exactly what the
+// SourceReader seam exists to prevent.
+func convertFiles(files []*jobspec.File) []reconciler.FileMount {
+	if len(files) == 0 {
+		return nil // nil, not empty: omitempty must drop the key
+	}
+	out := make([]reconciler.FileMount, 0, len(files))
+	for _, f := range files {
+		out = append(out, reconciler.FileMount{
+			Name:       f.Name,
+			Path:       f.Path,
+			Mode:       f.Mode,
+			Content:    f.Content,
+			SecretRefs: f.SecretRefs,
+			Nonce:      f.Nonce,
+		})
 	}
 	return out
 }
