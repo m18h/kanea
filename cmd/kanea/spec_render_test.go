@@ -328,6 +328,52 @@ service "web" {
 	}
 }
 
+func TestPidsLimitRoundTripsThroughGeneration(t *testing.T) {
+	// R11 (v1.89): a declared cap is SpecHash material, so it must regenerate
+	// into resources.pids; the default must regenerate as omission, or every
+	// service would re-hash on regeneration.
+	original, pipelines := renderText(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    resources {
+      pids = 2048
+    }
+  }
+}
+service "default" {
+  project = "shop"
+  task "app" { image = "nginx" }
+}
+`)
+	if original[0].Resources.PidsLimit != 2048 {
+		t.Fatalf("declared pids limit = %d, want 2048", original[0].Resources.PidsLimit)
+	}
+	if original[1].Resources.PidsLimit != DefaultPidsLimit {
+		t.Fatalf("omitted pids limit = %d, want the default %d",
+			original[1].Resources.PidsLimit, DefaultPidsLimit)
+	}
+
+	text, err := toHCL(original, pipelines)
+	if err != nil {
+		t.Fatalf("toHCL: %v", err)
+	}
+	if !strings.Contains(text, "pids = 2048") {
+		t.Errorf("generated spec loses the declared pids cap:\n%s", text)
+	}
+
+	regenerated, _ := renderText(t, text)
+	for i := range original {
+		if original[i].Resources != regenerated[i].Resources {
+			t.Errorf("service %s resources did not round-trip.\nwant: %+v\ngot:  %+v",
+				original[i].Service, original[i].Resources, regenerated[i].Resources)
+		}
+	}
+}
+
 const functionRoundTripSpec = `
 spec_version = 1
 

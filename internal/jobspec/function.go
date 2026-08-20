@@ -165,6 +165,19 @@ func convertFunction(f *hclFunction) (*Service, hcl.Diagnostics) {
 		if f.Resources.Memory != nil {
 			svc.Task.Resources.Memory = *f.Resources.Memory
 		}
+		// R25: the sandbox's caps are fixed promises. A wasm module cannot
+		// fork, and the shim's own thread budget is a runtime property, not
+		// the workload's — there is no pids to declare.
+		if f.Resources.Pids != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Function declares pids",
+				Detail: fmt.Sprintf("Function %q declares resources.pids; functions take cpu "+
+					"and memory only (PRD §6.2 R25). The wasm runtime's process cap is fixed.",
+					f.Name),
+				Subject: f.Resources.DefRange.Ptr(),
+			})
+		}
 	}
 
 	if f.Build != nil {

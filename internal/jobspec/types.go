@@ -463,6 +463,10 @@ type Resources struct {
 	CPU int
 	// Memory in MiB. 0 = all allocatable.
 	Memory int
+	// Pids overrides the alloc's cgroup pids.max. 0 = the default cap
+	// (DefaultPidsLimit): the cap is always on (PRD §5.2.11, R11 v1.89),
+	// this only changes its value.
+	Pids int
 }
 
 // DefaultCPU is the function CPU default in MHz (R25); services default to

@@ -286,8 +286,10 @@ type hclInit struct {
 }
 
 type hclResources struct {
-	CPU    *int `hcl:"cpu,optional"`
-	Memory *int `hcl:"memory,optional"`
+	CPU      *int      `hcl:"cpu,optional"`
+	Memory   *int      `hcl:"memory,optional"`
+	Pids     *int      `hcl:"pids,optional"`
+	DefRange hcl.Range `hcl:",def_range"`
 }
 
 // hclUser is the numeric identity a workload runs as (R23).
@@ -737,7 +739,20 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 	}
 
 	for i := range s.Inits {
-		out.Inits = append(out.Inits, convertInit(&s.Inits[i]))
+		init := &s.Inits[i]
+		// R11 (v1.89): an init step's pids cap is the alloc's, by R32's
+		// "a step is not a service" — the block has no pids field of its own.
+		if init.Resources != nil && init.Resources.Pids != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "Init container declares pids",
+				Detail: fmt.Sprintf("Init %q of service %q declares resources.pids; an init "+
+					"step's pids cap is the alloc's (PRD §6.2 R11). Set resources.pids on the "+
+					"task's resources block instead.", init.Name, s.Name),
+				Subject: init.Resources.DefRange.Ptr(),
+			})
+		}
+		out.Inits = append(out.Inits, convertInit(init))
 	}
 
 	if s.Build != nil {
@@ -890,6 +905,9 @@ func convertTask(t *hclTask) *Task {
 		}
 		if t.Resources.Memory != nil {
 			out.Resources.Memory = *t.Resources.Memory
+		}
+		if t.Resources.Pids != nil {
+			out.Resources.Pids = *t.Resources.Pids
 		}
 	}
 	for i := range t.Devices {

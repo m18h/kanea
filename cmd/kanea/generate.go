@@ -265,9 +265,8 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 	if svc.ReadOnlyRootfs {
 		return refuse("read_only_rootfs")
 	}
-	if svc.Resources.PidsLimit != 0 && svc.Resources.PidsLimit != DefaultPidsLimit {
-		return refuse("a non-default pids limit")
-	}
+	// resources.pids round-trips (R11, v1.89): a declared cap regenerates;
+	// the default regenerates as omission.
 
 	block := body.AppendNewBlock("service", []string{svc.Service}).Body()
 	block.SetAttributeValue("project", cty.StringVal(svc.Project))
@@ -388,16 +387,22 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 
 // writeResources emits a resources block with only the declared limits. A
 // zero limit is unbounded (R11, v1.58) and regenerates as omission: emitting
-// `cpu = 0` would be legal but would read as a declaration nobody made.
-// Reports whether it wrote anything.
+// `cpu = 0` would be legal but would read as a declaration nobody made. The
+// pids cap is emitted only when it differs from the default (R11, v1.89),
+// since an omitted pids means the default, never "zero". Reports whether it
+// wrote anything.
 func writeResources(block *hclwrite.Body, svc *reconciler.Desired) bool {
-	return writeResourceValues(block, svc.Resources)
+	return writeResourceValues(block, svc.Resources, true)
 }
 
-func writeResourceValues(block *hclwrite.Body, r runtime.Resources) bool {
+func writeResourceValues(block *hclwrite.Body, r runtime.Resources, includePids bool) bool {
 	cpu := int64(r.CPUMillis) * NominalCoreMHz / 1000
 	mem := r.MemoryBytes >> 20
-	if cpu <= 0 && mem <= 0 {
+	pids := int64(0)
+	if includePids && r.PidsLimit != 0 && r.PidsLimit != DefaultPidsLimit {
+		pids = r.PidsLimit
+	}
+	if cpu <= 0 && mem <= 0 && pids <= 0 {
 		return false
 	}
 	res := block.AppendNewBlock("resources", nil).Body()
@@ -406,6 +411,9 @@ func writeResourceValues(block *hclwrite.Body, r runtime.Resources) bool {
 	}
 	if mem > 0 {
 		res.SetAttributeValue("memory", cty.NumberIntVal(mem))
+	}
+	if pids > 0 {
+		res.SetAttributeValue("pids", cty.NumberIntVal(pids))
 	}
 	return true
 }
@@ -699,7 +707,9 @@ func writeInits(block *hclwrite.Body, svc *reconciler.Desired) {
 			}
 			body.SetAttributeValue("env", cty.ObjectVal(pairs))
 		}
-		writeResourceValues(body, step.Resources)
+		// Init steps never emit pids: jobspec refuses the field there (R32),
+		// and any record value came from the alloc anyway.
+		writeResourceValues(body, step.Resources, false)
 		if u := step.User; u != nil {
 			user := body.AppendNewBlock("user", nil).Body()
 			user.SetAttributeValue("uid", cty.NumberIntVal(int64(u.UID)))

@@ -710,6 +710,15 @@ func validateTask(svc *Service) hcl.Diagnostics {
 			Subject: task.DefRange.Ptr(),
 		})
 	}
+	if task.Resources.Pids < 0 {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Invalid pids limit",
+			Detail: fmt.Sprintf("Service %q declares resources.pids = %d; it cannot be negative. "+
+				"Omit the field (or declare 0) for the default cap.", svc.Name, task.Resources.Pids),
+			Subject: task.DefRange.Ptr(),
+		})
+	}
 
 	if err := CheckPullPolicy(task.PullPolicy, true); err != nil {
 		diags = append(diags, &hcl.Diagnostic{

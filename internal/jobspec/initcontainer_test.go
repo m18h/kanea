@@ -104,6 +104,7 @@ func TestInitRefusalsNameTheOffendingField(t *testing.T) {
 		{"bad name", "init \"Not_A_Label\" {\n    image = \"x:1\"\n  }", "DNS-1123"},
 		{"empty command", "init \"s\" {\n    image = \"x:1\"\n    command = [\"\", \"y\"]\n  }", "names the program"},
 		{"negative cpu", "init \"s\" {\n    image = \"x:1\"\n    resources {\n      cpu = -1\n    }\n  }", "cannot be negative"},
+		{"pids", "init \"s\" {\n    image = \"x:1\"\n    resources {\n      pids = 1024\n    }\n  }", "the alloc's"},
 		{"bad capability", "init \"s\" {\n    image = \"x:1\"\n    capabilities = [\"CAP_SYS_ADMIN\"]\n  }", "cannot be granted"},
 		{"cross-project secret", "init \"s\" {\n    image = \"x:1\"\n    env = { A = \"secret:other/b\" }\n  }", "Cross-project"},
 		{"bad timeout", "init \"s\" {\n    image = \"x:1\"\n    timeout = \"soon\"\n  }", "Invalid duration"},

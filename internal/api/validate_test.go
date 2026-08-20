@@ -163,6 +163,9 @@ func TestApplyRefusesTheFullR25List(t *testing.T) {
 		{"init containers", func(d *reconciler.Desired) {
 			d.Init = []reconciler.InitContainer{{Name: "warm", Image: "busybox:1.36"}}
 		}},
+		{"pids cap", func(d *reconciler.Desired) {
+			d.Resources.PidsLimit = 4096
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := wasm()
@@ -262,6 +265,14 @@ func TestApplyReEnforcesR32AndR33(t *testing.T) {
 			d.PullPolicy = "sometimes"
 			return d
 		}(), "not a policy"},
+		{"init crosses the alloc's pids cap", withStep(func(s *reconciler.InitContainer) {
+			s.Resources.PidsLimit = 4096
+		}), "inherits the alloc"},
+		{"task negative pids", func() reconciler.Desired {
+			d := testService("web", 1)
+			d.Resources.PidsLimit = -1
+			return d
+		}(), "cannot be negative"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := h.client.Apply(ctx, []reconciler.Desired{tc.desired}, nil)

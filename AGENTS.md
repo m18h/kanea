@@ -6,7 +6,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 **Kanea** is a lightweight, single-binary container orchestration platform written in Go, "container orchestration in one binary." It runs services on **containerd**, networks them with **its own eBPF datapath** (nothing from the Kubernetes stack underneath, and since PRD v1.36 no Cilium either), terminates TLS with **Let's Encrypt**, and ships a **React + shadcn/ui** dashboard, an **MCP server** for AI agents, GitOps pipelines (kaniko), eBPF-driven autoscaling, and S3-backed state replication.
 
-**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.88). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins, and the disagreement means one of them needs an amendment.
+**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.89). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins, and the disagreement means one of them needs an amendment.
 
 ## Current status
 
@@ -41,6 +41,8 @@ the end-to-end run under `kanead` itself, which is the PRD's exit criterion for
 the feature and [`docs/VALIDATION.md`](./docs/VALIDATION.md) §2.
 
 Things a future change is most likely to trip over:
+
+- **The pids cap has one knob, `resources.pids`, and omission must hash exactly as it always did** (PRD v1.89, §6.2 R11). The runtime layer has always honoured an explicit `PidsLimit` (zero falls to `runtime.DefaultPidsLimit` in `withHardening`'s spec builder); what was missing was the spec seam. `toDesired` resolves `pids = 0` to the default **at conversion**, which is the R23 move: every record continues to carry `PidsLimit` (256 when undeclared), so nothing rolls at upgrade, while a declared value enters the hash material and rolls, the cgroup being written at create. Three refusals close the boundary, with the usual plan/apply duplication: `init` blocks and `function` blocks take no `pids` at parse (a step's cap is the alloc's; R25's sandbox caps are fixed), and `internal/api.validateDesired` re-checks both plus the `pids < 0` invariant. `generate.go`'s `writeResourceValues(block, r, includePids)` emits `pids` only when the value differs from the default (init steps pass `false`; the function refusal stays), because regenerating the default as a literal would read as a declaration nobody made. `convertInits` leaves `PidsLimit = 0` so the reconciler's own inheritance (`initSpecFor`: the alloc's cap fills a zero) actually reaches init steps, rather than being defeated by the constant it copied in.
 
 - **Metrics never touch the Store** (constraint #2). `internal/scaling` is an in-memory ring, ~27 MiB at the 2 000-alloc target, measured by `TestFootprintAtTargetScale`. The rule is about **dependencies and persistence**, not about proximity: `internal/scaling` imports neither `store` nor `reconciler` and must not start, while `cmd/kanea`'s `allocResolver` has always read the Store on the metrics path. That is the line `node_allocs_running` (v1.79) is on the right side of: it is *counted inside the listing `Refresh` already performs* and recorded through a call taking a plain number, so it costs no read that was not already happening. A 5 s lister added to draw one chart line would be on the wrong side, and would be refused.
 - **"No data" is never zero**: in the time series, the evaluator, the exporter and the dashboard alike. A missing metric and an idle service lead to opposite decisions, and each layer has a test saying so. **The dashboard now distinguishes a third state** (PRD v1.79): a chart with no points renders a skeleton while its data is in flight and the words *"no samples yet"* once it is not, because the old "no data" was shown for the entire duration of the seed request and read as *broken* rather than *coming*. The §9.2 rule is untouched underneath: the numeric readout still renders a dash, a skeleton goes where a chart goes and never where a number goes, and nothing renders a zero it did not measure.
@@ -285,7 +287,7 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
 8. **Backpressure discipline**: log drains are non-blocking with drop counters; a full pipeline must never block a workload's `write()`.
 9. **Derived state**: datapath state (pinned BPF maps, programs, links) is always rebuildable from the Store; never persist or restore anything under the bpffs pin root.
 10. **No Kubernetes dependencies.** No client-go, no CRDs, no kube imports, ever.
-11. **Resource isolation**: the control plane (`kanead`, `kanea-edge`, containerd, buildkitd) has a kernel-guaranteed memory floor via cgroups v2 `memory.min` (default 256 MiB, PRD §5.2.11 v1.62; it covers a control plane that does not build; a node running pipelines raises `--reserve`, buildkitd alone holds ~157 MiB) and `OOMScoreAdjust=-900`; all workloads run under one parent cgroup with `memory.max` = total RAM − reserve. That collective ceiling and the floor are the isolation; a *declared* per-alloc limit is enforced exactly, and an omitted one means the node's capacity (zero in the record = unbounded, PRD §6.2 R11, v1.58); never fill a default in. `pids.max` keeps its default on every alloc. Never use `mlock` on the Go control plane (`RLIMIT_MEMLOCK` + GC heap growth = crash risk); the guarantee comes from cgroup protection + OOM-killer policy.
+11. **Resource isolation**: the control plane (`kanead`, `kanea-edge`, containerd, buildkitd) has a kernel-guaranteed memory floor via cgroups v2 `memory.min` (default 256 MiB, PRD §5.2.11 v1.62; it covers a control plane that does not build; a node running pipelines raises `--reserve`, buildkitd alone holds ~157 MiB) and `OOMScoreAdjust=-900`; all workloads run under one parent cgroup with `memory.max` = total RAM − reserve. That collective ceiling and the floor are the isolation; a *declared* per-alloc limit is enforced exactly, and an omitted one means the node's capacity (zero in the record = unbounded, PRD §6.2 R11, v1.58); never fill a default in. `pids.max` caps every alloc (256 by default; `resources.pids` declares a service's own value, PRD §6.2 R11 v1.89 — the cap's presence is fixed, only its value moves). Never use `mlock` on the Go control plane (`RLIMIT_MEMLOCK` + GC heap growth = crash risk); the guarantee comes from cgroup protection + OOM-killer policy.
 
 ## Tech stack
 
@@ -426,7 +428,7 @@ Every change, not just a large one: OWASP §14 checks reviewed, `govulncheck` cl
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.88), the north star |
+| `PRD.md` | Full product requirements (v1.89), the north star |
 | `AGENTS.md` | This file |
 | `README.md` | The public front door: install, quickstart, requirements |
 | `SECURITY.md` | How to report a vulnerability; what is in and out of scope |
