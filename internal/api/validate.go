@@ -181,7 +181,7 @@ func validateDesired(svc reconciler.Desired) error {
 			key, totalFiles, jobspec.MaxServiceFileBytes)
 	}
 
-	// R11 (v1.88) on the pids cap: the parser refuses a negative one; the
+	// R11 (v1.89) on the pids cap: the parser refuses a negative one; the
 	// same refusal lands here for records that never saw the parser.
 	if svc.Resources.PidsLimit < 0 {
 		return fmt.Errorf("service %s: resources.pids cannot be negative; "+

@@ -329,7 +329,7 @@ service "web" {
 }
 
 func TestPidsLimitRoundTripsThroughGeneration(t *testing.T) {
-	// R11 (v1.88): a declared cap is SpecHash material, so it must regenerate
+	// R11 (v1.89): a declared cap is SpecHash material, so it must regenerate
 	// into resources.pids; the default must regenerate as omission, or every
 	// service would re-hash on regeneration.
 	original, pipelines := renderText(t, `

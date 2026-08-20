@@ -25,3 +25,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # The container image's base (Containerfile). Pinned by digest, so nothing
+  # else would ever move it: a `FROM` digest that is never bumped is a frozen
+  # CVE surface rather than a pin, which is the half of "pin your base image"
+  # that usually goes unsaid.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

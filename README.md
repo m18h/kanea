@@ -106,6 +106,41 @@ lives in its own tap repository, [m18h/homebrew-kanea](https://github.com/m18h/h
 and is regenerated from each release's `checksums.txt` by a workflow there;
 the macOS install works from the first release that ships darwin archives.
 
+### Container image (CI)
+
+```bash
+docker run --rm ghcr.io/m18h/kanea:latest version
+
+# the shape a pipeline uses: the spec on a mount, the node over the network
+docker run --rm -v "$PWD:/workspace:ro" \
+  -e KANEA_URL -e KANEA_TOKEN \
+  ghcr.io/m18h/kanea:vX.Y.Z run shop.hcl   # pin it; that is what tags are for
+```
+
+`linux/amd64` and `linux/arm64` in one manifest list, tagged `vX.Y.Z` and
+`latest`; `latest` moves only for a plain `vX.Y.Z`, so a prerelease never
+becomes what everyone pulls by default. Like Homebrew, it ships the CLI and not
+the node (PRD §5.2.12): it is for the pipeline that deploys *to* a node, so
+`agent`, `edge`, `init`, `install`, `doctor` and `upgrade` — every verb that
+acts on a host, its systemd and its own binary — are not what it is for.
+
+The image carries the binary out of the release archives above, not a separate
+build of them, so the `checksums.txt` you can verify by hand describes what is
+inside it. The image digest is cosign-signed with the same keyless identity and
+carries an SPDX attestation:
+
+```bash
+cosign verify ghcr.io/m18h/kanea:vX.Y.Z \
+  --certificate-identity-regexp 'https://github.com/m18h/kanea/' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+```
+
+It runs as an unprivileged user (uid 65532) out of `/workspace`. If your
+network terminates TLS with its own CA, drop the root into
+`/usr/local/share/ca-certificates` and run `update-ca-certificates` in a
+derived image — or pass the node's own CA with `KANEA_CA_CERT`, which replaces
+the system pool rather than adding to it.
+
 ## Quickstart
 
 ```bash
@@ -755,7 +790,8 @@ config files, is in the
 ### Deploying from CI
 
 The CLI is not tied to the node. Point it at a node's HTTPS listener with a
-token and it works from a laptop or a GitLab runner:
+token and it works from a laptop or a GitLab runner — which is what
+`ghcr.io/m18h/kanea` is for:
 
 ```bash
 sudo kanea token create --role admin ci --expires-in 720h   # on the node
@@ -764,6 +800,7 @@ sudo kanea ca show > kanea-ca.crt                           # unless the node us
 
 ```yaml
 deploy:
+  image: ghcr.io/m18h/kanea:vX.Y.Z            # pin the version
   variables:
     KANEA_URL: https://kanea.apps.example.com:8600
   script:
@@ -844,7 +881,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.87) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.88) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

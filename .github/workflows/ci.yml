@@ -320,6 +320,78 @@ jobs:
           test ! -e /usr/local/lib/kanea/bin/containerd
           echo "refused, and nothing was written"
 
+  image:
+    # The container image's recipe, built and never pushed (PRD §5.2.12,
+    # v1.88). A Containerfile first exercised by a tag is a release that fails
+    # in the middle of itself, which is the genre §21 keeps recording: the
+    # release job builds two architectures from the published archives, and
+    # this one builds the near-identical thing from a local binary, so a broken
+    # COPY, a base that stopped resolving or a binary that will not start is a
+    # red check on the pull request instead.
+    #
+    # One architecture and no QEMU: what differs across the two is which file
+    # the COPY selects, and that is the release job's business.
+    name: "Container image: build and run"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The same build the release performs, minus the dashboard: nothing about
+      # the image depends on what go:embed put in the binary, and the committed
+      # placeholder makes the embed compile.
+      - name: Build the binary the image will carry
+        run: |
+          mkdir -p dist/image/amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_SHA}" \
+            -o dist/image/amd64/kanea ./cmd/kanea
+
+      - name: Build the image
+        run: |
+          docker buildx build --platform linux/amd64 \
+            -f Containerfile --load -t kanea:ci \
+            --build-arg VERSION="${GITHUB_SHA}" \
+            --build-arg REVISION="${GITHUB_SHA}" \
+            dist/image
+
+      # Three things a build alone does not prove: that the entrypoint runs,
+      # that it runs as the unprivileged user with a passwd entry behind it
+      # (os/user parses that file when CGO is off), and that the parser works
+      # from inside the image, which is the half of the CLI that needs no
+      # daemon and therefore the only half this job can exercise.
+      - name: Run it
+        run: |
+          set -euo pipefail
+          test "$(docker run --rm kanea:ci version)" = "kanea ${GITHUB_SHA}"
+          docker run --rm kanea:ci >/dev/null
+          test "$(docker run --rm --entrypoint id kanea:ci -un)" = kanea
+
+          mkdir -p spec
+          cat > spec/ci.hcl <<'SPEC'
+          spec_version = 1
+          project "ci" {}
+          service "web" {
+            project = "ci"
+            task "app" {
+              image = "nginx:1.27-alpine"
+            }
+            network {
+              port "http" { container = 80 }
+            }
+          }
+          SPEC
+          # No daemon here, so `plan` gets as far as the dial and stops. The
+          # assertion is that it parsed and validated first: a spec that is
+          # wrong fails before any connection is attempted, so reaching the
+          # dial is the proof that everything ahead of it ran.
+          out="$(docker run --rm -v "$PWD/spec:/workspace:ro" kanea:ci plan ci.hcl 2>&1 || true)"
+          echo "$out"
+          echo "$out" | grep -q 'cannot reach kanead'
+
   # The Homebrew formula's CI moved with it to m18h/homebrew-kanea
   # (PRD §5.2.12, v1.67): style, regenerate-and-diff and install-test run
   # in the tap repository, beside the file they verify.

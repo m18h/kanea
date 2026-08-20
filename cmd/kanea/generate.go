@@ -265,7 +265,7 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 	if svc.ReadOnlyRootfs {
 		return refuse("read_only_rootfs")
 	}
-	// resources.pids round-trips (R11, v1.88): a declared cap regenerates;
+	// resources.pids round-trips (R11, v1.89): a declared cap regenerates;
 	// the default regenerates as omission.
 
 	block := body.AppendNewBlock("service", []string{svc.Service}).Body()
@@ -388,7 +388,7 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 // writeResources emits a resources block with only the declared limits. A
 // zero limit is unbounded (R11, v1.58) and regenerates as omission: emitting
 // `cpu = 0` would be legal but would read as a declaration nobody made. The
-// pids cap is emitted only when it differs from the default (R11, v1.88),
+// pids cap is emitted only when it differs from the default (R11, v1.89),
 // since an omitted pids means the default, never "zero". Reports whether it
 // wrote anything.
 func writeResources(block *hclwrite.Body, svc *reconciler.Desired) bool {

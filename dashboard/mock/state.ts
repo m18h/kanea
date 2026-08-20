@@ -243,10 +243,16 @@ export function serviceStats(svc: MockService) {
   }
 }
 
+// The mock reports 0.0.0-mock rather than a release number, and deliberately:
+// this fixture feeds the site's screenshots (site/assets/shot-*.webp), where a
+// pinned version goes stale the moment the next tag is cut and nothing in the
+// release checklist would catch it. 0.0.0 is the binary's own convention for
+// "not a release" (cmd/kanea/main.go's 0.0.0-dev), and the Sidebar renders it
+// through a `v` prefix, so a bare word like "mock" would read as "vmock".
 export function nodeStats() {
   const running = allocs.filter((a) => a.state === 'running').length
   return {
-    version: 'v0.16.1-mock',
+    version: '0.0.0-mock',
     projects: new Set(services.map((s) => s.project)).size,
     services: services.length,
     allocs: allocs.length,

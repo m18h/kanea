@@ -740,7 +740,7 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 
 	for i := range s.Inits {
 		init := &s.Inits[i]
-		// R11 (v1.88): an init step's pids cap is the alloc's, by R32's
+		// R11 (v1.89): an init step's pids cap is the alloc's, by R32's
 		// "a step is not a service" — the block has no pids field of its own.
 		if init.Resources != nil && init.Resources.Pids != nil {
 			diags = append(diags, &hcl.Diagnostic{

@@ -464,7 +464,7 @@ type Resources struct {
 	// Memory in MiB. 0 = all allocatable.
 	Memory int
 	// Pids overrides the alloc's cgroup pids.max. 0 = the default cap
-	// (DefaultPidsLimit): the cap is always on (PRD §5.2.11, R11 v1.88),
+	// (DefaultPidsLimit): the cap is always on (PRD §5.2.11, R11 v1.89),
 	// this only changes its value.
 	Pids int
 }

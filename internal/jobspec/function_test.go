@@ -281,7 +281,7 @@ func TestFunctionRefusals(t *testing.T) {
 			 trigger "http" {}`,
 			"capabilities",
 		},
-		// R25/R11 (v1.88): resources.pids is a parse-shallow-looking but real
+		// R25/R11 (v1.89): resources.pids is a parse-shallow-looking but real
 		// schema field, so it needs an explicit refusal; the sandbox's caps
 		// are fixed.
 		{

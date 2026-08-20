@@ -126,7 +126,7 @@ service "web" {
 }
 
 func TestPidsResources(t *testing.T) {
-	// R11 (v1.88): pids takes a declared value, zero means what omission
+	// R11 (v1.89): pids takes a declared value, zero means what omission
 	// means (the default cap), and a negative is refused.
 	spec := parse(t, `
 spec_version = 1

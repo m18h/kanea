@@ -25,7 +25,7 @@ const NominalCoreMHz = 1000
 
 // DefaultPidsLimit is the cap every alloc carries when the spec does not
 // declare resources.pids; PRD §5.2.11 requires a cap on every container,
-// declared or not (R11, v1.88).
+// declared or not (R11, v1.89).
 const DefaultPidsLimit = 256
 
 // toDesired converts a validated job spec into the reconciler's desired state.
