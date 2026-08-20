@@ -193,7 +193,7 @@ jobs:
       # verify against, so moving to a bundle is a change to what every user
       # checks, not to how this file spells a command. Dependabot is told to
       # leave the major alone in .github/dependabot.yml.
-      - uses: sigstore/cosign-installer@b4da77ecad80ff9afe572690e3ce4a55a58e629c # v3.9.1
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
       # Only checksums.txt is signed, and every archive is covered by it. One
       # signature over a manifest of hashes is the same guarantee as a signature
@@ -271,7 +271,7 @@ jobs:
       # verify against, so moving to a bundle is a change to what every user
       # checks, not to how this file spells a command. Dependabot is told to
       # leave the major alone in .github/dependabot.yml.
-      - uses: sigstore/cosign-installer@b4da77ecad80ff9afe572690e3ce4a55a58e629c # v3.9.1
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
       # The apk step in the Containerfile runs on the target platform, so the
       # arm64 half needs emulation. The binaries themselves never execute
