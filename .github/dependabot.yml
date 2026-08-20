@@ -25,6 +25,18 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # cosign-installer v4 installs cosign v3, whose `sign-blob` dropped
+      # --output-signature and --output-certificate for --bundle. Taking that
+      # bump changes checksums.txt.sig and .pem into a bundle, which is what
+      # scripts/install.sh, cmd/kanea/selfupdate.go and the tap repository
+      # verify against - so it is a change to the artefacts every user checks,
+      # not to a flag. It also cannot be caught before a tag: release.yml runs
+      # on tags alone, so CI never exercises it, and v0.26.0's first attempt
+      # failed at the signing step for exactly this reason. Minor and patch
+      # updates within v3 still come through.
+      - dependency-name: sigstore/cosign-installer
+        update-types: [version-update:semver-major]
 
   # The container image's base (Containerfile). Pinned by digest, so nothing
   # else would ever move it: a `FROM` digest that is never bumped is a frozen
