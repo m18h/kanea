@@ -30,6 +30,11 @@ const (
 	maxDNSLabel   = 63
 	maxUDPPayload = 512
 
+	// maxTCPPayload is what a length-prefixed message can express, and so the
+	// ceiling on a TCP answer (v1.86). Nothing else bounds it: the two-byte
+	// frame is the protocol's own limit.
+	maxTCPPayload = 65535
+
 	// maxForwardPayload is the upstream reply read size (K-28): 4096 covers
 	// the standard EDNS UDP size; a reply that fills it may be clipped
 	// mid-record, so it is answered as truncated rather than relayed with its
@@ -183,11 +188,50 @@ func lowerASCII(b []byte) []byte {
 
 // answerBuilder assembles a response by echoing the request's question section
 // and appending records.
+// transport is how a query arrived (v1.86).
+//
+// It exists because exactly two things about answering depend on it, and both
+// are about the same client: how much an answer may carry before it must be
+// truncated, and whether a forward is made over TCP. A resolver that truncates
+// on TCP, or that answers a TCP retry from a 4 KiB UDP read, has told the
+// client to try again and then given it the same thing.
+type transport struct {
+	// maxPayload is the largest response body this transport may carry.
+	maxPayload int
+	// stream is true for TCP: forwards go out length-prefixed, and an upstream
+	// reply is read whole rather than into a fixed datagram buffer.
+	stream bool
+}
+
+var (
+	udpTransport = transport{maxPayload: maxUDPPayload}
+	tcpTransport = transport{maxPayload: maxTCPPayload, stream: true}
+)
+
 type answerBuilder struct {
 	buf []byte
 	// answers is uint16 because the header field is: the count cannot be
 	// allowed to wrap past 65535 and silently under-report what follows it.
 	answers uint16
+	// limit is the payload ceiling finish applies. Zero means maxUDPPayload,
+	// so every builder that is only ever a header and a question - which is
+	// every error response - needs to say nothing about it.
+	limit int
+}
+
+// limitTo sets the payload ceiling and returns the builder, for chaining onto
+// newResponse at the one call site that can produce a body worth measuring.
+func (b *answerBuilder) limitTo(n int) *answerBuilder {
+	b.limit = n
+	return b
+}
+
+// payloadLimit is the ceiling in force, resolving the zero value.
+func (b *answerBuilder) payloadLimit() int {
+	if b.limit <= 0 {
+		return maxUDPPayload
+	}
+	return b.limit
 }
 
 // maxAnswers is the largest answer count the header can express. Far above
@@ -266,15 +310,17 @@ func (b *answerBuilder) addAAAA(name string, ip netip.Addr, ttl uint32) error {
 	return nil
 }
 
-// finish patches the answer count and applies UDP truncation semantics.
+// finish patches the answer count and applies truncation semantics.
 //
 // A response that does not fit is returned empty with TC set rather than
 // clipped mid-record: a resolver that sees TC retries over TCP, while a
-// truncated record body is a parse error at the client.
+// truncated record body is a parse error at the client. What "fit" means is
+// the transport's (v1.86): 512 bytes on UDP, the frame's own 65535 on TCP, so
+// the retry TC asks for can carry what the datagram could not.
 func (b *answerBuilder) finish() []byte {
 	binary.BigEndian.PutUint16(b.buf[6:8], b.answers)
 
-	if len(b.buf) > maxUDPPayload {
+	if len(b.buf) > b.payloadLimit() {
 		flags := binary.BigEndian.Uint16(b.buf[2:4]) | flagTruncated
 		binary.BigEndian.PutUint16(b.buf[2:4], flags)
 		binary.BigEndian.PutUint16(b.buf[6:8], 0)

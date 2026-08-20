@@ -454,6 +454,30 @@ service "web" {
 }
 ```
 
+`content` is an ordinary HCL string, so a whole config file goes in a heredoc,
+which is the shape most files actually take:
+
+```hcl
+file "app-config" {
+  path    = "/etc/app/config.yaml"
+  content = <<-EOT
+    server:
+      addr: ":8080"
+      upstream: "${service.api.host}:${service.api.port.http}"
+    database:
+      dsn: "postgres://app:${secret.shop["database-password"]}@db:5432/app"
+    log:
+      # a literal dollar-brace the app expands itself
+      format: "$${level} $${msg}"
+  EOT
+}
+```
+
+Both interpolations work in the same file, and it is the secret that decides the
+rest: because one line names one, the whole file is written `0400` on a tmpfs of
+its own. Content that has template syntax of its own is escaped `$${…}`, which
+is HCL's rule rather than Kanea's.
+
 Files are mounted read-only, `nosuid,noexec,nodev`, after volumes — so a file at
 a path inside a volume wins. Init steps see them too; a step that renders or
 validates config is a real use, and a step gets its own copy of a
@@ -647,8 +671,29 @@ fast and clients fall back to v4. A gRPC service is exposed by marking its
 end-to-end (TLS on :443 in front, h2c behind). WebSockets need nothing at all.
 
 `kanea doctor` verifies the node at any time: components, versions against the
-pinned matrix, bpffs, disk and clock. `kanea install --list` prints what is
-pinned; `--dry-run` downloads and verifies every artefact without writing.
+pinned matrix, bpffs, disk and clock. A check the running user may not perform
+is reported `SKIP`, never `FAIL`: run as an ordinary user, "I could not look at
+the containerd socket" is not "containerd is broken". `kanea install --list`
+prints what is pinned; `--dry-run` downloads and verifies every artefact
+without writing.
+
+**If the node runs a host firewall, workloads need two allowances**, and a
+default-deny posture (ufw, firewalld) refuses both. Alloc traffic crosses the
+*forward* hook on its way out, and it crosses the **input** hook to reach the
+internal resolver, because a query to `10.244.0.1:53` is a new inbound
+connection to the host on a veth. The host's own `dig` keeps working
+throughout — every manager accepts `lo` unconditionally — which is what makes
+this present as "Kanea's DNS is broken". `kanea doctor` names it, and
+`kanea firewall` prints the rules for this node's CIDRs and resolver:
+
+```bash
+kanea firewall              # for the detected manager; --all for every one
+kanea firewall --manager ufw
+```
+
+It prints and never applies. Kanea owns exactly one nftables table and writes
+nothing outside it, because a rule placed in a manager's ruleset is flushed away
+by that manager on its next reload.
 
 ### AI agents (MCP)
 
@@ -768,7 +813,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.85) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.86) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |
