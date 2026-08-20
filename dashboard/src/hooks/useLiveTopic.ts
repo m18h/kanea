@@ -72,7 +72,7 @@ export function useLiveTopic<S extends z.ZodTypeAny>(
       }
       if (frame.type !== 'data') return
 
-      const parsed = schema.safeParse(frame.data) as z.SafeParseReturnType<unknown, z.infer<S>>
+      const parsed = schema.safeParse(frame.data) as z.ZodSafeParseResult<z.infer<S>>
       if (!parsed.success) {
         setState((s) => ({
           ...s,
