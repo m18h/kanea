@@ -211,6 +211,44 @@ describe('ServiceActions scaling', () => {
  * because a policy with no metric can never fire and must not pin a service to
  * a range nothing enforces. If the daemon's condition changes, this fails.
  */
+/**
+ * The Open button, which points at the service's public route.
+ *
+ * Two things are asserted beyond "does it render": the link opens in a new tab
+ * with `rel="noopener noreferrer"` (a target=_blank link without it hands the
+ * opened page a handle on this one), and it is absent rather than disabled
+ * when there is no URL - a disabled button implies a permission or a state you
+ * could change, and neither applies to a service that simply has no domain.
+ */
+describe('ServiceActions open', () => {
+  const exposed = {
+    ...withScaling(2),
+    Expose: { Port: 3000, Domains: ['shop.example.com'] },
+  } as Service
+
+  it('links to the public URL in a new tab, safely', () => {
+    renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, exposed)
+    const link = screen.getByRole('link', { name: /Open/ })
+    expect(link.getAttribute('href')).toBe('https://shop.example.com')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+
+  it('is offered to a viewer: opening a public URL needs no role', () => {
+    renderActions(
+      { deploying: false, updated: 2, total: 2 },
+      { ...adminSession, session: { subject: 'v', role: 'viewer', via: 'session' } },
+      exposed,
+    )
+    expect(screen.getByRole('link', { name: /Open/ })).toBeTruthy()
+  })
+
+  it('is absent, not disabled, for a service with no public route', () => {
+    renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, withScaling(2))
+    expect(screen.queryByRole('link', { name: /Open/ })).toBeNull()
+  })
+})
+
 describe('scaleBounds', () => {
   it('leaves a service with no policy unbounded above, floored at one', () => {
     const b = scaleBounds(withScaling(3))
