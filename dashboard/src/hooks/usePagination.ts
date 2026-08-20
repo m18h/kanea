@@ -1,11 +1,16 @@
 import { useState } from 'react'
 
-/** One page of a list. Ten rows keeps a card-height table scannable; the
- * selector offers more for whoever wants a wall of data. */
-export const DefaultPageSize = 10
+/** One page of a list. Twenty rows fills a screen without asking anyone to
+ * page through a short list; the selector offers more for whoever wants a wall
+ * of data. */
+export const DefaultPageSize = 20
 
-/** The sizes the pager offers. */
-export const PageSizes = [10, 20, 50, 100] as const
+/** The sizes the pager offers.
+ *
+ * The smallest is the default, and PaginationControls leans on that: it hides
+ * itself for a list that fits at DefaultPageSize, so a size below the default
+ * would put a pager under a table that never needs one. */
+export const PageSizes = [20, 50, 100] as const
 
 export interface Pagination<T> {
   /** The window of items the current page shows. */
