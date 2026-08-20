@@ -448,7 +448,7 @@ func runDoctor(args []string) error {
 
 	o := newOut()
 	o.printf("kanea doctor: %s\n\n", version)
-	ok := renderChecks(o, preflight(preflightOptions{
+	ok, skipped := renderCheckResults(o, preflight(preflightOptions{
 		dataDir: *dataDir, containerdSocket: *containerdSocket,
 		networkMode:    *networkMode,
 		buildkitSocket: *buildkitSocket,
@@ -456,6 +456,12 @@ func runDoctor(args []string) error {
 		serviceCIDR:    *docServiceCIDR,
 		offline:        *offline,
 	}))
+	if skipped > 0 {
+		// A count, at the end. Each skipped line already says how to resolve
+		// it; what this adds is the thing a reader scanning a long list needs
+		// to know: how much of the node was actually looked at.
+		o.printf("\n%d check(s) were not performed by this user; re-run with sudo for the full picture\n", skipped)
+	}
 	if err := o.Err(); err != nil {
 		return err
 	}

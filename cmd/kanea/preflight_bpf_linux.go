@@ -49,13 +49,24 @@ func checkBPF() checkResult {
 	if info, err := os.Stat(dpmap.PinRoot); err == nil && info.IsDir() {
 		return pass("bpf", "bpffs and cgroup2 are mounted; "+dpmap.PinRoot+" exists")
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// The pin root is root-owned, so an ordinary user meets EACCES here on
+		// a node whose datapath is fine (v1.86). That is a check that did not
+		// run, not a node that is broken.
+		if deniedByPermission(err) {
+			return skip("bpf", "not checked: "+dpmap.PinRoot+" is not readable by this user")
+		}
 		return fail("bpf", dpmap.PinRoot+": "+err.Error(), "check permissions on "+dpmap.PinRoot)
 	}
 	parent := filepath.Dir(dpmap.PinRoot)
 	if err := syscall.Access(parent, wOK); err != nil {
+		// Same distinction one level up (v1.86): kanead runs as root and
+		// creates the pin root at startup, so an ordinary user finding the
+		// parent unwritable has learned nothing about the node.
+		if deniedByPermission(err) {
+			return skip("bpf", "not checked: "+parent+" is not writable by this user")
+		}
 		return fail("bpf", parent+" is not writable: "+err.Error(),
-			"kanead runs as root and creates "+dpmap.PinRoot+" at startup; "+
-				"this process cannot, which usually means doctor is not running as root")
+			"kanead runs as root and creates "+dpmap.PinRoot+" at startup")
 	}
 	return pass("bpf", "bpffs and cgroup2 are mounted; "+dpmap.PinRoot+" is creatable")
 }

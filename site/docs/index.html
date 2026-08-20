@@ -1083,17 +1083,22 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       traffic is one nftables rule in an owned <code>kanea</code> table, and since v1.65 the
       rule and <code>net.ipv4.ip_forward</code> are <b>re-asserted every thirty seconds</b>:
       a firewall reload that flushes the ruleset costs seconds, not a daemon restart. A
-      FORWARD-drop policy another tool installs can still eat that traffic, and
-      <code>kanea doctor</code> detects and names it, along with a missing
-      <code>kanea</code> table and forwarding turned off.
+      drop policy another tool installs can still eat that traffic, on the <b>forward</b>
+      hook and on the <b>input</b> hook alike &mdash; the second is how an alloc reaches the
+      internal resolver, and a default-deny ufw eats it while the host's own
+      <code>dig</code> keeps working, since every manager accepts <code>lo</code>
+      unconditionally. <code>kanea doctor</code> detects and names both, passing once the
+      ruleset carries an accept for the cluster CIDR, and <code>kanea firewall</code>
+      prints the rules; a missing <code>kanea</code> table and forwarding turned off are
+      findings of their own.
     </p>
 
     <h4>Internal DNS</h4>
     <p>
       Allocs resolve through <code>kanead</code>'s own resolver, bound to the datapath's host
-      anchor (the node CIDR's <code>.1</code>) and never a wildcard. It answers
-      <code>&lt;service&gt;.&lt;project&gt;.kanea</code> names authoritatively and forwards
-      everything else upstream. The upstream list is, in order of precedence: the
+      anchor (the node CIDR's <code>.1</code>) and never a wildcard, on <b>UDP and TCP</b>
+      alike. It answers <code>&lt;service&gt;.&lt;project&gt;.kanea</code> names
+      authoritatively and forwards everything else upstream. The upstream list is, in order of precedence: the
       <code>--dns-upstream</code> flag; the server config's <code>dns</code> stanza
       (v1.66); the host's own <code>/etc/resolv.conf</code>, read once at startup, taken
       exactly as listed. That includes systemd-resolved's <code>127.0.0.53</code> stub,
@@ -1115,6 +1120,27 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       says so in its log, the same precedence every half of the server config follows. The
       stanza's own reference, and how to apply an edit, is in
       <a href="#nodeconfig-dns">Node configuration</a>.
+    </p>
+    <div class="callout">
+      <b class="label">A host firewall is what usually breaks this</b>
+      <p>
+        An alloc's query to the resolver is a <b>new inbound connection to the host on a
+        veth</b>, so it crosses the input hook like any other arrival and a default-deny
+        ufw or firewalld eats it. Nothing about it looks like a firewall problem: the
+        host's own <code>dig @10.244.0.1</code> keeps answering, because every manager
+        accepts <code>lo</code> unconditionally, and the resolver's logs show a healthy
+        server nobody is reaching. <code>kanea doctor</code> names it and
+        <code>kanea firewall</code> prints the rules.
+      </p>
+    </div>
+    <p>
+      TCP is served beside UDP (v1.86) because three things set the truncation bit &mdash;
+      an internal answer over 512 bytes, an upstream reply that filled the read buffer, and
+      an upstream reply that already carried TC &mdash; and each one tells a client to retry
+      over TCP. Serving only UDP made every one of those a dead end. The TCP half is bounded
+      the way the UDP half is: a hard concurrent-connection cap whose refusals are counted,
+      deadlines on every connection, and a TCP query forwarded over TCP, so the retry can
+      carry what the datagram could not.
     </p>
     <p>
       Datapath state is <b>derived state</b>. Programs, maps and the cgroup link are pinned
@@ -2413,6 +2439,32 @@ service "web" {
   <span class="k">task</span> <span class="s">"app"</span> {
     <span class="k">image</span> = <span class="s">"registry.example.com/shop/api:1.4"</span>
     <span class="k">user</span> { <span class="k">uid</span> = 999 }
+  }
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>image</code></td><td>string</td><td><b>Required.</b> Unlike a task an init container has no <code>build</code> block, so there is no pipeline to produce one.</td></tr>
+          <tr><td><code>command</code></td><td>list(string)</td><td>Overrides the image entrypoint. An argument array, never a shell string (R12's rule).</td></tr>
+          <tr><td><code>env</code></td><td>map</td><td><code>secret:</code> references and <code>${service.…}</code> interpolations work exactly as they do on a task.</td></tr>
+          <tr><td><code>resources</code></td><td>block</td><td>Its own. An omitted limit is unbounded (R11); nothing is inherited from the task.</td></tr>
+          <tr><td><code>user</code></td><td>block</td><td>Its own numeric identity (R23). Independent of <code>task.user</code> on purpose: running as root to <code>chown</code> a directory the task owns as 999 is the canonical use.</td></tr>
+          <tr><td><code>capabilities</code></td><td>list(string)</td><td>R13's baseline and permitted set, same rule as a task's.</td></tr>
+          <tr><td><code>registry_auth_ref</code></td><td>string</td><td>This step's pull credential, project-scoped like every other reference (R5).</td></tr>
+          <tr><td><code>pull_policy</code></td><td>string</td><td>R33's, minus <code>always</code>: there is one pinned-image field and it belongs to the task.</td></tr>
+          <tr><td><code>timeout</code></td><td>string</td><td>Bounds this step. Omit it for no timeout. A <b>floor, not a deadline</b>: the kill lands within one reconcile pass.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A sequence re-runs from the first step on every alloc creation - a
+      deploy, a crash restart, a spec change - so <b>init steps must be
+      idempotent</b>. That is the same standing requirement the netns, the
+      secrets tree and the staged host binds carry: an alloc is built, never
+      resumed.
+    </p>
+
     <h3 id="spec-env-group">env_group</h3>
     <p>
       An environment declared once and <b>taken</b> by the services that want
@@ -2479,23 +2531,44 @@ service "web" {
     <span class="k">content</span> = <span class="s">"db:5432:app:${secret.shop[\"database-password\"]}"</span>
   }
 }</code></pre>
+    <p>
+      <code>content</code> is an ordinary HCL string, so a whole config file
+      goes in a heredoc; this is the shape most files actually take.
+    </p>
+    <pre><code><span class="k">file</span> <span class="s">"app-config"</span> {
+  <span class="k">path</span>    = <span class="s">"/etc/app/config.yaml"</span>
+  <span class="k">content</span> = <span class="s">&lt;&lt;-EOT</span>
+<span class="s">    server:</span>
+<span class="s">      addr: ":8080"</span>
+<span class="s">      upstream: "${service.api.host}:${service.api.port.http}"</span>
+<span class="s">    database:</span>
+<span class="s">      dsn: "postgres://app:${secret.shop[\"database-password\"]}@db:5432/app"</span>
+<span class="s">    log:</span>
+<span class="c">      # a literal dollar-brace the app expands itself</span>
+<span class="s">      format: "$${level} $${msg}"</span>
+<span class="s">  EOT</span>
+}</code></pre>
+    <p>
+      Three things there are worth naming. <code>${service.…}</code> and
+      <code>${secret.…}</code> interpolate in the same file, and it is the
+      second that decides the rest: because one line names a secret, the whole
+      file is written <code>0400</code> on a tmpfs of its own and the record
+      keeps the <i>reference</i>, never the value. Content of its own that looks
+      like interpolation is escaped <code>$${…}</code>, which is HCL's rule
+      rather than Kanea's. And <code>file</code> blocks are the one place a
+      <code>&lt;&lt;-EOT</code> body reads better than a <code>source</code>
+      path: a short config that belongs to the spec does not need a second file
+      beside it.
+    </p>
     <div class="tablewrap">
       <table>
         <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>image</code></td><td>string</td><td><b>Required.</b> Unlike a task an init container has no <code>build</code> block, so there is no pipeline to produce one.</td></tr>
-          <tr><td><code>command</code></td><td>list(string)</td><td>Overrides the image entrypoint. An argument array, never a shell string (R12's rule).</td></tr>
-          <tr><td><code>env</code></td><td>map</td><td><code>secret:</code> references and <code>${service.…}</code> interpolations work exactly as they do on a task.</td></tr>
-          <tr><td><code>resources</code></td><td>block</td><td>Its own. An omitted limit is unbounded (R11); nothing is inherited from the task.</td></tr>
-          <tr><td><code>user</code></td><td>block</td><td>Its own numeric identity (R23). Independent of <code>task.user</code> on purpose: running as root to <code>chown</code> a directory the task owns as 999 is the canonical use.</td></tr>
-          <tr><td><code>capabilities</code></td><td>list(string)</td><td>R13's baseline and permitted set, same rule as a task's.</td></tr>
-          <tr><td><code>registry_auth_ref</code></td><td>string</td><td>This step's pull credential, project-scoped like every other reference (R5).</td></tr>
-          <tr><td><code>pull_policy</code></td><td>string</td><td>R33's, minus <code>always</code>: there is one pinned-image field and it belongs to the task.</td></tr>
-          <tr><td><code>timeout</code></td><td>string</td><td>Bounds this step. Omit it for no timeout. A <b>floor, not a deadline</b>: the kill lands within one reconcile pass.</td></tr>
           <tr><td><code>path</code></td><td>string</td><td><b>Required.</b> Absolute, clean, <code>..</code>-free. Refused under <code>/dev</code>, <code>/proc</code>, <code>/sys</code>, at <code>/etc/resolv.conf</code>, and where a volume or socket already mounts.</td></tr>
           <tr><td><code>content</code></td><td>string</td><td>Inline. <code>${service.…}</code> and <code>${secret.…}</code> interpolate; a literal dollar-brace is <code>$${…}</code>.</td></tr>
-          <tr><td><code>source</code></td><td>string</td><td>A path beside the spec, read at parse and embedded. Relative only. Mutually exclusive with <code>content</code>.</td></tr>
+          <tr><td><code>source</code></td><td>string</td><td>A path beside the spec, read at parse and embedded. Relative only, no symlink in any component, mutually exclusive with <code>content</code>. <b>Refused where the parser has no directory</b>: the dashboard's spec editor and MCP, because that parse happens inside <code>kanead</code> as root and reading a path there would be an arbitrary file read.</td></tr>
           <tr><td><code>mode</code></td><td>string</td><td>Octal. Default <code>0644</code>, or <code>0400</code> for a file interpolating a secret. An execute bit is refused: a file block delivers configuration, not a program.</td></tr>
+          <tr><td>&mdash;</td><td>&mdash;</td><td><b>Size.</b> 64 KiB per file and 128 KiB per service, post-substitution (PRD §21). A <code>Desired</code> record is CDC-replicated and the change log holds a second copy of every value it ships, so bulk bytes here are paid for on every apply, forever.</td></tr>
         </tbody>
       </table>
     </div>
@@ -3896,14 +3969,38 @@ kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
       containerd socket, bpffs and the cgroup2 mount, kernel version, cgroups v2 and slice
       placement, the effective memory floor, subnet overlap, the state database's
       permissions, the build socket, disk headroom and clock synchronisation. It also
-      names known interference, like a firewall FORWARD-drop policy (docker, ufw) eating
-      east-west traffic. Safe to run any time.
+      names known interference, like a host firewall dropping on the hooks alloc traffic
+      crosses (docker, ufw, firewalld). Safe to run any time.
     </p>
     <p>
-      A failing check exits non-zero; warnings do not. <code>--offline</code> skips the
-      one network probe, which is a reachability check for the pinned artefacts rather
-      than a requirement &mdash; on an air-gapped node it is the expected answer, not a
-      problem.
+      A failing check exits non-zero; warnings do not. A check <i>this user</i> may not
+      perform &mdash; the containerd socket, the bpf pin root and the state database are
+      all root-owned &mdash; is reported <code>SKIP</code> rather than <code>FAIL</code>,
+      and the run says once at the end how many need root. "I could not look" is not
+      "it is broken", and reporting it as one sends an operator to reinstall a healthy
+      node. <code>--offline</code> skips the one network probe, which is a reachability
+      check for the pinned artefacts rather than a requirement &mdash; on an air-gapped
+      node it is the expected answer, not a problem.
+    </p>
+
+    <h4><code>kanea firewall</code></h4>
+    <pre class="plain">kanea firewall [--manager=ufw|firewalld|nft|iptables] [--all]
+               [--prefix=&hellip;] [--node-cidr=&hellip;] [--cluster-cidr=&hellip;] [--network=ebpf|netns]</pre>
+    <p>
+      Prints the host-firewall rules this node's workloads need, derived from this node's
+      own cluster CIDR and resolver address rather than from an example. Two allowances,
+      because alloc traffic crosses two hooks a firewall owns: <b>forward</b>, on its way
+      off the node, and <b>input</b>, to reach the internal resolver &mdash; a query to the
+      resolver is a new inbound connection to the host on a veth. With no argument it
+      prints for the manager that appears to own the ruleset; <code>--all</code> prints
+      every one.
+    </p>
+    <p>
+      <b>It prints and never applies.</b> Kanea owns exactly the <code>kanea</code>
+      nftables table and writes nothing outside it: a rule placed in a manager's ruleset is
+      flushed away by that manager on its next reload, so applying one would be a fix that
+      silently stops being applied. A published port needs its own inbound allow, which
+      this command cannot know without asking the daemon.
     </p>
 
     <h4><code>kanea install</code></h4>
