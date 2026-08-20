@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, Pencil, Play, RotateCw, Square, SquareTerminal } from 'lucide-react'
+import { Loader2, Minus, Pencil, Play, Plus, RotateCw, Square, SquareTerminal } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,6 +21,7 @@ import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { useSession } from '@/hooks/useSession'
 import { allocSubject, seedFromHistory, seriesKey, useSeries, useTimedSeries } from '@/hooks/useSeries'
 import { seriesStatus } from '@/lib/seriesStatus'
+import { scaleBounds } from '@/lib/scale'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { Link } from '@/lib/router'
@@ -336,6 +337,7 @@ export function ServiceActions({
   const stopped = desired.Count === 0
   const disabled = !admin || busy !== null || converging
   const title = admin ? undefined : 'Requires the admin role'
+  const bounds = scaleBounds(desired)
   const spinner = (name: string) =>
     busy === name || (initiated === name && converging) ? (
       <Loader2 size={14} className="animate-spin" />
@@ -373,6 +375,51 @@ export function ServiceActions({
         </Button>
       ) : (
         <>
+          {/* Scaling writes one number and the reconciler converges; this is
+              the same route `kanea scale` and the autoscaler use, so the
+              dashboard is not a second path to the runtime.
+
+              The floor is one, not zero: scaling to zero is stopping, and it
+              lives behind Stop's confirmation rather than behind a button you
+              can reach by holding the mouse down. */}
+          {/* The tooltip sits on the group rather than on each button, which
+              is also what makes it reachable: a disabled button fires no
+              pointer events, so the hover lands on this element and the
+              explanation shows. Role comes first when it applies - a viewer
+              needs to know why the control is dead before they need to know
+              what the autoscaler would do with it. */}
+          <div className="flex items-center rounded-md border" title={title ?? bounds.hint}>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Scale down"
+              className="h-8 rounded-r-none px-2"
+              disabled={disabled || desired.Count <= bounds.min}
+              onClick={() =>
+                run('scale', () => scaleService(project, service, desired.Count - 1, csrf))
+              }
+            >
+              <Minus size={14} />
+            </Button>
+            <span
+              aria-label="Replicas"
+              className="min-w-9 px-1 text-center font-mono text-sm tabular-nums"
+            >
+              {spinner('scale') ?? desired.Count}
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Scale up"
+              className="h-8 rounded-l-none px-2"
+              disabled={disabled || desired.Count >= bounds.max}
+              onClick={() =>
+                run('scale', () => scaleService(project, service, desired.Count + 1, csrf))
+              }
+            >
+              <Plus size={14} />
+            </Button>
+          </div>
           <Button
             size="sm"
             variant="outline"
