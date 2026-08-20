@@ -38,19 +38,22 @@ func serveTCP(t *testing.T, d *DNS) string {
 	// Addr() reports the UDP bind, and Serve completes that before it binds TCP
 	// on the resolved port (dns.go: the two must answer on one port, so the
 	// order is forced). A non-empty Addr is therefore not proof that the TCP
-	// listener is accepting, and dialling on that signal alone is a race that
+	// listener exists, and dialling on that signal alone is a race that
 	// surfaces as "connection refused" on a loaded machine - which is how it
-	// failed in CI while passing 40 consecutive local runs. Wait for the
-	// transport this helper actually hands out.
+	// failed in CI while passing 40 consecutive local runs.
+	//
+	// Observed rather than probed: a dial would consume a slot, and
+	// TestTheTCPConnectionCapRefusesAndCounts runs with MaxTCPConns=1, where
+	// spending the only one here refuses the connection the test came to make.
+	// The bind is what matters anyway - the kernel queues connections from
+	// ListenTCP onward, so there is nothing to wait for past this pointer.
 	for range 200 {
-		probe, err := net.DialTimeout("tcp", addr, time.Second)
-		if err == nil {
-			_ = probe.Close() //nolint:errcheck // a readiness probe, nothing was written
+		if d.listener.Load() != nil {
 			return addr
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("tcp listener never accepted")
+	t.Fatal("tcp listener never bound")
 	return addr
 }
 
