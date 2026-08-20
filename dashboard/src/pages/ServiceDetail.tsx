@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, Pencil, Play, RotateCw, Square, SquareTerminal } from 'lucide-react'
+import {
+  Loader2,
+  Minus,
+  Pencil,
+  Play,
+  Plus,
+  RotateCw,
+  Scaling,
+  Square,
+  SquareTerminal,
+} from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,8 +31,11 @@ import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { useSession } from '@/hooks/useSession'
 import { allocSubject, seedFromHistory, seriesKey, useSeries, useTimedSeries } from '@/hooks/useSeries'
 import { seriesStatus } from '@/lib/seriesStatus'
+import { scaleBounds } from '@/lib/scale'
+import { exposeUrls } from '@/lib/exposeUrl'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
+import { OpenUrlMenu } from '@/components/OpenUrlMenu'
 import { Link } from '@/lib/router'
 import {
   Topic,
@@ -122,7 +135,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <BackChip to="/services">Services</BackChip>
-          <PageHeader title={<span className="font-mono">{service}</span>} subtitle={key} />
+          <PageHeader title={<span className="font-mono">{key}</span>} />
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }, (_, i) => (
@@ -163,8 +176,14 @@ export function ServiceDetail({ project, service }: { project: string; service: 
             ) : null}
           </div>
         </div>
+        {/* The title is the service's full name, project included: a service
+            name is only unique inside its project, so `web` alone names two
+            different things on a node running `shop` and `blog`. It is also
+            the form every other surface uses - PipelineDetail's title, the
+            CLI's `project/service` argument, the stats subject below - so the
+            page's name now matches what you would type to reach it. */}
         <PageHeader
-          title={<span className="font-mono">{service}</span>}
+          title={<span className="font-mono">{key}</span>}
           subtitle={
             <span className="inline-flex items-center gap-3">
               {status ? <StatusDot tone={status.tone} label={status.word} /> : null}
@@ -282,6 +301,7 @@ export function ServiceActions({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmStop, setConfirmStop] = useState(false)
+  const [scaleOpen, setScaleOpen] = useState(false)
   // Which action kicked off the rollout the page is now watching. Cleared
   // when convergence lands; the spinner rides it.
   const [initiated, setInitiated] = useState<string | null>(null)
@@ -330,6 +350,8 @@ export function ServiceActions({
   const stopped = desired.Count === 0
   const disabled = !admin || busy !== null || converging
   const title = admin ? undefined : 'Requires the admin role'
+  const bounds = scaleBounds(desired)
+  const urls = exposeUrls(desired)
   const spinner = (name: string) =>
     busy === name || (initiated === name && converging) ? (
       <Loader2 size={14} className="animate-spin" />
@@ -349,6 +371,11 @@ export function ServiceActions({
             : `rolling out · ${rollout.updated}/${rollout.total} updated`}
         </span>
       ) : null}
+      {/* Opening a public URL is navigation, not a mutation, so it is not
+          gated on the admin role the write buttons need. It is absent rather
+          than disabled when there is nothing to open: see exposeUrls for the
+          cases, one of which the dashboard cannot resolve for a viewer. */}
+      <OpenUrlMenu urls={urls} />
       <Link to={`/services/${project}/${service}/edit`}>
         <Button size="sm" variant="outline">
           <Pencil size={14} />
@@ -367,6 +394,33 @@ export function ServiceActions({
         </Button>
       ) : (
         <>
+          {/* Scaling writes one number and the reconciler converges; this is
+              the same route `kanea scale` and the autoscaler use, so the
+              dashboard is not a second path to the runtime. The count is
+              chosen in a dialog rather than nudged in place: a replica count
+              is a decision, and one taken by holding down a button is a
+              decision nobody made deliberately. */}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled}
+            title={title ?? bounds.hint}
+            onClick={() => setScaleOpen(true)}
+          >
+            {spinner('scale') ?? <Scaling size={14} />}
+            Scale
+          </Button>
+          <ScaleDialog
+            open={scaleOpen}
+            onClose={() => setScaleOpen(false)}
+            subject={`${project}/${service}`}
+            current={desired.Count}
+            bounds={bounds}
+            onScale={(count) => {
+              setScaleOpen(false)
+              run('scale', () => scaleService(project, service, count, csrf))
+            }}
+          />
           <Button
             size="sm"
             variant="outline"
@@ -400,6 +454,134 @@ export function ServiceActions({
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * ScaleDialog picks a replica count.
+ *
+ * A dialog rather than a stepper in the toolbar, because a replica count is a
+ * decision: it wants the current value in front of you, the range you may
+ * choose from, and one deliberate confirmation - not a button that changes
+ * production every time it is clicked.
+ *
+ * The draft is local until Scale is pressed, so nothing is written while you
+ * are still choosing, and the picker is seeded from the live count each time
+ * the dialog opens rather than held between openings: the count can move under
+ * you (the autoscaler, another operator, `kanea scale`), and a stale draft
+ * would quietly undo whatever moved it.
+ */
+function ScaleDialog({
+  open,
+  onClose,
+  subject,
+  current,
+  bounds,
+  onScale,
+}: {
+  open: boolean
+  onClose: () => void
+  subject: string
+  current: number
+  bounds: { min: number; max: number; hint: string | undefined }
+  onScale: (count: number) => void
+}) {
+  const [draft, setDraft] = useState(current)
+  // Re-seeded on each *opening*, and deliberately not while open. Following
+  // the live count instead would look tidier and would make this control
+  // unusable on the services it matters most for: an autoscaling service moves
+  // its count every few seconds, and each move would wipe whatever the
+  // operator had typed. What they typed is an intent that does not depend on
+  // where the count happens to be - scaling to 7 is the same decision from 3
+  // as from 4 - so the draft is theirs until they cancel or commit.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (wasOpen !== open) {
+    setWasOpen(open)
+    if (open) setDraft(current)
+  }
+
+  const bounded = Number.isFinite(bounds.max)
+  const clamp = (n: number) => Math.min(Math.max(n, bounds.min), bounds.max)
+  // The buttons cannot leave the range, but the *starting* value can already
+  // be outside it: a service running twelve replicas when a policy capping it
+  // at ten is applied afterwards. Submitting that would be refused by the
+  // daemon, so it is refused here first.
+  const valid = draft >= bounds.min && draft <= bounds.max
+  const unchanged = draft === current
+
+  return (
+    <Dialog open={open} onClose={onClose} title={`Scale ${subject}`} className="w-[90vw] max-w-sm">
+      <div className="space-y-4">
+        <div className="flex items-center justify-center gap-3">
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label="Fewer replicas"
+            className="h-10 w-10 p-0"
+            disabled={draft <= bounds.min}
+            onClick={() => setDraft((n) => clamp(n - 1))}
+          >
+            <Minus size={16} />
+          </Button>
+          {/* A readout, not a field. The count is chosen with the two
+              buttons, which cannot express an out-of-range or half-typed
+              value, so there is nothing here to validate and nothing to
+              mis-type. role="status" is what makes the change audible to a
+              screen reader: pressing a button that silently rewrites a number
+              elsewhere on screen is exactly what a live region is for. */}
+          <span
+            role="status"
+            aria-live="polite"
+            className="w-24 text-center font-mono text-lg tabular-nums"
+          >
+            {draft}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label="More replicas"
+            className="h-10 w-10 p-0"
+            disabled={draft >= bounds.max}
+            onClick={() => setDraft((n) => clamp(n + 1))}
+          >
+            <Plus size={16} />
+          </Button>
+        </div>
+
+        <p className="text-center text-xs text-muted-foreground">
+          Currently <span className="font-mono">{current}</span>
+          {bounded ? (
+            <>
+              {' · '}
+              allowed <span className="font-mono">
+                {bounds.min}-{bounds.max}
+              </span>
+            </>
+          ) : null}
+        </p>
+
+        {/* What the autoscaler will do with the number, said before it is
+            written rather than discovered afterwards. */}
+        {bounds.hint ? (
+          <p className="rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">{bounds.hint}</p>
+        ) : null}
+        <p className="text-center text-xs text-muted-foreground">
+          Scaling to zero is stopping; use Stop for that.
+        </p>
+
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          {/* Always "Scale to N", never a bare "Scale": the button states the
+              decision it commits, and it stops colliding with the toolbar
+              button that opened this dialog. */}
+          <Button size="sm" disabled={!valid || unchanged} onClick={() => onScale(draft)}>
+            {valid ? `Scale to ${draft}` : 'Scale'}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   )
 }
 

@@ -65,6 +65,10 @@ export const serviceSchema = z.object({
   Image: z.string(),
   Resources: resourcesSchema,
   Expose: exposeSchema.nullish(),
+  // The routes after the first (v1.50). `Expose` stays the primary one so
+  // every pre-v1.50 record and single-route reader keeps meaning what it
+  // meant; the rest ride here, additively.
+  extra_exposes: z.array(exposeSchema).nullish(),
   Publish: z.array(publishSchema).nullish(),
   DependsOn: z.array(z.string()).nullish(),
   Scaling: scalingPolicySchema.nullish(),
