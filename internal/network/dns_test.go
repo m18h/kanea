@@ -127,7 +127,7 @@ func TestDNSResolvesServiceToFrontend(t *testing.T) {
 	d := testDNS(t)
 
 	q := buildQuery(t, 0x1234, "web.shop.kanea", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if r.ID != 0x1234 {
 		t.Errorf("id = %#x, want 0x1234", r.ID)
@@ -147,7 +147,7 @@ func TestDNSResolvesAllocName(t *testing.T) {
 	d := testDNS(t)
 
 	q := buildQuery(t, 1, "alloc-shop-web-1.web.shop.kanea", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if len(r.Answers) != 1 || r.Answers[0].String() != "10.200.1.6" {
 		t.Fatalf("answers = %v, want 10.200.1.6", r.Answers)
@@ -158,7 +158,7 @@ func TestDNSIsCaseInsensitive(t *testing.T) {
 	d := testDNS(t)
 
 	q := buildQuery(t, 1, "WEB.Shop.KANEA", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if len(r.Answers) != 1 {
 		t.Fatalf("answers = %v, want the service to resolve regardless of case", r.Answers)
@@ -173,7 +173,7 @@ func TestDNSAnswersNodataForAAAA(t *testing.T) {
 	d := testDNS(t)
 
 	q := buildQuery(t, 1, "web.shop.kanea", typeAAAA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if r.RCode != rcodeNoError {
 		t.Errorf("rcode = %d, want NOERROR (NODATA) for AAAA on an existing name", r.RCode)
@@ -190,7 +190,7 @@ func TestDNSAnswersNXDomainForUnknownInternalName(t *testing.T) {
 	d := testDNS(t)
 
 	q := buildQuery(t, 1, "nope.shop.kanea", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if r.RCode != rcodeNXDomain {
 		t.Errorf("rcode = %d, want NXDOMAIN", r.RCode)
@@ -206,7 +206,7 @@ func TestDNSRefusesExternalNamesWithoutUpstreams(t *testing.T) {
 	d := testDNS(t)
 
 	q := buildQuery(t, 1, "example.com", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if r.RCode != rcodeRefused {
 		t.Errorf("rcode = %d, want REFUSED", r.RCode)
@@ -225,7 +225,7 @@ func TestDNSFailsFastOnDeadUpstream(t *testing.T) {
 
 	start := time.Now()
 	q := buildQuery(t, 1, "example.com", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 	elapsed := time.Since(start)
 
 	if r.RCode != rcodeServFail {
@@ -243,7 +243,7 @@ func TestDNSInternalNamesAreUnaffectedByDeadUpstream(t *testing.T) {
 
 	start := time.Now()
 	q := buildQuery(t, 1, "web.shop.kanea", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if len(r.Answers) != 1 {
 		t.Fatalf("answers = %v", r.Answers)
@@ -336,7 +336,7 @@ func TestDNSForwardsToUpstream(t *testing.T) {
 
 	d := testDNS(t, conn.LocalAddr().String())
 	q := buildQuery(t, 0xABCD, "example.com", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if r.RCode != rcodeNoError {
 		t.Fatalf("rcode = %d, want NOERROR", r.RCode)
@@ -355,7 +355,7 @@ func TestDNSDoesNotForwardWithoutRecursionDesired(t *testing.T) {
 	d := testDNS(t, "203.0.113.1:53")
 
 	q := buildQuery(t, 1, "example.com", typeA, false)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if r.RCode != rcodeRefused {
 		t.Errorf("rcode = %d, want REFUSED", r.RCode)
@@ -369,7 +369,7 @@ func TestDNSWithEmptyZone(t *testing.T) {
 		t.Fatalf("NewDNS: %v", err)
 	}
 	q := buildQuery(t, 1, "web.shop.kanea", typeA, true)
-	r := parseReply(t, d.respond(t.Context(), q))
+	r := parseReply(t, d.respondUDP(t.Context(), q))
 
 	if r.RCode != rcodeNXDomain {
 		t.Errorf("rcode = %d, want NXDOMAIN from an empty zone", r.RCode)
@@ -462,13 +462,13 @@ func TestDNSAnswersPerQueryType(t *testing.T) {
 	d := dualStackDNS(t)
 
 	t.Run("A stays v4", func(t *testing.T) {
-		r := parseReply(t, d.respond(t.Context(), buildQuery(t, 1, "web.shop.kanea", typeA, true)))
+		r := parseReply(t, d.respondUDP(t.Context(), buildQuery(t, 1, "web.shop.kanea", typeA, true)))
 		if len(r.Answers) != 1 || r.Answers[0].String() != "10.201.0.1" {
 			t.Fatalf("A answers = %v, want only the v4 VIP", r.Answers)
 		}
 	})
 	t.Run("AAAA answers the v6 twin", func(t *testing.T) {
-		r := parseReply(t, d.respond(t.Context(), buildQuery(t, 2, "web.shop.kanea", typeAAAA, true)))
+		r := parseReply(t, d.respondUDP(t.Context(), buildQuery(t, 2, "web.shop.kanea", typeAAAA, true)))
 		if r.RCode != rcodeNoError || !r.AA {
 			t.Fatalf("rcode = %d, authoritative = %v", r.RCode, r.AA)
 		}
@@ -477,7 +477,7 @@ func TestDNSAnswersPerQueryType(t *testing.T) {
 		}
 	})
 	t.Run("ANY answers both", func(t *testing.T) {
-		r := parseReply(t, d.respond(t.Context(), buildQuery(t, 3, "web.shop.kanea", typeANY, true)))
+		r := parseReply(t, d.respondUDP(t.Context(), buildQuery(t, 3, "web.shop.kanea", typeANY, true)))
 		if len(r.Answers) != 2 {
 			t.Fatalf("ANY answers = %v, want both families", r.Answers)
 		}
@@ -486,14 +486,14 @@ func TestDNSAnswersPerQueryType(t *testing.T) {
 		// shop-web-1 predates dual-stack: its alloc name has no v6 address,
 		// and the deliberate NODATA is still the answer, never NXDOMAIN, and
 		// never someone else's address.
-		r := parseReply(t, d.respond(t.Context(),
+		r := parseReply(t, d.respondUDP(t.Context(),
 			buildQuery(t, 4, "alloc-shop-web-1.web.shop.kanea", typeAAAA, true)))
 		if r.RCode != rcodeNoError || r.NumAnswr != 0 || !r.AA {
 			t.Fatalf("rcode = %d, answers = %d, AA = %v; want authoritative NODATA", r.RCode, r.NumAnswr, r.AA)
 		}
 	})
 	t.Run("AAAA on a dual-stack alloc name", func(t *testing.T) {
-		r := parseReply(t, d.respond(t.Context(),
+		r := parseReply(t, d.respondUDP(t.Context(),
 			buildQuery(t, 5, "alloc-shop-web-0.web.shop.kanea", typeAAAA, true)))
 		if len(r.Answers) != 1 || r.Answers[0].String() != "fd10:244::5" {
 			t.Fatalf("answers = %v, want fd10:244::5", r.Answers)
@@ -546,7 +546,7 @@ func TestDNSRelayTruncatesAnOversizedUpstreamReply(t *testing.T) {
 
 	d := testDNS(t, upstream)
 	q := buildQuery(t, 9, "example.com", typeA, true)
-	reply := d.respond(t.Context(), q)
+	reply := d.respondUDP(t.Context(), q)
 	r := parseReply(t, reply)
 	if !r.TC {
 		t.Error("an oversized upstream reply was not marked truncated")
@@ -598,4 +598,10 @@ func TestNewDNSDropsUpstreamsThatPointAtItself(t *testing.T) {
 			t.Fatalf("upstreams = %v, want the stub kept", d.upstreams)
 		}
 	})
+}
+
+// respondUDP is respond over the datagram transport: what every test written
+// before the TCP listener (v1.86) meant by "respond".
+func (d *DNS) respondUDP(ctx context.Context, request []byte) []byte {
+	return d.respond(ctx, request, udpTransport)
 }

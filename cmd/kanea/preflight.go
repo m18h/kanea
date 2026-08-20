@@ -15,6 +15,7 @@ import (
 	goruntime "runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/m18h/kanea/internal/provision"
@@ -33,6 +34,13 @@ type checkResult struct {
 	// not be left alone.
 	OK   bool
 	Warn bool
+	// Skipped marks a check that could not run, which is a third thing and not
+	// a failure (v1.86). Most of these checks read a root-owned socket, a
+	// root-owned pin directory or a 0600 database, so run as an ordinary user
+	// they meet EACCES; reporting that as "containerd refuses connections"
+	// sent an operator to `kanea install` on a node whose containerd was
+	// healthy. What could not be looked at is reported as exactly that.
+	Skipped bool
 	// Detail says what was found; Fix says what to do about it. A check that
 	// reports a problem without saying how to fix it is a check that sends
 	// someone to a search engine.
@@ -50,6 +58,23 @@ func warn(name, detail, fix string) checkResult {
 
 func fail(name, detail, fix string) checkResult {
 	return checkResult{Name: name, Detail: detail, Fix: fix}
+}
+
+// skip records a check that could not be performed by this process. It is OK,
+// because the node is not implicated: nothing was learned either way.
+func skip(name, detail string) checkResult {
+	return checkResult{Name: name, OK: true, Skipped: true, Detail: detail,
+		Fix: "re-run as root to check this"}
+}
+
+// deniedByPermission reports whether an error is the kernel refusing this
+// process, rather than the node being wrong.
+//
+// It covers the wrapped forms too (*os.PathError, *net.OpError), because every
+// call site here gets one of those rather than a bare errno.
+func deniedByPermission(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EACCES) ||
+		errors.Is(err, syscall.EPERM)
 }
 
 // preflightOptions is what the checks need to know about this install.
@@ -113,7 +138,7 @@ func componentChecks(opts preflightOptions) []checkResult {
 	}
 	if opts.networkMode != networkNetns {
 		results = append(results, checkBPF())
-		results = append(results, networkEgressChecks()...)
+		results = append(results, networkEgressChecks(opts)...)
 	}
 	if opts.buildkitSocket != "off" {
 		results = append(results, checkBuildkit(opts.buildkitSocket, opts.layout))
@@ -276,6 +301,9 @@ func checkStateDBPerms(dataDir string) checkResult {
 		return pass("state permissions", path)
 	}
 	if err != nil {
+		if deniedByPermission(err) {
+			return skip("state permissions", "not checked: "+path+" is not readable by this user")
+		}
 		return warn("state permissions", "cannot stat "+path+": "+err.Error(),
 			"check permissions on the data directory")
 	}
@@ -589,6 +617,12 @@ func checkSocket(name, path, fix string) checkResult {
 	// daemon looks identical to a live one until something connects.
 	conn, err := net.DialTimeout("unix", path, 2*time.Second)
 	if err != nil {
+		// A socket this process may not open says nothing about the daemon
+		// behind it (v1.86): kanead's containerd socket is root-owned, so an
+		// ordinary user meets EACCES on a perfectly healthy node.
+		if deniedByPermission(err) {
+			return skip(name, "not checked: "+path+" is not readable by this user")
+		}
 		return fail(name, path+" exists but refuses connections", fix)
 	}
 	if err := conn.Close(); err != nil {
@@ -599,22 +633,37 @@ func checkSocket(name, path, fix string) checkResult {
 
 // renderChecks prints the results and reports whether anything failed.
 func renderChecks(o *out, results []checkResult) bool {
+	ok, _ := renderCheckResults(o, results)
+	return ok
+}
+
+// renderCheckResults is renderChecks with the skip count, for the caller that
+// wants to say so once at the end rather than on every line.
+//
+// A skipped check never clears ok: a check that could not run has found no
+// problem, and reporting one would be inventing a finding out of a permission
+// error.
+func renderCheckResults(o *out, results []checkResult) (bool, int) {
 	ok := true
+	skipped := 0
 	for _, r := range results {
 		switch {
 		case !r.OK:
 			ok = false
 			o.printf("  FAIL  %-16s %s\n", r.Name, r.Detail)
+		case r.Skipped:
+			skipped++
+			o.printf("  SKIP  %-16s %s\n", r.Name, r.Detail)
 		case r.Warn:
 			o.printf("  WARN  %-16s %s\n", r.Name, r.Detail)
 		default:
 			o.printf("  ok    %-16s %s\n", r.Name, r.Detail)
 		}
-		if r.Fix != "" && (!r.OK || r.Warn) {
+		if r.Fix != "" && (!r.OK || r.Warn || r.Skipped) {
 			o.printf("        %-16s → %s\n", "", r.Fix)
 		}
 	}
-	return ok
+	return ok, skipped
 }
 
 // confirm reads a line and reports whether it matches want, exactly.

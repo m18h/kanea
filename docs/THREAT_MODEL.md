@@ -1244,6 +1244,47 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 - **Physical access and disk theft.** Nothing here survives it except what full-
   disk encryption provides, which is the operating system's to configure.
 
+### 3.25 The internal resolver's TCP listener (A10, A05; PRD v1.86, §7.1)
+
+The resolver has always set the TC bit and, until v1.86, bound UDP only, so
+every client it told to retry over TCP met a closed port. It now serves TCP on
+the same node-local address, which adds one listener to the node's surface and
+therefore one paragraph here.
+
+**The bind is unchanged in reach.** `validateNodeLocal` still refuses a wildcard
+or public listen address (K-27), and the TCP listener binds the address the UDP
+socket actually bound rather than the configured one, so it cannot end up
+somewhere the datagram half is not. An open resolver on a public interface is
+still refused by the same check, for the same two reasons: amplification, and
+publishing the node's service inventory.
+
+**What is new is that a client can now hold something.** A datagram server keeps
+nothing between queries; a stream server keeps a socket and a goroutine per
+client, so the transport that makes truncation answerable is also the one a peer
+can sit on. Three bounds, all of them the discipline the UDP path already had:
+a hard concurrent-connection cap (`DefaultMaxTCPConns`) whose excess is closed
+immediately and **counted** rather than queued, a read deadline that is the idle
+timeout between messages and a shorter one once a message has started, and a
+write deadline on the reply. Connection reuse is honoured because RFC 7766 asks
+for it, and the idle timeout is what keeps that from being a way to hold a slot.
+An upstream forward from a TCP query still takes a `forwardSlots` slot first, so
+the stream transport cannot become a way around the cap on concurrent upstream
+queries.
+
+**Request size needs no separate policy**: the two-byte length prefix is the
+protocol's own bound, so a client cannot describe more than 65535 bytes, and a
+frame that claims fewer bytes than a DNS header is refused rather than parsed.
+Upstream replies are relayed as opaque bytes on both transports, so a hostile or
+broken upstream still never reaches the parser.
+
+**Residual:** the cap is per node, not per source address. A single host that
+opens `DefaultMaxTCPConns` connections denies TCP DNS to every other alloc until
+they idle out, and UDP keeps working throughout. The per-source cap the UDP
+relay carries (§3.16) is the shape a fix would take; it is not built, because
+every client here is an alloc on this node whose address the datapath assigned
+and whose identity is already enforced, so the attacker it would defend against
+is one that has already reached a workload.
+
 ---
 
 ## 7. Known residual risks
@@ -1263,3 +1304,5 @@ The password is not reachable at any tier: there is no tool that reads a secret.
 | A directory user's revoked group membership outlives login by up to a session lifetime | Group→role mapping is evaluated at bind time only; the session's 12 h absolute expiry bounds it (§3.20) |
 | A build's `RUN` steps can read unauthenticated loopback diagnostics (containerd metrics, edge status) and reach every project's VIPs | Host networking is what keeps a node-local registry reachable; a worker network namespace is the real fix and is unevaluated (§3.21) |
 | A Dockerfile `USER <non-root>` step escapes the uid-keyed metadata drop | Rootless uid-mapping puts non-root container users on subuids, not the build account; the rule covers the default root shape (§3.21) |
+| One alloc can exhaust the resolver's TCP connection cap for the whole node | The cap is per node, not per source; UDP is unaffected, and every client is an alloc whose address the datapath assigned (§3.25) |
+| `kanea doctor` cannot prove a host firewall actually permits alloc traffic | It reads the ruleset rather than probing it; the accept-rule search is a heuristic, and only a live query from an alloc's netns could be conclusive (PRD v1.86) |

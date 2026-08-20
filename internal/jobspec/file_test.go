@@ -321,3 +321,96 @@ service "web" {
 		t.Fatal("two files on one path were accepted")
 	}
 }
+
+// TestTheDocumentedHeredocExampleParses drives the exact example README.md and
+// site/docs/index.html print for a multi-line `file` body.
+//
+// It is here because a documentation example nobody has parsed is a claim, not
+// a fact, and this one makes three at once: that a heredoc interpolates like a
+// quoted string (it is a template expression either way, evaluated against the
+// same EvalContext), that `${service.…}` and `${secret.…}` coexist in one file,
+// and that `$${…}` survives as a literal for content with template syntax of
+// its own. Change the docs, change this; that is the point of it.
+func TestTheDocumentedHeredocExampleParses(t *testing.T) {
+	const src = `spec_version = 1
+project "shop" {}
+
+service "api" {
+  project = "shop"
+  network {
+    port "http" { container = 8080 }
+  }
+  task "app" {
+    image = "nginx:1.27"
+  }
+}
+
+service "web" {
+  project = "shop"
+
+  file "app-config" {
+    path    = "/etc/app/config.yaml"
+    content = <<-EOT
+      server:
+        addr: ":8080"
+        upstream: "${service.api.host}:${service.api.port.http}"
+      database:
+        dsn: "postgres://app:${secret.shop["database-password"]}@db:5432/app"
+      log:
+        # a literal dollar-brace the app expands itself
+        format: "$${level} $${msg}"
+    EOT
+  }
+
+  task "app" {
+    image = "nginx:1.27"
+  }
+}
+`
+	spec, diags := parseSpec(t, src)
+	if diags.HasErrors() {
+		t.Fatalf("the documented example does not parse: %v", diags)
+	}
+
+	var file *jobspec.File
+	for _, svc := range spec.Services {
+		if svc.Name != "web" {
+			continue
+		}
+		for _, f := range svc.Files {
+			if f.Name == "app-config" {
+				file = f
+			}
+		}
+	}
+	if file == nil {
+		t.Fatal("the file block did not survive parsing")
+	}
+
+	// The multi-line body is a body, not one line with escapes in it.
+	if strings.Count(string(file.Content), "\n") < 6 {
+		t.Fatalf("content is not multi-line:\n%q", file.Content)
+	}
+	// The service reference resolved; the secret did not, and must not have.
+	if !strings.Contains(string(file.Content), "api.shop.kanea:8080") {
+		t.Errorf("the service reference did not resolve:\n%s", file.Content)
+	}
+	if strings.Contains(string(file.Content), "database-password") {
+		t.Errorf("a secret reference was resolved into the content:\n%s", file.Content)
+	}
+	if len(file.SecretRefs) != 1 || file.SecretRefs[0] != "secret:shop/database-password" {
+		t.Errorf("secret refs = %v, want the one reference the file names", file.SecretRefs)
+	}
+	// The escaped dollar-brace is content, not interpolation.
+	if !strings.Contains(string(file.Content), "${level} ${msg}") {
+		t.Errorf("$${…} did not survive as a literal:\n%s", file.Content)
+	}
+	// The mode stays unset in the spec: which default applies is decided on
+	// the node, from whether the file carries references, so what the parser
+	// owes is the reference list checked above. The docs' claim that one
+	// credential line makes the whole file 0400 rests on that list being
+	// non-empty, not on a mode written here.
+	if file.Mode != "" {
+		t.Errorf("mode = %q, want it left for the node to default", file.Mode)
+	}
+}

@@ -41,6 +41,7 @@ var commands = []command{
 	{"agent", "run the control-plane daemon (kanead)", runAgent},
 	{"edge", "run the edge ingress proxy (kanea-edge, separate process; PRD §5.2.6)", runEdge},
 	{"doctor", "verify node health: deps, versions, disk, clock", runDoctor},
+	{"firewall", "print the host-firewall rules this node's workloads need (it never applies them)", runFirewall},
 	{"plan", "dry-run diff of a job spec; selectors (shop, shop/web) scope it", runPlan},
 	{"run", "apply a job spec or just the selected services (shop/web …); alias: apply", runRun},
 	{"stop", "stop a service (scale to zero; --rm deletes it)", runStop},
