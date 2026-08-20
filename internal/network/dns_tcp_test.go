@@ -34,6 +34,23 @@ func serveTCP(t *testing.T, d *DNS) string {
 	if addr == "" {
 		t.Fatal("server never bound")
 	}
+
+	// Addr() reports the UDP bind, and Serve completes that before it binds TCP
+	// on the resolved port (dns.go: the two must answer on one port, so the
+	// order is forced). A non-empty Addr is therefore not proof that the TCP
+	// listener is accepting, and dialling on that signal alone is a race that
+	// surfaces as "connection refused" on a loaded machine - which is how it
+	// failed in CI while passing 40 consecutive local runs. Wait for the
+	// transport this helper actually hands out.
+	for range 200 {
+		probe, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			_ = probe.Close() //nolint:errcheck // a readiness probe, nothing was written
+			return addr
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("tcp listener never accepted")
 	return addr
 }
 
