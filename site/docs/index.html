@@ -50,6 +50,7 @@
     <a class="sub" href="#install-init">Setting up the node</a>
     <a class="sub" href="#install-components">Host components</a>
     <a class="sub" href="#install-manual">Installing by hand</a>
+    <a class="sub" href="#install-image">The container image</a>
     <a class="sub" href="#install-upgrade">Upgrading</a>
     <a class="sub" href="#install-airgapped">Air-gapped nodes</a>
     <a class="part" href="#arch">Architecture</a>
@@ -782,6 +783,53 @@ brew install kanea</pre>
       the swap. A brew-owned binary upgrades with <code>brew upgrade kanea</code>, then
       <code>sudo kanea upgrade --no-fetch</code> for the restart-and-migrate half.
     </p>
+
+    <h3 id="install-image">The container image</h3>
+
+    <pre class="plain">docker run --rm ghcr.io/m18h/kanea:latest version
+
+# the shape a pipeline uses: the spec on a mount, the node over the network
+docker run --rm -v "$PWD:/workspace:ro" \
+  -e KANEA_URL -e KANEA_TOKEN \
+  ghcr.io/m18h/kanea:vX.Y.Z run shop.hcl   # pin it; that is what tags are for</pre>
+    <p>
+      <code>linux/amd64</code> and <code>linux/arm64</code> in one manifest list, tagged
+      <code>vX.Y.Z</code> and <code>latest</code>; <code>latest</code> moves only for a
+      plain <code>vX.Y.Z</code>, so a prerelease never becomes what everyone pulls by
+      default. Like Homebrew it is a <b>CLI channel, never a node channel</b>: it is for
+      the pipeline that deploys <i>to</i> a node, so every verb that acts on a host, its
+      systemd and its own binary &mdash; <code>agent</code>, <code>edge</code>,
+      <code>init</code>, <code>install</code>, <code>doctor</code>,
+      <code>upgrade</code> &mdash; is not what it carries.
+    </p>
+    <p>
+      <b>The image contains the released binary, not a rebuild of it.</b> The release
+      workflow builds the image after it signs, from the same
+      <code>linux_amd64</code>/<code>linux_arm64</code> archives you can download, after
+      verifying <code>checksums.txt</code> under its signature and each archive against
+      it &mdash; the two checks <a href="#install-manual">the by-hand install</a>
+      performs, in that order. So the manifest of hashes you can verify yourself
+      describes what is inside the image, with no second build to reconcile.
+    </p>
+    <p>
+      The digest is signed with the same keyless identity as the checksums, and carries
+      an SPDX attestation beside the signature:
+    </p>
+    <pre class="plain">cosign verify ghcr.io/m18h/kanea:vX.Y.Z \
+  --certificate-identity-regexp 'https://github.com/m18h/kanea/' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'</pre>
+    <div class="callout">
+      <b class="label">Two things about running it</b>
+      <p>
+        It runs as an unprivileged user (uid&nbsp;65532) with <code>/workspace</code> as
+        its working directory, so mount your spec there. And if your network terminates
+        TLS with its own CA, either drop the root into
+        <code>/usr/local/share/ca-certificates</code> and run
+        <code>update-ca-certificates</code> in a derived image, or pass the node's own CA
+        with <code>KANEA_CA_CERT</code> &mdash; which <i>replaces</i> the system pool
+        rather than adding to it, so it is the node's CA or the public ones, never both.
+      </p>
+    </div>
 
     <h3 id="install-upgrade">Upgrading</h3>
 
@@ -4837,12 +4885,21 @@ kanea logs -f shop/web</pre>
 
     <h3 id="remote-ci">In a pipeline</h3>
 
+    <p>
+      The CLI ships as a container image, <code>ghcr.io/m18h/kanea</code>, which is
+      what a runner wants: <code>linux/amd64</code> and <code>linux/arm64</code> in
+      one manifest list, tagged <code>vX.Y.Z</code> and <code>latest</code>. Pin the
+      version &mdash; that is what tags are for. See
+      <a href="#install-image">the container image</a> for what is in it and how to
+      verify it.
+    </p>
+
     <p>GitLab:</p>
     <div class="window">
       <div class="bar"><i></i><i></i><i></i><span>.gitlab-ci.yml</span></div>
 <pre class="plain">deploy:
   stage: deploy
-  image: ghcr.io/acme/ci-base:latest        # any image with the kanea binary
+  image: ghcr.io/m18h/kanea:vX.Y.Z            # pin the version
   variables:
     KANEA_URL: https://kanea.apps.example.com:8600
   script:
@@ -4855,6 +4912,8 @@ kanea logs -f shop/web</pre>
     <div class="window">
       <div class="bar"><i></i><i></i><i></i><span>.github/workflows/deploy.yml</span></div>
 <pre class="plain">- name: Deploy
+  # or run the image directly: docker run --rm -e KANEA_URL -e KANEA_TOKEN \
+  #   ghcr.io/m18h/kanea:vX.Y.Z deploy shop/web "$IMAGE"
   env:
     KANEA_URL: https://kanea.apps.example.com:8600
     KANEA_TOKEN: ${{ secrets.KANEA_TOKEN }}

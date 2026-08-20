@@ -223,6 +223,175 @@ jobs:
             dist/*.tar.gz dist/*.spdx.json \
             dist/checksums.txt dist/checksums.txt.sig dist/checksums.txt.pem
 
+  # The container image (PRD §5.2.12, v1.88): the CLI for a pipeline that
+  # deploys to a node, never the node itself.
+  #
+  # It runs AFTER the signing job and takes its binaries from what that job
+  # published, rather than compiling its own. That is the whole design: a
+  # `go build` inside the Containerfile would be simpler to write and would
+  # mean the checksums.txt every user verifies described bytes nobody ships.
+  # As built, the signed manifest of hashes covers the image's contents, which
+  # is v1.30's bundle argument pointed at a registry.
+  #
+  # Its own job for K-42's reason, unchanged: a registry push credential does
+  # not belong beside `cosign sign-blob`.
+  #
+  # The consequence of running after `build` is that the GitHub release already
+  # exists when this starts, so a failure here leaves a published release with
+  # no image rather than rolling anything back. That is the right way round:
+  # re-running this job fixes it, and the alternative (publish last) would mean
+  # the image could not be built from the release's own verified assets, which
+  # is the property the whole job exists for.
+  image:
+    name: Container image
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # gh release download
+      packages: write # ghcr.io/<this repository>
+      id-token: write # the same keyless cosign identity as checksums.txt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      # The apk step in the Containerfile runs on the target platform, so the
+      # arm64 half needs emulation. The binaries themselves never execute
+      # during the build; they are copied.
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      # Exactly what scripts/install.sh does, in its order: the signature over
+      # checksums.txt first, then each archive against checksums.txt. An
+      # archive that fails either check must not reach an image that carries
+      # this repository's name.
+      - name: Fetch and verify the released binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          V="${TAG#v}"
+          # Named one by one rather than globbed: "kanea_*_linux_*.tar.gz"
+          # also matches the offline bundles, which are not this.
+          gh release download "$TAG" -D dist \
+            -p "kanea_${V}_linux_amd64.tar.gz" \
+            -p "kanea_${V}_linux_arm64.tar.gz" \
+            -p checksums.txt -p checksums.txt.sig -p checksums.txt.pem
+          cd dist
+          cosign verify-blob \
+            --certificate checksums.txt.pem \
+            --signature checksums.txt.sig \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            checksums.txt
+          for arch in amd64 arm64; do
+            archive="kanea_${V}_linux_${arch}.tar.gz"
+            # The leading space is load-bearing (install.sh:96): it anchors the
+            # name to a whole field rather than to a suffix of one.
+            grep " ${archive}\$" checksums.txt | sha256sum -c -
+            mkdir -p "image/${arch}"
+            tar -C "image/${arch}" -xzf "$archive"
+            test -x "image/${arch}/kanea"
+          done
+          # The build context is these two files and nothing else: the
+          # repository is never handed to the builder.
+          find image -type f
+
+      - name: Resolve the image reference and tags
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Lowercased because a registry reference has to be, and an owner
+          # with a capital letter is a push that fails on the last step.
+          repo="$(printf '%s' "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${repo}"
+          tags="--tag ${image}:${TAG}"
+          # `latest` moves only for a plain vX.Y.Z. The anchored pattern is the
+          # point: sbom.sh's glob accepts a tag like v1.0.0-rc1, which is fine
+          # for a filename check and wrong here, because a prerelease that
+          # takes `latest` is a prerelease everyone pulls by default.
+          if printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            tags="${tags} --tag ${image}:latest"
+          else
+            echo "::notice::${TAG} is not a plain vX.Y.Z; leaving :latest where it is"
+          fi
+          echo "IMAGE=${image}" >> "$GITHUB_ENV"
+          echo "TAGS=${tags}" >> "$GITHUB_ENV"
+
+      # Plain `docker login` rather than an action: one less piece of
+      # third-party code in the job that holds a push credential.
+      - name: Log in to ghcr.io
+        run: |
+          printf '%s' "${{ github.token }}" |
+            docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The default "docker" driver cannot produce a manifest list.
+          docker buildx create --use --name kanea-release
+          # --metadata-file for the digest: the same idiom internal/gitops
+          # reads containerimage.digest out of buildctl with.
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file Containerfile \
+            --build-arg VERSION="${TAG}" \
+            --build-arg REVISION="${GITHUB_SHA}" \
+            --metadata-file dist/image-meta.json \
+            --push $TAGS \
+            dist/image
+          digest="$(jq -er '."containerimage.digest"' dist/image-meta.json)"
+          echo "DIGEST=${digest}" >> "$GITHUB_ENV"
+          echo "pushed ${IMAGE}@${digest}"
+
+      # The digest, not a tag: a tag is a mutable pointer, and signing one
+      # signs whatever it happens to name later.
+      - name: Sign the image
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "${IMAGE}@${DIGEST}"
+
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: v1.51.0
+
+      # An SBOM here, unlike for the offline bundles: those are skipped because
+      # syft cannot descend into the archives they carry and would describe an
+      # empty bundle, and an image is exactly what it reads well (§14 A06).
+      - name: Attest an SBOM
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          # --platform stated rather than left to the runner: syft resolves a
+          # manifest list to whatever it is running on, and a document whose
+          # contents depend on the runner's architecture is a document that
+          # changes for a reason nobody can see. The two variants differ only
+          # in the one binary; the package set is the same base either way.
+          syft scan --platform linux/amd64 "registry:${IMAGE}@${DIGEST}" \
+            -o spdx-json=dist/image.spdx.json -q
+          cosign attest --type spdxjson --predicate dist/image.spdx.json "${IMAGE}@${DIGEST}"
+
+      # The build job verifies what it is about to publish; this one verifies
+      # what it just did. A signature that cannot be verified should fail the
+      # release rather than every `cosign verify` a user runs afterwards, and
+      # an image that does not start should fail it rather than every pipeline
+      # that pulls it.
+      - name: Verify what we just pushed
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cosign verify "${IMAGE}@${DIGEST}" \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            >/dev/null
+          docker buildx imagetools inspect "${IMAGE}:${TAG}"
+          test "$(docker run --rm "${IMAGE}@${DIGEST}" version)" = "kanea ${TAG}"
+
   # The Homebrew formula moved to its own tap repository (PRD §5.2.12,
   # v1.67): m18h/homebrew-kanea polls this repository's releases and bumps
   # itself; the release workflow writes only to this repository, and no

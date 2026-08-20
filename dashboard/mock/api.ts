@@ -127,7 +127,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (path === '/v1/healthz') {
     return json(res, 200, {
       status: 'ok',
-      version: 'v0.16.1-mock',
+      version: '0.0.0-mock',
       store_index: currentIndex(),
       ws_connections: 1,
       oidc: { enabled: false },
@@ -239,7 +239,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
           index: currentIndex() - 5,
           reason: 'interval',
           node: 'shop-node',
-          version: 'v0.16.1',
+          version: '0.0.0-mock',
           snapshot: { name: 'snapshot.bin.enc', size: 1_482_112, sha256: 'ab'.repeat(32) },
           counts: { services: services.length, allocs: allocs.length, secrets: 6, certs: 3, projects: 2 },
         },
