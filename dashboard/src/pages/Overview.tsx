@@ -115,15 +115,10 @@ export function Overview() {
     .filter((d): d is ScaleDecision => d !== null)
     .slice(0, 4)
 
-  const subtitle = [
-    'single binary',
-    health.data?.pid !== undefined ? `pid ${health.data.pid}` : null,
+  const subtitle =
     health.data?.uptime_seconds !== undefined
       ? `up ${formatUptime(health.data.uptime_seconds)}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(' · ')
+      : undefined
 
   return (
     <div className="space-y-4">

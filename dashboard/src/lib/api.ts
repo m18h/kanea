@@ -234,8 +234,8 @@ export const healthSchema = z.object({
   ws_connections: z.number(),
   oidc: oidcStatusSchema.nullish(),
   // Optional so the dashboard also renders against a pre-v1.38 daemon, which
-  // simply has no uptime to report.
-  pid: z.number().optional(),
+  // simply has no uptime to report. The daemon also sends a pid; nothing here
+  // renders it, so it is not declared.
   started_at: z.string().optional(),
   uptime_seconds: z.number().optional(),
 })
