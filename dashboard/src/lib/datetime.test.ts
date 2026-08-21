@@ -3,13 +3,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   DateStyles,
   DefaultDateStyle,
-  ShortDateStyle,
   dateStyle,
   formatDate,
   formatDateTime,
   formatTimeOfDay,
   isZeroTime,
-  nextDateStyle,
   setDateStyle,
   subscribeDateStyle,
   timeOrNever,
@@ -62,8 +60,8 @@ describe('formatDateTime', () => {
   })
 
   it('follows the current style when none is given', () => {
-    setDateStyle('yyyy-MM-dd')
-    expect(formatDateTime(iso)).toBe('2026-08-02 09:05:07')
+    setDateStyle('dd/MM/yyyy')
+    expect(formatDateTime(iso)).toBe('02/08/2026 09:05:07')
   })
 })
 
@@ -80,9 +78,11 @@ describe('timeOrNever', () => {
 })
 
 describe('the preference', () => {
-  it('defaults to day-first', () => {
-    expect(DefaultDateStyle).toBe('dd/MM/yyyy')
-    expect(dateStyle()).toBe('dd/MM/yyyy')
+  it('defaults to ISO 8601', () => {
+    // Big-endian is the one order unambiguous to every reader: 03/04 is two
+    // different days depending on where you learned to write dates.
+    expect(DefaultDateStyle).toBe('yyyy-MM-dd')
+    expect(dateStyle()).toBe('yyyy-MM-dd')
   })
 
   it('persists a choice and notifies subscribers', () => {
@@ -91,14 +91,16 @@ describe('the preference', () => {
       notified++
     })
 
-    setDateStyle('yyyy-MM-dd')
-    expect(dateStyle()).toBe('yyyy-MM-dd')
+    // Deliberately not the default, or the first call would be the no-op the
+    // idempotence check below is testing for.
+    setDateStyle('dd/MM/yyyy')
+    expect(dateStyle()).toBe('dd/MM/yyyy')
     expect(notified).toBe(1)
-    expect(window.localStorage.getItem('kanea-date-style')).toBe('yyyy-MM-dd')
+    expect(window.localStorage.getItem('kanea-date-style')).toBe('dd/MM/yyyy')
 
     // Idempotent: setting the style it already has notifies nobody, or every
     // render that re-asserted the current value would be a re-render storm.
-    setDateStyle('yyyy-MM-dd')
+    setDateStyle('dd/MM/yyyy')
     expect(notified).toBe(1)
 
     stop()
@@ -106,22 +108,10 @@ describe('the preference', () => {
     expect(notified).toBe(1)
   })
 
-  it('cycles through every style and wraps', () => {
-    let style = DefaultDateStyle
-    const seen = [style]
-    for (let i = 0; i < DateStyles.length - 1; i++) {
-      style = nextDateStyle(style)
-      seen.push(style)
-    }
-    expect(new Set(seen).size).toBe(DateStyles.length)
-    expect(nextDateStyle(style)).toBe(DefaultDateStyle)
-  })
-
-  it('labels every style for the control', () => {
-    // The button shows the label instead of an icon, so a style with no label
-    // would render as a blank button.
-    for (const style of DateStyles) {
-      expect(ShortDateStyle[style]).toBeTruthy()
-    }
+  it('offers the default among the styles the picker lists', () => {
+    // The picker renders DateStyles; a default outside that list would show as
+    // a select with nothing selected.
+    expect(DateStyles).toContain(DefaultDateStyle)
+    expect(new Set(DateStyles).size).toBe(DateStyles.length)
   })
 })

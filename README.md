@@ -64,7 +64,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.27.0; ARCH=amd64
+VERSION=v0.28.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -750,10 +750,10 @@ card charts **GPU utilisation first and VRAM second** when a GPU is visible:
 utilisation is what answers "is it actually being used", and a card whose
 driver publishes neither number (every integrated Intel GPU) is named beside a
 dash rather than drawn as an idle card. Timestamps carry the date as well as
-the time, in an order you pick from the sidebar: `dd/MM/yyyy` by default, with
-`MM/dd/yyyy` and `yyyy-MM-dd` offered. That preference is per browser, stored
-beside the theme, and it sits in the sidebar rather than in Settings because
-Settings is admin-only and a viewer reads dates too.
+the time, in an order you pick: `yyyy-MM-dd` by default, with `dd/MM/yyyy` and
+`MM/dd/yyyy` offered. It shares a cog in the sidebar with the dark-mode
+toggle, rather than living in Settings, because Settings is admin-only and a
+viewer reads dates too; both are stored in that browser and nowhere else.
 
 Every table pages at 20, 50 or 100 rows, and the pager stays out of the way
 until a list is longer than a page.
@@ -955,7 +955,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.94) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.95) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

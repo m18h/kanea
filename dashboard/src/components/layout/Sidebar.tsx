@@ -9,9 +9,7 @@ import {
   HardDrive,
   LayoutDashboard,
   LogOut,
-  Moon,
   Settings2,
-  Sun,
   type LucideIcon,
 } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
@@ -24,9 +22,7 @@ import { useNavCounts } from '@/hooks/useNavCounts'
 import { useRouter } from '@/hooks/useRouter'
 import { useSession } from '@/hooks/useSession'
 import { useSocketStatus } from '@/hooks/useSocketStatus'
-import { useDateStyle } from '@/hooks/useDateStyle'
-import { useTheme } from '@/hooks/useTheme'
-import { ShortDateStyle, nextDateStyle, setDateStyle } from '@/lib/datetime'
+import { DisplaySettings } from '@/components/layout/DisplaySettings'
 
 /** Sidebar is the shell's left rail: brand, nav, connection facts, user. */
 export function Sidebar({ className }: { className?: string | undefined }) {
@@ -138,8 +134,6 @@ function SocketLine() {
 
 function UserRow() {
   const { session, signOut } = useSession()
-  const [theme, setTheme] = useTheme()
-  const style = useDateStyle()
   if (!session) return null
 
   return (
@@ -154,30 +148,11 @@ function UserRow() {
         </div>
       </div>
       <div className="ml-auto flex items-center">
-        {/* The current format is the label, not an icon: you can read what it
-            is set to without hovering, which an icon cannot do for three
-            values. It cycles rather than opening a menu, because this app has
-            no menu primitive and a list of three needs none - the same call
-            OpenUrlMenu documents. It lives here beside the theme toggle rather
-            than on the Settings page because that page is admin-only, and how
-            a viewer reads a date is nobody else's decision. */}
-        <button
-          type="button"
-          title={`Date format: ${style} (click to change)`}
-          aria-label={`Date format: ${style}. Click to change.`}
-          className="rounded-md px-1.5 py-1 font-mono text-[10px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-          onClick={() => setDateStyle(nextDateStyle(style))}
-        >
-          {ShortDateStyle[style]}
-        </button>
-        <button
-          type="button"
-          aria-label="Toggle theme"
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-        >
-          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
+        {/* One cog rather than an icon per setting. Both live in this browser
+            rather than on the node, so neither belongs on the admin-only
+            Settings page; and the date format needs a label rather than an
+            icon, because no icon says which of three orders is in force. */}
+        <DisplaySettings />
         <button
           type="button"
           aria-label="Sign out"
