@@ -24,10 +24,19 @@ go build -o spike-i915 .
 # from one that is not wired up.
 sudo ./spike-i915 -duration 10s
 
-# Then, in another shell, put the GPU to work and run it again:
-#   ffmpeg -hwaccel vaapi -vaapi_device /dev/dri/renderD128 \
-#          -i some-input.mkv -f null -
+# Then put the GPU to work and run it again. Both flags are load-bearing:
+#
+#   -nostdin         a backgrounded ffmpeg reads stdin, takes SIGTTIN from the
+#                    terminal and suspends before decoding a frame. It prints
+#                    its banner first, so it looks like it started; `jobs` says
+#                    "Stopped" and the counters read a flat zero.
+#   -stream_loop -1  a short sample clip decodes in well under the sampling
+#                    window, so the GPU is idle again by the time it closes.
+ffmpeg -nostdin -stream_loop -1 -hwaccel vaapi -vaapi_device /dev/dri/renderD128 \
+       -i some-input.mkv -f null - >/dev/null 2>&1 &
+sleep 2                      # let it reach steady state
 sudo ./spike-i915 -duration 10s
+kill %1
 ```
 
 It writes a `PASS`/`FAIL`/`INFO` line per check and a summary. Paste the whole
