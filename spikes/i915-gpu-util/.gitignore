@@ -1,0 +1,8 @@
+# Build artifacts and run output: regenerable, never committed. Every sibling
+# spike carries one of these; this one did not, and a `git add -A` swept a
+# 2.9 MB binary and a captured run into the repository.
+/spike-i915
+/spike-i915-*
+/idle.txt
+/busy.txt
+/top.txt
