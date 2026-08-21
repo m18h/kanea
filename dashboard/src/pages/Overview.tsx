@@ -24,10 +24,11 @@ import {
   type StatsHistory,
 } from '@/lib/api'
 import { isStale, replicationLag } from '@/lib/backups'
+import { useDateStyle } from '@/hooks/useDateStyle'
+import { formatDateTime } from '@/lib/datetime'
 import { parseScaleDecision, type ScaleDecision } from '@/lib/events'
 import {
   formatBytes,
-  formatClock,
   formatUptime,
   groupAllocs,
   serviceHealth,
@@ -57,7 +58,7 @@ export function Overview() {
     {
       topic: Topic.Node,
       history: true,
-      history_series: ['cpu', 'memory', 'gpu_vram', 'load1', 'allocs_running'],
+      history_series: ['cpu', 'memory', 'gpu_util', 'gpu_vram', 'load1', 'allocs_running'],
     },
     nodeSampleSchema,
   )
@@ -110,20 +111,16 @@ export function Overview() {
   const warns = recent.filter((e) => e.severity === 'warning').length
   const errors = recent.filter((e) => e.severity === 'error').length
 
+  const style = useDateStyle()
   const decisions = feed
     .map(parseScaleDecision)
     .filter((d): d is ScaleDecision => d !== null)
     .slice(0, 4)
 
-  const subtitle = [
-    'single binary',
-    health.data?.pid !== undefined ? `pid ${health.data.pid}` : null,
+  const subtitle =
     health.data?.uptime_seconds !== undefined
       ? `up ${formatUptime(health.data.uptime_seconds)}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(' · ')
+      : undefined
 
   return (
     <div className="space-y-4">
@@ -201,7 +198,7 @@ export function Overview() {
                   ) : null}
                   <span className="min-w-0 truncate text-muted-foreground">{d.reason}</span>
                   <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-                    {formatClock(d.at)}
+                    {formatDateTime(d.at, style)}
                   </span>
                 </div>
               ))
@@ -289,6 +286,8 @@ function UtilisationCard({
   const load = useTimedSeries(seriesKey('node', 'load1'), machine?.load1, at, history, 'load1')
   const runningSeries = useTimedSeries(
     seriesKey('node', 'allocs_running'), node?.running, node?.at ?? '', history, 'allocs_running')
+  const gpuUtil = useTimedSeries(
+    seriesKey('node', 'gpu_util'), machine?.gpu_util_percent, at, history, 'gpu_util')
   const gpu = useTimedSeries(
     seriesKey('node', 'gpu_vram'), machine?.gpu_vram_percent, at, history, 'gpu_vram')
 
@@ -304,11 +303,22 @@ function UtilisationCard({
   // The GPU panel exists only when a GPU is visible: a GPU-less node gets no
   // panel, not an empty one; absence is not a 0% card.
   const gpus = machine?.gpus ?? []
-  const hasGPU = gpus.length > 0 || gpu.values.some((v) => v !== null)
+  const hasGPU =
+    gpus.length > 0 ||
+    gpu.values.some((v) => v !== null) ||
+    gpuUtil.values.some((v) => v !== null)
   const vramUsed = gpus.reduce((sum, g) => sum + (g.vram_used_bytes ?? 0), 0)
   const vramTotal = gpus.reduce((sum, g) => sum + (g.vram_total_bytes ?? 0), 0)
   const gpuText =
     vramTotal > 0 ? `${formatBytes(vramUsed)} / ${formatBytes(vramTotal)}` : undefined
+  // A dash with no name on it reads as a broken panel rather than as a card
+  // whose driver publishes nothing, so each GPU panel names its cards when it
+  // has no number of its own to draw (v1.91). The two conditions are separate
+  // because the absences are: an integrated GPU has no VRAM *and* no busy
+  // counter, while a card can easily report one and not the other.
+  const cardNames = gpus.map((g) => g.name).join(', ') || undefined
+  const utilNames = gpus.some((g) => g.util_percent !== undefined) ? undefined : cardNames
+  const gpuNames = vramTotal > 0 ? undefined : cardNames
 
   return (
     <Card className="lg:col-span-3">
@@ -338,6 +348,23 @@ function UtilisationCard({
           latest={node?.running}
           tone={4}
         />
+        {/* Utilisation before VRAM: "is the GPU actually being used" is the
+            question somebody opens this page with, and how full its memory is
+            is the follow-up. A card whose driver publishes no busy counter -
+            every integrated Intel GPU - draws a dash and the card's name, the
+            same shape the VRAM panel takes for a card with no VRAM. */}
+        {hasGPU ? (
+          <MetricChartPanel
+            label={gpus.length > 1 ? `GPU utilisation (${gpus.length} GPUs)` : 'GPU utilisation'}
+            unit="%"
+            series={gpuUtil}
+            scale="percent"
+            status={status}
+            latest={machine?.gpu_util_percent}
+            {...(utilNames !== undefined ? { detail: utilNames } : {})}
+            tone={3}
+          />
+        ) : null}
         {hasGPU ? (
           <MetricChartPanel
             label={gpus.length > 1 ? `GPU VRAM (${gpus.length} GPUs)` : 'GPU VRAM'}
@@ -347,6 +374,7 @@ function UtilisationCard({
             status={status}
             latest={machine?.gpu_vram_percent}
             {...(gpuText !== undefined ? { valueText: gpuText } : {})}
+            {...(gpuNames !== undefined ? { detail: gpuNames } : {})}
             tone={2}
           />
         ) : null}

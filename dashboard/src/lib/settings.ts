@@ -17,18 +17,7 @@ import type { BackupSettingsRecord, WireNotifications } from './api'
  * token cannot omit themselves (a struct field ignores omitempty), so "never"
  * arrives as year one rather than as absence.
  */
-export function isZeroTime(iso: string | undefined): boolean {
-  if (!iso) return true
-  return iso.startsWith('0001-01-01')
-}
-
-/** timeOrNever renders a timestamp, or "never" for absence and the zero time. */
-export function timeOrNever(iso: string | undefined): string {
-  if (isZeroTime(iso)) return 'never'
-  const at = new Date(iso as string)
-  if (Number.isNaN(at.getTime())) return iso as string
-  return at.toLocaleString()
-}
+export { isZeroTime, timeOrNever } from '@/lib/datetime'
 
 // ---- notification channel forms ----
 

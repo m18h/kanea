@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/m18h/kanea/internal/runtime"
@@ -67,6 +66,60 @@ func initVerb(r ExitReason) string {
 		return "timed out"
 	}
 	return "failed"
+}
+
+// InitLeaderIndex is the alloc index that runs a service's init sequence.
+//
+// The sequence runs **once per service, not once per alloc** (PRD v1.92): a
+// migration is work on shared state, and a spec that declares one has no way to
+// say "three replicas, one migration" if every replica runs it. Since creation
+// is not budget-gated - only ActionReplace is - a first deploy of `count = 3`
+// used to create three allocs in one pass and run three sequences at once.
+//
+// Index 0 rather than "whichever alloc gets there first" for two reasons. The
+// planner is deterministic and total, and a leader elected by a race is
+// neither. And index 0 is the last alloc a scale-in removes, so the one alloc
+// whose record proves the sequence ran is also the one that outlives every
+// other.
+const InitLeaderIndex = 0
+
+// InitLeaderID is the alloc that runs the service's init sequence.
+func InitLeaderID(d Desired) string {
+	return AllocID(d.Project, d.Service, InitLeaderIndex)
+}
+
+// serviceInitDone reports whether a service's init sequence has completed for
+// the given spec hash, and when it has not, why - because the answer gates
+// every other alloc of the service and a silent wait is a service that never
+// starts with nothing on screen to say so.
+//
+// The signal is the leader's **record**, not its init containers. Those are
+// swept the moment its task is created (initContainersToReap keeps them only
+// while the record is in AllocInit), so they are evidence *during* a sequence
+// and gone afterwards; the record leaving AllocInit at a known spec hash is
+// what survives. The hash is half of the test: on a deploy the leader re-runs
+// the new spec's sequence, and a follower that only checked "not in init"
+// would create its new task against a migration that has not been applied.
+func serviceInitDone(w World, d Desired, hash string) (bool, string) {
+	leader := InitLeaderID(d)
+	record, ok := w.Records[leader]
+	switch {
+	case !ok:
+		return false, fmt.Sprintf("waiting for %s to run the init sequence", leader)
+	case record.SpecHash != "" && record.SpecHash != hash:
+		return false, fmt.Sprintf("waiting for %s to re-run the init sequence for this spec", leader)
+	case record.State == AllocInit:
+		return false, fmt.Sprintf("waiting for %s init %q (%d of %d)",
+			leader, record.InitName, record.InitStep+1, len(d.Init))
+	case record.State == AllocFailed && isInitFailure(record.LastExitReason):
+		// Named rather than propagated. Failing the followers too would be a
+		// cascade, which R10 refuses for dependencies and which would spend
+		// their restart budgets on somebody else's failure; leaving them
+		// unexplained would be worse still.
+		return false, fmt.Sprintf("%s failed its init %q; nothing else can start",
+			leader, record.InitName)
+	}
+	return true, ""
 }
 
 // InitIDFor is the containerd id of one of an alloc's init steps.
@@ -529,19 +582,6 @@ func (r *Reconciler) ensureInitImage(ctx context.Context, d Desired, step InitCo
 // message rather than in the vocabulary.
 func wrapInitError(step InitContainer, ordinal, total int, err error) error {
 	return fmt.Errorf("init %q (%d of %d): %w", step.Name, ordinal+1, total, err)
-}
-
-// describeInit renders a service's init sequence for a plan diff: the names in
-// order, which is what an operator recognises, rather than a struct dump.
-func describeInit(inits []InitContainer) string {
-	if len(inits) == 0 {
-		return "none"
-	}
-	names := make([]string, 0, len(inits))
-	for _, i := range inits {
-		names = append(names, i.Name)
-	}
-	return strings.Join(names, " -> ")
 }
 
 // effectivePullPolicy resolves R33's "the node decides" on the node.

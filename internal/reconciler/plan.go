@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -130,7 +129,12 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 	// An alloc in its init sequence. Deliberately *after* the stale test above
 	// and before everything below: a deploy must not wait out the old spec's
 	// migrations before noticing it is a deploy.
-	if hasRecord && record.State == AllocInit {
+	// Only the leader runs the sequence (R32, v1.92). A follower can hold an
+	// AllocInit record only as a leftover from a node upgraded mid-sequence,
+	// when init was still per-alloc; it falls through to the follower gate
+	// below, creates its task without a sequence, and its half-run containers
+	// are swept on the pass after its record leaves AllocInit.
+	if hasRecord && record.State == AllocInit && index == InitLeaderIndex {
 		if stale {
 			// ActionRestart rather than the ActionCreate the !isActual branch
 			// below would emit, because only teardown sweeps the half-run
@@ -165,6 +169,20 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 			act.Kind = ActionWait
 			act.Reason = "waiting for " + strings.Join(blocked, ", ") + " to become healthy"
 			return []Action{act}
+		}
+		// The init gate, and it is a gate of the same kind as the one above:
+		// this alloc may not be created yet. A service's init sequence runs
+		// once, on the leader, so every other alloc waits for it rather than
+		// running its own - three replicas of a service that migrates a schema
+		// must not migrate it three times, and creation is not budget-gated, so
+		// without this they would all do it in the same pass.
+		if len(d.Init) > 0 && index != InitLeaderIndex {
+			if done, why := serviceInitDone(w, d, hash); !done {
+				act := base
+				act.Kind = ActionWait
+				act.Reason = why
+				return []Action{act}
+			}
 		}
 		// An alloc that failed during its init sequence has no main container,
 		// so without this it would take the ActionCreate path below - and
@@ -738,181 +756,4 @@ func unmetDependencies(d Desired, healthy map[string]bool) []string {
 	}
 	sort.Strings(blocked)
 	return blocked
-}
-
-// Diff renders a create/change summary between what is declared now and what a
-// spec would declare.
-//
-// It lives here rather than in the CLI because it is asked by more than the
-// CLI: `kanea plan`, the MCP plan_spec tool, and anything else that wants to
-// say what an apply would do. Two implementations of "what would change" drift,
-// and they drift into a plan that does not match the apply that follows it.
-//
-// It compares only what a user declares, so an untouched service is not
-// reported as a change because the daemon filled in a default.
-func Diff(current, desired []Desired) []string {
-	return DiffScoped(current, desired, nil)
-}
-
-// DiffScoped is Diff with a prune scope: the projects the spec is authoritative
-// for, whose stored services it does not declare are rendered as destroyed.
-//
-// Diff's callers that cannot prune (MCP's plan_spec, the dashboard's spec
-// editor) pass nothing and see exactly what they saw before. A destroy line
-// shown where no prune will happen would be worse than no line at all: the
-// reader has no way to tell a warning from a plan.
-func DiffScoped(current, desired []Desired, pruneProjects []string) []string {
-	byKey := make(map[string]Desired, len(current))
-	for _, svc := range current {
-		byKey[svc.Project+"/"+svc.Service] = svc
-	}
-
-	var out []string
-	for _, want := range desired {
-		key := want.Project + "/" + want.Service
-		have, exists := byKey[key]
-		if !exists {
-			out = append(out, fmt.Sprintf("+ create %s (count %d, image %s)", key, want.Count, want.Image))
-			continue
-		}
-		var changes []string
-		if have.Image != want.Image {
-			changes = append(changes, fmt.Sprintf("image %s -> %s", have.Image, want.Image))
-		}
-		// A runtime change rolls every alloc (it is in the spec hash), so a
-		// plan that did not mention it would show a redeploy with no cause.
-		if have.Runtime != want.Runtime {
-			changes = append(changes, fmt.Sprintf("runtime %s -> %s",
-				describeRuntime(have.Runtime), describeRuntime(want.Runtime)))
-		}
-		if have.Count != want.Count {
-			changes = append(changes, fmt.Sprintf("count %d -> %d", have.Count, want.Count))
-		}
-		// Capabilities are spec-hash material: declaring ["none"] (or adding a
-		// grant) rolls every alloc, and a plan that did not mention it would
-		// show a redeploy with no visible cause.
-		if !reflect.DeepEqual(have.Capabilities, want.Capabilities) {
-			changes = append(changes, fmt.Sprintf("capabilities %s -> %s",
-				describeCapabilities(have.Capabilities), describeCapabilities(want.Capabilities)))
-		}
-		if have.Resources != want.Resources {
-			changes = append(changes, fmt.Sprintf("resources %+v -> %+v", have.Resources, want.Resources))
-		}
-		// Init containers are spec-hash material (R32), so changing a
-		// migration's image or command rolls every alloc; a plan that did not
-		// say so would show a redeploy with no visible cause. Compared through
-		// hashableInit, so adjusting a step's timeout or pull policy - neither
-		// of which rolls anything - does not print a change either.
-		if !reflect.DeepEqual(hashableInit(have.Init), hashableInit(want.Init)) {
-			changes = append(changes, fmt.Sprintf("init containers %s -> %s",
-				describeInit(have.Init), describeInit(want.Init)))
-		}
-		if !sameEnv(have.Env, want.Env) {
-			changes = append(changes, "env changed")
-		}
-		// Container ports are spec-hash material: a changed number or a
-		// flipped protocol (v1.42) rolls every alloc, and a plan that did not
-		// mention it would show a redeploy with no visible cause.
-		if !reflect.DeepEqual(have.Ports, want.Ports) {
-			changes = append(changes, fmt.Sprintf("ports %s -> %s",
-				describeDeclaredPorts(have.Ports), describeDeclaredPorts(want.Ports)))
-		}
-		// Published ports are what people iterate on, and they do not change
-		// the spec hash, so without this line `kanea plan` would print "No
-		// changes" for the edit somebody just made and is about to apply.
-		if !reflect.DeepEqual(have.Publish, want.Publish) {
-			changes = append(changes, fmt.Sprintf("published ports %s -> %s",
-				describePublish(have.Publish), describePublish(want.Publish)))
-		}
-		if len(changes) > 0 {
-			out = append(out, fmt.Sprintf("~ update %s (%s)", key, strings.Join(changes, ", ")))
-		}
-	}
-	out = append(out, destroyLines(current, desired, pruneProjects)...)
-	sort.Strings(out)
-	return out
-}
-
-// destroyLines renders what a prune-scoped apply would remove: a stored service
-// in a project the spec owns that the spec no longer declares.
-func destroyLines(current, desired []Desired, pruneProjects []string) []string {
-	if len(pruneProjects) == 0 {
-		return nil
-	}
-	scope := make(map[string]struct{}, len(pruneProjects))
-	for _, p := range pruneProjects {
-		scope[p] = struct{}{}
-	}
-	declared := make(map[string]struct{}, len(desired))
-	for _, want := range desired {
-		declared[want.Project+"/"+want.Service] = struct{}{}
-	}
-
-	var out []string
-	for _, have := range current {
-		if _, ours := scope[have.Project]; !ours {
-			continue
-		}
-		key := have.Project + "/" + have.Service
-		if _, kept := declared[key]; kept {
-			continue
-		}
-		out = append(out, fmt.Sprintf("- destroy %s (count %d, image %s)",
-			key, have.Count, have.RunImage()))
-	}
-	return out
-}
-
-// describeRuntime names a runtime for a plan line; the empty default reads as
-// what it is rather than as a blank.
-func describeRuntime(r string) string {
-	if r == "" {
-		return "default"
-	}
-	return r
-}
-
-// describeDeclaredPorts renders a service's container ports for a plan line.
-func describeDeclaredPorts(ports []Port) string {
-	if len(ports) == 0 {
-		return "none"
-	}
-	parts := make([]string, 0, len(ports))
-	for _, p := range ports {
-		part := fmt.Sprintf("%s:%d", p.Name, p.Container)
-		if p.IsUDP() {
-			part += "/udp"
-		}
-		parts = append(parts, part)
-	}
-	return strings.Join(parts, " ")
-}
-
-// describePublish renders a service's node ports for a plan line.
-func describePublish(ports []PublishedPort) string {
-	if len(ports) == 0 {
-		return "none"
-	}
-	parts := make([]string, 0, len(ports))
-	for _, p := range ports {
-		mode := p.Mode
-		if mode == "" {
-			mode = "http"
-		}
-		parts = append(parts, fmt.Sprintf("%d/%s->%s", p.Host, mode, p.Port))
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, " ")
-}
-
-func sameEnv(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
 }

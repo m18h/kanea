@@ -118,7 +118,8 @@ func TestDiffNamesACapabilityChange(t *testing.T) {
 
 	lines := reconciler.Diff([]reconciler.Desired{have}, []reconciler.Desired{want})
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "capabilities baseline (default) -> [none]") {
+	if !strings.Contains(joined, "capabilities") ||
+		!strings.Contains(joined, "baseline (default) -> [none]") {
 		t.Fatalf("plan lines %q do not name the capability change", joined)
 	}
 }

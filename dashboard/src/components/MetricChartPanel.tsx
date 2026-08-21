@@ -15,6 +15,15 @@ export interface MetricChartPanelProps {
    * the whole formatted string (memory wants "6.1 / 16 GiB"). */
   latest?: number | undefined
   valueText?: string | undefined
+  /**
+   * detail rides *beside* the readout instead of replacing it, for a number
+   * that answers "how much is that?" without displacing the one the chart
+   * plots: a service's memory is a percentage of its declared limit, and the
+   * bytes behind it are what tells you whether 80% is 200 MiB or 20 GiB.
+   * It wraps under the readout when the card is too narrow, rather than
+   * truncating: half a byte figure is worse than a second line.
+   */
+  detail?: string | undefined
   scale: ChartScale
   tone: 1 | 2 | 3 | 4
   /** big is the metric-card form; without it, the compact panel form. */
@@ -42,6 +51,7 @@ export function MetricChartPanel({
   series,
   latest,
   valueText,
+  detail,
   scale,
   tone,
   big,
@@ -60,17 +70,22 @@ export function MetricChartPanel({
 
   return (
     <div className={cn('min-w-0', className)} aria-busy={state === 'loading' || undefined}>
-      <div className="flex items-baseline justify-between gap-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
         <span className="text-xs text-muted-foreground">{label}</span>
-        <span
-          className={cn('font-mono font-semibold tabular-nums', big ? 'text-2xl' : 'text-sm')}
-        >
-          {/* A gap is a dash: "measured nothing" is not "measured zero". This
-              is untouched by the states below, which is the whole reason a
-              skeleton is safe here: it stands where a *chart* goes, never
-              where a number goes, and nothing renders a zero it did not
-              measure. */}
-          {valueText ?? (current === undefined ? '-' : formatMetric(current, unit))}
+        <span className="flex items-baseline gap-1.5">
+          <span
+            className={cn('font-mono font-semibold tabular-nums', big ? 'text-2xl' : 'text-sm')}
+          >
+            {/* A gap is a dash: "measured nothing" is not "measured zero". This
+                is untouched by the states below, which is the whole reason a
+                skeleton is safe here: it stands where a *chart* goes, never
+                where a number goes, and nothing renders a zero it did not
+                measure. */}
+            {valueText ?? (current === undefined ? '-' : formatMetric(current, unit))}
+          </span>
+          {detail !== undefined ? (
+            <span className="font-mono text-xs tabular-nums text-muted-foreground">{detail}</span>
+          ) : null}
         </span>
       </div>
       {state === 'live' ? (

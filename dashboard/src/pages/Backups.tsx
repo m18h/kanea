@@ -13,6 +13,7 @@ import {
   verifyBackup,
   type Backup,
 } from '@/lib/api'
+import { useDateStyle } from '@/hooks/useDateStyle'
 import { describeArchive, formatTime, isStale, replicationLag } from '@/lib/backups'
 import { formatBytes, relativeAge } from '@/lib/state'
 import { useSession } from '@/hooks/useSession'
@@ -39,6 +40,7 @@ type VerifyVerdict = { state: 'checking' } | { state: 'ok' } | { state: 'failed'
  * `kanea restore` at a terminal.
  */
 export function Backups() {
+  const style = useDateStyle()
   const client = useQueryClient()
   const { session, csrf } = useSession()
   const [error, setError] = useState('')
@@ -153,7 +155,7 @@ export function Backups() {
             }
             sub={
               replication?.last_snapshot_at
-                ? `ago · ${formatTime(replication.last_snapshot_at)}`
+                ? `ago · ${formatTime(replication.last_snapshot_at, style)}`
                 : undefined
             }
           />
@@ -250,6 +252,7 @@ function ArchiveRow({
   canWrite: boolean
   onStage: () => void
 }) {
+  const style = useDateStyle()
   // Derived per archive, not global: a segment index at or past this archive's
   // means the sink holds everything this archive needs.
   const replicated = archive.index <= shippedTo
@@ -259,7 +262,7 @@ function ArchiveRow({
       <TD>
         <span className="block font-mono text-xs">{archive.id}</span>
         <span className="block font-mono text-[11px] text-muted-foreground">
-          {formatTime(archive.created_at)}
+          {formatTime(archive.created_at, style)}
         </span>
       </TD>
       <TD className="whitespace-nowrap font-mono text-xs tabular-nums">

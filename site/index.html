@@ -2,8 +2,8 @@
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kanea — container orchestration in one binary</title>
-<meta name="description" content="Kanea is a single-binary container orchestration platform: containerd for the runtime, its own eBPF datapath for the network, Let's Encrypt for TLS — no Kubernetes required.">
+<title>Kanea - container orchestration in one binary</title>
+<meta name="description" content="Kanea is a single-binary container orchestration platform: containerd for the runtime, its own eBPF datapath for the network, Let's Encrypt for TLS - no Kubernetes required.">
 <meta name="color-scheme" content="light dark">
 <meta property="og:title" content="Kanea">
 <meta property="og:description" content="Container orchestration in one binary. eBPF-native, Kubernetes-free.">
@@ -49,7 +49,7 @@
   })();
 </script>
 <style>
-  /* Anchor jumps land on the section, framed — not with its title jammed under
+  /* Anchor jumps land on the section, framed - not with its title jammed under
      the sticky header. The header is ~62px tall; 76px leaves a small gap. */
   section[id] { scroll-margin-top: 76px; }
 
@@ -389,7 +389,7 @@
     </nav>
     <div style="flex:1"></div>
     <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;font-family:'Spline Sans Mono',monospace;font-size:12px;color:var(--muted-3);">
-      <span>v0.26.1</span>
+      <span>v0.27.0</span>
       <button sc-camel-on-click="{{ toggleTheme }}" title="Toggle light and dark" aria-label="Toggle light and dark" style="display:flex;align-items:center;justify-content:center;width:32px;height:31px;padding:0;border:1px solid var(--line-3);background:transparent;color:var(--muted-3);cursor:pointer;" style-hover="color:var(--text);border-color:var(--line-strong)">
         <sc-if value="{{ isDark }}" hint-placeholder-val="{{ false }}">
           <svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M19.1 4.9l-1.5 1.5M6.4 17.6l-1.5 1.5"></path></svg>
@@ -424,7 +424,7 @@
             <button sc-camel-on-click="{{ copyInstall }}" style="flex:none;padding:0 18px;border:0;border-left:1px solid var(--line-3);background:var(--card-2);color:var(--muted-2);font-family:'Spline Sans Mono',monospace;font-size:11px;letter-spacing:.12em;cursor:pointer;" style-hover="color:var(--text);background:var(--card-3)">{{ copyLabel }}</button>
           </div>
           <p style="margin:12px 0 0;max-width:600px;font-size:14px;color:var(--muted-3);">
-            Piping a script into a root shell deserves a look first —
+            Piping a script into a root shell deserves a look first -
             <a href="https://m18h.github.io/kanea/install.sh">read it</a>, or
             <a href="#install">install it by hand</a>. Checksum verification is mandatory, with no flag to skip it.
           </p>
@@ -478,7 +478,7 @@
         <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">Two steps, and none of them are hidden</h2>
         <p style="margin:20px 0 40px;max-width:760px;font-size:18px;color:var(--muted);text-wrap:pretty;">
           The installer fetches the binary, verifies it, and stops. It generates no keys and starts
-          nothing — those are decisions with consequences, and a script that made them for you would
+          nothing - those are decisions with consequences, and a script that made them for you would
           make them at the moment you understand the node least.
         </p>
 
@@ -519,13 +519,13 @@
                 </div>
               </sc-for>
             </div>
-            <p style="margin:14px 0 0;font-size:14.5px;color:var(--muted-2);text-wrap:pretty;">That is the whole list. The runtime is installed by <code style="font-family:'Spline Sans Mono',monospace;color:var(--text-2);">kanea init</code> at pinned versions — Kanea supplies it, not you.</p>
+            <p style="margin:14px 0 0;font-size:14.5px;color:var(--muted-2);text-wrap:pretty;">That is the whole list. The runtime is installed by <code style="font-family:'Spline Sans Mono',monospace;color:var(--text-2);">kanea init</code> at pinned versions - Kanea supplies it, not you.</p>
           </div>
           <div>
             <h3 style="margin:0 0 16px;font-family:'Bricolage Grotesque',sans-serif;font-size:22px;font-weight:700;letter-spacing:-.025em;">Other ways in</h3>
             <div style="display:flex;flex-direction:column;gap:10px;">
               <div style="padding:18px 20px;border:1px solid var(--line-2);background:var(--card);">
-                <div style="font-size:15.5px;font-weight:500;">Homebrew — the CLI</div>
+                <div style="font-size:15.5px;font-weight:500;">Homebrew - the CLI</div>
                 <div style="margin-top:6px;font-size:14px;line-height:1.5;color:var(--muted-2);">macOS is the authoring half: <code style="font-family:'Spline Sans Mono',monospace;color:var(--text-2);">kanea plan</code> validates specs with file-and-line diagnostics, no daemon needed.</div>
                 <div style="margin-top:11px;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--text-2);white-space:pre;overflow-x:auto;display:flex;flex-direction:column;">
                   <div><span style="color:var(--accent-ink);">$</span> brew tap m18h/kanea</div>
@@ -535,7 +535,7 @@
               </div>
               <div style="padding:18px 20px;border:1px solid var(--line-2);background:var(--card);">
                 <div style="font-size:15.5px;font-weight:500;">Air-gapped nodes</div>
-                <div style="margin-top:6px;font-size:14px;line-height:1.5;color:var(--muted-2);">A supported installation, not a workaround. The bundle carries no hashes of its own — a bundle that supplied its own would be a bundle that authenticates itself.</div>
+                <div style="margin-top:6px;font-size:14px;line-height:1.5;color:var(--muted-2);">A supported installation, not a workaround. The bundle carries no hashes of its own - a bundle that supplied its own would be a bundle that authenticates itself.</div>
                 <div style="margin-top:11px;font-family:'Spline Sans Mono',monospace;font-size:12.5px;color:var(--text-2);white-space:pre;overflow-x:auto;display:flex;flex-direction:column;">
                   <div><span style="color:var(--accent-ink);">$</span> kanea bundle create --arch amd64 -o bundle.tar.gz</div>
                   <div><span style="color:var(--accent-ink);">$</span> sudo kanea init --bundle bundle.tar.gz</div>
@@ -556,7 +556,7 @@
       <div style="padding:70px 36px 66px;">
         <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">A control plane you can read in an afternoon</h2>
         <p style="margin:20px 0 40px;max-width:700px;font-size:18px;color:var(--muted);text-wrap:pretty;">
-          Three processes from one file. The edge is deliberately not a child of the control plane —
+          Three processes from one file. The edge is deliberately not a child of the control plane -
           restarting <code style="font-family:'Spline Sans Mono',monospace;font-size:15.5px;color:var(--text-2);">kanead</code> never drops a request in flight. Pick a piece.
         </p>
 
@@ -589,7 +589,7 @@
       <div style="padding:70px 36px 66px;">
         <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">One file describes a service completely</h2>
         <p style="margin:20px 0 30px;max-width:740px;font-size:18px;color:var(--muted);text-wrap:pretty;">
-          HCL — familiar if you have written Nomad job files. Change the spec and watch the platform
+          HCL - familiar if you have written Nomad job files. Change the spec and watch the platform
           it produces change with it.
         </p>
 
@@ -696,7 +696,7 @@
       <div style="padding:70px 36px 66px;">
         <h2 style="margin:0;max-width:900px;font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(32px,3.6vw,52px);line-height:1.02;letter-spacing:-.04em;font-weight:700;">Embedded in the binary, served by the daemon</h2>
         <p style="margin:20px 0 28px;max-width:740px;font-size:18px;color:var(--muted);text-wrap:pretty;">
-          Not a screenshot of a plan — this is <code style="font-family:'Spline Sans Mono',monospace;font-size:15.5px;color:var(--text-2);">kanea ui</code> on a running node, over one
+          Not a screenshot of a plan - this is <code style="font-family:'Spline Sans Mono',monospace;font-size:15.5px;color:var(--text-2);">kanea ui</code> on a running node, over one
           multiplexed websocket. Pick a page.
         </p>
 
@@ -801,7 +801,7 @@
     <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:center;font-family:'Spline Sans Mono',monospace;font-size:12px;color:var(--muted-4);">
       <span style="display:flex;align-items:center;gap:10px;color:var(--muted);">
         <svg width="20" height="20" sc-camel-view-box="0 0 64 64" aria-hidden="true"><path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="var(--muted)" stroke-width="5" stroke-linecap="round"></path><rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--accent)"></rect><rect x="28" y="21" width="8" height="6" rx="3" fill="var(--muted)"></rect><rect x="24" y="32" width="16" height="6" rx="3" fill="var(--muted)" opacity="0.65"></rect></svg>
-        KANEA — APACHE-2.0
+        KANEA - APACHE-2.0
       </span>
       <div style="flex:1"></div>
       <div style="display:flex;gap:22px;">
@@ -849,10 +849,10 @@ class Component extends DCLogic {
     return [
       { name: 'kanead', role: 'converges declared state', kind: 'CONTROL PLANE', title: 'The reconciler, and nothing else', body: 'One loop reads the store, diffs it against the node, and moves what has drifted. It is not a scheduler committee: the autoscaler writes one number and this converges it.', note: 'store · planner · ACME issuance · audit' },
       { name: 'kanea-edge', role: 'north–south traffic', kind: 'DATA PLANE', title: 'A separate process on purpose', body: 'The edge is not a child of the control plane, so restarting kanead never drops a request in flight. TLS is issued in the control plane and published here.', note: 'routes · middleware in fixed order · h2c behind' },
-      { name: 'eBPF datapath', role: 'east–west, no CNI', kind: 'NETWORK', title: 'Three programs, compiled in', body: 'Connect-time service load balancing, per-project default-deny policy, and per-alloc plumbing. No network agent, no kvstore, no CNI — the programs travel inside the binary.', note: 'internal DNS · service VIPs · the autoscaler\u2019s own counters' },
+      { name: 'eBPF datapath', role: 'east–west, no CNI', kind: 'NETWORK', title: 'Three programs, compiled in', body: 'Connect-time service load balancing, per-project default-deny policy, and per-alloc plumbing. No network agent, no kvstore, no CNI - the programs travel inside the binary.', note: 'internal DNS · service VIPs · the autoscaler\u2019s own counters' },
       { name: 'containerd', role: 'hardened runtime', kind: 'RUNTIME', title: 'No privileged escape hatch', body: 'Capabilities dropped to a reviewed uid-switching baseline, no-new-privileges, the default seccomp profile, per-alloc PID and IPC namespaces. Workloads share a cgroup with a hard ceiling; the control plane holds a memory floor beneath it.', note: 'installed by kanea init, pinned by SHA-256' },
-      { name: 'dashboard', role: 'embedded, one socket', kind: 'INTERFACE', title: 'Served by the daemon itself', body: 'React and shadcn/ui embedded in the binary, over one multiplexed websocket: services, allocs, events, streaming logs, rollout progress — and a shell into any running alloc, from the browser.', note: 'kanea ui' },
-      { name: 'mcp server', role: '20 tools, three tiers', kind: 'AGENTS', title: 'An agent can operate the platform', body: 'Over stdio and streamable HTTP. Tools reach the platform only over its own HTTP API — never a side channel — and no tool at any tier returns a secret.', note: 'deny-by-default on every route, audited' }
+      { name: 'dashboard', role: 'embedded, one socket', kind: 'INTERFACE', title: 'Served by the daemon itself', body: 'React and shadcn/ui embedded in the binary, over one multiplexed websocket: services, allocs, events, streaming logs, rollout progress - and a shell into any running alloc, from the browser.', note: 'kanea ui' },
+      { name: 'mcp server', role: '20 tools, three tiers', kind: 'AGENTS', title: 'An agent can operate the platform', body: 'Over stdio and streamable HTTP. Tools reach the platform only over its own HTTP API - never a side channel - and no tool at any tier returns a secret.', note: 'deny-by-default on every route, audited' }
     ];
   }
 
@@ -895,7 +895,7 @@ class Component extends DCLogic {
 
     const tlsBody = {
       'acme': 'Let\u2019s Encrypt over HTTP-01, issued in the control plane and published to the edge. Renewal is a loop, not a cron job you wrote.',
-      'self-signed': 'Issued from the node\u2019s own CA with a real IP SAN — install it once per device with kanea ca show. No public name, no rate limit to spend.',
+      'self-signed': 'Issued from the node\u2019s own CA with a real IP SAN - install it once per device with kanea ca show. No public name, no rate limit to spend.',
       'provided': 'The certificate pair you already have, granted to this project by the node. A mode names a source, never a path.',
       'plaintext': 'Explicit HTTP. Allowed because you typed it, and logged loudly.'
     }[s.tls];
@@ -903,7 +903,7 @@ class Component extends DCLogic {
     const outcomes = [
       { n: '01', title: s.count + (s.count === 1 ? ' alloc placed' : ' allocs placed'), body: 'containerd, hardened baseline, 500 MHz / 512 MiB each, behind one service VIP on internal DNS.', style: card(true) },
       { n: '02', title: s.tls === 'plaintext' ? 'TLS off' : 'TLS terminated at the edge', body: tlsBody, style: card(s.tls !== 'plaintext') },
-      { n: '03', title: s.policy ? 'One ingress path allowed' : 'Project default-deny only', body: s.policy ? 'analytics/collector may reach this service. Everything else is dropped in eBPF, before the packet costs anything.' : 'Without a policy block the project\u2019s default-deny still applies — nothing outside shop reaches web.', style: card(s.policy) },
+      { n: '03', title: s.policy ? 'One ingress path allowed' : 'Project default-deny only', body: s.policy ? 'analytics/collector may reach this service. Everything else is dropped in eBPF, before the packet costs anything.' : 'Without a policy block the project\u2019s default-deny still applies - nothing outside shop reaches web.', style: card(s.policy) },
       { n: '04', title: s.rate ? '100 req/min per IP' : 'No rate limit', body: s.rate ? 'Token bucket in the edge, evaluated in a fixed middleware order with IP restriction and header rewriting.' : 'The edge passes every request through to your allocs.', style: card(s.rate) },
       { n: '05', title: s.scaling ? 'Autoscaling on real RPS' : 'Fixed count', body: s.scaling ? 'Requests-per-second from the datapath\u2019s own counters, not a sidecar. The autoscaler writes a number; the reconciler converges it.' : 'Count stays where you put it until you change the spec.', style: card(s.scaling) }
     ];
@@ -923,7 +923,7 @@ class Component extends DCLogic {
       { k: 'TLS', a: 'built in, renews', b: 'cert-manager', c: 'external', d: 'external' },
       { k: 'Dashboard', a: 'embedded', b: 'add-on', c: 'built in', d: 'none' },
       { k: 'Autoscaling input', a: 'eBPF RPS + p95', b: 'metrics-server', c: 'APM plugin', d: 'none' },
-      { k: 'Agent API for LLMs', a: 'MCP, 20 tools', b: '—', c: '—', d: '—' },
+      { k: 'Agent API for LLMs', a: 'MCP, 20 tools', b: '-', c: '-', d: '-' },
       { k: 'Multi-node', a: 'not the point', b: 'yes', c: 'yes', d: 'yes' }
     ].map((r, i, arr) => Object.assign({}, r, {
       style: 'display:grid;grid-template-columns:minmax(0,1.5fr) repeat(4,minmax(0,1fr));align-items:center;'
@@ -935,7 +935,7 @@ class Component extends DCLogic {
     const shots = sd.map((d, i) => ({
       label: d.label,
       select: () => {
-        if (this.shotEl) { this.shotEl.src = d.src; this.shotEl.alt = 'Kanea dashboard — ' + d.label; }
+        if (this.shotEl) { this.shotEl.src = d.src; this.shotEl.alt = 'Kanea dashboard - ' + d.label; }
         if (this.pathEl) this.pathEl.textContent = d.path;
         this.setState({ shot: i });
       },
@@ -961,9 +961,9 @@ class Component extends DCLogic {
       shotRef: (el) => { this.shotEl = el; },
       pathRef: (el) => { this.pathEl = el; },
       uiFacts: [
-        { k: 'ONE SOCKET', v: 'Services, allocs, events, logs and charts all arrive multiplexed over a single websocket — charts with their history already in the first frame.' },
+        { k: 'ONE SOCKET', v: 'Services, allocs, events, logs and charts all arrive multiplexed over a single websocket - charts with their history already in the first frame.' },
         { k: 'SHELL IN THE BROWSER', v: 'Exec into any running alloc from the service page, over the same websocket the CLI uses.' },
-        { k: 'ROLLOUT PROGRESS', v: 'The planner\u2019s own spec-hash rule, on the wire — every restart and deploy visible as it happens.' },
+        { k: 'ROLLOUT PROGRESS', v: 'The planner\u2019s own spec-hash rule, on the wire - every restart and deploy visible as it happens.' },
         { k: 'SETTINGS THAT APPLY LIVE', v: 'Backup destination and notification channels change at runtime; unit-owned values are shown read-only.' }
       ],
       parts,
@@ -974,7 +974,7 @@ class Component extends DCLogic {
       claims: [
         { n: '01', t: 'The installer verifies, then stops. It generates no keys and starts nothing.' },
         { n: '02', t: 'kanea init installs containerd, runc and buildkitd at versions pinned by SHA-256 inside the binary.' },
-        { n: '03', t: 'The eBPF datapath needs no component — its programs travel inside kanea.' },
+        { n: '03', t: 'The eBPF datapath needs no component - its programs travel inside kanea.' },
         { n: '04', t: 'A node that ran Docker yesterday runs it tomorrow: own prefix, own socket.' }
       ],
       sessionStats: [
@@ -984,14 +984,14 @@ class Component extends DCLogic {
         { k: 'CLUSTER NEEDED', v: 'no' }
       ],
       ships: [
-        { n: '01', title: 'Live dashboard', body: 'Services, allocs, events, streaming logs, real-time charts that open with their history already drawn, rollout progress on every deploy — and a shell into any running alloc, from the browser.' },
+        { n: '01', title: 'Live dashboard', body: 'Services, allocs, events, streaming logs, real-time charts that open with their history already drawn, rollout progress on every deploy - and a shell into any running alloc, from the browser.' },
         { n: '02', title: 'MCP server', body: 'Twenty tools in three tiers over stdio and streamable HTTP, so an agent can operate the platform. No tool at any tier returns a secret.' },
-        { n: '03', title: 'GitOps & pipelines', body: 'In-process git sync, HMAC-signed webhooks, rootless BuildKit builds. Builds are serialised and refused when full — never silently queued behind a wall.' },
+        { n: '03', title: 'GitOps & pipelines', body: 'In-process git sync, HMAC-signed webhooks, rootless BuildKit builds. Builds are serialised and refused when full - never silently queued behind a wall.' },
         { n: '04', title: 'eBPF autoscaling', body: 'CPU, memory, RPS and p95 from containerd, the datapath\u2019s counters and the edge. It writes one number; the reconciler converges.' },
         { n: '05', title: 'Notifications', body: 'Telegram, Slack, Discord, ntfy, SMTP and webhooks, filtered by glob and coalesced. Egress checked at dial time against every resolved address.' },
         { n: '06', title: 'Backups & DR', body: 'AEAD-encrypted archives replicated to S3 by change data capture, with staged and offline restore. A truncated archive cannot half-restore a platform.' },
         { n: '07', title: 'Auth & audit', body: 'Deny-by-default on every API, websocket and MCP route. Local accounts, OIDC with PKCE, LDAP with mandatory TLS. Every privileged action audited.' },
-        { n: '08', title: 'Signed releases', body: 'Keyless Sigstore signatures bound to the release workflow — no long-lived key to guard, rotate and eventually leak. The proof is in a public log.' }
+        { n: '08', title: 'Signed releases', body: 'Keyless Sigstore signatures bound to the release workflow - no long-lived key to guard, rotate and eventually leak. The proof is in a public log.' }
       ],
       reqs: [
         { k: 'Platform', v: 'linux/amd64 · linux/arm64' },
@@ -1005,7 +1005,7 @@ class Component extends DCLogic {
         { title: 'Job spec reference', body: 'Every block, every field, and the sixteen rules', href: 'https://m18h.github.io/kanea/docs/#spec' },
         { title: 'CLI reference', body: 'Every command, with what it actually does', href: 'https://m18h.github.io/kanea/docs/#cli' },
         { title: 'THREAT_MODEL.md', body: 'Boundaries, adversaries, OWASP Top 10 as built', href: 'https://github.com/m18h/kanea/blob/main/docs/THREAT_MODEL.md' },
-        { title: 'DR_RUNBOOK.md', body: 'Disaster recovery — read it before you need it', href: 'https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md' }
+        { title: 'DR_RUNBOOK.md', body: 'Disaster recovery - read it before you need it', href: 'https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md' }
       ],
       rpsRef: (el) => { this.rpsEl = el; },
       p95Ref: (el) => { this.p95El = el; },

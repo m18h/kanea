@@ -91,7 +91,7 @@ const hostResolvConf = "/etc/resolv.conf"
 // alloc never receives these addresses. Its /etc/resolv.conf carries the
 // internal resolver and nothing else (WriteResolvConf), and the only consumer
 // of this list is kanead's own forwarder, which dials from kanead's network
-// namespace with a plain net.Dialer — so 127.0.0.53 is exactly as reachable
+// namespace with a plain net.Dialer - so 127.0.0.53 is exactly as reachable
 // here as it is for any other process on the node.
 //
 // That mattered because systemd-resolved's stub is the *only* nameserver in
@@ -99,7 +99,7 @@ const hostResolvConf = "/etc/resolv.conf"
 // nothing behind and kanead refused to start on the most ordinary DNS setup
 // there is. Forwarding to the stub is also the better answer on its merits:
 // it is the host's own resolver, so a workload inherits the node's cache,
-// its DNSSEC posture and any split-horizon view a link supplies — which is
+// its DNSSEC posture and any split-horizon view a link supplies - which is
 // what "the host's own resolvers" in upstreamResolvers means.
 func HostResolvers() ([]string, error) {
 	raw, err := os.ReadFile(hostResolvConf)

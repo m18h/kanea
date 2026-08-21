@@ -101,7 +101,7 @@ type ApplyRequest struct {
 	// `kanea run app.hcl shop/web` filters the desired state before sending it,
 	// so a server that derived "authoritative for" from the services present
 	// could not tell a selector-scoped apply from a spec that declares exactly
-	// those services — and would read the first as "delete everything else".
+	// those services - and would read the first as "delete everything else".
 	PruneProjects []string `json:"prune_projects,omitempty"`
 }
 

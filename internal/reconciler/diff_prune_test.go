@@ -13,7 +13,7 @@ func svc(project, service, image string, count int) reconciler.Desired {
 
 // TestDiffWithoutAScopeShowsNoDestroy is the guard for every caller that cannot
 // prune: MCP's plan_spec and the dashboard's spec editor share Diff, and a
-// destroy line where no prune will happen is worse than none — the reader has
+// destroy line where no prune will happen is worse than none - the reader has
 // no way to tell a warning from a plan.
 func TestDiffWithoutAScopeShowsNoDestroy(t *testing.T) {
 	current := []reconciler.Desired{svc("shop", "web", "web:v1", 1), svc("shop", "gone", "old:v1", 1)}

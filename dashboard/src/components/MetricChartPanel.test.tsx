@@ -27,6 +27,37 @@ describe('MetricChartPanel', () => {
     expect(Fake.instances).toHaveLength(0)
   })
 
+  it('shows a detail beside the readout without displacing it', () => {
+    // The distinction from valueText, which replaces. A memory percentage is
+    // what the chart plots and what a scaling rule is written against; the
+    // bytes are what tell you whether 80% is 200 MiB or 20 GiB, and you want
+    // both at once.
+    render(
+      <MetricChartPanel
+        label="Memory"
+        unit="%"
+        series={empty}
+        scale="percent"
+        tone={2}
+        latest={80}
+        detail="200 MiB / 256 MiB"
+        status="empty"
+      />,
+    )
+
+    expect(screen.getByText('80%')).toBeTruthy()
+    expect(screen.getByText('200 MiB / 256 MiB')).toBeTruthy()
+  })
+
+  it('renders no detail element when there is none to render', () => {
+    render(
+      <MetricChartPanel label="CPU" unit="%" series={empty} scale="percent" tone={1} latest={12} />,
+    )
+
+    expect(screen.getByText('12%')).toBeTruthy()
+    expect(screen.queryByText(/MiB/)).toBeNull()
+  })
+
   it('says "no samples yet" once there is genuinely nothing recorded', () => {
     // "yet" locates the absence in the record rather than the value, which is
     // also the honest thing to say for the ten seconds after a daemon restart.

@@ -13,7 +13,7 @@ import (
 //
 // This exists because of a bug no unit test could catch. reconciler.Config
 // gained a Secrets field, the reconciler used it for registry credentials, env
-// `secret:` refs and R27 route auth, and cmd/kanea never passed one — so on
+// `secret:` refs and R27 route auth, and cmd/kanea never passed one - so on
 // every real node those three features failed with "no secret store is
 // configured" while the store itself was healthy. Every reconciler test sets
 // cfg.Secrets on its own harness, which is exactly why the package's tests were

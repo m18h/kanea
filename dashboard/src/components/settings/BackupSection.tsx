@@ -11,6 +11,7 @@ import {
   type BackupSettingsRecord,
   type BackupSettingsView,
 } from '@/lib/api'
+import { useDateStyle } from '@/hooks/useDateStyle'
 import { replicationLag, when } from '@/lib/backups'
 import {
   backupFormFromRecord,
@@ -37,6 +38,7 @@ export function BackupSection({
   csrf: string | undefined
   canWrite: boolean
 }) {
+  const style = useDateStyle()
   const client = useQueryClient()
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
@@ -103,11 +105,11 @@ export function BackupSection({
             </KeyValue>
             <KeyValue label="Last segment" mono>
               {status.last_segment_at
-                ? `${replicationLag(status.last_segment_at)} ago · ${when(status.last_segment_at)}`
+                ? `${replicationLag(status.last_segment_at)} ago · ${when(status.last_segment_at, style)}`
                 : 'never'}
             </KeyValue>
             <KeyValue label="Last snapshot" mono>
-              {when(status.last_snapshot_at)}
+              {when(status.last_snapshot_at, style)}
             </KeyValue>
             <KeyValue label="Failures" mono>
               <span className={status.failures > 0 ? 'text-status-error' : undefined}>

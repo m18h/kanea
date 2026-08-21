@@ -358,7 +358,8 @@ func TestDiffNamesARuntimeChange(t *testing.T) {
 
 	lines := reconciler.Diff([]reconciler.Desired{have}, []reconciler.Desired{want})
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "runtime default -> io.containerd.wasmtime.v1") {
+	if !strings.Contains(joined, "runtime") ||
+		!strings.Contains(joined, "default -> io.containerd.wasmtime.v1") {
 		t.Fatalf("plan lines %q do not name the runtime change", joined)
 	}
 }

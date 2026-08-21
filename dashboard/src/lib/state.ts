@@ -1,5 +1,5 @@
 import type { BadgeProps } from '@/components/ui/badge'
-import type { Alloc } from '@/lib/api'
+import type { Alloc, StatsSample } from '@/lib/api'
 
 /** allocStateVariant maps an alloc state to how alarming it should look. */
 export function allocStateVariant(state: string): NonNullable<BadgeProps['variant']> {
@@ -194,13 +194,6 @@ export function relativeAge(iso: string | undefined, now: number = Date.now()): 
   return `${seconds}s`
 }
 
-/** formatClock renders a timestamp as the wall-clock time the feed shows. */
-export function formatClock(iso: string): string {
-  const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return iso
-  return at.toLocaleTimeString([], { hour12: false })
-}
-
 /** formatMetric renders a sample the same way everywhere: one decimal while
  * the number is small enough for it to mean something. */
 export function formatMetric(value: number, unit: string): string {
@@ -214,4 +207,48 @@ export function formatBytes(n: number): string {
   if (n < unit ** 2) return `${(n / unit).toFixed(1)} KiB`
   if (n < unit ** 3) return `${(n / unit ** 2).toFixed(1)} MiB`
   return `${(n / unit ** 3).toFixed(1)} GiB`
+}
+
+/**
+ * memoryUsageText renders the bytes behind the memory percentage.
+ *
+ * The figure is summed from the per-alloc breakdown the frame already carries,
+ * so this needs nothing new on the wire: the service-level sample has only a
+ * percentage, while every alloc reports its own `memory_bytes`. The denominator
+ * is the declared cap times the number of allocs that actually reported, which
+ * is what keeps the ratio equal to the percentage beside it - that percentage
+ * is the mean of the per-alloc ones, and every alloc of a service shares one
+ * declared cap.
+ *
+ * A service with no declared limit reads "all memory", which is this page's
+ * existing word for it (the Resources row says the same). Since R11 v1.58 an
+ * omitted `resources.memory` is unbounded, so there is a real allocation to
+ * name and it is simply not a number.
+ *
+ * It is deliberately not the node's workload ceiling, which is the one number
+ * that would fit there. That ceiling is **collective** (§5.2.11: total RAM
+ * minus the reserve, shared by every alloc on the node), so printing it as one
+ * service's denominator would claim this service may use all of it - true only
+ * on a node running nothing else, and read as a per-service budget by anybody
+ * who has not read §5.2.11. There is no percentage beside it to reconcile
+ * against either, because the scrapers record none for a limitless alloc.
+ */
+export function memoryUsageText(
+  sample: StatsSample | null,
+  limitBytes: number | undefined,
+): string | undefined {
+  let used = 0
+  let reporting = 0
+  for (const alloc of sample?.allocs ?? []) {
+    if (alloc.memory_bytes === undefined) continue
+    used += alloc.memory_bytes
+    reporting++
+  }
+  // Nothing measured is not zero used (§9.2): say nothing rather than "0 B".
+  if (reporting === 0) return undefined
+  const allocated =
+    limitBytes !== undefined && limitBytes > 0
+      ? formatBytes(limitBytes * reporting)
+      : 'all memory'
+  return `${formatBytes(used)} / ${allocated}`
 }

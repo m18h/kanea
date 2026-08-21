@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Input, Label } from '@/components/ui/input'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { fetchAuditPage, type AuditEntry } from '@/lib/api'
+import { useDateStyle } from '@/hooks/useDateStyle'
 import { formatTime } from '@/lib/backups'
 
 const pageSize = 25
@@ -159,10 +160,11 @@ function resultVariant(result: string): 'ok' | 'warn' | 'error' | 'muted' {
 }
 
 function AuditRow({ entry }: { entry: AuditEntry }) {
+  const style = useDateStyle()
   return (
     <TR>
       <TD className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-        {formatTime(entry.time)}
+        {formatTime(entry.time, style)}
       </TD>
       <TD className="font-mono text-xs">{entry.actor ?? '-'}</TD>
       <TD className="font-mono text-xs text-muted-foreground">{entry.via ?? '-'}</TD>

@@ -546,6 +546,7 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 
 		diags = append(diags, validateTask(svc)...)
 		diags = append(diags, validateInits(svc)...)
+		diags = append(diags, warnInitOnPerAllocVolumes(spec, svc)...)
 		// Files are service-level, so they are checked here rather than off
 		// validateTask's fan-out: that one returns early for a task-less
 		// service, and a rule that silently stops running is worse than one
@@ -1817,4 +1818,48 @@ func CheckSecretRefScope(ref, project, where string) error {
 		}
 	}
 	return nil
+}
+
+// warnInitOnPerAllocVolumes flags the one shape v1.92 quietly changed meaning
+// for: an init sequence on a replicated service that mounts local storage.
+//
+// A service's init sequence runs **once**, on alloc 0, so a step preparing
+// something shared - migrating a schema, seeding a bucket - is exactly right.
+// But a local volume is one directory per alloc (§8), and the canonical init
+// step in R32's own words is a `chown` of the directory the task will own.
+// That step now runs against alloc 0's directory and no other, leaving every
+// replica after the first with a directory nobody prepared.
+//
+// A warning rather than an error, because the combination is legitimate far
+// more often than not: most init steps touch shared state, and a spec that
+// mounts local storage for scratch space does not care. But it is not silence,
+// because the failure it guards is a service that starts, passes its health
+// check on alloc 0, and fails on the others for a reason nothing on screen
+// connects to the init block that caused it.
+func warnInitOnPerAllocVolumes(spec *Spec, svc *Service) hcl.Diagnostics {
+	if len(svc.Inits) == 0 || svc.Count <= 1 {
+		return nil
+	}
+	var diags hcl.Diagnostics
+	for _, v := range svc.Volumes {
+		st := spec.StorageByName(v.Storage)
+		// An unresolvable storage name is validateVolumes' error to report,
+		// not a second complaint from here.
+		if st == nil || st.Type != StorageLocal {
+			continue
+		}
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Summary:  "Init runs once, but this volume is per alloc",
+			Detail: fmt.Sprintf(
+				"Service %q declares %d init step(s) and mounts volume %q from local storage %q. "+
+					"An init sequence runs once for the whole service, on the first alloc, while "+
+					"local storage gives each of the %d allocs its own directory: a step that "+
+					"prepares this volume would prepare only the first alloc's copy. "+
+					"Steps that work on shared state (a migration, a seed) are unaffected.",
+				svc.Name, len(svc.Inits), v.Name, v.Storage, svc.Count),
+			Subject: v.DefRange.Ptr(),
+		})
+	}
+	return diags
 }

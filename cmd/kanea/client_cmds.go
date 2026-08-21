@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"golang.org/x/term"
 
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/gitops"
@@ -161,6 +163,8 @@ func runRun(args []string) error {
 	wait := fs.Duration("wait", 60*time.Second, "how long to wait for allocs to run; 0 to skip")
 	removeOrphans := fs.Bool("remove-orphans", false,
 		"delete services in this spec's projects that the spec no longer declares")
+	yes := fs.Bool("yes", false, "apply without asking; implied when stdin is not a terminal")
+	yesShort := fs.Bool("y", false, "alias for --yes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -186,25 +190,50 @@ func runRun(args []string) error {
 		return err
 	}
 
+	// The same read `kanea plan` performs, computed by the same function, so a
+	// plan and the run that follows it cannot disagree about what would happen.
+	current, changes, err := planChanges(ctx, client, desired, prune)
+	if err != nil {
+		return err
+	}
 	// `--image` builds a Desired from nothing, so applying one over a service
 	// that carries more than it can express silently deletes the difference.
 	// Refused rather than warned: the loss is invisible until something stops
 	// answering, and `kanea deploy` is the verb that was wanted.
 	if *image != "" {
-		if err := checkImageWouldNotClobber(ctx, client, desired); err != nil {
+		if err := checkImageWouldNotClobber(current, desired); err != nil {
 			return err
 		}
 	}
 	if err := checkPublishedPorts(ctx, client, desired); err != nil {
 		return err
 	}
+
+	o := newOut()
+	writeChanges(o, changes, pipelines)
+	// A prompt is for a person. A piped or redirected stdin is a script, and a
+	// script must never be asked a question: that is resolveListen's rule
+	// (init_bootstrap.go), and it is what keeps every CI recipe written against
+	// an older kanea working exactly as it did.
+	interactive := !*yes && !*yesShort && len(changes) > 0 &&
+		term.IsTerminal(int(os.Stdin.Fd()))
+	ok, err := confirmApply(o, bufio.NewReader(os.Stdin), interactive)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("aborted; nothing was applied")
+	}
+
 	resp, err := client.ApplyScoped(ctx, api.ApplyRequest{
 		Services: desired, Pipelines: pipelines, PruneProjects: prune,
 	})
 	if err != nil {
 		return err
 	}
-	o := newOut()
+	// A blank line between the preview and what came of it, since without a
+	// prompt (--yes, or CI) the two would otherwise run together.
+	o.println()
 	for _, svc := range resp.Applied {
 		o.printf("applied %s\n", svc)
 	}
@@ -223,6 +252,118 @@ func runRun(args []string) error {
 		return nil
 	}
 	return waitForRunning(ctx, client, desired, *wait)
+}
+
+// planChanges is the one pre-apply read: the stored services, and what an apply
+// would do to them.
+//
+// `kanea plan` and `kanea run` both go through it, because the alternative is
+// two implementations of "what would change", and they drift into a plan that
+// does not match the apply that follows it. It returns the stored listing too,
+// so a caller that also needs it (`--image`'s clobber check) does not fetch the
+// same thing twice.
+//
+// A listing error is fatal here, as it has always been in `plan`: the preview
+// is the only thing standing between a typo and a rolling restart, and quietly
+// skipping it because the daemon did not answer would drop that gate at exactly
+// the moment something is already wrong.
+func planChanges(
+	ctx context.Context, client *api.Client, desired []reconciler.Desired, prune []string,
+) ([]reconciler.Desired, []reconciler.ServiceChange, error) {
+	current, err := client.Services(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return current, reconciler.Changes(current, desired, prune), nil
+}
+
+// writeChanges renders a change set: the per-service blocks, then the verdict.
+//
+// Shared by plan and run so the preview a person confirms is byte-identical to
+// the one they asked for a moment earlier.
+func writeChanges(o *out, changes []reconciler.ServiceChange, pipelines []gitops.Config) {
+	if len(changes) == 0 {
+		o.println("No changes. Desired state matches the declared spec.")
+		if note := pipelineNote(pipelines); note != "" {
+			o.println(note)
+		}
+		return
+	}
+	for _, line := range reconciler.RenderChanges(changes) {
+		o.println(line)
+	}
+	o.printf("\n%s\n", planSummary(changes))
+	if note := pipelineNote(pipelines); note != "" {
+		o.println(note)
+	}
+}
+
+// planSummary is the one-line verdict under the blocks: how much would change,
+// and how much of it replaces containers that are serving traffic right now.
+func planSummary(changes []reconciler.ServiceChange) string {
+	n := reconciler.CountChanges(changes)
+	var parts []string
+	for _, p := range []struct {
+		n    int
+		verb string
+	}{{n.Create, "create"}, {n.Update, "update"}, {n.Destroy, "destroy"}} {
+		if p.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", p.n, p.verb))
+		}
+	}
+	line := fmt.Sprintf("Plan: %d change(s) - %s", len(changes), strings.Join(parts, ", "))
+	if n.Rolling > 0 {
+		line += fmt.Sprintf("; %d replace running allocs", n.Rolling)
+	}
+	return line + "."
+}
+
+// pipelineNote names the non-service state an apply also writes.
+//
+// It is a statement of what is being sent rather than a diff, because nothing
+// reads a stored pipeline config back: ApplyResponse answers with service names
+// only, and there is no route for the rest. Saying this much is still worth it
+// - a git source, a build target or a notification route changing with no line
+// on screen is the silence this whole feature exists to end - and a real diff
+// of it is an API route somebody can add later.
+func pipelineNote(pipelines []gitops.Config) string {
+	if len(pipelines) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(pipelines))
+	for _, p := range pipelines {
+		names = append(names, p.Project)
+	}
+	sort.Strings(names)
+	return fmt.Sprintf(
+		"pipelines: %s - the git source, build specs and notification routes are written as declared",
+		strings.Join(names, ", "))
+}
+
+// confirmApply asks before an apply acts, and answers yes for anything that is
+// not a person.
+//
+// The default is yes, so the common case is one keypress: this is a preview of
+// something the operator just typed, not a destructive-action gate. Anything
+// other than an empty line, y or yes aborts, including a typo, because the cost
+// of re-running `kanea run` is a second and the cost of a wrong yes is a
+// rolling restart.
+func confirmApply(o *out, in *bufio.Reader, interactive bool) (bool, error) {
+	if !interactive {
+		return true, nil
+	}
+	o.printf("\nApply? [Y/n] ")
+	// Flushed before the read, or the prompt sits in the tabwriter behind a
+	// cursor waiting for an answer to a question nobody can see.
+	if err := o.Err(); err != nil {
+		return false, err
+	}
+	line, err := in.ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if err != nil && answer == "" {
+		return false, fmt.Errorf("read confirmation: %w", err)
+	}
+	return answer == "" || answer == "y" || answer == "yes", nil
 }
 
 // pruneScope decides what a `--remove-orphans` apply may claim authority over.
@@ -263,13 +404,7 @@ func pruneScope(removeOrphans bool, declared []string, sels []selector, image st
 // So this refuses on loss, not on existence: if the stored record holds
 // something the synthetic one cannot express, the apply would drop it, and
 // that is invisible until traffic stops arriving.
-func checkImageWouldNotClobber(ctx context.Context, client *api.Client, desired []reconciler.Desired) error {
-	existing, err := client.Services(ctx)
-	if err != nil {
-		// Best-effort, like the port pre-check: a daemon that cannot list is a
-		// problem the apply itself will report more precisely.
-		return nil //nolint:nilerr // the apply reports the real failure
-	}
+func checkImageWouldNotClobber(existing, desired []reconciler.Desired) error {
 	for _, want := range desired {
 		for _, have := range existing {
 			if have.Project != want.Project || have.Service != want.Service {
@@ -447,7 +582,7 @@ func runPlan(args []string) error {
 	if err != nil {
 		return err
 	}
-	desired, _, declared, err := loadSpec(files, sels, *image, *name, *project, *count,
+	desired, pipelines, declared, err := loadSpec(files, sels, *image, *name, *project, *count,
 		fetchNodeVars(ctx, client))
 	if err != nil {
 		return err
@@ -459,7 +594,7 @@ func runPlan(args []string) error {
 		return err
 	}
 
-	current, err := client.Services(ctx)
+	_, changes, err := planChanges(ctx, client, desired, prune)
 	if err != nil {
 		return err
 	}
@@ -477,15 +612,10 @@ func runPlan(args []string) error {
 		}
 		o.printf("Scope: %s\n\n", strings.Join(raws, ", "))
 	}
-	diff := reconciler.DiffScoped(current, desired, prune)
-	if len(diff) == 0 {
-		o.println("No changes. Desired state matches the declared spec.")
-		return o.Err()
+	writeChanges(o, changes, pipelines)
+	if len(changes) > 0 {
+		o.println("Run `kanea run` to apply.")
 	}
-	for _, line := range diff {
-		o.println(line)
-	}
-	o.printf("\nPlan: %d change(s). Run `kanea run` to apply.\n", len(diff))
 	return o.Err()
 }
 

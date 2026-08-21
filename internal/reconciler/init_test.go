@@ -712,3 +712,209 @@ func TestAFailingInitSequenceExhaustsTheRestartBudget(t *testing.T) {
 			"until a new spec hash arrives (R29)", res.Applied)
 	}
 }
+
+// --- once per service (v1.92) ---------------------------------------------
+//
+// The sequence belongs to the service, not to each alloc. Creation is not
+// budget-gated - only ActionReplace is - so before this a first deploy of
+// `count = 3` created three allocs in one pass and ran three migrations at
+// once, against the same database.
+
+// actionFor returns the single action planned for one alloc, or fails.
+func actionFor(t *testing.T, actions []reconciler.Action, index int) reconciler.Action {
+	t.Helper()
+	id := reconciler.AllocID("shop", "web", index)
+	var found []reconciler.Action
+	for _, a := range actions {
+		if a.AllocID == id {
+			found = append(found, a)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("actions for alloc %d = %v, want exactly one (all: %s)", index, found, kinds(actions))
+	}
+	return found[0]
+}
+
+// The headline: one sequence, on alloc 0, and nobody else starts one.
+func TestInitRunsOnTheLeaderAloneOnAFirstDeploy(t *testing.T) {
+	d := withInit(3, "migrate")
+	w := reconciler.World{
+		Desired:    []reconciler.Desired{d},
+		Records:    map[string]reconciler.AllocRecord{},
+		Actual:     map[string]runtime.Status{},
+		InitActual: map[string]reconciler.InitStatus{},
+		Now:        testNow,
+	}
+
+	actions := reconciler.Plan(w)
+	if got := actionFor(t, actions, 0); got.Kind != reconciler.ActionCreate {
+		t.Errorf("alloc 0 = %s, want create: the leader runs the sequence", got.Kind)
+	}
+	for _, index := range []int{1, 2} {
+		got := actionFor(t, actions, index)
+		if got.Kind != reconciler.ActionWait {
+			t.Errorf("alloc %d = %s (%s), want wait: only the leader runs init",
+				index, got.Kind, got.Reason)
+		}
+		if !strings.Contains(got.Reason, "shop-web-0") {
+			t.Errorf("alloc %d waits without naming the leader: %q", index, got.Reason)
+		}
+	}
+}
+
+// A follower waits while the leader is mid-sequence, and the reason says which
+// step: a service that has not started needs to be able to say why on `ps`.
+func TestFollowersWaitNamingTheLiveStep(t *testing.T) {
+	d := withInit(2, "migrate", "seed")
+	w := initWorld(d, initRecord(0, 1, "seed", testNow.Add(-30*time.Second)),
+		initStatus(0, 0, "migrate", runtime.StateStopped, 0),
+		initStatus(0, 1, "seed", runtime.StateRunning, 0))
+
+	got := actionFor(t, reconciler.Plan(w), 1)
+	if got.Kind != reconciler.ActionWait {
+		t.Fatalf("alloc 1 = %s, want wait", got.Kind)
+	}
+	if !strings.Contains(got.Reason, "seed") {
+		t.Errorf("wait reason does not name the live step: %q", got.Reason)
+	}
+}
+
+// Once the leader is past its sequence, the followers are created - and with
+// no init of their own, which is what create() checks the index for.
+func TestFollowersAreCreatedOnceTheLeaderIsPastInit(t *testing.T) {
+	d := withInit(3, "migrate")
+	leader := record(0, reconciler.AllocRunning)
+	leader.SpecHash = reconciler.SpecHash(d)
+
+	w := reconciler.World{
+		Desired: []reconciler.Desired{d},
+		Records: map[string]reconciler.AllocRecord{leader.ID: leader},
+		Actual: map[string]runtime.Status{
+			leader.ID: running(leader.ID),
+		},
+		InitActual: map[string]reconciler.InitStatus{},
+		Now:        testNow,
+	}
+
+	for _, index := range []int{1, 2} {
+		if got := actionFor(t, reconciler.Plan(w), index); got.Kind != reconciler.ActionCreate {
+			t.Errorf("alloc %d = %s (%s), want create", index, got.Kind, got.Reason)
+		}
+	}
+}
+
+// The spec hash is half the test. On a deploy the leader re-runs the new
+// spec's sequence, and a follower that only asked "is the leader past init"
+// would build its new task against a migration that has not been applied yet.
+func TestAFollowerWaitsForTheLeaderToRerunInitAfterADeploy(t *testing.T) {
+	d := withInit(2, "migrate")
+	leader := record(0, reconciler.AllocRunning)
+	leader.SpecHash = "the-previous-spec"
+
+	w := reconciler.World{
+		Desired:    []reconciler.Desired{d},
+		Records:    map[string]reconciler.AllocRecord{leader.ID: leader},
+		Actual:     map[string]runtime.Status{},
+		InitActual: map[string]reconciler.InitStatus{},
+		Now:        testNow,
+	}
+
+	got := actionFor(t, reconciler.Plan(w), 1)
+	if got.Kind != reconciler.ActionWait {
+		t.Fatalf("alloc 1 = %s (%s), want wait: the leader is on an older spec",
+			got.Kind, got.Reason)
+	}
+}
+
+// A leader that failed its migration stops the service, visibly. Failing the
+// followers too would be a cascade - R10 refuses those for dependencies - and
+// would spend their restart budgets on somebody else's failure; leaving them
+// unexplained would be worse.
+func TestAFailedLeaderStopsTheServiceAndSaysSo(t *testing.T) {
+	d := withInit(2, "migrate")
+	leader := record(0, reconciler.AllocFailed)
+	leader.SpecHash = reconciler.SpecHash(d)
+	leader.LastExitReason, leader.InitName = reconciler.ExitInitFailed, "migrate"
+
+	w := reconciler.World{
+		Desired:    []reconciler.Desired{d},
+		Records:    map[string]reconciler.AllocRecord{leader.ID: leader},
+		Actual:     map[string]runtime.Status{},
+		InitActual: map[string]reconciler.InitStatus{},
+		Now:        testNow,
+	}
+
+	got := actionFor(t, reconciler.Plan(w), 1)
+	if got.Kind != reconciler.ActionWait {
+		t.Fatalf("alloc 1 = %s, want wait", got.Kind)
+	}
+	for _, want := range []string{"shop-web-0", "migrate", "failed"} {
+		if !strings.Contains(got.Reason, want) {
+			t.Errorf("reason %q does not carry %q", got.Reason, want)
+		}
+	}
+}
+
+// A single-replica service is the common case and must behave exactly as it
+// did: the leader is the only alloc, so nothing waits for anything.
+func TestASingleAllocServiceIsUnchanged(t *testing.T) {
+	d := withInit(1, "migrate")
+	w := reconciler.World{
+		Desired:    []reconciler.Desired{d},
+		Records:    map[string]reconciler.AllocRecord{},
+		Actual:     map[string]runtime.Status{},
+		InitActual: map[string]reconciler.InitStatus{},
+		Now:        testNow,
+	}
+
+	if got := actionFor(t, reconciler.Plan(w), 0); got.Kind != reconciler.ActionCreate {
+		t.Errorf("alloc 0 = %s, want create", got.Kind)
+	}
+}
+
+// A service with no init blocks is gated by nothing: the follower path must be
+// reachable only when there is a sequence to wait for.
+func TestAServiceWithoutInitCreatesEveryAllocAtOnce(t *testing.T) {
+	w := reconciler.World{
+		Desired:    []reconciler.Desired{desired(3)},
+		Records:    map[string]reconciler.AllocRecord{},
+		Actual:     map[string]runtime.Status{},
+		InitActual: map[string]reconciler.InitStatus{},
+		Now:        testNow,
+	}
+
+	for index := range 3 {
+		if got := actionFor(t, reconciler.Plan(w), index); got.Kind != reconciler.ActionCreate {
+			t.Errorf("alloc %d = %s, want create", index, got.Kind)
+		}
+	}
+}
+
+// A follower holding an AllocInit record is a leftover from a node upgraded
+// mid-sequence, back when init ran per alloc. It must not be planned into a
+// sequence of its own; it takes the ordinary follower path.
+func TestAFollowerLeftInAllocInitByAnUpgradeDoesNotResumeASequence(t *testing.T) {
+	d := withInit(2, "migrate")
+	leader := record(0, reconciler.AllocRunning)
+	leader.SpecHash = reconciler.SpecHash(d)
+	stale := initRecord(1, 0, "migrate", testNow.Add(-time.Minute))
+
+	w := reconciler.World{
+		Desired: []reconciler.Desired{d},
+		Records: map[string]reconciler.AllocRecord{leader.ID: leader, stale.ID: stale},
+		Actual:  map[string]runtime.Status{leader.ID: running(leader.ID)},
+		InitActual: map[string]reconciler.InitStatus{
+			initID(1, 0, "migrate"): initStatus(1, 0, "migrate", runtime.StateStopped, 0),
+		},
+		Now: testNow,
+	}
+
+	got := actionFor(t, reconciler.Plan(w), 1)
+	if got.Kind == reconciler.ActionInitStep {
+		t.Fatalf("a follower resumed a per-alloc sequence: %s", got.Reason)
+	}
+	if got.Kind != reconciler.ActionCreate {
+		t.Errorf("alloc 1 = %s (%s), want create", got.Kind, got.Reason)
+	}
+}

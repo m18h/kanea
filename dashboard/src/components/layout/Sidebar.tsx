@@ -24,7 +24,9 @@ import { useNavCounts } from '@/hooks/useNavCounts'
 import { useRouter } from '@/hooks/useRouter'
 import { useSession } from '@/hooks/useSession'
 import { useSocketStatus } from '@/hooks/useSocketStatus'
+import { useDateStyle } from '@/hooks/useDateStyle'
 import { useTheme } from '@/hooks/useTheme'
+import { ShortDateStyle, nextDateStyle, setDateStyle } from '@/lib/datetime'
 
 /** Sidebar is the shell's left rail: brand, nav, connection facts, user. */
 export function Sidebar({ className }: { className?: string | undefined }) {
@@ -76,9 +78,6 @@ export function Sidebar({ className }: { className?: string | undefined }) {
 
       <div className="mt-auto border-t border-sidebar-border px-4 py-3">
         <SocketLine />
-        <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
-          <span aria-hidden>◇</span> store idx {health.data?.store_index ?? '-'}
-        </div>
       </div>
       <UserRow />
     </aside>
@@ -140,6 +139,7 @@ function SocketLine() {
 function UserRow() {
   const { session, signOut } = useSession()
   const [theme, setTheme] = useTheme()
+  const style = useDateStyle()
   if (!session) return null
 
   return (
@@ -154,6 +154,22 @@ function UserRow() {
         </div>
       </div>
       <div className="ml-auto flex items-center">
+        {/* The current format is the label, not an icon: you can read what it
+            is set to without hovering, which an icon cannot do for three
+            values. It cycles rather than opening a menu, because this app has
+            no menu primitive and a list of three needs none - the same call
+            OpenUrlMenu documents. It lives here beside the theme toggle rather
+            than on the Settings page because that page is admin-only, and how
+            a viewer reads a date is nobody else's decision. */}
+        <button
+          type="button"
+          title={`Date format: ${style} (click to change)`}
+          aria-label={`Date format: ${style}. Click to change.`}
+          className="rounded-md px-1.5 py-1 font-mono text-[10px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+          onClick={() => setDateStyle(nextDateStyle(style))}
+        >
+          {ShortDateStyle[style]}
+        </button>
         <button
           type="button"
           aria-label="Toggle theme"

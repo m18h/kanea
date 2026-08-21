@@ -114,6 +114,10 @@ var (
 	// and its live samples are the same three numbers.
 	defaultAllocSeries = []string{"cpu", "memory", "memory_bytes"}
 
+	// gpu_util (v1.94) is deliberately absent: this set is what a client that
+	// names nothing receives, so adding to it changes the bytes an existing
+	// caller already gets. It is available by name, which is how the dashboard
+	// asks for it. TestThePreV179RequestIsUnchanged is the guard.
 	defaultNodeSeries = []string{"cpu", "memory", "gpu_vram", "rps", "p95_latency_ms"}
 )
 
@@ -135,6 +139,7 @@ type nodeSeriesDef struct {
 var nodeSeries = map[string]nodeSeriesDef{
 	"cpu":            {metric: scaling.MetricNodeCPU, kind: "direct"},
 	"memory":         {metric: scaling.MetricNodeMemory, kind: "direct"},
+	"gpu_util":       {metric: scaling.MetricNodeGPUUtil, kind: "direct"},
 	"gpu_vram":       {metric: scaling.MetricNodeGPU, kind: "direct"},
 	"load1":          {metric: scaling.MetricNodeLoad1, kind: "direct"},
 	"allocs_running": {metric: scaling.MetricNodeAllocsRunning, kind: "direct"},

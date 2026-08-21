@@ -230,12 +230,15 @@ export const oidcStatusSchema = z.object({
 export const healthSchema = z.object({
   status: z.string(),
   version: z.string(),
-  store_index: z.number(),
   ws_connections: z.number(),
   oidc: oidcStatusSchema.nullish(),
+  // The daemon also sends `pid` and `store_index`. Neither is declared, because
+  // nothing here renders either one and zod drops what it is not told about: a
+  // required field the dashboard does not read is a validation failure waiting
+  // to happen over a number nobody would have missed.
+  //
   // Optional so the dashboard also renders against a pre-v1.38 daemon, which
   // simply has no uptime to report.
-  pid: z.number().optional(),
   started_at: z.string().optional(),
   uptime_seconds: z.number().optional(),
 })
@@ -579,6 +582,9 @@ export async function fetchEvents(
  * report them: an [N/A] from nvidia-smi is not an empty card. */
 export const nodeGPUSchema = z.object({
   name: z.string(),
+  // How busy the card is (v1.94). Absent for a driver that publishes no busy
+  // counter, which is every integrated Intel GPU: absent, never zero.
+  util_percent: z.number().optional(),
   vram_used_bytes: z.number().optional(),
   vram_total_bytes: z.number().optional(),
   vram_percent: z.number().optional(),
@@ -593,6 +599,7 @@ export const nodeMachineSchema = z.object({
   memory_available_bytes: z.number().optional(),
   memory_percent: z.number().optional(),
   gpus: z.array(nodeGPUSchema).optional(),
+  gpu_util_percent: z.number().optional(),
   gpu_vram_percent: z.number().optional(),
   cores: z.number(),
   at: z.string(),

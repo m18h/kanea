@@ -9,12 +9,9 @@ import type { Backup } from './api'
  * on for no benefit.
  */
 
-/** formatTime renders a timestamp in the reader's locale, or passes it through. */
-export function formatTime(iso: string): string {
-  const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return iso
-  return at.toLocaleString()
-}
+import { type DateStyle, formatDateTime } from '@/lib/datetime'
+
+export { formatDateTime as formatTime } from '@/lib/datetime'
 
 /** describeArchive summarises an archive's contents without decrypting it. */
 export function describeArchive(archive: Backup): string {
@@ -42,9 +39,9 @@ export function isStale(last: string | undefined, now: number = Date.now()): boo
 }
 
 /** describeReplication renders "never" for a destination nothing has reached. */
-export function when(iso: string | undefined): string {
+export function when(iso: string | undefined, style?: DateStyle): string {
   if (!iso) return 'never'
-  return formatTime(iso)
+  return formatDateTime(iso, style)
 }
 
 /**

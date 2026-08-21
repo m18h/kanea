@@ -931,13 +931,20 @@ func runPlanSpec(ctx context.Context, s *Server, sess *Session, args arguments) 
 		return callToolResult{}, err
 	}
 
-	diff := reconciler.Diff(current, desired)
-	if len(diff) == 0 {
+	// The change set rather than the rendered lines, because one service is now
+	// several lines and len(lines) stopped being a count of anything.
+	changes := reconciler.Changes(current, desired, nil)
+	if len(changes) == 0 {
 		return textResult("No changes. The declared state already matches this spec."), nil
 	}
-	return textResult(fmt.Sprintf("%s\n\n%d change(s). Nothing has been applied; "+
+	n := reconciler.CountChanges(changes)
+	summary := fmt.Sprintf("%d change(s)", len(changes))
+	if n.Rolling > 0 {
+		summary += fmt.Sprintf(", %d of which replace running allocs", n.Rolling)
+	}
+	return textResult(fmt.Sprintf("%s\n\n%s. Nothing has been applied; "+
 		"call apply_spec with the same spec to make them.",
-		strings.Join(diff, "\n"), len(diff))), nil
+		strings.Join(reconciler.RenderChanges(changes), "\n"), summary)), nil
 }
 
 // runApplySpec applies a spec.
