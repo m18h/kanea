@@ -438,7 +438,7 @@ kanea logs -f demo/web</pre>
     <p>
       Two commands: one puts the binary on the node, one turns the node into a platform.
       The first only ever writes <code>/usr/local/bin/kanea</code>; everything else
-      &mdash; the runtime, the keys, the units, the accounts &mdash; belongs to
+      (the runtime, the keys, the units, the accounts) belongs to
       <code>kanea init</code>, which you can read before you run.
     </p>
 
@@ -1609,7 +1609,7 @@ sudo systemctl restart kanead</pre>
     <div class="callout warn">
       <b class="label">The port is part of the URL, and leaving it off fails confusingly</b>
       <p>
-        <code>https://kanea.apps.example.com</code> &mdash; no port &mdash; goes to
+        <code>https://kanea.apps.example.com</code> (no port) goes to
         <b>:443, which is <code>kanea-edge</code></b>, a different process that has never
         heard of the dashboard. The dashboard is served by <code>kanead</code> itself and
         <a href="#arch-dashboard">is not a service</a>, so no route to it can exist and
@@ -1703,7 +1703,7 @@ sudo systemctl restart kanead</pre>
 
     <p>
       A job spec names a <i>grant</i>, never a path. There is no field in the spec for a
-      device node or a socket path &mdash; not a validated one, none &mdash; because the
+      device node or a socket path: not a validated one, none at all, because the
       node holds the mapping and the spec only asks for it by name.
     </p>
 
@@ -4198,8 +4198,8 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       <b class="label">A script is never asked a question</b>
       <p>
         The prompt appears only when stdin is a terminal. A piped or redirected stdin
-        &mdash; every CI job, every pipeline, every <code>kanea run … &lt; /dev/null</code>
-        &mdash; applies without asking, exactly as it did before the prompt existed. No
+        (every CI job, every pipeline, every <code>kanea run … &lt; /dev/null</code>)
+        applies without asking, exactly as it did before the prompt existed. No
         existing automation needs <code>--yes</code> added to it.
       </p>
     </div>

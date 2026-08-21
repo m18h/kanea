@@ -788,7 +788,7 @@ default-deny posture (ufw, firewalld) refuses both. Alloc traffic crosses the
 *forward* hook on its way out, and it crosses the **input** hook to reach the
 internal resolver, because a query to `10.244.0.1:53` is a new inbound
 connection to the host on a veth. The host's own `dig` keeps working
-throughout — every manager accepts `lo` unconditionally — which is what makes
+throughout (every manager accepts `lo` unconditionally), which is what makes
 this present as "Kanea's DNS is broken". `kanea doctor` names it, and
 `kanea firewall` prints the rules for this node's CIDRs and resolver:
 
@@ -921,7 +921,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.90) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.91) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

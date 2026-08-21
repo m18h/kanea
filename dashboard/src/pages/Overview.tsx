@@ -304,6 +304,12 @@ function UtilisationCard({
   const vramTotal = gpus.reduce((sum, g) => sum + (g.vram_total_bytes ?? 0), 0)
   const gpuText =
     vramTotal > 0 ? `${formatBytes(vramUsed)} / ${formatBytes(vramTotal)}` : undefined
+  // With no VRAM to report the readout is a dash, and a dash with no name on it
+  // reads as a broken panel rather than as an integrated GPU, which is what it
+  // is: an iGPU shares system memory, so the number is in the Memory panel and
+  // there is none of its own to draw. Naming the cards is what makes the dash
+  // legible (v1.91).
+  const gpuNames = vramTotal > 0 ? undefined : gpus.map((g) => g.name).join(', ') || undefined
 
   return (
     <Card className="lg:col-span-3">
@@ -342,6 +348,7 @@ function UtilisationCard({
             status={status}
             latest={machine?.gpu_vram_percent}
             {...(gpuText !== undefined ? { valueText: gpuText } : {})}
+            {...(gpuNames !== undefined ? { detail: gpuNames } : {})}
             tone={2}
           />
         ) : null}

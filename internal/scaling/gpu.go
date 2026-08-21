@@ -91,7 +91,7 @@ func (r *GPUReader) Read() []GPUStats {
 	if !r.cachedAt.IsZero() && r.now().Sub(r.cachedAt) < gpuCacheFor {
 		return r.cached
 	}
-	gpus := append(r.amdgpu(), r.nvidiaGPUs()...)
+	gpus := append(r.drmGPUs(), r.nvidiaGPUs()...)
 	r.cached, r.cachedAt = gpus, r.now()
 	return gpus
 }
@@ -100,10 +100,37 @@ func (r *GPUReader) Read() []GPUStats {
 // connector entries like card0-DP-1, which have no device to read.
 var cardDir = regexp.MustCompile(`^card\d+$`)
 
-// amdgpu walks /sys/class/drm for cards whose driver publishes VRAM files.
-// An NVIDIA card also appears here but carries no mem_info_vram_*: it is
-// skipped and counted once, by nvidia-smi.
-func (r *GPUReader) amdgpu() []GPUStats {
+// drmGPUs walks /sys/class/drm and reports every GPU it finds there, with VRAM
+// where the driver publishes it.
+//
+// Two kinds of card come out of this. A card publishing `mem_info_vram_*`
+// (amdgpu) is reported with its numbers. A card publishing neither is reported
+// with **no VRAM fields at all**, which is why they are pointers: an Intel
+// integrated GPU has no VRAM to report, because it has none - it shares system
+// memory, which the node's own memory reading already covers - and "this GPU
+// exists and its memory is not separately measurable" is a different fact from
+// "there is no GPU here". Before v1.91 such a card was skipped entirely, so a
+// node whose only GPU was integrated rendered no GPU panel and read as having
+// none, which is the §9.2 mistake in the shape it takes when the absent thing
+// is the device rather than the number.
+//
+// Two cards are deliberately *not* reported, and each exclusion earns itself:
+//
+//   - **A card with no render node.** A server's BMC display adapter (ast,
+//     mgag200) is a DRM card and is not a GPU; it cannot run a workload, so
+//     calling it one would put a permanent unmeasurable panel on the majority
+//     of headless nodes. `device/drm/renderD*` is the kernel's own answer to
+//     "can this device compute", which is better than a driver-name allowlist
+//     that would need editing for every new driver.
+//   - **An NVIDIA card with no VRAM files.** nvidia-smi reports it, with real
+//     numbers, and a card counted twice is worse than one counted once. The
+//     open `nouveau` driver is *not* excluded: nvidia-smi does not see those,
+//     so this path is the only thing that would ever name them.
+//
+// The render-node check applies only to a card with no VRAM files. Publishing
+// VRAM is already proof of being a GPU, and gating an amdgpu card on a second
+// signal would risk losing a reading that works today for a tidier rule.
+func (r *GPUReader) drmGPUs() []GPUStats {
 	cards, err := filepath.Glob(r.sysRoot + "/class/drm/card*")
 	if err != nil {
 		return nil
@@ -116,12 +143,15 @@ func (r *GPUReader) amdgpu() []GPUStats {
 		device := card + "/device"
 		used, usedOK := readSysUint(device + "/mem_info_vram_used")
 		total, totalOK := readSysUint(device + "/mem_info_vram_total")
+		driver := sysDriver(device)
 		if !usedOK && !totalOK {
-			continue
+			if driver == driverNvidia || !hasRenderNode(device) {
+				continue
+			}
 		}
 
 		g := GPUStats{Name: filepath.Base(card)}
-		if driver := sysDriver(device); driver != "" {
+		if driver != "" {
 			g.Name += " (" + driver + ")"
 		}
 		if usedOK {
@@ -137,6 +167,18 @@ func (r *GPUReader) amdgpu() []GPUStats {
 		out = append(out, g)
 	}
 	return out
+}
+
+// driverNvidia is the proprietary driver's name in a card's uevent. Its cards
+// are reported by nvidia-smi, which has the numbers this path does not.
+const driverNvidia = "nvidia"
+
+// hasRenderNode reports whether a DRM device exposes a render node, which is
+// the kernel saying the device can be used for rendering or compute rather
+// than only for scanning out a display.
+func hasRenderNode(device string) bool {
+	nodes, err := filepath.Glob(device + "/drm/renderD*")
+	return err == nil && len(nodes) > 0
 }
 
 // readSysUint reads one integer sysfs file. Garbage is an absence, not a zero.
