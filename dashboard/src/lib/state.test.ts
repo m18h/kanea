@@ -62,14 +62,24 @@ describe('memoryUsageText', () => {
     expect(text).toBe('256.0 MiB / 512.0 MiB')
   })
 
-  it('shows the bytes alone for a service with no declared limit', () => {
-    // R11 v1.58: an omitted resources.memory is unbounded, so no percentage is
-    // ever recorded and the panel has always shown a bare dash. The bytes are
-    // recorded regardless, and there is no denominator to invent.
+  it('names the allocation as "all memory" when none is declared', () => {
+    // R11 v1.58: an omitted resources.memory is unbounded. There is still an
+    // allocation to name, it just is not a number - and the Resources row on
+    // the same page has called it "all memory" since v1.58, so this does too.
     expect(memoryUsageText(sample([{ alloc_id: 'a', memory_bytes: 512 * 1024 * 1024 }]), 0))
-      .toBe('512.0 MiB')
+      .toBe('512.0 MiB / all memory')
     expect(memoryUsageText(sample([{ alloc_id: 'a', memory_bytes: 512 * 1024 * 1024 }]), undefined))
-      .toBe('512.0 MiB')
+      .toBe('512.0 MiB / all memory')
+  })
+
+  it('always reads as used over allocated', () => {
+    // The readout answers "how much of what it may have", so the denominator
+    // is never dropped: half an answer invites the reader to supply the other
+    // half from memory, and they will supply the node's total.
+    for (const limit of [0, 256 * 1024 * 1024]) {
+      const text = memoryUsageText(sample([{ alloc_id: 'a', memory_bytes: 1024 }]), limit)
+      expect(text).toContain(' / ')
+    }
   })
 
   it('counts only the allocs that reported', () => {

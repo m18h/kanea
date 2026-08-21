@@ -220,12 +220,18 @@ export function formatBytes(n: number): string {
  * is the mean of the per-alloc ones, and every alloc of a service shares one
  * declared cap.
  *
- * A service with no declared limit is the interesting case and the reason this
- * does not simply mirror the Overview's "used / total": since R11 v1.58 an
- * omitted `resources.memory` is unbounded, the scrapers record no percentage
- * for a limitless alloc, and the panel has therefore always shown a bare dash
- * for such a service. The bytes are recorded regardless, so they are shown
- * alone - a real number where there was nothing, and no invented denominator.
+ * A service with no declared limit reads "all memory", which is this page's
+ * existing word for it (the Resources row says the same). Since R11 v1.58 an
+ * omitted `resources.memory` is unbounded, so there is a real allocation to
+ * name and it is simply not a number.
+ *
+ * It is deliberately not the node's workload ceiling, which is the one number
+ * that would fit there. That ceiling is **collective** (§5.2.11: total RAM
+ * minus the reserve, shared by every alloc on the node), so printing it as one
+ * service's denominator would claim this service may use all of it - true only
+ * on a node running nothing else, and read as a per-service budget by anybody
+ * who has not read §5.2.11. There is no percentage beside it to reconcile
+ * against either, because the scrapers record none for a limitless alloc.
  */
 export function memoryUsageText(
   sample: StatsSample | null,
@@ -240,6 +246,9 @@ export function memoryUsageText(
   }
   // Nothing measured is not zero used (§9.2): say nothing rather than "0 B".
   if (reporting === 0) return undefined
-  if (limitBytes === undefined || limitBytes <= 0) return formatBytes(used)
-  return `${formatBytes(used)} / ${formatBytes(limitBytes * reporting)}`
+  const allocated =
+    limitBytes !== undefined && limitBytes > 0
+      ? formatBytes(limitBytes * reporting)
+      : 'all memory'
+  return `${formatBytes(used)} / ${allocated}`
 }
