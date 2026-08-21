@@ -1,6 +1,6 @@
 # REPORT; Spike: Intel GPU utilisation for the node reader
 
-**Date:** 2026-08-21 · **Verdict: GO (7/7)** · **PRD amendments required:** one, for the aggregate rule
+**Date:** 2026-08-21 · **Verdict: GO (7/7), and shipped** · **PRD amendment:** v1.96
 
 > Every `PASS`/`INFO` line below is copied from a real run on the media server,
 > not written from expectation. Two earlier attempts produced flat zeros
@@ -282,6 +282,19 @@ Four things the implementation must get right, each of them a finding above:
    its baseline on every call, and v1.79 records what went wrong when two
    callers shared one instance: a reading of the wrong interval, which is worse
    than a gap because nothing about it looks wrong. The same trap applies here.
+
+### Built, and confirmed end to end
+
+Shipped as PRD v1.96. The reader discovers the PMU once, holds one counter per
+engine, and reports through the existing `GPUStats.UtilPercent`, so no API
+field and no dashboard change were needed.
+
+On **21 August 2026** it was deployed to the same media server this spike ran
+on and the dashboard rendered the Intel card's utilisation under a transcode.
+That closes the loop this report opened: the spike proves the syscall, the unit
+tests prove the arithmetic against a fake sampler, and only a real daemon proves
+the two are connected. Recorded in
+[`docs/VALIDATION.md` §12](../../docs/VALIDATION.md#12-intel-gpu-occupancy-v196).
 
 **Out of scope, and now confirmed rather than assumed:** the i915 PMU is
 uncore-like and cannot be opened per process, so this measures the whole GPU
