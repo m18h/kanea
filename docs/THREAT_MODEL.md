@@ -1080,21 +1080,21 @@ one has a directory: the syncer reads blobs out of a commit tree, and the
 dashboard's spec editor and the MCP spec tools parse an in-memory string
 **inside `kanead`, as root**. An `os.ReadFile` inside the parser would therefore
 make `POST /v1/spec/render` an arbitrary file read as root for any signed-in
-user — `source = "/etc/kanea/api.key"` — embedded into a record they read back
+user - `source = "/etc/kanea/api.key"` - embedded into a record they read back
 from `GET /v1/services`. Those two callers supply no reader, so `source` is
 refused there by name. The CLI's reader is rooted at the spec's own directory
 and refuses a symlink **component by component**, not only on the leaf, because
 the lexical containment check alone was the K-01 hole. The syncer's reader is a
 tree lookup, which cannot leave the repository at all, and refuses a symlink by
-entry *mode* — stronger than the v1.75 defence, since there is no working tree
+entry *mode* - stronger than the v1.75 defence, since there is no working tree
 for a symlink blob to be written into.
 
 **Where the bytes go.** Every file is bind-mounted **read-only** with
 `nosuid,noexec,nodev`, and an execute bit in `mode` is refused outright, which
 is what lets `noexec` be unconditional rather than mode-dependent: a `file`
 block delivers configuration, not a program. A path gets the refusals a volume
-destination gets — absolute, clean, `..`-free, not under `/dev`, `/proc` or
-`/sys`, not `/etc/resolv.conf` — plus a collision check against every volume
+destination gets - absolute, clean, `..`-free, not under `/dev`, `/proc` or
+`/sys`, not `/etc/resolv.conf` - plus a collision check against every volume
 and socket mount path, because two things on one path means one silently wins.
 Files mount *after* volumes so a file inside a volume's mount path wins, which
 is what "declare a file at a path" has to mean. One residual, stated rather than
@@ -1103,7 +1103,7 @@ defended: a file bind over a path the **image** holds as a directory fails
 
 **A secret in content never becomes state.** `${secret.<scope>.<name>}` resolves
 at parse to a placeholder; the record carries the placeholder and an R5-scoped
-reference list, and the reconciler substitutes at alloc create — R3's rule for
+reference list, and the reconciler substitutes at alloc create - R3's rule for
 an env var, applied to bytes. The alternative (resolve at parse, embed the
 value) would put a credential in bbolt, in the change log, in every S3 segment
 and archive, and in `GET /v1/services` for any authenticated viewer. Three
@@ -1129,7 +1129,7 @@ delivery for a service in another project that declares no files.
 **What is deliberately not claimed.** File content is visible to any
 authenticated caller of `GET /v1/services`, exactly as env values and volume
 declarations are; it is spec, not secret, and the secret half is the reference.
-And the websocket feed elides content — a resource decision (v1.70's send
+And the websocket feed elides content - a resource decision (v1.70's send
 buffer), not a confidentiality one.
 
 ---

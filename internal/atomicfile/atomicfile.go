@@ -23,7 +23,7 @@ import (
 // Two properties matter to both callers. **Unchanged content writes nothing**,
 // so a steady-state reconcile pass touches no disk at all. And the write is a
 // temp file in the same directory followed by rename(2), so a reader never sees
-// half a file — which is also what makes it safe while a container has the old
+// half a file - which is also what makes it safe while a container has the old
 // inode bind-mounted: the bind pins what it opened, and a new container binds
 // the new inode.
 func WriteIfChanged(path string, body []byte, mode os.FileMode) (bool, error) {

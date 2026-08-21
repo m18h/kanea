@@ -30,7 +30,7 @@ func TestUpstreamResolversPrecedence(t *testing.T) {
 
 // The v1.81 question, pinned: keeping loopback in the resolv.conf fallback
 // changed only what happens when nothing is configured. A stanza still wins
-// outright — including on the node whose resolv.conf holds only
+// outright - including on the node whose resolv.conf holds only
 // systemd-resolved's stub, which is exactly where the fallback now differs.
 func TestTheStanzaStillWinsOverTheHostsResolvers(t *testing.T) {
 	pinned := []string{"213.186.33.99"}

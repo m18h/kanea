@@ -1,6 +1,6 @@
 // Package headown names the HTTP headers the edge owns: its statement about
 // who the client is. It exists as a leaf so both the plan-time validator
-// (jobspec) and the edge's request path share one list — two implementations
+// (jobspec) and the edge's request path share one list - two implementations
 // of "may a spec set this header" drift, and they drift into a spec that
 // passes plan and then fails the whole node's route-table publish (K-22).
 package headown

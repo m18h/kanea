@@ -28,7 +28,7 @@ curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash
 
 The installer fetches the binary, verifies it, and stops. Checksum verification is
 mandatory and there is no flag to skip it; the Sigstore signature is verified too
-when `cosign` is on `PATH` — and a signature that is *present and invalid* is
+when `cosign` is on `PATH` - and a signature that is *present and invalid* is
 fatal, not a warning. It generates no keys, starts nothing, and writes no units.
 
 It takes no arguments. The three knobs are environment variables, and `sudo` does
@@ -46,8 +46,8 @@ curl -fsSL https://m18h.github.io/kanea/install.sh | sudo KANEA_VERSION=vX.Y.Z b
 
 A non-Linux kernel, an architecture outside amd64/arm64, and a repository with no
 published release are all refused before anything is downloaded. The full
-walk-through — an annotated `kanea init` run, what a re-run keeps, the host
-components, upgrades and air-gapped nodes — is in the
+walk-through - an annotated `kanea init` run, what a re-run keeps, the host
+components, upgrades and air-gapped nodes - is in the
 [installation docs](https://m18h.github.io/kanea/docs/#install).
 
 `kanea init` then installs the runtime (containerd, `runc` and rootless
@@ -94,7 +94,7 @@ brew trust m18h/kanea   # brew ≥ 6 refuses formulae from untrusted third-party
 brew install kanea
 ```
 
-Homebrew ships the CLI, not the node (PRD §5.2.12) — but the CLI is not the
+Homebrew ships the CLI, not the node (PRD §5.2.12) - but the CLI is not the
 authoring half any more. `kanea plan` still validates job specs with
 file-and-line diagnostics and needs no daemon at all, and with `KANEA_URL` and
 a token the same binary drives a remote node completely: deploy, ps, logs,
@@ -121,8 +121,8 @@ docker run --rm -v "$PWD:/workspace:ro" \
 `latest`; `latest` moves only for a plain `vX.Y.Z`, so a prerelease never
 becomes what everyone pulls by default. Like Homebrew, it ships the CLI and not
 the node (PRD §5.2.12): it is for the pipeline that deploys *to* a node, so
-`agent`, `edge`, `init`, `install`, `doctor` and `upgrade` — every verb that
-acts on a host, its systemd and its own binary — are not what it is for.
+`agent`, `edge`, `init`, `install`, `doctor` and `upgrade` - every verb that
+acts on a host, its systemd and its own binary - are not what it is for.
 
 The image carries the binary out of the release archives above, not a separate
 build of them, so the `checksums.txt` you can verify by hand describes what is
@@ -138,7 +138,7 @@ cosign verify ghcr.io/m18h/kanea:vX.Y.Z \
 It runs as an unprivileged user (uid 65532) out of `/workspace`. If your
 network terminates TLS with its own CA, drop the root into
 `/usr/local/share/ca-certificates` and run `update-ca-certificates` in a
-derived image — or pass the node's own CA with `KANEA_CA_CERT`, which replaces
+derived image - or pass the node's own CA with `KANEA_CA_CERT`, which replaces
 the system pool rather than adding to it.
 
 ## Quickstart
@@ -166,8 +166,8 @@ sudo usermod -aG kanea $USER
 
 Init ends with the node summary: the dashboard URL, your admin account, the
 internal DNS address and the subnet layout. TLS is required beyond loopback,
-and init provisions it by default: a public listen address — answered at the
-prompt or passed as a bare `--listen` — mints a 10-year self-signed pair at
+and init provisions it by default: a public listen address - answered at the
+prompt or passed as a bare `--listen` - mints a 10-year self-signed pair at
 `/etc/kanea/api.crt` and serves the API and dashboard with it. Bring your own
 with `--listen-cert`/`--listen-key`, or override the default at any time via
 the server config below. `--admin-user` and a piped
@@ -239,8 +239,8 @@ network {
 }
 ```
 
-The full DNS story — internal `<service>.<project>` names, the public records you
-create, HTTP-01 versus DNS-01, and split-horizon setups — is in the
+The full DNS story - internal `<service>.<project>` names, the public records you
+create, HTTP-01 versus DNS-01, and split-horizon setups - is in the
 [names and DNS docs](https://m18h.github.io/kanea/docs/#dns).
 
 `mode = "tcp"` relays bytes instead, for Postgres, a game server, or anything
@@ -285,7 +285,7 @@ still only inside a prefix you allowed above.
 
 `/etc/kanea/kanea.hcl` is the file both of the blocks above live in: the node's
 settings, as opposed to a job spec's. A spec can *reference* what it permits and
-can never add to it, which is the point — GitOps deploys specs automatically, so
+can never add to it, which is the point - GitOps deploys specs automatically, so
 anything a spec could declare, anyone who can push to a synced repo could
 declare. It does not exist by default, and `kanea init` never writes it.
 
@@ -296,7 +296,7 @@ Six stanzas are read:
 | `bind` | Where the API and dashboard listen, and how that listener gets its certificate |
 | `storage` | Which host directories a `host` volume may mount (`allowed_host_paths`) |
 | `dns` | Which resolvers the internal DNS forwards to (`upstreams`) |
-| `variables` | Node-wide defaults for spec variables — **never secrets**: `GET /v1/vars` serves them to any authenticated caller |
+| `variables` | Node-wide defaults for spec variables - **never secrets**: `GET /v1/vars` serves them to any authenticated caller |
 | `device` | A named device grant: `nodes`, `allow`, optional `mode` |
 | `socket` | A named socket grant: `path`, `allow` |
 
@@ -306,12 +306,12 @@ Four rules are worth knowing before you edit it:
 - **Absent is off; malformed is fatal.** There is no keep-last-good and no
   partial load, so a typo stops kanead starting. Fix the file and restart, or add
   `--config off` to the unit to get the node up without it.
-- **It is trust-checked before it is parsed** — a regular file, owned by root or
+- **It is trust-checked before it is parsed** - a regular file, owned by root or
   the daemon's uid, writable only by its owner. World-*readable* is fine; it is
   policy, not a secret.
 - **An unknown stanza is a warning** (named at startup, so a future version's
   settings can sit there), **but an unknown attribute inside a read stanza is an
-  error** — there it is almost always a typo, and a silently ignored
+  error** - there it is almost always a typo, and a silently ignored
   `allowed_host_path` would be a security control that quietly did nothing.
 
 Applying an edit is the same for every stanza:
@@ -321,7 +321,7 @@ sudo systemctl restart kanead
 ```
 
 `daemon-reload` is not part of it: that is for unit changes. The restart is
-cheaper than it looks — **running workloads keep running** (`KillMode=process`)
+cheaper than it looks - **running workloads keep running** (`KillMode=process`)
 and **ingress keeps serving** (`kanea-edge` is a separate process with no
 `After=` either way). What pauses is *change*: deploys, scaling, certificate
 renewal, the API and dashboard. Afterwards, `journalctl -u kanead | grep 'server
@@ -329,16 +329,16 @@ config'` shows whether it loaded, whether a stanza is being ignored, and whether
 a flag on the unit is overriding it.
 
 Every half has a flag that wins over the file, and the disable words are not the
-same — `--listen none`, but `off` for `--config`, `--allowed-host-paths` and
+same - `--listen none`, but `off` for `--config`, `--allowed-host-paths` and
 `--passthrough-config`. The full reference, with every field and refusal, is in
 the [node configuration docs](https://m18h.github.io/kanea/docs/#nodeconfig).
 
 ### Seeing what an apply would do
 
 `kanea plan` renders one block per service and one row per resource that would
-be added, changed or removed — volumes, routes, published ports, config files,
+be added, changed or removed - volumes, routes, published ports, config files,
 device and socket grants, env keys, init steps, the health check, the
-autoscaler — and marks the rows that **replace running containers**, because
+autoscaler - and marks the rows that **replace running containers**, because
 that is the difference between a config edit and a rolling restart:
 
 ```
@@ -357,8 +357,8 @@ Plan: 2 change(s) - 1 create, 1 update; 1 replace running allocs.
 Run `kanea run` to apply.
 ```
 
-`kanea run` prints the same block from the same code — so what you confirm is
-what you were shown — and then asks:
+`kanea run` prints the same block from the same code - so what you confirm is
+what you were shown - and then asks:
 
 ```
 Apply? [Y/n]
@@ -386,7 +386,7 @@ kanea run  --remove-orphans app.hcl
 
 The spec becomes authoritative for the projects it declares a `project` block
 for; projects it does not mention are never touched. It is **refused with a
-selector or `--image`** — a selector sends part of the spec and `--image`
+selector or `--image`** - a selector sends part of the spec and `--image`
 declares no project, so neither can claim to be the whole of one. For a single
 service, `kanea stop shop/web --rm`.
 
@@ -455,7 +455,7 @@ service "api" {
 Blocks run **in declaration order, one at a time**, and the task is created only
 once the last has exited zero. Each step shares the alloc's network namespace
 (so `${service.postgres.host}` resolves, which is what makes a wait-for-database
-step possible), its volumes, and its secrets — and declares everything else for
+step possible), its volumes, and its secrets - and declares everything else for
 itself: its own image, command, env, resources, `user` and capabilities. Running
 as root to fix a directory the task will own as uid 999 is the canonical use, so
 nothing is inherited from `task`.
@@ -467,8 +467,8 @@ database; a step that could not be *pulled* is retried without spending it,
 because nothing ran.
 
 **Init containers must be idempotent.** A half-run sequence is abandoned rather
-than resumed, and a sequence re-runs on every alloc creation — a deploy, a crash
-restart, a spec change — for the same reason the namespace and the secrets are
+than resumed, and a sequence re-runs on every alloc creation - a deploy, a crash
+restart, a spec change - for the same reason the namespace and the secrets are
 rebuilt.
 
 ### Where images come from
@@ -476,8 +476,8 @@ rebuilt.
 `pull_policy` on a `task` or an `init` block says whether Kanea may reach a
 registry: `if-not-present` (the default), `never`, or `always`.
 
-`never` is for a node whose images are already there — see [air-gapped
-nodes](#air-gapped-nodes) — where the default's pull-and-fail blames a registry
+`never` is for a node whose images are already there - see [air-gapped
+nodes](#air-gapped-nodes) - where the default's pull-and-fail blames a registry
 the node was never going to contact. Set the node-wide default in
 `/etc/kanea/kanea.hcl`:
 
@@ -494,11 +494,11 @@ through `max_parallel`, `min_healthy` and the health check. It is task-only, and
 inherits auto-update's rules: not beside a `build` block, a tag rather than a
 digest.
 Groups apply in the order `env_from` lists them, and each container's own `env`
-wins over all of them — the task's and every [init step](#setup-before-a-service-starts)'s,
+wins over all of them - the task's and every [init step](#setup-before-a-service-starts)'s,
 because `env_from` is a statement about the service rather than about one
 container. It is **opt-in per service** rather than project-wide on
 purpose: env is baked into a container, so a shared value changing rolls every
-service that takes it — and that blast radius should be something the spec
+service that takes it - and that blast radius should be something the spec
 states, not something a service inherits by living in a project.
 
 A group is evaluated **once per service that takes it**, which is why
@@ -553,7 +553,7 @@ rest: because one line names one, the whole file is written `0400` on a tmpfs of
 its own. Content that has template syntax of its own is escaped `$${…}`, which
 is HCL's rule rather than Kanea's.
 
-Files are mounted read-only, `nosuid,noexec,nodev`, after volumes — so a file at
+Files are mounted read-only, `nosuid,noexec,nodev`, after volumes - so a file at
 a path inside a volume wins. Init steps see them too; a step that renders or
 validates config is a real use, and a step gets its own copy of a
 secret-bearing file so it can read one owned by its own user. An execute bit in `mode` is refused: a `file` block
@@ -568,8 +568,8 @@ archive, or in `GET /v1/services`. A file carrying one is placed 0400 on a tmpfs
 of its own, owned by the workload's user.
 
 Two things worth knowing before you write one. `${...}` is HCL's own
-interpolation, so a literal dollar-brace — which nginx and prometheus configs
-are full of — is written `$${...}`. And `source` is read **where the spec is
+interpolation, so a literal dollar-brace - which nginx and prometheus configs
+are full of - is written `$${...}`. And `source` is read **where the spec is
 parsed**: from the directory beside the file for `kanea run`, and out of the
 commit for a synced repository. The dashboard's spec editor parses text rather
 than files, so it refuses `source` and wants `content`.
@@ -605,7 +605,7 @@ It may also carry a `dns` stanza pinning the resolvers the internal DNS
 forwards external names to (`dns { upstreams = ["1.1.1.1"] }`), for a node
 whose `/etc/resolv.conf` is DHCP's to rewrite. An explicit `--dns-upstream`
 flag wins; with neither, the daemon uses the host's own resolvers, exactly as
-listed — including systemd-resolved's `127.0.0.53` stub, which is what a
+listed - including systemd-resolved's `127.0.0.53` stub, which is what a
 stock Debian or Ubuntu server has and which `kanead` reaches from the host
 like any other process, so no stanza is needed to boot such a node.
 
@@ -819,7 +819,7 @@ claude mcp add --transport http kanea https://192.168.1.10:8600/mcp   --header "
 ```
 
 The stdio transport authenticates by unix socket access, which is
-root-equivalent, so an agent on it is always an admin — join the `kanea` group
+root-equivalent, so an agent on it is always an admin - join the `kanea` group
 or it cannot reach the daemon at all. Use HTTP with a viewer token when you want
 an agent that can diagnose but not deploy. There is **no secrets tool at any
 tier**, the two destructive tools need an explicit `confirm`, and every call is
@@ -830,7 +830,7 @@ config files, is in the
 ### Deploying from CI
 
 The CLI is not tied to the node. Point it at a node's HTTPS listener with a
-token and it works from a laptop or a GitLab runner — which is what
+token and it works from a laptop or a GitLab runner - which is what
 `ghcr.io/m18h/kanea` is for:
 
 ```bash
@@ -849,13 +849,13 @@ deploy:
 ```
 
 `kanea deploy` points a service at a new image and **leaves the rest of its
-spec alone** — it reads the record, changes the image, writes it back, and
+spec alone** - it reads the record, changes the image, writes it back, and
 waits for the new image to be running so a failed deploy fails the pipeline.
 Prefer a digest to a tag: a tag can move between two allocs being replaced.
 
 `--role admin` is required to deploy; a viewer token reads and changes nothing.
 `http://` beyond loopback is refused, because a bearer token would cross the
-network in clear text, and there is no skip-verify flag — `KANEA_CA_CERT`
+network in clear text, and there is no skip-verify flag - `KANEA_CA_CERT`
 takes the PEM itself, so a CI secret needs no file step. `kanea upgrade` and
 `kanea mcp` act on the host they run on and refuse a remote endpoint.
 
@@ -881,7 +881,7 @@ would be a bundle that authenticates itself. Releases publish one per
 architecture, covered by the same signed `checksums.txt`.
 
 This covers Kanea's own components; your workload images still come from a
-registry the node can reach — or, on a node where they are preloaded, from
+registry the node can reach - or, on a node where they are preloaded, from
 nowhere at all: `images { pull_policy = "never" }` makes an absent image fail
 immediately and by name instead of timing out against a registry the node
 cannot reach.

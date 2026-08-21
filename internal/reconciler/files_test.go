@@ -368,7 +368,7 @@ func TestFilesMountAfterVolumes(t *testing.T) {
 // TestAnInitStepBindsItsOwnCopyOfASecretBearingFile.
 //
 // A secret-bearing file is 0400 owned by *its reader* (R35), and R32 makes an
-// init step's user deliberately independent of the task's — the canonical step
+// init step's user deliberately independent of the task's - the canonical step
 // runs as root to chown a directory the task owns as somebody else. So a step
 // binding the task's copy would get a file it cannot open, which surfaces as a
 // missing credential rather than as a permission problem. A plain file is

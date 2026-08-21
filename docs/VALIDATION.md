@@ -408,7 +408,7 @@ between steps. What no test here can answer is the half that is a conversation
 with containerd and the kernel:
 
 > **does a second container of the same alloc actually join that alloc's
-> network namespace, mount its volumes, and see its secrets — and does the
+> network namespace, mount its volumes, and see its secrets - and does the
 > reconcile loop keep serving every other service while a five-minute step
 > runs?**
 
@@ -465,7 +465,7 @@ secret placeholder unforgeable. What no test here can answer is the half that is
 a conversation with runc and the kernel:
 
 > **does a bind-mounted file actually appear at its path, with the right mode
-> and owner, when the parent directory does not exist in the image — and does a
+> and owner, when the parent directory does not exist in the image - and does a
 > secret-bearing one really live on a tmpfs rather than on disk?**
 
 Everything about the design assumes yes. runc creates a missing mountpoint

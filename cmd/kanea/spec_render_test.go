@@ -602,7 +602,7 @@ service "api" {
 // canonicalFiles normalises a record's file placeholders for comparison.
 //
 // A regenerated spec is parsed afresh, so its secret placeholders carry a new
-// nonce — by design, since the nonce is what makes them unforgeable. Comparing
+// nonce - by design, since the nonce is what makes them unforgeable. Comparing
 // raw bytes would therefore fail on every file that interpolates a secret,
 // which is exactly the carve-out that hides a genuinely dropped field.
 //

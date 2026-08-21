@@ -159,9 +159,9 @@ func NewDNS(cfg DNSConfig) (*DNS, error) {
 	// An upstream that is this resolver forwards every external name to
 	// itself: the query loops until the forward timeout and comes back
 	// SERVFAIL, which reads as "the internet is broken" rather than as a
-	// configuration mistake. It is reachable by two ordinary routes — a
+	// configuration mistake. It is reachable by two ordinary routes - a
 	// loopback bind beside a loopback nameserver, and a node whose own
-	// resolv.conf was pointed at Kanea's resolver on purpose — so it is
+	// resolv.conf was pointed at Kanea's resolver on purpose - so it is
 	// dropped by name here rather than left to be diagnosed by timeout.
 	// Dropped, not refused: the other upstreams in the list still work, and
 	// only an empty result is fatal.
@@ -181,7 +181,7 @@ func NewDNS(cfg DNSConfig) (*DNS, error) {
 	if len(selfForward) > 0 {
 		if len(upstreams) == 0 {
 			return nil, fmt.Errorf("dns: every upstream is this resolver's own address (%s); "+
-				"forwarding there is a loop — set --dns-upstream, or a dns stanza, to a real resolver",
+				"forwarding there is a loop - set --dns-upstream, or a dns stanza, to a real resolver",
 				cfg.Listen)
 		}
 		cfg.Logger.Warn("dropping upstreams that point at this resolver",

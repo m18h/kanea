@@ -343,7 +343,7 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 	// §13.1 refuses a network listener on a daemon that booted with no
 	// account, and its refusal message prescribes exactly this: create the
 	// account, then restart. The comparison beside it covers a re-run whose
-	// listener changed in either direction — a new --listen, a new bind
+	// listener changed in either direction - a new --listen, a new bind
 	// stanza (v1.80), or a "none" that retires one: `enable --now` does not
 	// re-exec a running unit, so without the restart the daemon keeps serving
 	// whatever the previous run settled. health.Listen is the daemon's

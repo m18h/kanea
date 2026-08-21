@@ -105,7 +105,7 @@ func (c *Client) dialExec(ctx context.Context, opts ExecOptions) (*websocket.Con
 		// Remotely that transport is the TLS one, and the bearer token rides
 		// its RoundTripper: coder/websocket builds this handshake request
 		// itself and sends it through this client, so auth set anywhere else
-		// would miss it. The server side needs nothing — checkOrigin admits a
+		// would miss it. The server side needs nothing - checkOrigin admits a
 		// request with no Origin (a CLI is not a browser) and checkCSRF exempts
 		// token callers.
 		HTTPClient: c.http,

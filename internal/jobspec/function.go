@@ -167,7 +167,7 @@ func convertFunction(f *hclFunction) (*Service, hcl.Diagnostics) {
 		}
 		// R25: the sandbox's caps are fixed promises. A wasm module cannot
 		// fork, and the shim's own thread budget is a runtime property, not
-		// the workload's — there is no pids to declare.
+		// the workload's - there is no pids to declare.
 		if f.Resources.Pids != nil {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,

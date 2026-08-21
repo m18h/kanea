@@ -30,7 +30,7 @@ func richService() reconciler.Desired {
 //
 // There is no route that sets an image, so a deploy is a read-modify-write of
 // the whole record. If it ever stops round-tripping, a deploy silently deletes
-// whatever the writer of that code did not think about — which is exactly what
+// whatever the writer of that code did not think about - which is exactly what
 // `kanea run --image` does today and why `kanea deploy` was added.
 func TestDeployChangesOnlyTheImage(t *testing.T) {
 	before := richService()
