@@ -397,3 +397,203 @@ func TestNodeGPUUtilisationIsAbsentWhenNoCardReportsIt(t *testing.T) {
 		t.Errorf("aggregate = %v, want absent", *stats.GPUUtilPercent)
 	}
 }
+
+// --- Intel occupancy from the perf PMU (v1.96, spike 7) --------------------
+
+// fakeEngines is an EngineBusyReader over a scripted sequence of readings.
+type fakeEngines struct {
+	readings []map[string]uint64
+	at       int
+	err      error
+	closed   bool
+}
+
+func (f *fakeEngines) Busy() (map[string]uint64, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.at >= len(f.readings) {
+		return nil, errors.New("gpu_test: no reading scripted")
+	}
+	r := f.readings[f.at]
+	f.at++
+	return r, nil
+}
+
+func (f *fakeEngines) Close() error { f.closed = true; return nil }
+
+// intelReader is an i915 card with a scripted engine sampler and a clock the
+// test advances, so the delta is over an interval the test chose.
+func intelReader(t *testing.T, clock *time.Time, engines scaling.EngineBusyReader) *scaling.GPUReader {
+	t.Helper()
+	sys := fakeSys(t, map[string]map[string]string{
+		"card0": {"uevent": "DRIVER=i915\n", renderNode: ""},
+	})
+	return scaling.NewGPUReader(scaling.GPUReaderConfig{
+		SysRoot: sys, NvidiaSMI: noNvidia, EngineBusy: engines,
+		Now: func() time.Time { return *clock },
+	})
+}
+
+// busyNs is one second of engine busy time, the unit the PMU counts in.
+const busyNs = uint64(time.Second)
+
+// gpuTestNow is the clock these tests advance by hand, so a delta is over an
+// interval the test chose rather than over however long it took to run.
+var gpuTestNow = time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+
+// The first reading has no delta, so it has no percentage: the same rule the
+// CPU reader follows, and the reason a gap is not a zero (§9.2).
+func TestIntelUtilisationNeedsTwoReadings(t *testing.T) {
+	clock := gpuTestNow
+	r := intelReader(t, &clock, &fakeEngines{readings: []map[string]uint64{
+		{"vcs0": 0, "rcs0": 0},
+		{"vcs0": 7 * busyNs, "rcs0": 0},
+	}})
+
+	first := r.Read()
+	if len(first) != 1 {
+		t.Fatalf("gpus = %+v, want the iGPU", first)
+	}
+	if first[0].UtilPercent != nil {
+		t.Errorf("util = %v on the first reading, want absent", *first[0].UtilPercent)
+	}
+
+	clock = clock.Add(10 * time.Second)
+	next := r.Read()
+	if next[0].UtilPercent == nil {
+		t.Fatal("util absent on the second reading")
+	}
+	if got := *next[0].UtilPercent; got < 69.9 || got > 70.1 {
+		t.Errorf("util = %.2f%%, want ~70%% (7s busy over 10s)", got)
+	}
+}
+
+// The decision the spike made, pinned. A transcode saturates one engine and
+// leaves the rest at zero; the mean across four would report a GPU at 70% as
+// being at 17.5%, which is what `intel_gpu_top` would immediately contradict.
+func TestIntelUtilisationIsTheBusiestEngineNotTheMean(t *testing.T) {
+	clock := gpuTestNow
+	r := intelReader(t, &clock, &fakeEngines{readings: []map[string]uint64{
+		{"vcs0": 0, "rcs0": 0, "bcs0": 0, "vecs0": 0},
+		{"vcs0": 7 * busyNs, "rcs0": 0, "bcs0": 0, "vecs0": 0},
+	}})
+
+	r.Read()
+	clock = clock.Add(10 * time.Second)
+	got := r.Read()
+
+	if got[0].UtilPercent == nil {
+		t.Fatal("util absent")
+	}
+	if v := *got[0].UtilPercent; v < 69.9 || v > 70.1 {
+		t.Errorf("util = %.2f%%, want ~70%% (the busiest engine); "+
+			"17.5%% would be the mean across four and 70%% is what the GPU was doing", v)
+	}
+}
+
+// A single engine cannot be busy longer than the interval, so an overshoot is
+// skew between reading the counters and reading the clock. Clamped, unlike a
+// sysfs value out of range, which means a driver this code does not understand.
+func TestIntelUtilisationIsClampedAtFull(t *testing.T) {
+	clock := gpuTestNow
+	r := intelReader(t, &clock, &fakeEngines{readings: []map[string]uint64{
+		{"vcs0": 0},
+		{"vcs0": 11 * busyNs},
+	}})
+
+	r.Read()
+	clock = clock.Add(10 * time.Second)
+	got := r.Read()
+
+	if got[0].UtilPercent == nil || *got[0].UtilPercent != 100 {
+		t.Errorf("util = %v, want exactly 100", got[0].UtilPercent)
+	}
+}
+
+// A counter that went backwards is a driver reload or a suspend. That engine
+// contributes nothing rather than a negative reading folded into a maximum.
+func TestIntelUtilisationSurvivesACounterReset(t *testing.T) {
+	clock := gpuTestNow
+	r := intelReader(t, &clock, &fakeEngines{readings: []map[string]uint64{
+		{"vcs0": 50 * busyNs, "rcs0": 50 * busyNs},
+		{"vcs0": 1 * busyNs, "rcs0": 53 * busyNs}, // vcs0 reset; rcs0 kept counting
+	}})
+
+	r.Read()
+	clock = clock.Add(10 * time.Second)
+	got := r.Read()
+
+	if got[0].UtilPercent == nil {
+		t.Fatal("util absent; rcs0 still had a usable delta")
+	}
+	if v := *got[0].UtilPercent; v < 29.9 || v > 30.1 {
+		t.Errorf("util = %.2f%%, want ~30%% from rcs0 alone", v)
+	}
+}
+
+// A sampler that fails leaves the card named and unmeasured, which is the
+// state it was in before this existed. Never a zero, and never a log per
+// scrape: this runs every five seconds forever.
+func TestIntelUtilisationIsAbsentWhenTheSamplerFails(t *testing.T) {
+	clock := gpuTestNow
+	r := intelReader(t, &clock, &fakeEngines{err: errors.New("gpu_test: counter gone")})
+
+	got := r.Read()
+	if len(got) != 1 {
+		t.Fatalf("gpus = %+v, want the card listed anyway", got)
+	}
+	if got[0].UtilPercent != nil {
+		t.Errorf("util = %v, want absent", *got[0].UtilPercent)
+	}
+}
+
+// The plain "i915" PMU names one device. With two Intel cards the kernel names
+// them per PCI address, so attributing one PMU's numbers to a card chosen by
+// iteration order would put a real number in the wrong row.
+func TestIntelUtilisationIsNotGuessedAcrossTwoCards(t *testing.T) {
+	clock := gpuTestNow
+	sys := fakeSys(t, map[string]map[string]string{
+		"card0": {"uevent": "DRIVER=i915\n", renderNode: ""},
+		"card1": {"uevent": "DRIVER=i915\n", renderNode: ""},
+	})
+	r := scaling.NewGPUReader(scaling.GPUReaderConfig{
+		SysRoot: sys, NvidiaSMI: noNvidia,
+		Now: func() time.Time { return clock },
+		EngineBusy: &fakeEngines{readings: []map[string]uint64{
+			{"vcs0": 0}, {"vcs0": 7 * busyNs},
+		}},
+	})
+
+	r.Read()
+	clock = clock.Add(10 * time.Second)
+	for _, g := range r.Read() {
+		if g.UtilPercent != nil {
+			t.Errorf("%s got %v%%; one PMU cannot say which of two cards was busy",
+				g.Name, *g.UtilPercent)
+		}
+	}
+}
+
+// The node aggregate reads the card's occupancy through the same path a real
+// one does, so the series and the per-card figure cannot disagree.
+func TestNodeGPUUtilisationCarriesTheIntelReading(t *testing.T) {
+	clock := gpuTestNow
+	gpu := intelReader(t, &clock, &fakeEngines{readings: []map[string]uint64{
+		{"vcs0": 0}, {"vcs0": 7 * busyNs},
+	}})
+	reader := scaling.NewNodeReaderWithGPU(
+		fakeProc(t, "cpu 100 0 100 800 0 0 0 0 0 0\n", meminfoFixture, "0.5 0.4 0.3 1/100 200\n"),
+		gpu)
+
+	reader.Read()
+	clock = clock.Add(10 * time.Second)
+	stats := reader.Read()
+
+	if stats.GPUUtilPercent == nil {
+		t.Fatal("node aggregate absent")
+	}
+	if v := *stats.GPUUtilPercent; v < 69.9 || v > 70.1 {
+		t.Errorf("aggregate = %.2f%%, want ~70%%", v)
+	}
+}

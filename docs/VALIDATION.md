@@ -18,6 +18,7 @@ indistinguishable from one nobody checked.
 | Kernel floor ≥ 5.10 | §21 Platform | [`spikes/ebpf-datapath/REPORT.md`](../spikes/ebpf-datapath/REPORT.md) Kernel A, **pending**; run `go test -tags bpfload` on the node |
 | S3 interoperability | §15.3 | `s3-interop` CI (MinIO, both addressing styles); real providers via `s3-cloud.yml`, **pending secrets** |
 | OOM kills are attributed, not guessed | §17, §5.2.11 (v1.68) | [§5](#5-oom-attribution-v168), **pending** |
+| Intel GPU occupancy is real and reaches the dashboard | §9.1, §17 (v1.96) | [§12](#12-intel-gpu-occupancy-v196), **confirmed 2026-08-21** |
 
 ---
 
@@ -616,3 +617,54 @@ kanea run files.hcl && kanea ps                            # same alloc ids, no 
 | ⑤ an unresolvable reference fails the alloc `files_failed` | | | |
 | ⑥ re-applying an unchanged spec rolls nothing | | | |
 | ⑦ the plain tree is not hidden by the files tmpfs | | | |
+
+## 12. Intel GPU occupancy (v1.96)
+
+Everything about the arithmetic is unit-tested against a fake sampler: the
+delta, the busiest-engine rule, a counter that resets, the clamp, the refusal to
+attribute across two cards. None of that touches the two things only hardware
+can answer:
+
+> **does `perf_event_open` against the i915 PMU actually succeed from a daemon
+> running the way `kanead` runs, and is the number it produces the same number
+> the GPU is doing?**
+
+Both are now answered, in two stages.
+
+**The mechanism**, by spike 7 ([`spikes/i915-gpu-util/REPORT.md`](../spikes/i915-gpu-util/REPORT.md),
+7/7, 21 Aug 2026) on the media server, an Intel UHD 630 under Debian 12:
+
+- `perf_event_paranoid` is **3** on that node - Debian's hardened setting,
+  stricter than upstream's maximum - and a root open succeeded anyway. `kanead`
+  already runs as root with no `CapabilityBoundingSet`, so **no capability is
+  granted and no unit changes**. This was the likeliest reason to refuse the
+  feature and it does not apply.
+- A looped HEVC decode read `vcs0` at **70.82%** with `rcs0`, `bcs0` and
+  `vecs0` at exactly 0.00%. `intel_gpu_top`, reading the same PMU through its
+  own code over the following window, averaged **71.17%** across 18 samples:
+  **0.35 percentage points** apart.
+- That measurement is also what decided the busiest-engine rule. A mean across
+  the four engines would have published **17.7%** for that GPU.
+- Cost: **~4µs** per full sample against a 5-second scrape, and four file
+  descriptors held for the process's life.
+
+**The wiring**, on 21 Aug 2026: the reader built into `kanead`, deployed to the
+same node, and the dashboard's Overview rendering the Intel card's utilisation
+under load. That is the step neither the unit tests nor the spike could reach -
+the spike proves the syscall, the tests prove the arithmetic, and only a real
+daemon proves the two are connected.
+
+Not recorded here because they were not measured: the exact figure the dashboard
+showed. The claim this section supports is that the path works end to end, and
+the numbers above are the spike's, which were.
+
+### What is still assumed
+
+- **Multi-GPU attribution.** The reader refuses to attribute utilisation unless
+  exactly one `i915` card is visible, because the plain `i915` PMU names one
+  device and the kernel names several per PCI address. That refusal is
+  unit-tested; the two-Intel-GPU node it exists for has never been seen.
+- **The `xe` driver.** Newer Intel hardware uses it, and its PMU is named per
+  card rather than `i915`. `openI915Sampler` finds nothing there and reports the
+  absence, which is correct but untested on such a node.
+

@@ -1,0 +1,39 @@
+spike-i915: Intel GPU utilisation for the node reader
+uid=0  sampling for 10s
+
+      --- card0 (driver "i915") ---
+INFO  A   card0 render node: true (v1.91 needs one to call this a GPU)
+INFO  A   card0/gpu_busy_percent absent
+INFO  A   card0/mem_info_vram_used absent
+INFO  A   card0/mem_info_vram_total absent
+INFO  A   card0/lmem_total_bytes absent
+INFO  A   card0/gt_act_freq_mhz = "0"  (clock, NOT occupancy)
+INFO  A   card0/gt_cur_freq_mhz = "1067"  (clock, NOT occupancy)
+INFO  A   card0/gt_max_freq_mhz = "1100"  (clock, NOT occupancy)
+PASS  B   i915 PMU present, type=19
+INFO  B   cpumask="0" (a per-PMU counter is opened on one CPU, not every CPU)
+PASS  C   busy event bcs0-busy        config=0x1000
+PASS  C   busy event rcs0-busy        config=0x0
+PASS  C   busy event vcs0-busy        config=0x2000
+PASS  C   busy event vecs0-busy       config=0x3000
+INFO  C   other events: actual-frequency bcs0-sema bcs0-wait interrupts rc6-residency rcs0-sema rcs0-wait requested-frequency software-gt-awake-time vcs0-sema vcs0-wait vecs0-sema vecs0-wait
+INFO  D   perf_event_paranoid=3 (>=2 normally blocks a system-wide open for non-root)
+PASS  D   opened bcs0-busy (fd 4)
+PASS  D   opened rcs0-busy (fd 7)
+PASS  D   opened vcs0-busy (fd 8)
+PASS  D   opened vecs0-busy (fd 9)
+INFO  D   held file descriptors: 4, one per engine, for the process's life
+INFO  E   bcs0-busy          0.00% busy over 10.009s (delta 0 ns)
+INFO  E   rcs0-busy          0.00% busy over 10.009s (delta 0 ns)
+INFO  E   vcs0-busy          0.00% busy over 10.009s (delta 0 ns)
+INFO  E   vecs0-busy         0.00% busy over 10.009s (delta 0 ns)
+INFO  E   busiest engine 0.00%, sum across engines 0.00%
+INFO  E     ^ which of those a node reader should publish is a decision this
+INFO  E       report has to make: a sum can exceed 100% on a card whose
+INFO  E       engines run concurrently, and the busiest is what a transcode
+INFO  E       actually saturates.
+INFO  E   nothing moved. Re-run with a transcode in flight before concluding:
+INFO  E     ffmpeg -hwaccel vaapi -vaapi_device /dev/dri/renderD128 -i IN -f null -
+PASS  F   one full sample of 4 counters: 9.198µs (the reader does this every 5s)
+
+10 PASS, 0 FAIL, 23 INFO

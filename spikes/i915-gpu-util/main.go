@@ -292,8 +292,14 @@ func checkE(fds []counter) {
 	info("E", "    engines run concurrently, and the busiest is what a transcode")
 	info("E", "    actually saturates.")
 	if busiest == 0 {
-		info("E", "nothing moved. Re-run with a transcode in flight before concluding:")
-		info("E", "  ffmpeg -hwaccel vaapi -vaapi_device /dev/dri/renderD128 -i IN -f null -")
+		info("E", "nothing moved. Re-run with a transcode actually in flight:")
+		info("E", "  ffmpeg -nostdin -stream_loop -1 -hwaccel vaapi \\")
+		info("E", "         -vaapi_device /dev/dri/renderD128 -i IN -f null - >/dev/null 2>&1 &")
+		info("E", "  -nostdin matters: a backgrounded ffmpeg reads stdin, takes SIGTTIN")
+		info("E", "  from the terminal and suspends before decoding a frame. Check with")
+		info("E", "  `jobs`: a job reading \"Stopped\" produced no load at all.")
+		info("E", "  -stream_loop -1 matters too: a short sample clip can finish decoding")
+		info("E", "  before the sampling window closes.")
 	}
 }
 
