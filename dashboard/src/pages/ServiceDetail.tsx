@@ -59,6 +59,7 @@ import { rolloutStatus, type RolloutStatus } from '@/lib/rollout'
 import {
   allocStateVariant,
   formatBytes,
+  memoryUsageText,
   allocExitReason,
   formatClock,
   groupAllocs,
@@ -196,6 +197,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
 
       <StatsPanel
         subject={key}
+        memoryLimitBytes={desired?.Resources.MemoryBytes}
         sample={stats.data}
         history={history}
         seeded={seeded}
@@ -775,6 +777,7 @@ function Total({ label, value }: { label: string; value: string }) {
  */
 function StatsPanel({
   subject,
+  memoryLimitBytes,
   sample,
   history,
   seeded,
@@ -782,6 +785,8 @@ function StatsPanel({
   error,
 }: {
   subject: string
+  /** The service's declared per-alloc memory cap, or 0 for unbounded (R11). */
+  memoryLimitBytes: number | undefined
   sample: StatsSample | null
   history: StatsHistory | null
   seeded: boolean
@@ -799,6 +804,8 @@ function StatsPanel({
   // frame and from the same seed: they are never empty for different reasons.
   const status = seriesStatus({ points: cpu.times.length, seeded, connected, error })
 
+  const memoryText = memoryUsageText(sample, memoryLimitBytes)
+
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {/* CPU and memory are percentages of the declared limit, so the scale
@@ -809,7 +816,18 @@ function StatsPanel({
         <MetricChartPanel label="CPU" unit="%" series={cpu} scale="percent" latest={sample?.cpu} tone={1} big status={status} error={error} />
       </Card>
       <Card className="p-4">
-        <MetricChartPanel label="Memory" unit="%" series={memory} scale="percent" latest={sample?.memory} tone={2} big status={status} error={error} />
+        <MetricChartPanel
+          label="Memory"
+          unit="%"
+          series={memory}
+          scale="percent"
+          latest={sample?.memory}
+          {...(memoryText !== undefined ? { detail: memoryText } : {})}
+          tone={2}
+          big
+          status={status}
+          error={error}
+        />
       </Card>
       <Card className="p-4">
         <MetricChartPanel label="Requests / s" unit="/s" series={rps} scale="auto" latest={sample?.rps} tone={3} big status={status} error={error} />

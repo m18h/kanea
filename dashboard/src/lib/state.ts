@@ -1,5 +1,5 @@
 import type { BadgeProps } from '@/components/ui/badge'
-import type { Alloc } from '@/lib/api'
+import type { Alloc, StatsSample } from '@/lib/api'
 
 /** allocStateVariant maps an alloc state to how alarming it should look. */
 export function allocStateVariant(state: string): NonNullable<BadgeProps['variant']> {
@@ -214,4 +214,39 @@ export function formatBytes(n: number): string {
   if (n < unit ** 2) return `${(n / unit).toFixed(1)} KiB`
   if (n < unit ** 3) return `${(n / unit ** 2).toFixed(1)} MiB`
   return `${(n / unit ** 3).toFixed(1)} GiB`
+}
+
+/**
+ * memoryUsageText renders the bytes behind the memory percentage.
+ *
+ * The figure is summed from the per-alloc breakdown the frame already carries,
+ * so this needs nothing new on the wire: the service-level sample has only a
+ * percentage, while every alloc reports its own `memory_bytes`. The denominator
+ * is the declared cap times the number of allocs that actually reported, which
+ * is what keeps the ratio equal to the percentage beside it - that percentage
+ * is the mean of the per-alloc ones, and every alloc of a service shares one
+ * declared cap.
+ *
+ * A service with no declared limit is the interesting case and the reason this
+ * does not simply mirror the Overview's "used / total": since R11 v1.58 an
+ * omitted `resources.memory` is unbounded, the scrapers record no percentage
+ * for a limitless alloc, and the panel has therefore always shown a bare dash
+ * for such a service. The bytes are recorded regardless, so they are shown
+ * alone - a real number where there was nothing, and no invented denominator.
+ */
+export function memoryUsageText(
+  sample: StatsSample | null,
+  limitBytes: number | undefined,
+): string | undefined {
+  let used = 0
+  let reporting = 0
+  for (const alloc of sample?.allocs ?? []) {
+    if (alloc.memory_bytes === undefined) continue
+    used += alloc.memory_bytes
+    reporting++
+  }
+  // Nothing measured is not zero used (§9.2): say nothing rather than "0 B".
+  if (reporting === 0) return undefined
+  if (limitBytes === undefined || limitBytes <= 0) return formatBytes(used)
+  return `${formatBytes(used)} / ${formatBytes(limitBytes * reporting)}`
 }
