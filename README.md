@@ -333,6 +333,46 @@ same — `--listen none`, but `off` for `--config`, `--allowed-host-paths` and
 `--passthrough-config`. The full reference, with every field and refusal, is in
 the [node configuration docs](https://m18h.github.io/kanea/docs/#nodeconfig).
 
+### Seeing what an apply would do
+
+`kanea plan` renders one block per service and one row per resource that would
+be added, changed or removed — volumes, routes, published ports, config files,
+device and socket grants, env keys, init steps, the health check, the
+autoscaler — and marks the rows that **replace running containers**, because
+that is the difference between a config edit and a rolling restart:
+
+```
+$ kanea plan app.hcl
+~ update shop/web
+    image             web:v1 -> web:v2  (rolls allocs)
+    env               + DB_URL, ~ LOG_LEVEL  (rolls allocs)
+    volumes           + cache  s3:backups /var/cache rw 10 GiB budget  (rolls allocs)
+    expose            + api.example.com  (tls acme, port 8080)
+
++ create shop/worker (count 2, image worker:v3)
+    volumes           + queue  local /queue
+    files             + /etc/app.conf  (412 B, content 3f2a1b9c, mode 0644)
+
+Plan: 2 change(s) - 1 create, 1 update; 1 replace running allocs.
+Run `kanea run` to apply.
+```
+
+`kanea run` prints the same block from the same code — so what you confirm is
+what you were shown — and then asks:
+
+```
+Apply? [Y/n]
+```
+
+Enter applies. `--yes` (or `-y`) skips the question, and **stdin that is not a
+terminal is never prompted**: a piped or redirected stdin is a script, so every
+CI recipe and pipeline written before this keeps working exactly as it did.
+
+Two things never appear in the output whatever changed: an env **value**, since
+it may be a `secret-env:` reference, and a config file's **content**, since it
+carries secret placeholders. Keys, paths and a short content digest are what
+make an edit visible without printing the secret.
+
 ### Removing a service
 
 An apply is additive: deleting a `service` block and re-applying leaves the
@@ -881,7 +921,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.89) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.90) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

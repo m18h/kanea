@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/m18h/kanea/internal/runtime"
@@ -529,19 +528,6 @@ func (r *Reconciler) ensureInitImage(ctx context.Context, d Desired, step InitCo
 // message rather than in the vocabulary.
 func wrapInitError(step InitContainer, ordinal, total int, err error) error {
 	return fmt.Errorf("init %q (%d of %d): %w", step.Name, ordinal+1, total, err)
-}
-
-// describeInit renders a service's init sequence for a plan diff: the names in
-// order, which is what an operator recognises, rather than a struct dump.
-func describeInit(inits []InitContainer) string {
-	if len(inits) == 0 {
-		return "none"
-	}
-	names := make([]string, 0, len(inits))
-	for _, i := range inits {
-		names = append(names, i.Name)
-	}
-	return strings.Join(names, " -> ")
 }
 
 // effectivePullPolicy resolves R33's "the node decides" on the node.

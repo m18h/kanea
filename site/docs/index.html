@@ -3058,12 +3058,20 @@ restart {
       reach into <code>data</code>.
     </p>
     <pre class="plain">$ kanea plan --remove-orphans app.hcl
-~ update shop/web (image web:v1 -&gt; web:v2)
 - destroy shop/legacy-worker (count 1, image legacy:v3)
+    volumes           - scratch  local /scratch rw
+                        (the mount goes; the volume's data is NOT deleted)
 
-Plan: 2 change(s). Run `kanea run` to apply.
+~ update shop/web
+    image             web:v1 -&gt; web:v2  (rolls allocs)
+
+Plan: 2 change(s) - 1 update, 1 destroy; 1 replace running allocs.
+Run `kanea run` to apply.
 
 $ kanea run --remove-orphans app.hcl
+[the same block]
+
+Apply? [Y/n]
 applied shop/web
 removed shop/legacy-worker
 
@@ -4123,16 +4131,52 @@ kanea ca info                       # its subject, fingerprint and validity</pre
     <pre class="plain">kanea plan app.hcl [more.hcl …] [selector …]
 kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
-      A real dry run: the create/change diff, the resulting workload budget, and
-      every validation rule. <code>--remove-orphans</code> adds the
-      <code>- destroy</code> lines <code>kanea run --remove-orphans</code> would act on,
-      computed from the same scope, so the plan and the run cannot disagree. Multiple files are parsed as one set, so file order does not
-      matter. This is where you find out about a cycle, a cross-project secret, a duplicate
-      domain or a rate limit that would fail open.
+      A real dry run: one block per service, one row per resource that would be added,
+      changed or removed, the resulting workload budget, and every validation rule.
+      <code>--remove-orphans</code> adds the <code>- destroy</code> lines
+      <code>kanea run --remove-orphans</code> would act on, computed from the same scope,
+      so the plan and the run cannot disagree. Multiple files are parsed as one set, so
+      file order does not matter. This is where you find out about a cycle, a
+      cross-project secret, a duplicate domain or a rate limit that would fail open.
     </p>
+    <pre class="plain">$ kanea plan app.hcl
+~ update shop/web
+    image             web:v1 -&gt; web:v2  (rolls allocs)
+    env               + DB_URL, ~ LOG_LEVEL  (rolls allocs)
+    volumes           + cache  s3:backups /var/cache rw 10 GiB budget  (rolls allocs)
+                      ~ data  local /data rw -&gt; local /srv/data rw
+    expose            + api.example.com  (tls acme, port 8080)
+    publish           - 8443/tcp  port http
+    scaling           min 1, max 5, rps 100 -&gt; min 1, max 10, rps 100
+
++ create shop/worker (count 2, image worker:v3)
+    volumes           + queue  local /queue
+    files             + /etc/app.conf  (412 B, content 3f2a1b9c, mode 0644)
+    check             http /healthz on port 8080 every 10s, timeout 2s, 3 failure(s)
+
+Plan: 2 change(s) - 1 create, 1 update; 1 replace running allocs.
+Run `kanea run` to apply.</pre>
+    <p>
+      <b>Rows marked <code>(rolls allocs)</code> replace running containers</b>, the ones
+      without are applied to the service as it is or republished to the edge. That is the
+      difference between an edit that costs a rolling restart and one that costs nothing,
+      and it is the number the summary line counts. It is derived from the same rule the
+      reconciler uses to decide a deploy, so the plan and the daemon cannot disagree about
+      which is which.
+    </p>
+    <div class="callout">
+      <b class="label">What a plan never prints</b>
+      <p>
+        An environment <b>value</b>, because it may be a <code>secret-env:</code>
+        reference, and a config file's <b>content</b>, because it carries secret
+        placeholders. You get the keys, the paths, and a short digest of the content:
+        enough to see that something changed, never enough to leak it into a terminal
+        scrollback or a pasted issue.
+      </p>
+    </div>
 
     <h4><code>kanea run</code></h4>
-    <pre class="plain">kanea run app.hcl [more.hcl …] [selector …] [--wait=60s]
+    <pre class="plain">kanea run app.hcl [more.hcl …] [selector …] [--wait=60s] [--yes|-y]
 kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>
       Applies the spec. <code>kanea apply</code> is an alias: same flags, same
@@ -4140,6 +4184,25 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       before returning; <code>0</code> returns immediately. Running it twice with an
       unchanged spec does nothing: a deploy is a spec-hash mismatch, not an invocation.
     </p>
+    <p>
+      <b>It shows the plan and asks first.</b> The block above is printed by the same
+      code <code>kanea plan</code> uses, so what you confirm is exactly what you were
+      shown, and then:
+    </p>
+    <pre class="plain">Apply? [Y/n]</pre>
+    <p>
+      Enter applies. Anything that is not <code>y</code> or <code>yes</code> aborts and
+      nothing is sent. <code>--yes</code> (or <code>-y</code>) skips the question.
+    </p>
+    <div class="callout">
+      <b class="label">A script is never asked a question</b>
+      <p>
+        The prompt appears only when stdin is a terminal. A piped or redirected stdin
+        &mdash; every CI job, every pipeline, every <code>kanea run … &lt; /dev/null</code>
+        &mdash; applies without asking, exactly as it did before the prompt existed. No
+        existing automation needs <code>--yes</code> added to it.
+      </p>
+    </div>
     <p>
       <b>An apply is additive.</b> A service the spec no longer declares keeps running,
       because <code>kanea run</code> on one file must not delete what another file
