@@ -24,18 +24,20 @@
 /** DateStyle is the order the date half is written in. */
 export type DateStyle = 'dd/MM/yyyy' | 'MM/dd/yyyy' | 'yyyy-MM-dd'
 
-/** DateStyles is every offered style, in the order the control cycles them. */
-export const DateStyles: readonly DateStyle[] = ['dd/MM/yyyy', 'MM/dd/yyyy', 'yyyy-MM-dd']
+/** DateStyles is every offered style, in the order the picker lists them. */
+export const DateStyles: readonly DateStyle[] = ['yyyy-MM-dd', 'dd/MM/yyyy', 'MM/dd/yyyy']
 
-/** DefaultDateStyle is day-first. */
-export const DefaultDateStyle: DateStyle = 'dd/MM/yyyy'
-
-/** ShortDateStyle labels a style for a control with no room for the full form. */
-export const ShortDateStyle: Record<DateStyle, string> = {
-  'dd/MM/yyyy': 'dd/mm',
-  'MM/dd/yyyy': 'mm/dd',
-  'yyyy-MM-dd': 'iso',
-}
+/**
+ * DefaultDateStyle is ISO 8601.
+ *
+ * Big-endian is the one order that is unambiguous to every reader: `03/04` is
+ * two different days depending on where the reader learned to write dates,
+ * while `2026-04-03` is one day everywhere. It also sorts lexically, which
+ * matters on a page whose timestamps sit in mono columns beside each other.
+ * The other two remain offered, because a preference nobody can change is not
+ * a preference.
+ */
+export const DefaultDateStyle: DateStyle = 'yyyy-MM-dd'
 
 const storageKey = 'kanea-date-style'
 
@@ -82,12 +84,6 @@ export function subscribeDateStyle(listener: () => void): () => void {
   return () => {
     listeners.delete(listener)
   }
-}
-
-/** nextDateStyle is the style after this one, wrapping: the control cycles. */
-export function nextDateStyle(style: DateStyle): DateStyle {
-  const at = DateStyles.indexOf(style)
-  return DateStyles[(at + 1) % DateStyles.length] as DateStyle
 }
 
 function pad(n: number): string {
