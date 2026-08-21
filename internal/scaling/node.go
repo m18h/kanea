@@ -52,6 +52,10 @@ type NodeStats struct {
 	// GPUs are the node's visible GPUs (v1.42): absent on a node without
 	// any, never an empty placeholder.
 	GPUs []GPUStats `json:"gpus,omitempty"`
+	// GPUUtilPercent is the mean busy percentage across every GPU reporting
+	// one (v1.94). Nil when none does, which is every node whose only GPU is
+	// integrated: Intel publishes no busy counter in sysfs.
+	GPUUtilPercent *float64 `json:"gpu_util_percent,omitempty"`
 	// GPUVRAMPercent aggregates VRAM use across every GPU that reports both
 	// numbers: used summed over total. Nil when no GPU is visible.
 	GPUVRAMPercent *float64 `json:"gpu_vram_percent,omitempty"`
@@ -109,6 +113,10 @@ const (
 	MetricNodeCPU    = "node_cpu_percent"
 	MetricNodeMemory = "node_memory_percent"
 	MetricNodeGPU    = "node_gpu_vram_percent"
+	// MetricNodeGPUUtil is how busy the node's GPUs are (v1.94). A second
+	// series rather than a label on the first: they answer different questions
+	// and a card can report either without the other.
+	MetricNodeGPUUtil = "node_gpu_util_percent"
 	// MetricNodeLoad1 is the kernel's one-minute load average (v1.79). Load5
 	// and Load15 are deliberately not recorded: three curves that differ only
 	// in how much they are smoothed are three series for one fact, and the
@@ -139,6 +147,9 @@ func RecordNode(m *Metrics, stats NodeStats) {
 	}
 	if stats.MemoryPercent != nil {
 		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeMemory}, stats.At, *stats.MemoryPercent)
+	}
+	if stats.GPUUtilPercent != nil {
+		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeGPUUtil}, stats.At, *stats.GPUUtilPercent)
 	}
 	if stats.GPUVRAMPercent != nil {
 		m.Record(Key{Subject: NodeSubject, Metric: MetricNodeGPU}, stats.At, *stats.GPUVRAMPercent)
@@ -250,6 +261,7 @@ func (r *NodeReader) sample() NodeStats {
 	if r.gpu != nil {
 		if gpus := r.gpu.Read(); len(gpus) > 0 {
 			stats.GPUs = gpus
+			stats.GPUUtilPercent = aggregateUtil(gpus)
 			stats.GPUVRAMPercent = aggregateVRAM(gpus)
 		}
 	}

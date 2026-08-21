@@ -582,6 +582,9 @@ export async function fetchEvents(
  * report them: an [N/A] from nvidia-smi is not an empty card. */
 export const nodeGPUSchema = z.object({
   name: z.string(),
+  // How busy the card is (v1.94). Absent for a driver that publishes no busy
+  // counter, which is every integrated Intel GPU: absent, never zero.
+  util_percent: z.number().optional(),
   vram_used_bytes: z.number().optional(),
   vram_total_bytes: z.number().optional(),
   vram_percent: z.number().optional(),
@@ -596,6 +599,7 @@ export const nodeMachineSchema = z.object({
   memory_available_bytes: z.number().optional(),
   memory_percent: z.number().optional(),
   gpus: z.array(nodeGPUSchema).optional(),
+  gpu_util_percent: z.number().optional(),
   gpu_vram_percent: z.number().optional(),
   cores: z.number(),
   at: z.string(),

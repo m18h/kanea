@@ -26,7 +26,14 @@ import (
 // for the NodeStats reason: a card whose driver reports no usage file and a
 // card with an empty VRAM are different facts.
 type GPUStats struct {
-	Name        string   `json:"name"`
+	Name string `json:"name"`
+	// UtilPercent is how busy the GPU is, 0-100 (v1.94). It is the first
+	// number anybody wants from a GPU - "is the transcode actually using it"
+	// is a question about occupancy, not about memory - and it is a pointer
+	// for the same reason the VRAM fields are: a driver that does not publish
+	// busy time is an absence, and rendering it as 0% would say the card is
+	// idle when the truth is that nobody asked it.
+	UtilPercent *float64 `json:"util_percent,omitempty"`
 	VRAMUsed    *uint64  `json:"vram_used_bytes,omitempty"`
 	VRAMTotal   *uint64  `json:"vram_total_bytes,omitempty"`
 	VRAMPercent *float64 `json:"vram_percent,omitempty"`
@@ -143,8 +150,11 @@ func (r *GPUReader) drmGPUs() []GPUStats {
 		device := card + "/device"
 		used, usedOK := readSysUint(device + "/mem_info_vram_used")
 		total, totalOK := readSysUint(device + "/mem_info_vram_total")
+		busy, busyOK := readSysPercent(device + "/gpu_busy_percent")
 		driver := sysDriver(device)
-		if !usedOK && !totalOK {
+		// Any published number is proof of being a GPU; the render-node check
+		// is the fallback for a card that publishes none.
+		if !usedOK && !totalOK && !busyOK {
 			if driver == driverNvidia || !hasRenderNode(device) {
 				continue
 			}
@@ -153,6 +163,13 @@ func (r *GPUReader) drmGPUs() []GPUStats {
 		g := GPUStats{Name: filepath.Base(card)}
 		if driver != "" {
 			g.Name += " (" + driver + ")"
+		}
+		// amdgpu publishes busy time as a plain percentage file, which is the
+		// whole reason utilisation costs nothing on that driver. i915 has no
+		// equivalent: Intel's busy counters live behind the perf PMU, so an
+		// integrated GPU reports its presence and its absence of numbers.
+		if busyOK {
+			g.UtilPercent = &busy
 		}
 		if usedOK {
 			g.VRAMUsed = &used
@@ -179,6 +196,17 @@ const driverNvidia = "nvidia"
 func hasRenderNode(device string) bool {
 	nodes, err := filepath.Glob(device + "/drm/renderD*")
 	return err == nil && len(nodes) > 0
+}
+
+// readSysPercent reads a 0-100 sysfs file. A value outside that range is a
+// driver this code does not understand, and is an absence rather than a clamp:
+// clamping publishes a number nobody measured.
+func readSysPercent(path string) (float64, bool) {
+	value, ok := readSysUint(path)
+	if !ok || value > 100 {
+		return 0, false
+	}
+	return float64(value), true
 }
 
 // readSysUint reads one integer sysfs file. Garbage is an absence, not a zero.
@@ -226,18 +254,19 @@ func nvidiaSMI(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	return exec.CommandContext(ctx, "nvidia-smi",
-		"--query-gpu=name,memory.used,memory.total",
+		"--query-gpu=name,utilization.gpu,memory.used,memory.total",
 		"--format=csv,noheader,nounits").Output()
 }
 
-// parseNvidiaSMI reads "name, used, total" CSV lines; the memory values are
-// MiB under nounits. A value nvidia-smi could not report ("[N/A]") parses to
-// nothing, which serves it as the absence it is.
+// parseNvidiaSMI reads "name, util, used, total" CSV lines; the memory values
+// are MiB under nounits and the utilisation is a bare percentage. A value
+// nvidia-smi could not report ("[N/A]") parses to nothing, which serves it as
+// the absence it is.
 func parseNvidiaSMI(body []byte) []GPUStats {
 	var out []GPUStats
 	for _, line := range strings.Split(string(body), "\n") {
 		fields := strings.Split(line, ",")
-		if len(fields) < 3 {
+		if len(fields) < 4 {
 			continue
 		}
 		name := strings.TrimSpace(fields[0])
@@ -246,11 +275,15 @@ func parseNvidiaSMI(body []byte) []GPUStats {
 		}
 
 		g := GPUStats{Name: name}
-		if mib, err := strconv.ParseUint(strings.TrimSpace(fields[1]), 10, 64); err == nil {
+		if busy, err := strconv.ParseUint(strings.TrimSpace(fields[1]), 10, 64); err == nil && busy <= 100 {
+			percent := float64(busy)
+			g.UtilPercent = &percent
+		}
+		if mib, err := strconv.ParseUint(strings.TrimSpace(fields[2]), 10, 64); err == nil {
 			used := mib * 1024 * 1024
 			g.VRAMUsed = &used
 		}
-		if mib, err := strconv.ParseUint(strings.TrimSpace(fields[2]), 10, 64); err == nil {
+		if mib, err := strconv.ParseUint(strings.TrimSpace(fields[3]), 10, 64); err == nil {
 			total := mib * 1024 * 1024
 			g.VRAMTotal = &total
 		}
@@ -261,6 +294,29 @@ func parseNvidiaSMI(body []byte) []GPUStats {
 		out = append(out, g)
 	}
 	return out
+}
+
+// aggregateUtil is the mean busy percentage across every GPU reporting one.
+//
+// A mean rather than VRAM's used-over-total, because utilisation is already a
+// ratio and there is no second quantity to weight it by: two cards at 100% and
+// 0% are a node at 50%, whichever is larger. Nil when no card reports busy
+// time, so a node whose only GPU is integrated records no series at all rather
+// than a flat zero (§9.2).
+func aggregateUtil(gpus []GPUStats) *float64 {
+	var sum float64
+	var n int
+	for _, g := range gpus {
+		if g.UtilPercent != nil {
+			sum += *g.UtilPercent
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	mean := sum / float64(n)
+	return &mean
 }
 
 // aggregateVRAM is used summed over total, across every GPU reporting both.
