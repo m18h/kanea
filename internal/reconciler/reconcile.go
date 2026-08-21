@@ -881,7 +881,11 @@ func Observe(w World) map[string]AllocRecord {
 	// an alloc part-way through one has no main container, so it appears in
 	// neither map the loop below walks (R32).
 	for id, record := range w.Records {
-		if record.State != AllocInit {
+		// A follower in AllocInit is a leftover from a node upgraded mid-
+		// sequence, back when init ran per alloc. It is not running a sequence
+		// any more, so timing one out would record a failure against work that
+		// nothing is doing; the planner creates its task instead.
+		if record.State != AllocInit || record.Index != InitLeaderIndex {
 			continue
 		}
 		desired, isDesired := byService[record.Project+"/"+record.Service]
@@ -1146,8 +1150,13 @@ func (r *Reconciler) create(ctx context.Context, desired Desired, action Action)
 	// sequence already ran and this create is the one that finally builds the
 	// task. Anything else - a first create, a restart, a deploy - starts at
 	// step 0, which is what makes a sequence re-run on every alloc creation.
+	//
+	// Only for the leader, though (R32, v1.92). Every other alloc reaches this
+	// point having already waited for the leader's sequence in the planner, so
+	// it builds its task directly; running a sequence here would be the third
+	// concurrent migration this change exists to prevent.
 	sequenceDone := action.Init != nil && action.Init.Op == InitDone
-	if len(desired.Init) > 0 && !sequenceDone {
+	if len(desired.Init) > 0 && action.Index == InitLeaderIndex && !sequenceDone {
 		return r.startInitStep(ctx, desired, action, spec, sec, files, 0)
 	}
 

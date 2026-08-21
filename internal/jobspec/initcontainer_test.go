@@ -3,6 +3,7 @@ package jobspec_test
 // Init containers and pull policy (PRD v1.84, §6.2 R32 / R33).
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -356,5 +357,103 @@ function "thumb" {
 	_, diags := jobspec.ParseSource(jobspec.Options{}, "shop.hcl", []byte(src))
 	if !diags.HasErrors() {
 		t.Fatal("a function accepted an init block")
+	}
+}
+
+// --- init runs once, volumes do not (v1.92) --------------------------------
+
+// warningsFor parses a spec that must succeed and returns its warnings.
+func warningsFor(t *testing.T, src string) string {
+	t.Helper()
+	_, diags := jobspec.ParseSource(jobspec.Options{}, "test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("unexpected errors:\n%s", jobspec.FormatDiagnostics(diags))
+	}
+	return jobspec.FormatDiagnostics(diags)
+}
+
+const initWithLocalVolume = `
+spec_version = 1
+project "shop" {}
+storage "scratch" { type = "local" }
+service "web" {
+  project = "shop"
+  count   = %d
+  task "app" { image = "nginx:1.27-alpine" }
+  %s
+  volume "data" {
+    storage = "scratch"
+    mount_path = "/data"
+  }
+}
+`
+
+const chownStep = `
+  init "chown" {
+    image   = "busybox:1.36"
+    command = ["chown", "-R", "999", "/data"]
+  }
+`
+
+// The one shape v1.92 quietly changed meaning for. An init sequence runs once,
+// on the first alloc, while local storage gives every alloc its own directory,
+// so a chown step prepares one replica's copy and no other. That failure is a
+// service which starts, passes its health check on alloc 0 and fails on the
+// rest, with nothing on screen connecting it to the init block.
+func TestInitOnAPerAllocVolumeWarns(t *testing.T) {
+	got := warningsFor(t, fmt.Sprintf(initWithLocalVolume, 3, chownStep))
+	for _, want := range []string{"runs once", "per alloc", "data", "scratch"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warning does not carry %q:\n%s", want, got)
+		}
+	}
+}
+
+// Quiet where it should be. A single-replica service has no second alloc to
+// leave unprepared, and a service with no init steps has nothing to run once.
+func TestInitOnAPerAllocVolumeIsQuietWhenItCannotBite(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		count int
+		init  string
+	}{
+		{"one alloc", 1, chownStep},
+		{"no init steps", 3, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := warningsFor(t, fmt.Sprintf(initWithLocalVolume, tc.count, tc.init)); got != "" {
+				t.Errorf("unexpected warning:\n%s", got)
+			}
+		})
+	}
+}
+
+// Shared storage is the case the warning must not fire on: every alloc mounts
+// the same thing, so preparing it once is exactly right.
+func TestInitOnSharedStorageDoesNotWarn(t *testing.T) {
+	src := `
+spec_version = 1
+project "shop" {}
+storage "shared" {
+  type   = "nfs"
+  server = "nfs.example.com"
+  export = "/exports/web"
+}
+service "web" {
+  project = "shop"
+  count   = 3
+  task "app" { image = "nginx:1.27-alpine" }
+  init "seed" {
+    image   = "busybox:1.36"
+    command = ["sh", "-c", "seed"]
+  }
+  volume "data" {
+    storage = "shared"
+    mount_path = "/data"
+  }
+}
+`
+	if got := warningsFor(t, src); got != "" {
+		t.Errorf("shared storage warned:\n%s", got)
 	}
 }

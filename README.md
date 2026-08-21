@@ -424,6 +424,28 @@ service "api" {
 
   task "app" {
     image = "registry.example.com/shop/api:1.4"
+    ...
+  }
+}
+```
+
+**A sequence runs once per service, not once per alloc.** It runs on the first
+alloc; the others wait for it and then start with no sequence of their own, so
+`count = 3` means three replicas and one migration. The gate is that alloc's
+record leaving `init` *at the same spec hash*, so a deploy re-runs it once and
+the others wait again. A waiting alloc says what for, on `kanea ps`.
+
+The cost is per-alloc volumes: local storage gives each alloc its own
+directory, so a step preparing *this alloc's* volume (the classic `chown`) now
+prepares the first alloc's and no other. `kanea plan` warns when a service with
+`count > 1` declares both init steps and a local volume; steps that work on
+shared state are unaffected.
+
+Steps run in declaration order, one at a time, and the task starts only once
+the last has exited zero. They share the alloc's network namespace, volumes and
+secrets, and **must be idempotent**: a half-run sequence is abandoned rather
+than resumed.
+
 ### Sharing an environment
 
 `variables` substitutes `${name}` into text you write, so putting `LOG_LEVEL`
@@ -921,7 +943,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.91) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.92) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

@@ -129,7 +129,12 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 	// An alloc in its init sequence. Deliberately *after* the stale test above
 	// and before everything below: a deploy must not wait out the old spec's
 	// migrations before noticing it is a deploy.
-	if hasRecord && record.State == AllocInit {
+	// Only the leader runs the sequence (R32, v1.92). A follower can hold an
+	// AllocInit record only as a leftover from a node upgraded mid-sequence,
+	// when init was still per-alloc; it falls through to the follower gate
+	// below, creates its task without a sequence, and its half-run containers
+	// are swept on the pass after its record leaves AllocInit.
+	if hasRecord && record.State == AllocInit && index == InitLeaderIndex {
 		if stale {
 			// ActionRestart rather than the ActionCreate the !isActual branch
 			// below would emit, because only teardown sweeps the half-run
@@ -164,6 +169,20 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 			act.Kind = ActionWait
 			act.Reason = "waiting for " + strings.Join(blocked, ", ") + " to become healthy"
 			return []Action{act}
+		}
+		// The init gate, and it is a gate of the same kind as the one above:
+		// this alloc may not be created yet. A service's init sequence runs
+		// once, on the leader, so every other alloc waits for it rather than
+		// running its own - three replicas of a service that migrates a schema
+		// must not migrate it three times, and creation is not budget-gated, so
+		// without this they would all do it in the same pass.
+		if len(d.Init) > 0 && index != InitLeaderIndex {
+			if done, why := serviceInitDone(w, d, hash); !done {
+				act := base
+				act.Kind = ActionWait
+				act.Reason = why
+				return []Action{act}
+			}
 		}
 		// An alloc that failed during its init sequence has no main container,
 		// so without this it would take the ActionCreate path below - and

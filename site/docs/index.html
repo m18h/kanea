@@ -2508,12 +2508,41 @@ service "web" {
       </table>
     </div>
     <p>
-      A sequence re-runs from the first step on every alloc creation - a
-      deploy, a crash restart, a spec change - so <b>init steps must be
-      idempotent</b>. That is the same standing requirement the netns, the
+      A sequence re-runs from the first step whenever the alloc running it is
+      created - a deploy, a crash restart, a spec change - so <b>init steps must
+      be idempotent</b>. That is the same standing requirement the netns, the
       secrets tree and the staged host binds carry: an alloc is built, never
       resumed.
     </p>
+
+    <div class="callout warn">
+      <b class="label">A sequence runs once per service, not once per alloc</b>
+      <p>
+        It runs on the <b>first alloc</b>; every other alloc of the service
+        waits for it and then starts with no sequence of its own. That is what
+        makes a schema migration expressible: three replicas, one migration.
+        Without it a first deploy of <code>count = 3</code> creates three allocs
+        in one pass and runs three copies of the migration at once, against the
+        same database.
+      </p>
+      <p>
+        The gate is the first alloc's record leaving <code>init</code>
+        <i>at the same spec hash</i>, so a deploy re-runs the sequence once and
+        the others wait again. A waiting alloc says what it is waiting for on
+        <code>kanea ps</code>. If the first alloc <b>fails</b> its sequence the
+        service does not start, and the wait names it: the alternative is
+        failing every replica for one migration's mistake.
+      </p>
+      <p>
+        <b>The cost is per-alloc volumes.</b> Local storage gives each alloc its
+        own directory, so a step that prepares <i>this alloc's</i> volume
+        - the classic <code>chown</code> - now prepares the first
+        alloc's and no other. <code>kanea plan</code> warns when a service with
+        <code>count &gt; 1</code> declares both init steps and a local volume.
+        Steps that work on shared state are unaffected.
+      </p>
+    </div>
+
 
     <h3 id="spec-env-group">env_group</h3>
     <p>
@@ -2624,10 +2653,10 @@ service "web" {
     </div>
     <p>
       <b>Init containers must be idempotent.</b> That is a requirement, not
-      advice: a half-run sequence is abandoned rather than resumed, and a
-      sequence re-runs from the first step on every alloc creation - a
-      deploy, a crash restart, a spec change - for the same reason the
-      network namespace and the secrets are rebuilt.
+      advice: a half-run sequence is abandoned rather than resumed, and the
+      sequence re-runs from the first step whenever the alloc running it is
+      created - a deploy, a crash restart, a spec change - for the same reason
+      the network namespace and the secrets are rebuilt.
     </p>
     <p>
       There is deliberately no <code>device</code>, <code>socket</code>,
@@ -3148,7 +3177,7 @@ removed shop/legacy-worker
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous; declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
     <div class="rule"><b>R17</b><div><p><b><code>task.device</code> names a grant, not a device.</b> There is no field for a device path, so a spec cannot ask for one. Parse time checks only that the grant name is a DNS-1123 label. The node refuses a grant it does not have, a grant whose <code>allow</code> list does not name the requesting project, and a path that is no longer a character or block device: checked after symlink resolution, at every alloc start. The device appears at its host path, and the grant carries the cgroup permissions (<code>rw</code> by default, never <code>m</code> unless written). A failed grant fails the alloc; it never starts without what it asked for.</p></div></div>
     <div class="rule"><b>R18</b><div><p><b><code>task.socket</code> is R17 for unix sockets, and is privilege delegation.</b> <code>mount_path</code> is validated as absolute, clean and <code>..</code>-free, may not sit under <code>/dev</code>, <code>/proc</code> or <code>/sys</code>, and may not collide with another socket or a volume. The bind carries <code>nosuid</code>, <code>noexec</code> and <code>nodev</code>. <b>None of that makes it safe and none of it is meant to</b>: a container holding the container runtime's socket can create containers without the hardening defaults, so the grant is equivalent to root on the node. The server config is the only control over it, which is why it is project-scoped and empty by default.</p></div></div>
-    <div class="rule"><b>R32</b><div><p><b><code>init</code> blocks run to completion before the task.</b> In declaration order, one at a time; the task is created only once the last has exited zero. Each shares the alloc's network namespace, volumes and secrets, and declares its own image, command, env, resources, user, capabilities and timeout - nothing is inherited from <code>task</code>. There is no <code>device</code>, <code>socket</code>, <code>health_check</code>, <code>expose</code>, <code>scaling</code>, <code>count</code>, <code>depends_on</code>, <code>network</code> or <code>build</code> field: an init container is a step, not a service. Names are DNS-1123 labels, unique within a service, and compose into a container id and a log file. <b>They must be idempotent</b>: a half-run sequence is abandoned rather than resumed, and a sequence re-runs on every alloc creation. A step that ran and failed, or outlived its <code>timeout</code>, spends the restart budget (R29); one that could not be pulled or created is retried every pass without spending it, because nothing ran.</p></div></div>
+    <div class="rule"><b>R32</b><div><p><b><code>init</code> blocks run to completion before the task.</b> In declaration order, one at a time; the task is created only once the last has exited zero. Each shares the alloc's network namespace, volumes and secrets, and declares its own image, command, env, resources, user, capabilities and timeout - nothing is inherited from <code>task</code>. There is no <code>device</code>, <code>socket</code>, <code>health_check</code>, <code>expose</code>, <code>scaling</code>, <code>count</code>, <code>depends_on</code>, <code>network</code> or <code>build</code> field: an init container is a step, not a service. Names are DNS-1123 labels, unique within a service, and compose into a container id and a log file. <b>A sequence runs once per service, not once per alloc</b> (v1.92): on alloc 0, with every other alloc waiting on that alloc's record leaving <code>init</code> at the same spec hash, which is what makes "three replicas, one migration" expressible. A local volume is one directory per alloc, so a step preparing this alloc's own volume prepares the first's alone; <code>kanea plan</code> warns on that shape. <b>They must be idempotent</b>: a half-run sequence is abandoned rather than resumed, and it re-runs whenever the alloc running it is created. A step that ran and failed, or outlived its <code>timeout</code>, spends the restart budget (R29); one that could not be pulled or created is retried every pass without spending it, because nothing ran.</p></div></div>
     <div class="rule"><b>R33</b><div><p><b><code>pull_policy</code> says where an image may come from.</b> <code>if-not-present</code> (the default), <code>never</code> (content store only - the air-gapped case) or <code>always</code>. <code>always</code> is not a per-create re-pull, which would let two replicas of one spec run different bytes: it lowers to <code>update { auto = true }</code>, so a moved digest is pinned and every replica rolls together, and it inherits that rule's refusals. It is refused on an <code>init</code> block, because there is one pinned-image field and it belongs to the task. The node supplies the default through <code>/etc/kanea/kanea.hcl</code>'s <code>images</code> stanza; an omitted policy means "the node decides".</p></div></div>
     <div class="rule"><b>R34</b><div><p><b>An <code>env_group</code> is declared once and <i>taken</i> by a service.</b> A top-level block names environment variables; a service opts in with <code>env_from = ["common", "db"]</code>, and the groups apply in that order with the task's own <code>env</code> on top. Opt-in per service rather than project-wide, because environment is baked into a container and a shared value changing rolls every service that takes it. A group is evaluated <b>once per consuming service</b>: <code>${service.…}</code> is project-scoped, so one group taken from two projects resolves differently, and the dependency edge lands on the service that took it. A <code>secret:</code> inside a group is scoped against every consumer, so a group carrying one project's credential is refused for a service in another.</p></div></div>
     <div class="rule"><b>R35</b><div><p><b>A <code>file</code> block puts content in a container, and a secret in it stays a reference.</b> <code>path</code> is absolute, clean and <code>..</code>-free, refused where a volume or socket already mounts and under the system paths a volume destination is; the bind is read-only with <code>nosuid,noexec,nodev</code>, and an execute bit in <code>mode</code> is refused. Files mount after volumes, so one inside a volume's path wins. Exactly one of <code>content</code> and <code>source</code>; <code>source</code> is read where the spec is parsed and is refused where there is no directory (the dashboard editor, MCP), because a parser reading files there would be reading the node's filesystem as root. <code>${secret.&lt;scope&gt;.&lt;name&gt;}</code> resolves to an opaque placeholder at parse and is substituted on the node at container create, so the value never enters the state database, a backup, or the API; such a file is written <code>0400</code> on a tmpfs of its own. Content is SpecHash material - editing a config file rolls the service, which is the feature - and is capped at 64 KiB per file and 128 KiB per service.</p></div></div>
