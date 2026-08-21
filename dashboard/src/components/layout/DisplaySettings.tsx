@@ -35,7 +35,6 @@ export function DisplaySettings() {
   const style = useDateStyle()
   const ref = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
-  const themeId = useId()
   const dateId = useId()
 
   useEffect(() => {
@@ -75,18 +74,25 @@ export function DisplaySettings() {
         <Settings size={15} />
       </button>
       {open ? (
-        // Anchored to the bottom, because this sits in the sidebar's last row
-        // and a panel opening downward would leave the viewport.
+        // Two constraints, both from where this lives rather than from taste.
+        // It opens **upward** because it sits in the sidebar's last row. And it
+        // is narrow enough to fit **inside the sidebar**: the panel is anchored
+        // to the cog, whose right edge is short of the sidebar's by the width
+        // of the sign-out button beside it, so anything wider than about 180px
+        // runs off the left of the viewport and is simply cut off - which is
+        // what a 240px panel did. The sidebar is 230px in both the desktop rail
+        // and the mobile drawer, so one width is correct in both.
         <div
-          className="absolute bottom-full right-0 z-20 mb-1 w-60 rounded-md border bg-card p-3 shadow-lg"
+          className="absolute bottom-full right-0 z-20 mb-1 w-44 rounded-md border bg-card p-3 shadow-lg"
           aria-label="Display settings"
         >
           <p className="mb-2 text-xs font-medium text-muted-foreground">Display</p>
 
           <div className="flex items-center justify-between gap-3 py-1.5">
-            <label htmlFor={themeId} className="text-sm">
-              Dark mode
-            </label>
+            {/* A span, not a label: Switch renders a button and takes no id,
+                so an htmlFor here would point at nothing. The control carries
+                its own aria-label, which is what a screen reader reads. */}
+            <span className="text-sm">Dark mode</span>
             <Switch
               checked={theme === 'dark'}
               onCheckedChange={(on) => setTheme(on ? 'dark' : 'light')}
