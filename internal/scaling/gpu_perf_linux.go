@@ -63,7 +63,14 @@ func openI915Sampler(sysRoot string) EngineBusyReader {
 	// and the frequency ones are actively misleading (spike 7 measured the
 	// clock at 97% of maximum while the GPU was idle and 32% while it was
 	// 70.8% busy, because video decode does not drive the render clock).
-	events, _ := filepath.Glob(filepath.Join(base, "events/*-busy"))
+	events, err := filepath.Glob(filepath.Join(base, "events/*-busy"))
+	if err != nil {
+		// ErrBadPattern is the only error Glob returns and the pattern is a
+		// constant, so this cannot fire; it is handled rather than discarded
+		// because a node with no readable events is the same "no utilisation
+		// to report" every other failure here becomes.
+		return nil
+	}
 	fds := make(map[string]int, len(events))
 	for _, path := range events {
 		config, ok := i915EventConfig(path)
@@ -133,9 +140,14 @@ func (s *i915Sampler) Busy() (map[string]uint64, error) {
 // Close releases the counters. Production never calls it (see the file
 // comment); it exists so a test can hold a real sampler without leaking.
 func (s *i915Sampler) Close() error {
-	for _, fd := range s.fds {
-		_ = unix.Close(fd)
+	// Every descriptor is closed even if one fails, and the first failure is
+	// what comes back: stopping at the first would leak the rest.
+	var firstErr error
+	for engine, fd := range s.fds {
+		if err := unix.Close(fd); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("scaling: close i915 %s counter: %w", engine, err)
+		}
 	}
 	s.fds = nil
-	return nil
+	return firstErr
 }
