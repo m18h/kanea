@@ -54,6 +54,8 @@ import {
   type StatsHistory,
   type StatsSample,
 } from '@/lib/api'
+import { useDateStyle } from '@/hooks/useDateStyle'
+import { formatDateTime } from '@/lib/datetime'
 import { parseScaleDecision } from '@/lib/events'
 import { rolloutStatus, type RolloutStatus } from '@/lib/rollout'
 import {
@@ -61,7 +63,6 @@ import {
   formatBytes,
   memoryUsageText,
   allocExitReason,
-  formatClock,
   groupAllocs,
   groupCodes,
   relativeAge,
@@ -595,6 +596,7 @@ function AutoscalePanel({
   desired: Service | undefined
   events: KaneaEvent[]
 }) {
+  const style = useDateStyle()
   const policy = desired?.Scaling
   const metrics = policy?.metrics ?? []
   const lastDecision = events.map(parseScaleDecision).find((d) => d !== null)
@@ -634,7 +636,7 @@ function AutoscalePanel({
                   {lastDecision.from !== undefined && lastDecision.to !== undefined
                     ? `${lastDecision.from} → ${lastDecision.to} · `
                     : ''}
-                  {formatClock(lastDecision.at)}
+                  {formatDateTime(lastDecision.at, style)}
                 </span>
               ) : (
                 <span className="text-muted-foreground">none recorded</span>

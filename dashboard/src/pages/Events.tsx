@@ -13,7 +13,8 @@ import {
 } from '@/lib/api'
 import { eventScope, eventSource, matchGlob } from '@/lib/events'
 import { matchesQuery } from '@/lib/search'
-import { formatClock } from '@/lib/state'
+import { useDateStyle } from '@/hooks/useDateStyle'
+import { type DateStyle, formatDateTime } from '@/lib/datetime'
 import { useSession } from '@/hooks/useSession'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
@@ -49,6 +50,7 @@ const severityVariant: Record<KaneaEvent['severity'], 'info' | 'warn' | 'error'>
  * judgment; it is a record.
  */
 export function Events() {
+  const style = useDateStyle()
   const [filter, setFilter] = useState<Filter>('all')
   const [glob, setGlob] = useState('')
   const [query, setQuery] = useState('')
@@ -170,6 +172,7 @@ export function Events() {
                       key={event.id}
                       event={event}
                       channels={event.project ? (channels.get(event.project) ?? []) : []}
+                      style={style}
                     />
                   ))}
                 </TBody>
@@ -185,13 +188,21 @@ export function Events() {
   )
 }
 
-function EventTableRow({ event, channels }: { event: KaneaEvent; channels: string[] }) {
+function EventTableRow({
+  event,
+  channels,
+  style,
+}: {
+  event: KaneaEvent
+  channels: string[]
+  style: DateStyle
+}) {
   const scope = eventScope(event)
   return (
     <TR>
       <TD className="whitespace-nowrap font-mono text-xs text-muted-foreground">
         <time dateTime={event.at} title={event.at}>
-          {formatClock(event.at)}
+          {formatDateTime(event.at, style)}
         </time>
       </TD>
       <TD>
@@ -238,6 +249,7 @@ function AuditTable({
   admin: boolean
   pager: React.ReactNode
 }) {
+  const style = useDateStyle()
   if (error) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -267,7 +279,7 @@ function AuditTable({
             <TR key={entry.id}>
               <TD className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                 <time dateTime={entry.time} title={entry.time}>
-                  {formatClock(entry.time)}
+                  {formatDateTime(entry.time, style)}
                 </time>
               </TD>
               <TD className="font-mono text-xs">

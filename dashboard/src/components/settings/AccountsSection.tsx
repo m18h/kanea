@@ -15,6 +15,7 @@ import {
   revokeToken,
   type TokenCreated,
 } from '@/lib/api'
+import { useDateStyle } from '@/hooks/useDateStyle'
 import { timeOrNever } from '@/lib/settings'
 import { relativeAge } from '@/lib/state'
 
@@ -38,6 +39,7 @@ export function AccountsSection({
   /** self is the signed-in subject; deleting yourself is greyed out. */
   self: string | undefined
 }) {
+  const style = useDateStyle()
   const client = useQueryClient()
   const [error, setError] = useState('')
 
@@ -138,10 +140,10 @@ export function AccountsSection({
                     <Badge variant={u.role === 'admin' ? 'accent' : 'muted'}>{u.role}</Badge>
                   </TD>
                   <TD className="font-mono text-xs text-muted-foreground">
-                    {timeOrNever(u.created)}
+                    {timeOrNever(u.created, style)}
                   </TD>
                   <TD className="font-mono text-xs text-muted-foreground">
-                    {timeOrNever(u.updated)}
+                    {timeOrNever(u.updated, style)}
                   </TD>
                   {canWrite ? (
                     <TD className="text-right">
@@ -258,10 +260,10 @@ export function AccountsSection({
                 </TD>
                 <TD className="font-mono text-xs text-muted-foreground">{relativeAge(t.created)}</TD>
                 <TD className="font-mono text-xs text-muted-foreground">
-                  {timeOrNever(t.expires)}
+                  {timeOrNever(t.expires, style)}
                 </TD>
                 <TD className="font-mono text-xs text-muted-foreground">
-                  {timeOrNever(t.last_used)}
+                  {timeOrNever(t.last_used, style)}
                 </TD>
                 {canWrite ? (
                   <TD className="text-right">

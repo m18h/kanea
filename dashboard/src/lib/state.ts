@@ -194,13 +194,6 @@ export function relativeAge(iso: string | undefined, now: number = Date.now()): 
   return `${seconds}s`
 }
 
-/** formatClock renders a timestamp as the wall-clock time the feed shows. */
-export function formatClock(iso: string): string {
-  const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return iso
-  return at.toLocaleTimeString([], { hour12: false })
-}
-
 /** formatMetric renders a sample the same way everywhere: one decimal while
  * the number is small enough for it to mean something. */
 export function formatMetric(value: number, unit: string): string {

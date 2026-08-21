@@ -24,10 +24,11 @@ import {
   type StatsHistory,
 } from '@/lib/api'
 import { isStale, replicationLag } from '@/lib/backups'
+import { useDateStyle } from '@/hooks/useDateStyle'
+import { formatDateTime } from '@/lib/datetime'
 import { parseScaleDecision, type ScaleDecision } from '@/lib/events'
 import {
   formatBytes,
-  formatClock,
   formatUptime,
   groupAllocs,
   serviceHealth,
@@ -110,6 +111,7 @@ export function Overview() {
   const warns = recent.filter((e) => e.severity === 'warning').length
   const errors = recent.filter((e) => e.severity === 'error').length
 
+  const style = useDateStyle()
   const decisions = feed
     .map(parseScaleDecision)
     .filter((d): d is ScaleDecision => d !== null)
@@ -196,7 +198,7 @@ export function Overview() {
                   ) : null}
                   <span className="min-w-0 truncate text-muted-foreground">{d.reason}</span>
                   <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-                    {formatClock(d.at)}
+                    {formatDateTime(d.at, style)}
                   </span>
                 </div>
               ))

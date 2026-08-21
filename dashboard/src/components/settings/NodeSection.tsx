@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { KeyValueSkeleton } from '@/components/Skeletons'
 import { KeyValue } from '@/components/KeyValue'
 import { fetchEdgePolicy, fetchSecretProviders, type NodeConfig } from '@/lib/api'
+import { useDateStyle } from '@/hooks/useDateStyle'
 import { timeOrNever } from '@/lib/settings'
 
 /**
@@ -12,6 +13,7 @@ import { timeOrNever } from '@/lib/settings'
  * rather than growing inputs that could not take effect.
  */
 export function NodeSection({ node }: { node: NodeConfig }) {
+  const style = useDateStyle()
   const policy = useQuery({
     queryKey: ['edge-policy'],
     queryFn: ({ signal }) => fetchEdgePolicy(signal),
@@ -131,7 +133,7 @@ export function NodeSection({ node }: { node: NodeConfig }) {
               {providers.data.map((p) => (
                 <KeyValue key={`${p.kind}/${p.name}`} label={`${p.kind} · ${p.name}`}>
                   <span className="font-mono text-xs text-muted-foreground">
-                    {p.mappings} mapping(s) · last sync {timeOrNever(p.last_success)}
+                    {p.mappings} mapping(s) · last sync {timeOrNever(p.last_success, style)}
                   </span>
                 </KeyValue>
               ))}
