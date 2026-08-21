@@ -76,9 +76,6 @@ export function Sidebar({ className }: { className?: string | undefined }) {
 
       <div className="mt-auto border-t border-sidebar-border px-4 py-3">
         <SocketLine />
-        <div className="mt-1 flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
-          <span aria-hidden>◇</span> store idx {health.data?.store_index ?? '-'}
-        </div>
       </div>
       <UserRow />
     </aside>

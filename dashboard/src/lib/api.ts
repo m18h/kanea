@@ -230,12 +230,15 @@ export const oidcStatusSchema = z.object({
 export const healthSchema = z.object({
   status: z.string(),
   version: z.string(),
-  store_index: z.number(),
   ws_connections: z.number(),
   oidc: oidcStatusSchema.nullish(),
+  // The daemon also sends `pid` and `store_index`. Neither is declared, because
+  // nothing here renders either one and zod drops what it is not told about: a
+  // required field the dashboard does not read is a validation failure waiting
+  // to happen over a number nobody would have missed.
+  //
   // Optional so the dashboard also renders against a pre-v1.38 daemon, which
-  // simply has no uptime to report. The daemon also sends a pid; nothing here
-  // renders it, so it is not declared.
+  // simply has no uptime to report.
   started_at: z.string().optional(),
   uptime_seconds: z.number().optional(),
 })
