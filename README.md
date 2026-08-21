@@ -747,8 +747,10 @@ Numbers on those pages say what they are of. A service's memory reads
 `108 MiB / 256 MiB`, or `512 MiB / all memory` where no limit is declared,
 because an omitted `resources.memory` is unbounded rather than zero. The node
 card charts **GPU utilisation first and VRAM second** when a GPU is visible:
-utilisation is what answers "is it actually being used", and a card whose
-driver publishes neither number (every integrated Intel GPU) is named beside a
+utilisation is what answers "is it actually being used". amdgpu and NVIDIA
+publish it as a plain number; Intel does not, so an `i915` card's occupancy is
+read from the kernel's perf PMU instead, which needs no privilege the daemon
+does not already have. A card whose driver offers neither is named beside a
 dash rather than drawn as an idle card. Timestamps carry the date as well as
 the time, in an order you pick: `yyyy-MM-dd` by default, with `dd/MM/yyyy` and
 `MM/dd/yyyy` offered. It shares a cog in the sidebar with the dark-mode
@@ -955,7 +957,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.95) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.96) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |

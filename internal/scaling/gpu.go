@@ -2,6 +2,7 @@ package scaling
 
 import (
 	"context"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,22 @@ type GPUStats struct {
 	VRAMUsed    *uint64  `json:"vram_used_bytes,omitempty"`
 	VRAMTotal   *uint64  `json:"vram_total_bytes,omitempty"`
 	VRAMPercent *float64 `json:"vram_percent,omitempty"`
+	// driver is the card's kernel driver, used to find the one card an i915
+	// PMU reading belongs to. Unexported so it never reaches the wire: it is a
+	// node-local fact this package needs and no client asked for, the
+	// Volume.resolvedHostPath precedent.
+	driver string
+}
+
+// EngineBusyReader samples an Intel GPU's per-engine busy time (PRD v1.96).
+//
+// An interface rather than a concrete type because it has two implementations
+// that share no code: the i915 perf PMU on Linux, and nothing at all anywhere
+// else. It is exported so a test can supply a third.
+type EngineBusyReader interface {
+	// Busy returns cumulative busy nanoseconds per engine name.
+	Busy() (map[string]uint64, error)
+	Close() error
 }
 
 // GPUReaderConfig points the reader somewhere other than the real node.
@@ -46,7 +63,12 @@ type GPUReaderConfig struct {
 	SysRoot string
 	// NvidiaSMI overrides the nvidia-smi invocation; tests inject CSV here.
 	NvidiaSMI func(ctx context.Context) ([]byte, error)
-	Now       func() time.Time
+	// EngineBusy overrides the Intel per-engine sampler. Nil opens the real
+	// i915 PMU under SysRoot, which answers nil on every node without one -
+	// including every fixture directory, so a test gets no Intel utilisation
+	// without asking for it.
+	EngineBusy EngineBusyReader
+	Now        func() time.Time
 }
 
 // GPUReader reads per-GPU VRAM.
@@ -62,6 +84,14 @@ type GPUReader struct {
 	mu       sync.Mutex
 	cached   []GPUStats
 	cachedAt time.Time
+
+	// The Intel half. engines is opened once and held for the process's life;
+	// engineOpen records that the attempt was made, so a node without a PMU
+	// does not re-probe sysfs on every scrape.
+	engines    EngineBusyReader
+	engineOpen bool
+	lastBusy   map[string]uint64
+	lastBusyAt time.Time
 }
 
 // gpuCacheFor bounds how often the sources are consulted; well under the 5 s
@@ -83,7 +113,10 @@ func NewGPUReader(cfg GPUReaderConfig) *GPUReader {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &GPUReader{sysRoot: cfg.SysRoot, nvidia: cfg.NvidiaSMI, now: cfg.Now}
+	return &GPUReader{
+		sysRoot: cfg.SysRoot, nvidia: cfg.NvidiaSMI, now: cfg.Now,
+		engines: cfg.EngineBusy, engineOpen: cfg.EngineBusy != nil,
+	}
 }
 
 // Read reports every visible GPU, or nothing.
@@ -95,11 +128,16 @@ func (r *GPUReader) Read() []GPUStats {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.cachedAt.IsZero() && r.now().Sub(r.cachedAt) < gpuCacheFor {
+	// One clock read for the whole pass: the cache decision and the interval
+	// the Intel delta is computed over have to be the same instant, or the
+	// percentage is taken against a window that does not match the sample.
+	now := r.now()
+	if !r.cachedAt.IsZero() && now.Sub(r.cachedAt) < gpuCacheFor {
 		return r.cached
 	}
 	gpus := append(r.drmGPUs(), r.nvidiaGPUs()...)
-	r.cached, r.cachedAt = gpus, r.now()
+	r.attachIntelUtil(gpus, now)
+	r.cached, r.cachedAt = gpus, now
 	return gpus
 }
 
@@ -160,7 +198,7 @@ func (r *GPUReader) drmGPUs() []GPUStats {
 			}
 		}
 
-		g := GPUStats{Name: filepath.Base(card)}
+		g := GPUStats{Name: filepath.Base(card), driver: driver}
 		if driver != "" {
 			g.Name += " (" + driver + ")"
 		}
@@ -189,6 +227,9 @@ func (r *GPUReader) drmGPUs() []GPUStats {
 // driverNvidia is the proprietary driver's name in a card's uevent. Its cards
 // are reported by nvidia-smi, which has the numbers this path does not.
 const driverNvidia = "nvidia"
+
+// driverI915 is Intel's, and the one whose occupancy needs the perf PMU.
+const driverI915 = "i915"
 
 // hasRenderNode reports whether a DRM device exposes a render node, which is
 // the kernel saying the device can be used for rendering or compute rather
@@ -294,6 +335,108 @@ func parseNvidiaSMI(body []byte) []GPUStats {
 		out = append(out, g)
 	}
 	return out
+}
+
+// attachIntelUtil fills the Intel card's occupancy in from the perf PMU.
+//
+// It writes into the card rather than returning a number because the PMU
+// belongs to a *device* and GPUStats is per card, and it is skipped unless
+// exactly one i915 card is visible: the plain "i915" PMU names one device, and
+// on a machine with two Intel GPUs the kernel names them per PCI address.
+// Attributing one PMU's numbers to an arbitrarily chosen card would put a real
+// number in the wrong row, which is worse than the dash it replaces.
+func (r *GPUReader) attachIntelUtil(gpus []GPUStats, now time.Time) {
+	card := soleIntelCard(gpus)
+	if card == nil {
+		return
+	}
+	if !r.engineOpen {
+		r.engineOpen = true
+		r.engines = openI915Sampler(r.sysRoot)
+	}
+	if r.engines == nil {
+		return
+	}
+	busy, err := r.engines.Busy()
+	if err != nil || len(busy) == 0 {
+		// Silent, and deliberately: this runs every scrape forever, and a GPU
+		// counter is not worth a log line per five seconds. The card keeps its
+		// name and loses its number, which is the state it was in before.
+		return
+	}
+
+	// The baseline is swapped on every reading, and this reader owns it alone:
+	// v1.79 records what happens when two callers share one - a real reading
+	// of the wrong interval, which is worse than a gap because nothing about
+	// it looks wrong. What keeps that from happening here is the cache above,
+	// which is why the clock is read once per pass: two consecutive samples
+	// are always at least gpuCacheFor apart, whoever asked for them.
+	prev, prevAt := r.lastBusy, r.lastBusyAt
+	r.lastBusy, r.lastBusyAt = busy, now
+	if prevAt.IsZero() {
+		return // the first sample has no delta, exactly like the CPU reader's
+	}
+	elapsed := now.Sub(prevAt)
+	if elapsed <= 0 {
+		return
+	}
+	if percent, ok := busiestEngine(prev, busy, elapsed); ok {
+		card.UtilPercent = &percent
+	}
+}
+
+// soleIntelCard is the one i915 card, or nil when there is not exactly one.
+func soleIntelCard(gpus []GPUStats) *GPUStats {
+	var found *GPUStats
+	for i := range gpus {
+		if gpus[i].driver != driverI915 {
+			continue
+		}
+		if found != nil {
+			return nil
+		}
+		found = &gpus[i]
+	}
+	return found
+}
+
+// busiestEngine is the highest per-engine occupancy over the interval.
+//
+// The busiest rather than the mean or the sum, and that was decided by
+// measurement rather than by taste (spike 7): a transcode read `vcs0` at 70.8%
+// with `rcs0`, `bcs0` and `vecs0` at exactly zero, so a mean across the four
+// would have published 17.7% for a GPU that `intel_gpu_top` showed at 71%. A
+// sum is wrong in the other direction and can exceed 100% on hardware whose
+// engines run concurrently.
+//
+// It does not contradict aggregateUtil's mean across *cards*: busiest-engine is
+// how one card's occupancy is derived, and the mean is how several cards
+// combine.
+func busiestEngine(prev, now map[string]uint64, elapsed time.Duration) (float64, bool) {
+	var best float64
+	var measured bool
+	for engine, current := range now {
+		before, ok := prev[engine]
+		// A counter that went backwards is a reset - a driver reload, a
+		// suspend - and a gap is the honest answer for that engine rather than
+		// a negative reading folded into a maximum.
+		if !ok || current < before {
+			continue
+		}
+		measured = true
+		if percent := float64(current-before) / float64(elapsed.Nanoseconds()) * 100; percent > best {
+			best = percent
+		}
+	}
+	if !measured {
+		return 0, false
+	}
+	// One engine cannot be busy for longer than the interval, so anything over
+	// 100 is skew between reading the counters and reading the clock. Clamped
+	// rather than refused, which is the opposite of readSysPercent's rule and
+	// for the opposite reason: there an out-of-range value means a driver this
+	// code does not understand, here it means a measurement this code took.
+	return math.Min(best, 100), true
 }
 
 // aggregateUtil is the mean busy percentage across every GPU reporting one.
