@@ -64,7 +64,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.26.1; ARCH=amd64
+VERSION=v0.27.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -742,6 +742,18 @@ The scheme is `https` unless the route declares `tls { mode = "plaintext" }`.
 A route with no domains is left out: the edge serves it at a name generated
 under `--base-domain`, and reading that needs an admin-only route, so the
 address would be a guess for anyone else.
+
+Numbers on those pages say what they are of. A service's memory reads
+`108 MiB / 256 MiB`, or `512 MiB / all memory` where no limit is declared,
+because an omitted `resources.memory` is unbounded rather than zero. The node
+card charts **GPU utilisation first and VRAM second** when a GPU is visible:
+utilisation is what answers "is it actually being used", and a card whose
+driver publishes neither number (every integrated Intel GPU) is named beside a
+dash rather than drawn as an idle card. Timestamps carry the date as well as
+the time, in an order you pick from the sidebar: `dd/MM/yyyy` by default, with
+`MM/dd/yyyy` and `yyyy-MM-dd` offered. That preference is per browser, stored
+beside the theme, and it sits in the sidebar rather than in Settings because
+Settings is admin-only and a viewer reads dates too.
 
 Every table pages at 20, 50 or 100 rows, and the pager stays out of the way
 until a list is longer than a page.
