@@ -44,7 +44,7 @@ security: ## Security gates: gosec + govulncheck + gitleaks (AGENTS.md constrain
 # of the committed sources: tag 1777990914, the toolchain cilium/ebpf
 # v0.22.0 builds with. The generated artifacts are committed; `bpf-verify`
 # regenerates and diffs, so a hand-edited artifact or a drifted toolchain is
-# a CI failure, not a code path (AGENTS.md, PRD v1.36).
+# a CI failure, not a code path (docs/DECISIONS.md, PRD v1.36).
 BPF_IMAGE      := ghcr.io/cilium/ebpf-builder@sha256:22ce6d5aad2f15df921db21770e759554cbda52f6d4e291b1ff58b4b9a5d6fcb
 BPF2GO_VERSION := v0.22.0
 
