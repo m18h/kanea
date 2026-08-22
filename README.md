@@ -951,7 +951,7 @@ providers other than MinIO. Those are tracked, with dates, in
 [`docs/VALIDATION.md`](./docs/VALIDATION.md).
 
 The decisions a change is most likely to trip over live in
-[`AGENTS.md`](./AGENTS.md), in one place to update.
+[`docs/DECISIONS.md`](./docs/DECISIONS.md), in one place to update.
 
 ## Documentation
 
@@ -959,6 +959,7 @@ The decisions a change is most likely to trip over live in
 |---|---|
 | [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.96) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
+| [`docs/DECISIONS.md`](./docs/DECISIONS.md) | The decision record: status, trip-over bullets, refusals, spike log |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
 | [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md) | Disaster recovery: read it before you need it |
 | [`docs/VALIDATION.md`](./docs/VALIDATION.md) | What has been exercised on real hardware, with dates |

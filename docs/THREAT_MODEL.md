@@ -429,7 +429,7 @@ attacker cannot reach.
   resolved and proven to stay under the destination; non-regular members
   (symlinks, hard links, devices) are dropped rather than resolved. This is the
   shape of GO-2026-5597, the go-billy traversal the module floors in
-  `AGENTS.md` exist for (repository-controlled paths written to disk) at
+  `docs/DECISIONS.md` exist for (repository-controlled paths written to disk) at
   higher privilege.
 - **A bundle is not trusted more than the network.** Offline bundles are
   verified against the hashes in the *installing node's* binary, never against

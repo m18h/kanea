@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Before you file: check the **Deliberately not built** section of
-        [AGENTS.md](https://github.com/m18h/kanea/blob/main/AGENTS.md); several
+        [docs/DECISIONS.md](https://github.com/m18h/kanea/blob/main/docs/DECISIONS.md); several
         obvious features are absent on purpose, with the reasoning written down.
         If your request is one of them, the useful issue is the one that engages
         with that reasoning rather than restating the feature.
@@ -33,4 +33,4 @@ body:
     id: fit
     attributes:
       label: Anything the PRD says about this?
-      description: If the PRD or AGENTS.md already touches this area, link the section; it speeds the conversation up considerably.
+      description: If the PRD or docs/DECISIONS.md already touches this area, link the section; it speeds the conversation up considerably.

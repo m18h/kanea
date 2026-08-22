@@ -8,15 +8,17 @@ first step is reading, not writing.
 ## Before you write any code
 
 1. **[`AGENTS.md`](./AGENTS.md)** is the working guide: conventions, the
-   binding constraints, and a long list of decisions a change is most likely to
-   trip over. It is addressed to AI agents and humans alike, and it is short
-   relative to what it saves you.
+   binding constraints, and the recurring design rules. It is addressed to AI
+   agents and humans alike. The long list of decisions a change is most likely
+   to trip over lives in **[`docs/DECISIONS.md`](./docs/DECISIONS.md)**: read
+   its bullets for the area you are touching; they are short relative to what
+   they save you.
 2. **[`PRD.md`](./PRD.md)** is the north star. Every architectural decision
    lives there, versioned and amended in place. **Any change that deviates from
    the PRD must amend the PRD first, in the same PR**: bump the version, add an
    amendment note saying what changed and why. This is constraint #1 and it is
    not a formality: it is how the document stays true.
-3. Check the **"Deliberately not built"** section of `AGENTS.md` before opening
+3. Check the **"Deliberately not built"** section of `docs/DECISIONS.md` before opening
    a feature PR. Several obvious-looking gaps are decisions with reasoning
    attached, and a PR that "fixes" one will be declined with a pointer to it.
 

@@ -176,7 +176,7 @@ jobs:
   install-smoke:
     # `kanea install` places binaries, writes units and starts daemons. None of
     # that can be tested off a real Linux host, and the S3 `Put` defect in
-    # AGENTS.md is the standing reminder of what a fake server does not catch.
+    # docs/DECISIONS.md is the standing reminder of what a fake server does not catch.
     name: "Install smoke: real node"
     runs-on: ubuntu-latest
     steps:

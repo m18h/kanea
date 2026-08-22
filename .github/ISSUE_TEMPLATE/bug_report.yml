@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for the report. Two things before you file:
         - **Security issue?** Do not open it here; see [SECURITY.md](https://github.com/m18h/kanea/blob/main/SECURITY.md) for private reporting.
-        - Some apparent gaps are decisions: check the *Deliberately not built* list in [AGENTS.md](https://github.com/m18h/kanea/blob/main/AGENTS.md) if the bug is "feature X is missing".
+        - Some apparent gaps are decisions: check the *Deliberately not built* list in [docs/DECISIONS.md](https://github.com/m18h/kanea/blob/main/docs/DECISIONS.md) if the bug is "feature X is missing".
   - type: input
     id: version
     attributes:
