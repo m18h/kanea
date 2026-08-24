@@ -19,7 +19,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.14
 	github.com/google/nftables v0.3.0
 	github.com/hashicorp/hcl/v2 v2.24.0
-	github.com/miekg/dns v1.1.72
+	github.com/miekg/dns v1.1.73
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/opencontainers/runtime-spec v1.3.0
