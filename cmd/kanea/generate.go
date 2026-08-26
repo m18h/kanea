@@ -123,6 +123,10 @@ func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Conf
 		return refuse("its capability grants")
 	case len(svc.Command) > 0:
 		return refuse("its command override")
+	case len(svc.Args) > 0:
+		// R12's v1.97 half is refused with its other half: a function block has
+		// no args field either - a module's argv is the shim's contract.
+		return refuse("its args override")
 	case len(svc.Init) > 0:
 		// A function block has no init field (R25/R32): the wasm runtime runs
 		// one module, so there is no second container to run.
@@ -427,6 +431,9 @@ func writeTask(block *hclwrite.Body, svc *reconciler.Desired) error {
 	if len(svc.Command) > 0 {
 		task.SetAttributeValue("command", stringList(svc.Command))
 	}
+	if len(svc.Args) > 0 {
+		task.SetAttributeValue("args", stringList(svc.Args))
+	}
 	if len(svc.Capabilities) > 0 {
 		task.SetAttributeValue("capabilities", stringList(svc.Capabilities))
 	}
@@ -686,6 +693,9 @@ func writeInits(block *hclwrite.Body, svc *reconciler.Desired) {
 		setOptionalString(body, "image", step.Image)
 		if len(step.Command) > 0 {
 			body.SetAttributeValue("command", stringList(step.Command))
+		}
+		if len(step.Args) > 0 {
+			body.SetAttributeValue("args", stringList(step.Args))
 		}
 		if len(step.Capabilities) > 0 {
 			body.SetAttributeValue("capabilities", stringList(step.Capabilities))

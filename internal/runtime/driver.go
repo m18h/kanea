@@ -111,6 +111,10 @@ type AllocSpec struct {
 	// Command overrides the image entrypoint when non-empty. Argument array,
 	// never a shell string (PRD §6.2 R12).
 	Command []string
+	// Args keeps the image's entrypoint and replaces its arguments (R12,
+	// v1.97): alone, argv is the image's ENTRYPOINT then Args; beside Command,
+	// argv is Command then Args. Same argument-array rule as Command.
+	Args []string
 	// Capabilities is the *effective* set, already projected by the caller
 	// (PRD §6.2 R13): the reconciler resolves the baseline, the union with a
 	// service's declared grants, and the "none" opt-out before anything

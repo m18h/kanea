@@ -314,6 +314,13 @@ type Task struct {
 	// Command overrides the image entrypoint (R12). Argument array, never a
 	// shell string.
 	Command []string
+	// Args keeps the image's entrypoint and replaces its arguments (R12,
+	// v1.97). Beside Command the final argv is Command then Args; alone, it is
+	// the image's ENTRYPOINT then Args, resolved on the node from the image
+	// itself. Nil means the image's own arguments stand; a declared empty list
+	// is refused at validation, because the record cannot carry "declared
+	// empty" apart from "absent".
+	Args []string
 	// Capabilities are grants added to the R13 baseline; the "none" token
 	// starts from nothing instead. Only PermittedCapabilities (or "none") may
 	// be declared.
@@ -367,6 +374,10 @@ type InitContainer struct {
 	// Command overrides the image entrypoint (R12's rule, unchanged): an
 	// argument array, never a shell string.
 	Command []string
+	// Args is R12's v1.97 half, unchanged here too: it keeps the init image's
+	// entrypoint and replaces its arguments; beside Command, argv is Command
+	// then Args.
+	Args []string
 	// Capabilities are grants added to the R13 baseline, "none" starts from
 	// nothing, and only the permitted set may be declared. The canonical init
 	// container asks for CAP_CHOWN to fix a directory the task will own.

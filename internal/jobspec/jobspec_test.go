@@ -1755,6 +1755,79 @@ service "web" {
 	}
 }
 
+func TestTaskArgsKeepTheEntrypoint(t *testing.T) {
+	// R12 (v1.97): args is command's other half - it keeps the image's
+	// entrypoint and replaces its arguments; beside command, argv is command
+	// then args. Elements may all be empty (they are arguments, not a
+	// program), so unlike command there is no non-empty-first-element rule.
+	spec := parse(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx:1.27-alpine"
+    args  = ["", "-g", "daemon off;"]
+  }
+}
+service "worker" {
+  project = "shop"
+  task "app" {
+    image   = "worker:1"
+    command = ["/bin/worker"]
+    args    = ["--queue", "orders"]
+  }
+  init "migrate" {
+    image   = "migrate:1"
+    command = ["/bin/migrate"]
+    args    = ["up"]
+  }
+}
+`)
+	if got := spec.ServiceByName("shop", "web").Task.Args; len(got) != 3 || got[0] != "" {
+		t.Errorf("args = %v, want an empty first element to survive", got)
+	}
+	worker := spec.ServiceByName("shop", "worker")
+	if got := worker.Task.Args; len(got) != 2 || got[0] != "--queue" {
+		t.Errorf("args beside command = %v", got)
+	}
+	if got := worker.Inits[0].Args; len(got) != 1 || got[0] != "up" {
+		t.Errorf("init args = %v, want [up]", got)
+	}
+
+	// Declared and empty is refused: the record cannot carry "declared empty"
+	// apart from "absent", so it would silently decay into the image default.
+	out := parseErr(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  task "app" {
+    image = "nginx"
+    args  = []
+  }
+}
+`)
+	if !strings.Contains(out, "Empty args") {
+		t.Errorf("task diagnostics = %q, want the empty-args refusal", out)
+	}
+	out = parseErr(t, `
+spec_version = 1
+project "shop" {}
+service "web" {
+  project = "shop"
+  init "mig" {
+    image = "migrate:1"
+    args  = []
+  }
+  task "app" { image = "nginx" }
+}
+`)
+	if !strings.Contains(out, "Empty args") {
+		t.Errorf("init diagnostics = %q, want the empty-args refusal", out)
+	}
+}
+
 func TestCapabilityAllowlist(t *testing.T) {
 	// R13: only the permitted set may be requested, and privilege-equivalent
 	// capabilities are refused with an explanation.

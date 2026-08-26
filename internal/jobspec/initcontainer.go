@@ -131,6 +131,15 @@ func validateInits(svc *Service) hcl.Diagnostics {
 				fmt.Sprintf("Init %q of service %q declares a command whose first element is empty; "+
 					"it names the program to run (PRD §6.2 R12).", init.Name, svc.Name)))
 		}
+		// R12's v1.97 half, the task's rule duplicated on purpose (recurring
+		// rule 5): a declared-empty args cannot survive serialization.
+		if init.Args != nil && len(init.Args) == 0 {
+			diags = append(diags, initDiag(init, "Empty args",
+				fmt.Sprintf("Init %q of service %q declares args = []. An empty override cannot "+
+					"be recorded apart from an absent one; omit the field to keep the image's own "+
+					"arguments, or use command to replace the entrypoint outright (PRD §6.2 R12).",
+					init.Name, svc.Name)))
+		}
 
 		// R11 (v1.58): zero is unbounded, so only a negative is malformed.
 		if init.Resources.CPU < 0 {

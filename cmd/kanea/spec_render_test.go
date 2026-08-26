@@ -126,6 +126,10 @@ service "api" {
   task "app" {
     image = "registry.example.com/shop/api:0.9.1"
 
+    # args alone keeps the image entrypoint (R12, v1.97); an empty element
+    # must survive the trip, the reason describeArgs quotes.
+    args = ["--port", "8080", ""]
+
     resources {
       cpu    = 250
       memory = 256
@@ -195,7 +199,8 @@ service "orders" {
 
   init "migrate" {
     image       = "registry.example.com/shop/orders-migrate:2.1.0"
-    command     = ["/bin/migrate", "up"]
+    command     = ["/bin/migrate"]
+    args        = ["up"]
     pull_policy = "never"
 
     env = {

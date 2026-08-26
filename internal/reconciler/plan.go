@@ -378,8 +378,12 @@ func SpecHash(d Desired) string {
 		// They are bookkeeping and pull-time inputs, not things baked into a
 		// container: hashing them would roll every auto-updating service on
 		// every poll, for no change to what is running.
-		PinnedImage  string            `json:"pinned_image,omitempty"`
-		Command      []string          `json:"command,omitempty"`
+		PinnedImage string   `json:"pinned_image,omitempty"`
+		Command     []string `json:"command,omitempty"`
+		// Args are part of the argv the container is created with, so changing
+		// them rolls (the same reason as Command). omitempty is what keeps
+		// every pre-v1.97 record hashing exactly as it did (the R23 lesson).
+		Args         []string          `json:"args,omitempty"`
 		Capabilities []string          `json:"capabilities,omitempty"`
 		Env          map[string]string `json:"env,omitempty"`
 		// The uid a process runs as is fixed when the container is created, so
@@ -422,7 +426,7 @@ func SpecHash(d Desired) string {
 		Runtime string `json:"runtime,omitempty"`
 	}{
 		Image: d.Image, PinnedImage: d.PinnedImage,
-		Command: d.Command, Capabilities: d.Capabilities,
+		Command: d.Command, Args: d.Args, Capabilities: d.Capabilities,
 		Env: d.Env, User: d.User, Resources: d.Resources, Volumes: hashableVolumes(d.Volumes),
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
 		Files:   hashableFiles(d.Files),
@@ -649,6 +653,7 @@ func AllocSpecFor(d Desired, index int, logDir, volumeDir string) runtime.AllocS
 		Image:          d.RunImage(),
 		Runtime:        d.Runtime,
 		Command:        d.Command,
+		Args:           d.Args,
 		Capabilities:   effectiveCapabilities(d),
 		Env:            d.Env,
 		User:           d.User,

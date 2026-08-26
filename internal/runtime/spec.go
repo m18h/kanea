@@ -164,10 +164,16 @@ func (s AllocSpec) Validate() error {
 
 // specOpts builds the OCI spec options for an alloc, in the order they must be
 // applied. The image config comes first so later options override it.
+//
+// Args with no Command is deliberately absent here: that case needs the
+// image's own ENTRYPOINT, which only the image config knows, so Create swaps
+// the base opt to WithImageConfigArgs instead (R12, v1.97).
 func specOpts(spec AllocSpec) []oci.SpecOpts {
 	opts := []oci.SpecOpts{}
 	if len(spec.Command) > 0 {
-		opts = append(opts, oci.WithProcessArgs(spec.Command...))
+		// Beside Command, Args extend it: the pair replaces the image's
+		// ENTRYPOINT and CMD with command then args (R12, v1.97).
+		opts = append(opts, oci.WithProcessArgs(append(spec.Command, spec.Args...)...))
 	}
 	if len(spec.Env) > 0 {
 		opts = append(opts, oci.WithEnv(envSlice(spec.Env)))

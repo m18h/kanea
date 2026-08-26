@@ -169,8 +169,15 @@ func (d *containerdDriver) Create(ctx context.Context, spec AllocSpec) error {
 	}
 
 	// Image config first, then our options: hardening and limits must win over
-	// anything the image asks for.
-	opts := append([]oci.SpecOpts{oci.WithImageConfig(img)}, specOpts(spec)...)
+	// anything the image asks for. Args with no Command keeps the image's
+	// ENTRYPOINT and replaces only its CMD (R12, v1.97), which needs the image
+	// config's own answer, so the base opt is what changes: the entrypoint is
+	// resolved here on the node, never baked in by a client.
+	base := oci.WithImageConfig(img)
+	if len(spec.Args) > 0 && len(spec.Command) == 0 {
+		base = oci.WithImageConfigArgs(img, spec.Args)
+	}
+	opts := append([]oci.SpecOpts{base}, specOpts(spec)...)
 
 	newOpts := []containerd.NewContainerOpts{
 		containerd.WithImage(img),

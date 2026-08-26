@@ -52,6 +52,7 @@ export const initContainerSchema = z.object({
   name: z.string(),
   image: z.string(),
   command: z.array(z.string()).nullish(),
+  args: z.array(z.string()).nullish(),
   // Nanoseconds, because Go marshals a time.Duration as its integer count.
   // Zero (or absent) is no timeout, never "immediate" (R11's rule).
   timeout: z.number().optional(),
@@ -63,6 +64,12 @@ export const serviceSchema = z.object({
   Service: z.string(),
   Count: z.number(),
   Image: z.string(),
+  // The entrypoint overrides (R12): Command replaces the image's whole argv
+  // and rides PascalCase (Desired's field is untagged); args (v1.97) keeps
+  // the entrypoint and replaces its arguments, and carries a lowercase json
+  // tag like every post-v1.84 field. Both absent on most records.
+  Command: z.array(z.string()).nullish(),
+  args: z.array(z.string()).nullish(),
   Resources: resourcesSchema,
   Expose: exposeSchema.nullish(),
   // The routes after the first (v1.50). `Expose` stays the primary one so

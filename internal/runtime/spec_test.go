@@ -478,6 +478,47 @@ func TestCommandOverridesEntrypoint(t *testing.T) {
 	}
 }
 
+// R12's v1.97 pair semantics: beside command, args extend it into one argv.
+func TestCommandAndArgsConcatenate(t *testing.T) {
+	alloc := validAlloc()
+	alloc.Command = []string{"/bin/server"}
+	alloc.Args = []string{"--port", "8080"}
+	s := buildSpec(t, alloc)
+
+	want := []string{"/bin/server", "--port", "8080"}
+	if len(s.Process.Args) != 3 || s.Process.Args[0] != want[0] ||
+		s.Process.Args[1] != want[1] || s.Process.Args[2] != want[2] {
+		t.Errorf("args = %v, want %v: command then args, one argv", s.Process.Args, want)
+	}
+}
+
+// Args alone keeps the image's entrypoint: Create swaps the base opt to
+// WithImageConfigArgs, so by the time specOpts runs, Process.Args already
+// holds ENTRYPOINT + args - and no option here may touch it. The fixture
+// stands in for what that base opt leaves behind, the TestUserOverridesTheImage
+// pattern.
+func TestArgsAloneLeaveTheResolvedArgvUntouched(t *testing.T) {
+	alloc := validAlloc()
+	alloc.Args = []string{"--port", "8080"}
+
+	s := &oci.Spec{
+		Version: specs.Version,
+		Process: &specs.Process{Args: []string{"/entrypoint", "--port", "8080"}},
+		Root:    &specs.Root{Path: "rootfs"},
+		Linux:   &specs.Linux{},
+	}
+	for i, opt := range specOpts(alloc) {
+		if err := opt(context.Background(), nil, nil, s); err != nil {
+			t.Fatalf("spec option %d: %v", i, err)
+		}
+	}
+
+	if len(s.Process.Args) != 3 || s.Process.Args[0] != "/entrypoint" {
+		t.Errorf("args = %v, want the entrypoint WithImageConfigArgs resolved kept intact",
+			s.Process.Args)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
