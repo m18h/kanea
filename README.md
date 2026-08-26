@@ -64,7 +64,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.29.0; ARCH=amd64
+VERSION=v0.30.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -478,7 +478,7 @@ Blocks run **in declaration order, one at a time**, and the task is created only
 once the last has exited zero. Each step shares the alloc's network namespace
 (so `${service.postgres.host}` resolves, which is what makes a wait-for-database
 step possible), its volumes, and its secrets - and declares everything else for
-itself: its own image, command, env, resources, `user` and capabilities. Running
+itself: its own image, command, args, env, resources, `user` and capabilities. Running
 as root to fix a directory the task will own as uid 999 is the canonical use, so
 nothing is inherited from `task`.
 
@@ -876,13 +876,20 @@ sudo kanea ca show > kanea-ca.crt                           # unless the node us
 
 ```yaml
 deploy:
-  image: ghcr.io/m18h/kanea:vX.Y.Z            # pin the version
+  image:
+    name: ghcr.io/m18h/kanea:vX.Y.Z           # pin the version
+    entrypoint: [""]                          # GitLab runs the job script as the container command
   variables:
     KANEA_URL: https://kanea.apps.example.com:8600
   script:
     - kanea deploy shop/web "$CI_REGISTRY_IMAGE@$IMAGE_DIGEST"
   # KANEA_TOKEN masked; KANEA_CA_CERT a file variable, or the PEM itself
 ```
+
+The `entrypoint: [""]` is not decoration: the image's entrypoint is `kanea`
+itself, and GitLab hands the job script to the container as its command
+(`sh -c …`), which without the override becomes `kanea sh` and fails with
+`unknown command "sh"`.
 
 `kanea deploy` points a service at a new image and **leaves the rest of its
 spec alone** - it reads the record, changes the image, writes it back, and
@@ -957,7 +964,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.96) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.97) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | The decision record: status, trip-over bullets, refusals, spike log |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |

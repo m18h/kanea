@@ -237,9 +237,12 @@ type hclBuild struct {
 }
 
 type hclTask struct {
-	Name         string         `hcl:"name,label"`
-	Image        string         `hcl:"image,optional"`
-	Command      []string       `hcl:"command,optional"`
+	Name    string   `hcl:"name,label"`
+	Image   string   `hcl:"image,optional"`
+	Command []string `hcl:"command,optional"`
+	// Args keeps the image's entrypoint and replaces its arguments (R12,
+	// v1.97); beside command, the argv is command then args.
+	Args         []string       `hcl:"args,optional"`
 	Capabilities []string       `hcl:"capabilities,optional"`
 	Env          hcl.Expression `hcl:"env,optional"`
 	Resources    *hclResources  `hcl:"resources,block"`
@@ -272,6 +275,7 @@ type hclInit struct {
 	Name            string         `hcl:"name,label"`
 	Image           string         `hcl:"image,optional"`
 	Command         []string       `hcl:"command,optional"`
+	Args            []string       `hcl:"args,optional"`
 	Capabilities    []string       `hcl:"capabilities,optional"`
 	Env             hcl.Expression `hcl:"env,optional"`
 	Resources       *hclResources  `hcl:"resources,block"`
@@ -878,6 +882,7 @@ func convertTask(t *hclTask) *Task {
 		Name:            t.Name,
 		Image:           t.Image,
 		Command:         t.Command,
+		Args:            t.Args,
 		Capabilities:    t.Capabilities,
 		RegistryAuthRef: t.RegistryAuthRef,
 		PullPolicy:      t.PullPolicy,
@@ -936,6 +941,7 @@ func convertInit(i *hclInit) *InitContainer {
 		Name:            i.Name,
 		Image:           i.Image,
 		Command:         i.Command,
+		Args:            i.Args,
 		Capabilities:    i.Capabilities,
 		RegistryAuthRef: i.RegistryAuthRef,
 		PullPolicy:      i.PullPolicy,

@@ -349,6 +349,26 @@ func TestSpecHashIsUnchangedForASpecWithNoUserOrOwnership(t *testing.T) {
 	}
 }
 
+// Args is v1.97's half of the same property: absent, it must vanish from the
+// material (the digest above pins that), and declared, it is a different
+// container and must roll - both for the task's args and for an init step's.
+func TestSpecHashChangesWhenArgsAreDeclared(t *testing.T) {
+	plain := desired(1)
+	withArgs := desired(1)
+	withArgs.Args = []string{"--port", "8080"}
+	if reconciler.SpecHash(plain) == reconciler.SpecHash(withArgs) {
+		t.Error("declaring task args did not change the spec hash; the alloc would never roll")
+	}
+
+	initPlain := desired(1)
+	initPlain.Init = []reconciler.InitContainer{{Name: "mig", Image: "mig:v1"}}
+	initArgs := desired(1)
+	initArgs.Init = []reconciler.InitContainer{{Name: "mig", Image: "mig:v1", Args: []string{"up"}}}
+	if reconciler.SpecHash(initPlain) == reconciler.SpecHash(initArgs) {
+		t.Error("declaring init args did not change the spec hash; the sequence would never re-run")
+	}
+}
+
 // A runtime change rolls every alloc, so a plan that did not mention it would
 // show a redeploy with no visible cause.
 func TestDiffNamesARuntimeChange(t *testing.T) {

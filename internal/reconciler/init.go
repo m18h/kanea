@@ -368,6 +368,7 @@ func initSpecFor(
 	spec.Init = &runtime.InitMeta{AllocID: allocSpec.ID, Ordinal: ordinal, Name: step.Name}
 	spec.Image = step.Image
 	spec.Command = step.Command
+	spec.Args = step.Args
 	spec.User = step.User
 	spec.Resources = step.Resources
 	// A step's pids cap is the alloc's: R11 keeps pids.max on every container

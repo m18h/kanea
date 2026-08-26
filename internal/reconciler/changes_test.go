@@ -91,6 +91,7 @@ var mutations = []struct {
 	{"Count", "count", func(d *reconciler.Desired) { d.Count = 3 }},
 	{"Image", "image", func(d *reconciler.Desired) { d.Image = "web:v2" }},
 	{"Command", "command", func(d *reconciler.Desired) { d.Command = []string{"/bin/app", "-v"} }},
+	{"Args", "args", func(d *reconciler.Desired) { d.Args = []string{"--port", "8080"} }},
 	{"Capabilities", "capabilities", func(d *reconciler.Desired) { d.Capabilities = []string{"none"} }},
 	{"Env", "env", func(d *reconciler.Desired) { d.Env = map[string]string{"LOG_LEVEL": "debug"} }},
 	{"Files", "files", func(d *reconciler.Desired) { d.Files[0].Content = []byte("a=2") }},

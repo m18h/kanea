@@ -81,6 +81,14 @@ func describeSpec(o *out, svc reconciler.Desired) {
 	if svc.Runtime != "" {
 		o.printf("Runtime      %s\n", svc.Runtime)
 	}
+	// Absent overrides print nothing: the image's own entrypoint and arguments
+	// are the default, and most services have both.
+	if len(svc.Command) > 0 {
+		o.printf("Command      %s\n", strings.Join(svc.Command, " "))
+	}
+	if len(svc.Args) > 0 {
+		o.printf("Args         %s\n", strings.Join(svc.Args, " "))
+	}
 	// The stored list is what was declared; an empty one means the R13
 	// baseline for a runc service, and saying so beats printing nothing:
 	// the difference between "default" and "none" is the whole feature.
@@ -106,6 +114,9 @@ func describeSpec(o *out, svc reconciler.Desired) {
 		detail := fmt.Sprintf("%d. %s  %s", i+1, step.Name, step.Image)
 		if len(step.Command) > 0 {
 			detail += fmt.Sprintf("  %s", strings.Join(step.Command, " "))
+		}
+		if len(step.Args) > 0 {
+			detail += fmt.Sprintf("  args %s", strings.Join(step.Args, " "))
 		}
 		if step.Timeout > 0 {
 			detail += fmt.Sprintf("  (timeout %s)", step.Timeout)

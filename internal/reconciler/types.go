@@ -74,6 +74,15 @@ type Desired struct {
 	Init []InitContainer `json:"init,omitempty"`
 	// Command overrides the image entrypoint when non-empty.
 	Command []string
+	// Args keeps the image's entrypoint and replaces its arguments (jobspec
+	// R12, v1.97): alone, argv is the image's ENTRYPOINT then Args, resolved
+	// on the node from the image itself; beside Command, argv is Command then
+	// Args.
+	//
+	// omitempty is load-bearing: this is SpecHash material, and a record with
+	// no args must serialize exactly as it did before v1.97 or upgrading
+	// kanead rolls every container on the node (the R23 lesson).
+	Args []string `json:"args,omitempty"`
 	// Capabilities is the validated *declared* list (jobspec R13): grants on
 	// top of the baseline, or CapabilityNone to start from nothing. The
 	// baseline itself is never written here: it is applied at projection time
@@ -744,6 +753,10 @@ type InitContainer struct {
 	Image string `json:"image"`
 	// Command overrides the image entrypoint when non-empty (R12's rule).
 	Command []string `json:"command,omitempty"`
+	// Args keeps the step image's entrypoint and replaces its arguments (R12,
+	// v1.97); beside Command, argv is Command then Args. omitempty keeps every
+	// pre-v1.97 record hashing exactly as it did.
+	Args []string `json:"args,omitempty"`
 	// Capabilities is the declared list, projected through
 	// effectiveCapabilities exactly as the task's is: the baseline is never
 	// written into the record.

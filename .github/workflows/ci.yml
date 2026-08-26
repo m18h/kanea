@@ -369,6 +369,10 @@ jobs:
           test "$(docker run --rm kanea:ci version)" = "kanea ${GITHUB_SHA}"
           docker run --rm kanea:ci >/dev/null
           test "$(docker run --rm --entrypoint id kanea:ci -un)" = kanea
+          # The GitLab shape: the runner empties the entrypoint and hands the
+          # job script to a shell, so the image must have one and kanea must
+          # be on PATH. This is the docs' `entrypoint: [""]` workaround.
+          test "$(docker run --rm --entrypoint "" kanea:ci sh -c 'kanea version')" = "kanea ${GITHUB_SHA}"
 
           mkdir -p spec
           cat > spec/ci.hcl <<'SPEC'

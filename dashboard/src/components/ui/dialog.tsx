@@ -25,13 +25,25 @@ export function Dialog({ open, onClose, title, dismissable = true, className, ch
   const panelRef = useRef<HTMLDivElement>(null)
   const restoreRef = useRef<Element | null>(null)
 
+  // onClose is almost always an inline arrow at the call site, so its
+  // identity changes on every parent render. The capture effect below must
+  // depend on `open` alone: re-running it steals focus from the dialog's
+  // content back to the panel (the exec terminal loses its cursor on every
+  // live-stats frame). Escape reads the latest props through these refs.
+  const onCloseRef = useRef(onClose)
+  const dismissableRef = useRef(dismissable)
+  useEffect(() => {
+    onCloseRef.current = onClose
+    dismissableRef.current = dismissable
+  })
+
   useEffect(() => {
     if (!open) return
     restoreRef.current = document.activeElement
     panelRef.current?.focus()
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && dismissable) onClose()
+      if (e.key === 'Escape' && dismissableRef.current) onCloseRef.current()
     }
     document.addEventListener('keydown', onKey)
     const previous = document.body.style.overflow
@@ -41,7 +53,7 @@ export function Dialog({ open, onClose, title, dismissable = true, className, ch
       document.body.style.overflow = previous
       if (restoreRef.current instanceof HTMLElement) restoreRef.current.focus()
     }
-  }, [open, dismissable, onClose])
+  }, [open])
 
   if (!open) return null
 

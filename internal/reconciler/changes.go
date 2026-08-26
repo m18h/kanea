@@ -171,6 +171,7 @@ func update(have, want Desired) (ServiceChange, bool) {
 	scalar("image", true, have.Image, want.Image)
 	scalar("runtime", true, describeRuntime(have.Runtime), describeRuntime(want.Runtime))
 	scalar("command", true, describeCommand(have.Command), describeCommand(want.Command))
+	scalar("args", true, describeArgs(have.Args), describeArgs(want.Args))
 	scalar("capabilities", true,
 		describeCapabilities(have.Capabilities), describeCapabilities(want.Capabilities))
 	scalar("user", true, describeUser(have.User), describeUser(want.User))
@@ -550,6 +551,9 @@ func initMap(inits []InitContainer) map[string]string {
 		if len(step.Command) > 0 {
 			parts = append(parts, describeCommand(step.Command))
 		}
+		if len(step.Args) > 0 {
+			parts = append(parts, "args "+describeArgs(step.Args))
+		}
 		if step.User != nil {
 			parts = append(parts, "as "+describeUser(step.User))
 		}
@@ -751,6 +755,19 @@ func describeCommand(cmd []string) string {
 		return "the image's own entrypoint"
 	}
 	return strings.Join(cmd, " ")
+}
+
+// describeArgs renders an arguments override (R12, v1.97). Elements may be
+// empty on purpose, so they are quoted: `--save ""` has to survive rendering.
+func describeArgs(args []string) string {
+	if len(args) == 0 {
+		return "the image's own arguments"
+	}
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = fmt.Sprintf("%q", a)
+	}
+	return strings.Join(quoted, " ")
 }
 
 // describeCheck renders a health probe.

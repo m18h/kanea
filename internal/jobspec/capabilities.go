@@ -151,20 +151,36 @@ func checkCapability(capability string, seen map[string]bool) error {
 // ""` is the documented way to disable snapshots, and rejecting it would make
 // the field unusable for exactly the images that need it.
 func validateCommand(svc *Service) hcl.Diagnostics {
-	if svc.Task == nil || len(svc.Task.Command) == 0 {
+	if svc.Task == nil {
 		return nil
 	}
-	if strings.TrimSpace(svc.Task.Command[0]) == "" {
-		return hcl.Diagnostics{{
+	var diags hcl.Diagnostics
+	if len(svc.Task.Command) > 0 && strings.TrimSpace(svc.Task.Command[0]) == "" {
+		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "Invalid command",
 			Detail: fmt.Sprintf("Service %q: the first element of command is the program to run "+
 				"and cannot be empty. command is an argument array; "+
 				"[\"nginx\", \"-g\", \"daemon off;\"], never a shell string.", svc.Name),
 			Subject: svc.Task.DefRange.Ptr(),
-		}}
+		})
 	}
-	return nil
+	// args elements may all be empty (they are arguments, not a program), but a
+	// declared empty list is refused: the record cannot carry "declared empty"
+	// apart from "absent", so it would decay into the image default on its
+	// round trip. `command` is the spelling for "run the bare entrypoint".
+	if svc.Task.Args != nil && len(svc.Task.Args) == 0 {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "Empty args",
+			Detail: fmt.Sprintf("Service %q declares args = []. An empty override cannot be "+
+				"recorded apart from an absent one; omit the field to keep the image's own "+
+				"arguments, or use command to replace the entrypoint outright (PRD §6.2 R12).",
+				svc.Name),
+			Subject: svc.Task.DefRange.Ptr(),
+		})
+	}
+	return diags
 }
 
 func capDiag(svc *Service, detail string) *hcl.Diagnostic {

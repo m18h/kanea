@@ -672,6 +672,21 @@ function SpecPanel({ desired }: { desired: Service | undefined }) {
         <KeyValue label="Replicas" mono>
           {desired.Count}
         </KeyValue>
+        {/* Absent overrides render nothing: the image's own entrypoint and
+            arguments are the default, and claiming "none" would misread it. */}
+        {(desired.Command ?? []).length > 0 ? (
+          <KeyValue label="Command" mono>
+            <span className="break-all">{(desired.Command ?? []).join(' ')}</span>
+          </KeyValue>
+        ) : null}
+        {(desired.args ?? []).length > 0 ? (
+          <KeyValue label="Args" mono>
+            {/* Elements may be empty on purpose (`--save ""`), so quote them. */}
+            <span className="break-all">
+              {(desired.args ?? []).map((a) => JSON.stringify(a)).join(' ')}
+            </span>
+          </KeyValue>
+        ) : null}
         <KeyValue label="Resources" mono>
           {/* Zero means unbounded (R11, v1.58): "0m · 0 B" would read as
               nothing allowed when it means everything available. */}

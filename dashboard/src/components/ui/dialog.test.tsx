@@ -53,6 +53,32 @@ describe('Dialog', () => {
     expect(document.body.style.overflow).toBe('')
   })
 
+  it('keeps focus on the content when handler identity changes across re-renders', () => {
+    // The exec-terminal regression: every live-stats frame re-rendered the
+    // parent with a fresh inline onClose, and the capture effect's re-run
+    // pulled focus off the terminal and back onto the panel.
+    const { rerender } = render(
+      <Dialog open onClose={() => {}} title="Shell">
+        <input aria-label="field" />
+      </Dialog>,
+    )
+    const field = screen.getByLabelText('field')
+    field.focus()
+    expect(document.activeElement).toBe(field)
+
+    const latest = vi.fn()
+    rerender(
+      <Dialog open onClose={latest} title="Shell">
+        <input aria-label="field" />
+      </Dialog>,
+    )
+    expect(document.activeElement).toBe(field)
+
+    // and Escape still reaches the latest handler, not the first one
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(latest).toHaveBeenCalledTimes(1)
+  })
+
   it('moves focus into the panel and returns it on close', () => {
     const outside = document.createElement('button')
     document.body.appendChild(outside)
