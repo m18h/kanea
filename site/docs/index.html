@@ -4993,7 +4993,9 @@ kanea logs -f shop/web</pre>
       <div class="bar"><i></i><i></i><i></i><span>.gitlab-ci.yml</span></div>
 <pre class="plain">deploy:
   stage: deploy
-  image: ghcr.io/m18h/kanea:vX.Y.Z            # pin the version
+  image:
+    name: ghcr.io/m18h/kanea:vX.Y.Z           # pin the version
+    entrypoint: [""]                          # GitLab runs the job script as the container command
   variables:
     KANEA_URL: https://kanea.apps.example.com:8600
   script:
@@ -5018,6 +5020,9 @@ kanea logs -f shop/web</pre>
     <div class="callout">
       <b class="label">If the job fails before it deploys</b>
       <p>
+        <code>unknown command "sh"</code> - the image's entrypoint is
+        <code>kanea</code> and GitLab passes the job script to the container as its
+        command; use the map form above with <code>entrypoint: [""]</code>.
         <code>KANEA_TOKEN is set but no endpoint</code> - you set the token and not
         the URL. <code>… has no credential without a token</code> - the secret was
         not exported and arrived empty, which is why an empty variable counts as unset

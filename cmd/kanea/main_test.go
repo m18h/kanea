@@ -31,6 +31,15 @@ func TestUnknownCommandFails(t *testing.T) {
 	if err := run([]string{"does-not-exist"}); err == nil {
 		t.Fatal("expected error for unknown command")
 	}
+	// A shell name means a CI runner's job script hit the image entrypoint;
+	// the error must say what to do about it, not just shrug.
+	err := run([]string{"sh"})
+	if err == nil {
+		t.Fatal("expected error for unknown command sh")
+	}
+	if !strings.Contains(err.Error(), `entrypoint: [""]`) {
+		t.Errorf("error for sh = %q, want the GitLab entrypoint hint", err)
+	}
 }
 
 // Aliases resolve before dispatch: every alias must target a real command and

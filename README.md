@@ -876,13 +876,20 @@ sudo kanea ca show > kanea-ca.crt                           # unless the node us
 
 ```yaml
 deploy:
-  image: ghcr.io/m18h/kanea:vX.Y.Z            # pin the version
+  image:
+    name: ghcr.io/m18h/kanea:vX.Y.Z           # pin the version
+    entrypoint: [""]                          # GitLab runs the job script as the container command
   variables:
     KANEA_URL: https://kanea.apps.example.com:8600
   script:
     - kanea deploy shop/web "$CI_REGISTRY_IMAGE@$IMAGE_DIGEST"
   # KANEA_TOKEN masked; KANEA_CA_CERT a file variable, or the PEM itself
 ```
+
+The `entrypoint: [""]` is not decoration: the image's entrypoint is `kanea`
+itself, and GitLab hands the job script to the container as its command
+(`sh -c …`), which without the override becomes `kanea sh` and fails with
+`unknown command "sh"`.
 
 `kanea deploy` points a service at a new image and **leaves the rest of its
 spec alone** - it reads the record, changes the image, writes it back, and

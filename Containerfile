@@ -64,5 +64,10 @@ USER kanea
 WORKDIR /workspace
 
 # No CMD: `kanea` with no arguments prints its usage and exits 0, which is the
-# right answer to a bare `docker run ghcr.io/m18h/kanea`.
+# right answer to a bare `docker run ghcr.io/m18h/kanea`. The exec-form
+# ENTRYPOINT is deliberate too - it is what makes `docker run <image> deploy …`
+# work as documented - and it means a CI runner that passes its job script as
+# the container command (GitLab does) must empty it: `entrypoint: [""]`. The
+# shell that override relies on exists because the base is Alpine; ci.yml's
+# smoke test pins both facts.
 ENTRYPOINT ["/usr/local/bin/kanea"]

@@ -109,6 +109,13 @@ func run(args []string) error {
 	if err := printUsage(os.Stderr); err != nil {
 		return err
 	}
+	// The one unknown command with a known cause: the container image's
+	// entrypoint is kanea, and a CI runner that hands its job script to a
+	// shell as the container command (GitLab's docker executor does) turns
+	// that shell invocation into `kanea sh`.
+	if name == "sh" || name == "bash" {
+		return fmt.Errorf(`unknown command %q (a CI runner passing its job script through a shell? the image's entrypoint is kanea - in GitLab use image: {name: ..., entrypoint: [""]})`, args[0])
+	}
 	return fmt.Errorf("unknown command %q", args[0])
 }
 
