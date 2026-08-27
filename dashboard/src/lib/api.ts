@@ -535,6 +535,19 @@ export async function restartService(project: string, service: string, csrf?: st
   })
 }
 
+/**
+ * deleteService removes one service declaration (PRD v1.100): the same DELETE
+ * route `kanea remove` and MCP's delete_service use. Containers, alloc
+ * records, VIP, routes and mounts go; volume data is kept (v1.83), so
+ * re-applying the spec brings the service back with its data.
+ */
+export async function deleteService(project: string, service: string, csrf?: string): Promise<void> {
+  await apiFetch(`/v1/services/${enc(project)}/${enc(service)}`, {
+    method: 'DELETE',
+    ...(csrf ? { csrf } : {}),
+  })
+}
+
 /** Sync a project's git source. */
 export async function syncProject(project: string, csrf?: string): Promise<void> {
   await apiFetch(`/v1/projects/${enc(project)}/sync`, {
