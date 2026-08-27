@@ -249,7 +249,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
             </CardContent>
           </Card>
 
-          <LogPanel project={project} service={service} inits={desired?.Init ?? []} />
+          <LogPanel project={project} service={service} inits={desired?.init ?? []} />
 
           <EdgePanel edge={stats.data?.edge} />
         </div>
@@ -722,11 +722,11 @@ function SpecPanel({ desired }: { desired: Service | undefined }) {
             {desired.pull_policy}
           </KeyValue>
         ) : null}
-        {(desired.Init ?? []).length > 0 ? (
+        {(desired.init ?? []).length > 0 ? (
           <KeyValue label="Init" mono>
             {/* In declaration order, which is run order (R32). */}
             <span className="break-all">
-              {(desired.Init ?? []).map((step) => step.name).join(' → ')}
+              {(desired.init ?? []).map((step) => step.name).join(' → ')}
             </span>
           </KeyValue>
         ) : null}
