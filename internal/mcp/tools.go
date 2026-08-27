@@ -394,6 +394,20 @@ func registry() []*tool {
 			run: runRestoreBackup,
 		},
 		{
+			name: "delete_service", tier: tierDestructive,
+			description: "Delete one service's declaration and stop everything it is running. " +
+				"Volume data is kept, so re-applying the spec brings the service back with its " +
+				"data; the deletion itself has no undo. Requires confirm=true, and should only " +
+				"be called when an operator has explicitly asked for it.",
+			schema: object(map[string]property{
+				"project": projectProp,
+				"service": serviceProp,
+				"confirm": {Type: "boolean",
+					Description: "Must be true. Confirms the operator asked for this."},
+			}, "project", "service", "confirm"),
+			run: runDeleteService,
+		},
+		{
 			name: "delete_project", tier: tierDestructive,
 			description: "Delete every service in a project and stop everything it is running. " +
 				"There is no undo. Requires confirm=true, and should only be called when an " +
@@ -801,6 +815,23 @@ func runTestNotification(ctx context.Context, s *Server, sess *Session, args arg
 }
 
 // ---- destructive implementations ----
+
+func runDeleteService(ctx context.Context, s *Server, sess *Session, args arguments) (callToolResult, error) {
+	if err := args.require("project", "service"); err != nil {
+		return callToolResult{}, err
+	}
+	project, service := args.text("project"), args.text("service")
+
+	path := fmt.Sprintf("%s/%s/%s", pathServices, escape(project), escape(service))
+	if err := s.call(ctx, sess, http.MethodDelete, path, nil, nil); err != nil {
+		return callToolResult{}, err
+	}
+	// The v1.83 rule travels with the result: what went, and what did not.
+	return textResult(fmt.Sprintf("Deleted service %s/%s: its containers, alloc records, VIP, "+
+		"routes and mounts are gone. Volume data is kept; re-applying the spec brings the "+
+		"service back with its data. Secrets under its project were not touched.",
+		project, service)), nil
+}
 
 func runDeleteProject(ctx context.Context, s *Server, sess *Session, args arguments) (callToolResult, error) {
 	if err := args.require("project"); err != nil {
