@@ -206,6 +206,11 @@ type LogOptions struct {
 	// task's. It is a *step name*, resolved server-side against the service's
 	// own declared sequence: no client ever names a container id.
 	Container string
+	// Previous selects allocs from the log files on disk instead of the live
+	// records (PRD v1.101): a torn-down alloc leaves no record, but its log
+	// file stays behind, so a stopped or removed service's last output is
+	// still readable. Needs a project/service pair or an alloc id.
+	Previous bool
 }
 
 // PollInterval is how often a following log stream checks for new output.

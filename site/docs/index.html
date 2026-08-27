@@ -4376,13 +4376,17 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <p>Health, recent events, current and desired counts, and the scaling picture.</p>
 
     <h4><code>kanea logs</code></h4>
-    <pre class="plain">kanea logs [--project=p] &lt;[project/]service&gt; [-f] [--tail=N] [--alloc=ID] [-c NAME]</pre>
+    <pre class="plain">kanea logs [--project=p] &lt;[project/]service&gt; [-f] [--tail=N] [--alloc=ID] [-c NAME] [--previous]</pre>
     <p>
       Merged across allocs by default; <code>--alloc</code> narrows to one.
       <code>--tail</code> shows the last N lines before following. <code>-c</code>
       reads an <a href="#spec-init">init container</a>'s log instead of the
-      task's, by its block name. Log drains are non-blocking with drop counters:
-      a slow reader can never stall a workload's <code>write()</code>.
+      task's, by its block name. <code>--previous</code> reads the log files a
+      <b>stopped or removed</b> service left on disk - a torn-down alloc keeps no
+      record, but its log file survives, so the last output before a stop, a
+      crash-loop's end, or a removal is still readable. Log drains are
+      non-blocking with drop counters: a slow reader can never stall a
+      workload's <code>write()</code>.
     </p>
 
     <h4><code>kanea exec</code></h4>

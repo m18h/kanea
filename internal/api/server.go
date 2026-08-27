@@ -1205,10 +1205,11 @@ func (s *Server) serviceOf(ctx context.Context, project, service string) (reconc
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	opts := LogOptions{
-		Project: q.Get("project"),
-		Service: q.Get("service"),
-		AllocID: q.Get("alloc"),
-		Follow:  q.Get("follow") == "true",
+		Project:  q.Get("project"),
+		Service:  q.Get("service"),
+		AllocID:  q.Get("alloc"),
+		Follow:   q.Get("follow") == "true",
+		Previous: q.Get("previous") == "true",
 	}
 	if n, err := strconv.Atoi(q.Get("tail")); err == nil {
 		opts.Tail = n
@@ -1218,14 +1219,37 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	// nothing here takes a container id from a client.
 	initName := q.Get("container")
 
-	allocs, err := s.selectAllocs(r.Context(), opts)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if len(allocs) == 0 {
-		writeError(w, http.StatusNotFound, errors.New("no matching allocs"))
-		return
+	var allocs []reconciler.AllocRecord
+	if opts.Previous {
+		// The explicit request to read what remains on disk (PRD v1.101),
+		// never a silent fallback: a live query answering old files would
+		// blur "no allocs" into "these logs", and absence is not zero.
+		if opts.AllocID == "" && (opts.Project == "" || opts.Service == "") {
+			writeError(w, http.StatusBadRequest, errors.New(
+				"previous logs need a project/service pair or an alloc id: "+
+					"log files are found by name, and a bare project cannot name them"))
+			return
+		}
+		var err error
+		if allocs, err = s.previousAllocs(opts); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if len(allocs) == 0 {
+			writeError(w, http.StatusNotFound, fmt.Errorf(
+				"no log files remain for %s", previousSubject(opts)))
+			return
+		}
+	} else {
+		var err error
+		if allocs, err = s.selectAllocs(r.Context(), opts); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if len(allocs) == 0 {
+			writeError(w, http.StatusNotFound, errors.New("no matching allocs"))
+			return
+		}
 	}
 	var initOrdinals map[string]int
 	if initName != "" {
@@ -1346,6 +1370,79 @@ func (s *Server) selectAllocs(ctx context.Context, opts LogOptions) ([]reconcile
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
 	return out, nil
+}
+
+// previousAllocs derives the alloc list from the log directory instead of the
+// Store (PRD v1.101). A torn-down alloc leaves no record on purpose - only
+// failed-and-declared ones persist to explain themselves - but nothing deletes
+// its log file, so a stopped or removed service's last output is still on
+// disk, and ?previous=true is the explicit request to read it.
+//
+// Files are matched by name, <project>-<service>-<index>.log with a purely
+// numeric index, so a sibling service sharing the prefix (shop/web beside
+// shop/web-front) never leaks in. No path is ever composed from the query:
+// candidates come from the directory listing, and each still passes
+// logPathFor's containment check where the tailer opens it. The synthesized
+// records carry only what the streaming loop reads - the id for the path and
+// the label, the project/service pair for init-step resolution.
+func (s *Server) previousAllocs(opts LogOptions) ([]reconciler.AllocRecord, error) {
+	if opts.AllocID != "" {
+		path, err := logPathFor(s.logDir, opts.AllocID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(path); err != nil {
+			return nil, nil // nothing on disk: the caller answers 404
+		}
+		return []reconciler.AllocRecord{{
+			ID: opts.AllocID, Project: opts.Project, Service: opts.Service,
+		}}, nil
+	}
+
+	entries, err := os.ReadDir(s.logDir)
+	if err != nil {
+		return nil, fmt.Errorf("list log directory: %w", err)
+	}
+	prefix := opts.Project + "-" + opts.Service + "-"
+	type match struct {
+		id    string
+		index uint64
+	}
+	var matches []match
+	for _, entry := range entries {
+		rest, ok := strings.CutPrefix(entry.Name(), prefix)
+		if !ok {
+			continue
+		}
+		indexText, ok := strings.CutSuffix(rest, ".log")
+		if !ok {
+			continue
+		}
+		// ParseUint rather than Atoi: a sign is not an index, and anything
+		// beyond bare digits here is another service's file or an init log.
+		index, err := strconv.ParseUint(indexText, 10, 32)
+		if err != nil {
+			continue
+		}
+		matches = append(matches, match{id: strings.TrimSuffix(entry.Name(), ".log"), index: index})
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].index < matches[j].index })
+
+	out := make([]reconciler.AllocRecord, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, reconciler.AllocRecord{
+			ID: m.id, Project: opts.Project, Service: opts.Service,
+		})
+	}
+	return out, nil
+}
+
+// previousSubject names what a previous-logs query asked for, for its 404.
+func previousSubject(opts LogOptions) string {
+	if opts.AllocID != "" {
+		return "alloc " + opts.AllocID
+	}
+	return opts.Project + "/" + opts.Service
 }
 
 // wake nudges the reconciler. Non-blocking: a missed wake-up only means the
