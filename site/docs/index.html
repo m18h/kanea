@@ -3086,7 +3086,7 @@ restart {
       <table>
         <thead><tr><th></th><th>One service</th><th>Everything a spec dropped</th></tr></thead>
         <tbody>
-          <tr><td><b>Command</b></td><td><code>kanea stop shop/web --rm</code></td><td><code>kanea run --remove-orphans app.hcl</code></td></tr>
+          <tr><td><b>Command</b></td><td><code>kanea remove shop/web</code></td><td><code>kanea run --remove-orphans app.hcl</code></td></tr>
           <tr><td><b>Scope</b></td><td>the service you name</td><td>the spec's <code>project</code> blocks</td></tr>
           <tr><td><b>Dry run</b></td><td>-</td><td><code>kanea plan --remove-orphans app.hcl</code></td></tr>
         </tbody>
@@ -4298,8 +4298,18 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
     <h4><code>kanea stop</code></h4>
     <pre class="plain">kanea stop [--project=p] &lt;[project/]service&gt; [--rm]</pre>
     <p>
-      Scales to zero. <code>--rm</code> also deletes the service declaration, so the
-      reconciler stops holding desired state for it.
+      Scales to zero. <code>--rm</code> also deletes the service declaration, behind
+      the same confirmation <code>kanea remove</code> asks; a piped stdin is never
+      prompted, so scripted removals run unchanged.
+    </p>
+
+    <h4><code>kanea remove</code></h4>
+    <pre class="plain">kanea remove [--project=p] [--yes] &lt;[project/]service&gt;</pre>
+    <p>
+      Deletes one service declaration (alias: <code>rm</code>). Asks
+      <code>[y/N]</code> on a terminal; <code>--yes</code>/<code>-y</code> skips.
+      The containers, alloc records, VIP, routes and mounts go; <b>volume data is
+      kept</b>, so re-applying the spec brings the service back with its data.
     </p>
 
     <h4><code>kanea start</code></h4>
@@ -4779,7 +4789,7 @@ sudo kanea token create --role viewer --expires-in 720h agent-30d</pre>
     <h3 id="mcp-tools">The tools</h3>
 
     <p>
-      Twenty-four tools in three tiers. <b>The tier an agent gets is its credential's
+      Twenty-five tools in three tiers. <b>The tier an agent gets is its credential's
       role</b>, and the listing is filtered, not merely refused: a viewer token does not
       see the mutating tools in <code>tools/list</code> at all, so the model cannot
       propose calling one.
@@ -4791,7 +4801,7 @@ sudo kanea token create --role viewer --expires-in 720h agent-30d</pre>
         <tbody>
           <tr><td><b>Read</b><br>13 tools</td><td>viewer</td><td><code>list_projects</code>, <code>get_project</code>, <code>list_services</code>, <code>get_service</code>, <code>list_allocs</code>, <code>get_logs</code>, <code>get_events</code>, <code>get_node_stats</code>, <code>get_service_stats</code>, <code>list_pipelines</code>, <code>list_storage</code>, <code>list_backups</code>, <code>get_audit</code>*</td></tr>
           <tr><td><b>Mutate</b><br>9 tools</td><td>admin</td><td><code>plan_spec</code>, <code>apply_spec</code>, <code>scale_service</code>, <code>restart_service</code>, <code>stop_service</code>, <code>deploy_service</code>, <code>run_pipeline</code>, <code>create_backup</code>, <code>test_notification</code></td></tr>
-          <tr><td><b>Destructive</b><br>2 tools</td><td>admin, plus an explicit <code>confirm</code></td><td><code>restore_backup</code>, <code>delete_project</code></td></tr>
+          <tr><td><b>Destructive</b><br>3 tools</td><td>admin, plus an explicit <code>confirm</code></td><td><code>restore_backup</code>, <code>delete_service</code>, <code>delete_project</code></td></tr>
         </tbody>
       </table>
     </div>
