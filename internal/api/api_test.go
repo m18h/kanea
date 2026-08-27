@@ -316,6 +316,42 @@ func TestLogsStreamsOneAlloc(t *testing.T) {
 	}
 }
 
+// TestLogsContainerReadsTheInitStream (PRD §6.2 R32): ?container=NAME selects
+// the init container's own file, never the task's, and an unknown name is a
+// 404 rather than a silent fallback - the CLI once dropped the flag and the
+// task's log answered in the init's place with nothing to say so.
+func TestLogsContainerReadsTheInitStream(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	svc := testService("web", 1)
+	svc.Init = []reconciler.InitContainer{{
+		Name: "migrate", Image: svc.Image, Command: []string{"true"},
+	}}
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{svc}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	rec := reconciler.AllocRecord{ID: "shop-web-0", Project: "shop", Service: "web", State: reconciler.AllocRunning}
+	if _, err := store.PutValue(ctx, h.store, store.KindAlloc, rec.Key(), rec); err != nil {
+		t.Fatal(err)
+	}
+	writeLog(t, h.logDir, "shop-web-0", "task talking\n")
+	writeLog(t, h.logDir, runtime.InitID("shop-web-0", 0, "migrate"), "alembic says no\n")
+
+	var buf bytes.Buffer
+	if err := h.client.Logs(ctx, api.LogOptions{Service: "web", Container: "migrate"}, &buf); err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+	if got := buf.String(); got != "alembic says no\n" {
+		t.Errorf("init logs = %q, want the init container's stream", got)
+	}
+
+	err := h.client.Logs(ctx, api.LogOptions{Service: "web", Container: "nope"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "no init container") {
+		t.Errorf("unknown init name = %v, want a 404 naming the problem", err)
+	}
+}
+
 func TestLogsPrefixesWhenFollowingSeveralAllocs(t *testing.T) {
 	// With one alloc the stream is clean; with several, each line must say
 	// which alloc it came from.

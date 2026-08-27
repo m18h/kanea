@@ -165,7 +165,7 @@ func runRun(args []string) error {
 		"delete services in this spec's projects that the spec no longer declares")
 	yes := fs.Bool("yes", false, "apply without asking; implied when stdin is not a terminal")
 	yesShort := fs.Bool("y", false, "alias for --yes")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 
@@ -568,7 +568,7 @@ func runPlan(args []string) error {
 	count := fs.Int("count", 1, "alloc count (with --image)")
 	removeOrphans := fs.Bool("remove-orphans", false,
 		"also show what `kanea run --remove-orphans` would delete")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 
@@ -755,7 +755,7 @@ func runStatus(args []string) error {
 	traffic := fs.Bool("traffic", false,
 		"show the edge's status-code and byte breakdown per service (PRD §9.1.1)")
 	asJSON := fs.Bool("json", false, "emit the status as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 1 {
@@ -1110,10 +1110,13 @@ func runLogs(args []string) error {
 	tail := fs.Int("tail", 0, "show only the last N lines before following")
 	container := fs.String("c", "",
 		"read an init container's log instead of the task's, by its block name (PRD §6.2 R32)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 
+	if fs.NArg() > 1 {
+		return errors.New("usage: kanea logs [-f] [-c NAME] [--project P | --alloc ID] [[project/]service]")
+	}
 	service := ""
 	if fs.NArg() > 0 {
 		service = fs.Arg(0)
@@ -1161,7 +1164,7 @@ func runStop(args []string) error {
 	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
 	remove := fs.Bool("rm", false, "also delete the service declaration")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -1214,7 +1217,7 @@ func runStart(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 || fs.NArg() > 2 {
@@ -1296,7 +1299,7 @@ func runDeploy(args []string) error {
 	wait := fs.Duration("wait", 60*time.Second,
 		"how long to wait for the new image to be running")
 	noWait := fs.Bool("no-wait", false, "return once the change is accepted, without waiting")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
@@ -1371,7 +1374,7 @@ func runRestart(args []string) error {
 	fs := flag.NewFlagSet("restart", flag.ContinueOnError)
 	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -1411,7 +1414,7 @@ func runScale(args []string) error {
 	fs := flag.NewFlagSet("scale", flag.ContinueOnError)
 	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {

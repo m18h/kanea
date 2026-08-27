@@ -362,10 +362,19 @@ export interface SubscribeRequest {
   history_allocs?: boolean
 }
 
-/** The subscription key the daemon echoes back, so frames can be routed. */
+/**
+ * The subscription key the daemon echoes back, so frames can be routed.
+ *
+ * Must compose exactly as the daemon's subscriptionKey (internal/api/ws.go,
+ * pinned there by TestASubscriptionKeyDistinguishesContainers): container is
+ * part of the key when set - it selects a different stream - and absent
+ * otherwise, so pre-init subscriptions keep the key they always had. Omitting
+ * it here made every init log frame arrive under a key no listener matched.
+ */
 export function subscriptionKey(req: SubscribeRequest): string {
   if (!req.project && !req.service) return req.topic
-  return `${req.topic}:${req.project ?? ''}/${req.service ?? ''}`
+  const key = `${req.topic}:${req.project ?? ''}/${req.service ?? ''}`
+  return req.container ? `${key}:${req.container}` : key
 }
 
 /** Fetch the daemon's health over REST. */
