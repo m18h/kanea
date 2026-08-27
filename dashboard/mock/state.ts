@@ -15,6 +15,8 @@ interface MockService {
   scaling?: { min: number; max: number; metrics: { name: string; target: number }[] }
   expose?: { domains: string[]; port: number; tlsMode: string }
   isFunction?: boolean
+  /** Init steps (R32), in declaration order. */
+  inits?: { name: string; image: string }[]
 }
 
 export interface MockAlloc {
@@ -69,6 +71,15 @@ export const services: MockService[] = [
     count: 2,
     image: 'registry.example.com/shop/api:0.9.1',
     generation: 2,
+    // The two canonical init shapes (R32): a wait on a dependency from a
+    // sidecar image, and a migration on the task's own image - the shape
+    // v1.99's deploy-follow exists for. This service having steps is what
+    // puts the Container picker on its Logs card in dev:mock; no fixture
+    // exercised it before v0.31.1 and the schema's wrong key went unseen.
+    inits: [
+      { name: 'wait-for-postgres', image: 'busybox:1.36' },
+      { name: 'migrate', image: 'registry.example.com/shop/api:0.9.1' },
+    ],
   },
   {
     project: 'shop',
@@ -152,6 +163,10 @@ export function desiredJSON(svc: MockService) {
       : null,
     Scaling: svc.scaling ?? null,
     ...(svc.isFunction ? { runtime: 'wasm', function: { module: svc.image } } : {}),
+    // Lowercase `init`, as Desired's json tag marshals it (post-v1.84 fields
+    // all are). The dashboard schema said `Init` until v0.31.1, and because
+    // this mock never served the key at all, dev:mock could not catch it.
+    ...(svc.inits ? { init: svc.inits.map((i) => ({ name: i.name, image: i.image })) } : {}),
     spec_hash: specHash(svc),
   }
 }
@@ -378,6 +393,44 @@ export function logLine(svc: MockService): { alloc_id: string; line: string } | 
   const samples = logSamples[svc.service] ?? ['tick']
   const line = samples[Math.floor(Math.random() * samples.length)] ?? 'tick'
   return { alloc_id: alloc.id, line: `${new Date().toISOString().slice(11, 19)} ${line}` }
+}
+
+/** Per-step init transcripts: what each of shop/api's steps would have said. */
+const initLogSamples: Record<string, string[]> = {
+  'wait-for-postgres': [
+    'waiting for postgres.shop.kanea:5432…',
+    'not ready (attempt 1)',
+    'not ready (attempt 2)',
+    'postgres.shop.kanea:5432 accepting connections',
+  ],
+  migrate: [
+    'alembic: context impl PostgresqlImpl',
+    'alembic: 3 revisions pending',
+    'alembic: running upgrade 8f2c41 -> 9a01d7, add order index',
+    'alembic: running upgrade 9a01d7 -> b44e02, widen sku column',
+    'alembic: running upgrade b44e02 -> c91f3a, backfill currencies',
+    'alembic: done in 2.4s',
+  ],
+}
+
+/**
+ * initLogLines is the whole of one step's log, at once: a sequence runs once
+ * per service per spec hash, on alloc index 0 (v1.92), and its file stops
+ * growing the moment the step exits - so the honest mock is a finite
+ * transcript served on subscribe, never a stream. That difference is visible
+ * in dev:mock on purpose: a picker that kept "streaming" init lines would be
+ * a friendlier contract than the daemon's.
+ */
+export function initLogLines(
+  svc: MockService,
+  container: string,
+): { alloc_id: string; line: string }[] {
+  if (!svc.inits?.some((i) => i.name === container)) return []
+  const startedAgo = 36 * 3600 * 1000 // beside the leader alloc's created_at
+  return (initLogSamples[container] ?? [`${container}: done`]).map((line, i) => ({
+    alloc_id: `${svc.project}-${svc.service}-0`,
+    line: `${new Date(startedAt - startedAgo + i * 700).toISOString().slice(11, 19)} ${line}`,
+  }))
 }
 
 // ---- rollouts ----

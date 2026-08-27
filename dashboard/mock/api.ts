@@ -9,6 +9,7 @@ import {
   currentIndex,
   events,
   findService,
+  initLogLines,
   history,
   logLine,
   nodeSeriesNames,
@@ -450,6 +451,7 @@ function liveSocket(ws: WebSocket): void {
       topic: string
       project?: string
       service?: string
+      container?: string
       history?: boolean
       series?: string[]
       allocs?: boolean
@@ -482,6 +484,16 @@ function liveSocket(ws: WebSocket): void {
     if (sub.topic === 'node') {
       send(key, 'node', { ...nodeStats(), ...seed(nodeSeriesNames, 'node') })
     }
+    // An init step's log is history, not a stream (v1.92: the sequence ran
+    // once, on alloc 0, and the file stopped growing when the step exited).
+    // The whole transcript rides the subscribe, and the store-change rebroad-
+    // casts skip it: `seeded` guards the once, exactly like history seeds.
+    if (sub.topic === 'logs' && sub.container && sub.project && sub.service && !sub.seeded) {
+      sub.seeded = true
+      const svc = findService(sub.project, sub.service)
+      const lines = svc ? initLogLines(svc, sub.container) : []
+      if (lines.length > 0) send(key, 'logs', { lines })
+    }
     if (sub.topic === 'stats' && sub.project && sub.service) {
       const svc = findService(sub.project, sub.service)
       if (svc) {
@@ -504,6 +516,7 @@ function liveSocket(ws: WebSocket): void {
       project?: string
       service?: string
       tail?: number
+      container?: string
       history?: boolean
       history_series?: string[]
       history_allocs?: boolean
@@ -524,6 +537,7 @@ function liveSocket(ws: WebSocket): void {
         topic: string
         project?: string
         service?: string
+        container?: string
         history?: boolean
         series?: string[]
         allocs?: boolean
@@ -534,6 +548,11 @@ function liveSocket(ws: WebSocket): void {
       if (frame.history_allocs) sub.allocs = true
       if (frame.project) sub.project = frame.project
       if (frame.service) sub.service = frame.service
+      // R32: a logs subscription may name an init container. The client keys
+      // task and init feeds identically, so re-subscribing with a different
+      // container replaces the sub at this key - which is the daemon's shape
+      // too: switching steps is a new feed, not a filter on the old one.
+      if (frame.container) sub.container = frame.container
       subs.set(key, sub)
       snapshot(key)
     }
@@ -554,6 +573,9 @@ function liveSocket(ws: WebSocket): void {
   const logTimer = setInterval(() => {
     for (const [key, sub] of subs) {
       if (sub.topic !== 'logs' || !sub.project || !sub.service) continue
+      // A finished init step's log does not grow; its transcript went out
+      // with the subscribe.
+      if (sub.container) continue
       const svc = findService(sub.project, sub.service)
       if (!svc) continue
       // A batch per tick, like the daemon (PRD v1.70): one frame per line is
