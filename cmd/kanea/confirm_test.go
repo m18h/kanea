@@ -83,6 +83,79 @@ func TestConfirmApplyNamesItsDefault(t *testing.T) {
 	}
 }
 
+// The default is no, confirmApply's opposite (PRD v1.100): this gates a
+// destruction, not a preview, so an empty line aborts and only a yes proceeds.
+func TestConfirmRemoveDefaultsToNo(t *testing.T) {
+	for _, answer := range []string{"\n", "n\n", "no\n", "N\n", "q\n", "yes please\n", "y y\n"} {
+		var buf bytes.Buffer
+		ok, err := confirmRemove(&out{w: &buf}, bufio.NewReader(strings.NewReader(answer)), "shop/web", true)
+		if err != nil {
+			t.Fatalf("answer %q: %v", answer, err)
+		}
+		if ok {
+			t.Errorf("answer %q removed", answer)
+		}
+	}
+}
+
+func TestConfirmRemoveAcceptsAYes(t *testing.T) {
+	// The unterminated "y" is what `printf y | kanea remove …` produces, and it
+	// means yes.
+	for _, answer := range []string{"y\n", "Y\n", "yes\n", "YES\n", "  y  \n", "y"} {
+		var buf bytes.Buffer
+		ok, err := confirmRemove(&out{w: &buf}, bufio.NewReader(strings.NewReader(answer)), "shop/web", true)
+		if err != nil {
+			t.Fatalf("answer %q: %v", answer, err)
+		}
+		if !ok {
+			t.Errorf("answer %q did not remove", answer)
+		}
+	}
+}
+
+// A closed stdin with nothing typed is an abort, not an error: the default is
+// no, and no is always a safe answer here.
+func TestConfirmRemoveAbortsOnEOF(t *testing.T) {
+	var buf bytes.Buffer
+	ok, err := confirmRemove(&out{w: &buf}, bufio.NewReader(strings.NewReader("")), "shop/web", true)
+	if err != nil || ok {
+		t.Fatalf("ok = %v, err = %v; want EOF to abort cleanly", ok, err)
+	}
+}
+
+// The most important case, same as confirmApply's: a piped stdin is a script,
+// scripts are never asked, and `kanea stop --rm` has worked in scripts since
+// v1.83 - byte for byte, nothing consumed.
+func TestConfirmRemoveNeverReadsWhenNotInteractive(t *testing.T) {
+	var buf bytes.Buffer
+	reader := bufio.NewReader(strings.NewReader("this line must not be consumed\n"))
+	ok, err := confirmRemove(&out{w: &buf}, reader, "shop/web", false)
+	if err != nil || !ok {
+		t.Fatalf("ok = %v, err = %v; want a non-interactive remove to proceed", ok, err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a non-interactive remove printed a prompt: %q", buf.String())
+	}
+	line, _ := reader.ReadString('\n')
+	if line != "this line must not be consumed\n" {
+		t.Errorf("the prompt consumed stdin: next line is %q", line)
+	}
+}
+
+// The prompt names its target and its default: [y/N]'s capital is what tells a
+// reader that Enter aborts, and the name is what stops a wrong-tab removal.
+func TestConfirmRemoveNamesTheTargetAndItsDefault(t *testing.T) {
+	var buf bytes.Buffer
+	if _, err := confirmRemove(&out{w: &buf}, bufio.NewReader(strings.NewReader("\n")), "shop/web", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"[y/N]", "shop/web", "volume data is kept"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("prompt = %q, want it to carry %q", buf.String(), want)
+		}
+	}
+}
+
 func changeSet(t *testing.T) []reconciler.ServiceChange {
 	t.Helper()
 	current := []reconciler.Desired{

@@ -204,6 +204,71 @@ describe('ServiceActions scaling', () => {
 })
 
 /**
+ * The Remove button (PRD v1.100): the two-click arm/disarm confirm Stop uses,
+ * against the DELETE route `kanea remove` shares.
+ */
+describe('ServiceActions remove', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function captureRequests(): { url: string; method: string; csrf: string | null }[] {
+    const calls: { url: string; method: string; csrf: string | null }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL | Request, init?: RequestInit) => {
+        const href = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url
+        const headers = new Headers(init?.headers)
+        calls.push({
+          url: href,
+          method: init?.method ?? 'GET',
+          csrf: headers.get('X-Kanea-CSRF'),
+        })
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) } as Response)
+      }),
+    )
+    return calls
+  }
+
+  it('arms on the first click and deletes nothing', () => {
+    const calls = captureRequests()
+    renderActions({ deploying: false, updated: 2, total: 2 })
+    fireEvent.click(screen.getByRole('button', { name: /Remove/ }))
+    expect(screen.getByRole('button', { name: /Confirm remove\?/ })).toBeTruthy()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('the second click sends the DELETE, with the CSRF token', () => {
+    const calls = captureRequests()
+    renderActions({ deploying: false, updated: 2, total: 2 })
+    const button = screen.getByRole('button', { name: /Remove/ })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toContain('/v1/services/shop/web')
+    expect(calls[0]?.method).toBe('DELETE')
+    expect(calls[0]?.csrf).toBe('token')
+  })
+
+  it('a viewer cannot remove', () => {
+    renderActions(
+      { deploying: false, updated: 2, total: 2 },
+      { ...adminSession, session: { subject: 'v', role: 'viewer', via: 'session' } },
+    )
+    expect(screen.getByRole('button', { name: /Remove/ })).toHaveProperty('disabled', true)
+  })
+
+  // The placement rule (PRD v1.100): the button lives outside the
+  // running/stopped branch, because a stopped service must stay removable.
+  // Tucking it into either branch makes this fail.
+  it('is offered for a stopped service too', () => {
+    renderActions({ deploying: false, updated: 0, total: 0 }, adminSession, withScaling(0))
+    expect(screen.getByRole('button', { name: /Remove/ })).toHaveProperty('disabled', false)
+  })
+})
+
+/**
  * The bound rule itself, pinned against internal/api's `handleScale`.
  *
  * Both halves of its condition matter and neither is redundant: a policy

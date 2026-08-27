@@ -1096,6 +1096,10 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.wake()
+	// §11 promises this event for every deletion path (v1.83), and the prune
+	// was the only emitter until v1.100: a single-service delete was silent
+	// from every client. Who asked is the audit line's to say, not the event's.
+	s.emit(notify.EventServiceRemoved, project, service, "declaration deleted by request")
 	s.log.Info("deleted service", "service", key, "index", index)
 	writeJSON(w, http.StatusOK, ApplyResponse{Applied: []string{key}, Index: index})
 }

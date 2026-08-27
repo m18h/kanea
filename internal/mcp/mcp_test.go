@@ -205,7 +205,7 @@ func TestViewerSeesOnlyReadTools(t *testing.T) {
 			t.Errorf("a viewer cannot see %s", want)
 		}
 	}
-	for _, unwanted := range []string{"apply_spec", "scale_service", "delete_project"} {
+	for _, unwanted := range []string{"apply_spec", "scale_service", "delete_service", "delete_project"} {
 		if has(names, unwanted) {
 			t.Errorf("a viewer was offered %s", unwanted)
 		}
@@ -214,7 +214,7 @@ func TestViewerSeesOnlyReadTools(t *testing.T) {
 
 func TestAdminSeesEveryTier(t *testing.T) {
 	names := toolNames(t, newServer(t, newFakeAPI("admin")))
-	for _, want := range []string{"list_services", "apply_spec", "delete_project"} {
+	for _, want := range []string{"list_services", "apply_spec", "delete_service", "delete_project"} {
 		if !has(names, want) {
 			t.Errorf("an admin cannot see %s", want)
 		}
@@ -259,6 +259,41 @@ func TestDestructiveToolsNeedConfirmation(t *testing.T) {
 	}
 	if !api.called(http.MethodDelete, "/v1/services/shop/web") {
 		t.Error("a confirmed delete_project deleted nothing")
+	}
+}
+
+// The single-service twin of the delete_project gate above: unconfirmed is a
+// refusal with nothing deleted, confirmed deletes exactly the named service.
+func TestDeleteServiceNeedsConfirmation(t *testing.T) {
+	api := newFakeAPI("admin")
+	s := newServer(t, api)
+
+	text, isError := callTool(t, s, "delete_service", map[string]any{
+		"project": "shop", "service": "web",
+	})
+	if !isError {
+		t.Fatal("delete_service ran without confirmation")
+	}
+	if !strings.Contains(text, "confirm=true") {
+		t.Errorf("the refusal does not say how to confirm: %s", text)
+	}
+	if api.called(http.MethodDelete, "/v1/services/shop/web") {
+		t.Fatal("delete_service deleted before being confirmed")
+	}
+
+	text, isError = callTool(t, s, "delete_service", map[string]any{
+		"project": "shop", "service": "web", "confirm": true,
+	})
+	if isError {
+		t.Fatalf("a confirmed delete_service was refused: %s", text)
+	}
+	if !api.called(http.MethodDelete, "/v1/services/shop/web") {
+		t.Error("a confirmed delete_service deleted nothing")
+	}
+	// The result carries the v1.83 rule: an agent relaying it must be able to
+	// say the data survived.
+	if !strings.Contains(text, "Volume data is kept") {
+		t.Errorf("the result does not say what survives: %s", text)
 	}
 }
 

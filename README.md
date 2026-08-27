@@ -388,7 +388,14 @@ The spec becomes authoritative for the projects it declares a `project` block
 for; projects it does not mention are never touched. It is **refused with a
 selector or `--image`** - a selector sends part of the spec and `--image`
 declares no project, so neither can claim to be the whole of one. For a single
-service, `kanea stop shop/web --rm`.
+service:
+
+```bash
+kanea remove shop/web        # alias: rm; asks [y/N] on a terminal, --yes/-y skips
+```
+
+(`kanea stop shop/web --rm` does the same, behind the same confirmation. A
+piped stdin is never prompted, so scripted removals work unchanged.)
 
 **Volume data is never deleted.** A service pruned by mistake comes back with
 its data by re-applying it; a deliberate prune frees no disk. What does go: the
@@ -840,7 +847,7 @@ by that manager on its next reload.
 ### AI agents (MCP)
 
 Kanea is an MCP server, over stdio for an agent on the node and streamable HTTP
-at `/mcp` on the API listener for one anywhere else. Twenty-four tools in three
+at `/mcp` on the API listener for one anywhere else. Twenty-five tools in three
 tiers, and **the tier an agent gets is its credential's role**: a viewer token
 does not see the mutating tools in `tools/list` at all.
 
@@ -968,7 +975,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.99) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.100) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | The decision record: status, trip-over bullets, refusals, spike log |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |

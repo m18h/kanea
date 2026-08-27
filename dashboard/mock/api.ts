@@ -15,6 +15,7 @@ import {
   nodeSeriesNames,
   nodeStats,
   onChange,
+  removeService,
   restartService,
   runLogFor,
   runsAt,
@@ -180,6 +181,17 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       const body = (await readBody(req)) as { count?: number }
       scaleService(svc, Math.max(0, body.count ?? 1))
     }
+    return json(res, 200, { applied: [`${svc.project}/${svc.service}`], index: currentIndex() })
+  }
+
+  // The daemon's DELETE route (PRD v1.100): the declaration and its allocs
+  // go, an ApplyResponse-shaped body answers, an unknown name is a 404.
+  const single = /^\/v1\/services\/([^/]+)\/([^/]+)$/.exec(path)
+  if (single && method === 'DELETE') {
+    const [, project, service] = single
+    const svc = findService(project ?? '', service ?? '')
+    if (!svc) return json(res, 404, { error: `no such service ${project}/${service}` })
+    removeService(svc)
     return json(res, 200, { applied: [`${svc.project}/${svc.service}`], index: currentIndex() })
   }
 

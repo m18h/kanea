@@ -454,6 +454,31 @@ function changed(): void {
  * pending replacement at the new hash → running, staggered so the rollout
  * line on the detail page visibly counts up.
  */
+/**
+ * removeService deletes the declaration and everything derived from it, the
+ * way the daemon's DELETE route does (PRD v1.100): the service row and its
+ * allocs go, a service.removed event fires at warning severity (v1.83), and
+ * volume data would survive - the mock has none to keep.
+ */
+export function removeService(svc: MockService): void {
+  const si = services.indexOf(svc)
+  if (si >= 0) services.splice(si, 1)
+  for (let i = allocs.length - 1; i >= 0; i--) {
+    const alloc = allocs[i]
+    if (alloc && alloc.project === svc.project && alloc.service === svc.service) {
+      allocs.splice(i, 1)
+    }
+  }
+  pushEvent({
+    name: 'service.removed',
+    severity: 'warning',
+    project: svc.project,
+    service: svc.service,
+    message: 'declaration deleted by request',
+  })
+  changed()
+}
+
 export function restartService(svc: MockService): void {
   svc.generation += 1
   const hash = specHash(svc)

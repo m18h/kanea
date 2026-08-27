@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/secrets"
@@ -255,6 +256,63 @@ func TestDeleteService(t *testing.T) {
 	// a typo in a service name should be visible.
 	if _, err := h.client.DeleteService(ctx, "shop", "ghost"); err == nil {
 		t.Error("deleting an unknown service should fail")
+	}
+}
+
+// TestServiceRemovedFiresFromEveryDeletionPath pins §11's promise (v1.83,
+// closed in v1.100): a deleted declaration announces itself whether the prune
+// removed it or the DELETE route did. The prune half was never pinned before,
+// which is how the DELETE route stayed silent for seventeen minor versions.
+func TestServiceRemovedFiresFromEveryDeletionPath(t *testing.T) {
+	var mu sync.Mutex
+	var events []notify.Event
+	h := newHarness(t, func(cfg *api.ServerConfig) {
+		cfg.Publish = func(e notify.Event) {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, e)
+		}
+	})
+	ctx := context.Background()
+
+	removedFor := func(service string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, e := range events {
+			if e.Name == notify.EventServiceRemoved && e.Project == "shop" && e.Service == service {
+				n++
+			}
+		}
+		return n
+	}
+
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{testService("web", 1)}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := h.client.DeleteService(ctx, "shop", "web"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if got := removedFor("web"); got != 1 {
+		t.Errorf("DELETE route emitted %d service.removed events, want 1", got)
+	}
+
+	// The prune path: re-declare the project without one of its services.
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{
+		testService("web", 1), testService("api", 1),
+	}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := h.client.ApplyScoped(ctx, api.ApplyRequest{
+		Services: []reconciler.Desired{testService("web", 1)}, PruneProjects: []string{"shop"},
+	}); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if got := removedFor("api"); got != 1 {
+		t.Errorf("prune emitted %d service.removed events for the pruned service, want 1", got)
+	}
+	if got := removedFor("web"); got != 1 {
+		t.Errorf("a service the prune kept got %d service.removed events, want the delete's 1", got)
 	}
 }
 

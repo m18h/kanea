@@ -10,6 +10,7 @@ import {
   Scaling,
   Square,
   SquareTerminal,
+  Trash2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -28,6 +29,7 @@ import { Sparkline } from '@/components/Sparkline'
 import { StatusDot } from '@/components/StatusDot'
 import { useLiveLog, MaxLogLines } from '@/hooks/useLiveLog'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
+import { useRouter } from '@/hooks/useRouter'
 import { useSession } from '@/hooks/useSession'
 import { allocSubject, seedFromHistory, seriesKey, useSeries, useTimedSeries } from '@/hooks/useSeries'
 import { seriesStatus } from '@/lib/seriesStatus'
@@ -40,6 +42,7 @@ import { Link } from '@/lib/router'
 import {
   Topic,
   allocsResponseSchema,
+  deleteService,
   fetchEvents,
   restartService,
   scaleService,
@@ -299,11 +302,13 @@ export function ServiceActions({
   rollout: RolloutStatus
 }) {
   const { session, csrf } = useSession()
+  const { navigate } = useRouter()
   const admin = session?.role === 'admin'
 
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmStop, setConfirmStop] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
   const [scaleOpen, setScaleOpen] = useState(false)
   // Which action kicked off the rollout the page is now watching. Cleared
   // when convergence lands; the spinner rides it.
@@ -327,6 +332,11 @@ export function ServiceActions({
     const timer = setTimeout(() => setConfirmStop(false), 4000)
     return () => clearTimeout(timer)
   }, [confirmStop])
+  useEffect(() => {
+    if (!confirmRemove) return
+    const timer = setTimeout(() => setConfirmRemove(false), 4000)
+    return () => clearTimeout(timer)
+  }, [confirmRemove])
 
   const converging = rollout.deploying && !lockExpired
   // Render-time reset (the derived-state pattern): convergence voids both the
@@ -456,6 +466,36 @@ export function ServiceActions({
           </Button>
         </>
       )}
+      {/* Outside the stopped/running branch on purpose (PRD v1.100): a
+          stopped service must stay removable. The fire path does not go
+          through run(): that helper writes state after success, and a
+          successful remove unmounts this component by navigating away.
+          Volume data survives the removal (v1.83); the title says so. */}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={disabled}
+        title={title ?? 'Delete the service declaration; volume data is kept'}
+        className={confirmRemove ? 'border-destructive text-destructive hover:bg-destructive/10' : ''}
+        onClick={() => {
+          if (!confirmRemove) {
+            setConfirmRemove(true)
+            return
+          }
+          setConfirmRemove(false)
+          setBusy('remove')
+          setError(null)
+          deleteService(project, service, csrf)
+            .then(() => navigate('/services'))
+            .catch((err: unknown) => {
+              setError(err instanceof Error ? err.message : String(err))
+              setBusy(null)
+            })
+        }}
+      >
+        {busy === 'remove' ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+        {busy === 'remove' ? 'Removing…' : confirmRemove ? 'Confirm remove?' : 'Remove'}
+      </Button>
     </div>
   )
 }
