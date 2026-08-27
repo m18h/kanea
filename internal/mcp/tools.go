@@ -716,7 +716,10 @@ func runDeploy(ctx context.Context, s *Server, sess *Session, args arguments) (c
 		return textResult(fmt.Sprintf("%s/%s already declares %s; nothing to do.",
 			project, service, image)), nil
 	}
-	svc.Image = image
+	// Init steps declaring the task's previous image move with it (PRD v1.99);
+	// the same helper the CLI and the GitOps deployer use, so the three sites
+	// cannot drift about what a deploy is.
+	moved := reconciler.RetargetImage(&svc, image)
 
 	var applied struct {
 		Applied []string `json:"applied"`
@@ -725,9 +728,14 @@ func runDeploy(ctx context.Context, s *Server, sess *Session, args arguments) (c
 		map[string]any{"services": []reconciler.Desired{svc}}, &applied); err != nil {
 		return callToolResult{}, err
 	}
+	followed := ""
+	if len(moved) > 0 {
+		followed = fmt.Sprintf(" Init steps declaring the same image follow: %s.",
+			strings.Join(moved, ", "))
+	}
 	return textResult(fmt.Sprintf(
-		"Deployed %s to %s/%s (was %s). Replicas roll according to the service's update policy.",
-		image, project, service, orNone(previous))), nil
+		"Deployed %s to %s/%s (was %s).%s Replicas roll according to the service's update policy.",
+		image, project, service, orNone(previous), followed)), nil
 }
 
 func runPipeline(ctx context.Context, s *Server, sess *Session, args arguments) (callToolResult, error) {

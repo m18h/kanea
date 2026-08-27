@@ -4287,9 +4287,12 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       Point an existing service at a new image and leave the rest of its spec alone. It
       reads the record, changes the image and writes the whole record back, because there
       is no route that sets an image on its own and round-tripping is what stops a deploy
-      dropping a field. Waits for the new image to be running by default, which is what
-      makes it usable as a pipeline's last step. This is the CI verb; see
-      <a href="#remote-deploy">Deploying a new image</a>.
+      dropping a field. An <code>init</code> step declaring the task's previous image
+      moves with it (v0.31.1) - a migration on the app's own image must not run
+      yesterday's bytes against today's application - and the output names the steps
+      that followed; a step on any other image is untouched. Waits for the new image to
+      be running by default, which is what makes it usable as a pipeline's last step.
+      This is the CI verb; see <a href="#remote-deploy">Deploying a new image</a>.
     </p>
 
     <h4><code>kanea stop</code></h4>
@@ -4966,6 +4969,13 @@ kanea logs -f shop/web</pre>
       changes the image, and writes the whole record back - which matters, because
       there is no API route that sets an image on its own, and round-tripping the record
       is what makes it impossible for a deploy to drop a field it does not know about.
+      One deliberate exception rides along (v0.31.1): an <code>init</code> step whose
+      image is exactly the task's previous one is pointed at the new image too, so a
+      migration that runs the app's own image deploys in lock-step with the app.
+      Byte-for-byte equality on the declared reference, nothing cleverer; a step on
+      its own image never moves. The same rule applies when a GitOps build deploys
+      its result, so a step that starts on the app's image stays on it build after
+      build.
     </p>
     <pre class="plain">kanea deploy shop/web ghcr.io/acme/web@sha256:9f2a…</pre>
     <p>
