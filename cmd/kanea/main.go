@@ -45,6 +45,7 @@ var commands = []command{
 	{"plan", "dry-run diff of a job spec; selectors (shop, shop/web) scope it", runPlan},
 	{"run", "apply a job spec or just the selected services (shop/web …); alias: apply", runRun},
 	{"stop", "stop a service (scale to zero; --rm deletes it)", runStop},
+	{"remove", "delete a service declaration (asks first; volume data is kept); alias: rm", runRemove},
 	{"start", "start a stopped service (one replica unless a count is given)", runStart},
 	{"deploy", "point an existing service at a new image, leaving its spec alone", runDeploy},
 	{"restart", "roll a service's allocs through its update policy", runRestart},
@@ -91,7 +92,7 @@ func main() {
 // one table entry, one handler, so the spellings cannot drift (PRD v1.52).
 // The usage output deliberately keeps one row per verb; the alias rides the
 // target's description instead.
-var aliases = map[string]string{"apply": "run"}
+var aliases = map[string]string{"apply": "run", "rm": "remove"}
 
 func run(args []string) error {
 	if len(args) == 0 {

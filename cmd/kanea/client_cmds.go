@@ -366,6 +366,36 @@ func confirmApply(o *out, in *bufio.Reader, interactive bool) (bool, error) {
 	return answer == "" || answer == "y" || answer == "yes", nil
 }
 
+// confirmRemove asks before a service declaration is deleted, and answers yes
+// for anything that is not a person.
+//
+// The default is no, the opposite of confirmApply's, and the two deliberately
+// share neither a helper nor a default (PRD v1.100): apply's prompt previews
+// something the operator just typed, while this one gates a destruction that
+// only re-applying a spec undoes - a spec the operator may not have at hand.
+// Only y or yes proceeds; an empty line or a typo aborts. A non-interactive
+// stdin proceeds without asking, exactly as confirmApply does, because
+// `kanea stop --rm` has worked in scripts since v1.83 and a script must never
+// be asked a question.
+func confirmRemove(o *out, in *bufio.Reader, target string, interactive bool) (bool, error) {
+	if !interactive {
+		return true, nil
+	}
+	o.printf("Remove %s? This deletes its declaration; volume data is kept. [y/N] ", target)
+	// Flushed before the read, for confirmApply's reason: an unflushed prompt
+	// is a question nobody can see.
+	if err := o.Err(); err != nil {
+		return false, err
+	}
+	line, err := in.ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if err != nil && answer == "" {
+		// EOF with nothing typed is an abort, not an error: the default is no.
+		return false, nil
+	}
+	return answer == "y" || answer == "yes", nil
+}
+
 // pruneScope decides what a `--remove-orphans` apply may claim authority over.
 //
 // The two refusals are the point of the function. A selector filters the
@@ -1163,7 +1193,9 @@ func runStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
-	remove := fs.Bool("rm", false, "also delete the service declaration")
+	remove := fs.Bool("rm", false, "also delete the service declaration (asks first on a terminal)")
+	yes := fs.Bool("yes", false, "remove without asking; implied when stdin is not a terminal")
+	yesShort := fs.Bool("y", false, "alias for --yes")
 	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
@@ -1188,12 +1220,7 @@ func runStop(args []string) error {
 	}
 
 	if *remove {
-		if _, err := client.DeleteService(ctx, target.Project, target.Service); err != nil {
-			return err
-		}
-		o := newOut()
-		o.printf("removed %s/%s\n", target.Project, target.Service)
-		return o.Err()
+		return removeService(ctx, client, target, *yes || *yesShort)
 	}
 
 	// Scaling to zero keeps the declaration, so `kanea run` (or a scale up)
@@ -1204,6 +1231,66 @@ func runStop(args []string) error {
 	}
 	o := newOut()
 	o.printf("stopped %s/%s (count 0; use --rm to delete the service)\n",
+		target.Project, target.Service)
+	return o.Err()
+}
+
+// runRemove implements `kanea remove` (alias `rm`): delete one service
+// declaration, asking first (PRD v1.100, §16.2). The same route `kanea stop
+// --rm` has always used, promoted to a verb so the destructive action has a
+// name of its own and a gate of its own.
+func runRemove(args []string) error {
+	fs := flag.NewFlagSet("remove", flag.ContinueOnError)
+	ep := endpointFlags(fs)
+	project := fs.String("project", "", "project name")
+	yes := fs.Bool("yes", false, "remove without asking; implied when stdin is not a terminal")
+	yesShort := fs.Bool("y", false, "alias for --yes")
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: kanea remove [--project P] [--yes] <[project/]service>")
+	}
+
+	ctx := context.Background()
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
+
+	// Resolved before the prompt, so a typo'd name is a not-found error rather
+	// than a question about deleting something that does not exist.
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	target, err := findService(services, *project, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	return removeService(ctx, client, target, *yes || *yesShort)
+}
+
+// removeService is the shared tail of `kanea remove` and `kanea stop --rm`:
+// one confirmation, one route, one message, so the two spellings cannot drift
+// about what a removal is or says.
+func removeService(ctx context.Context, client *api.Client, target reconciler.Desired, yes bool) error {
+	o := newOut()
+	interactive := !yes && term.IsTerminal(int(os.Stdin.Fd()))
+	ok, err := confirmRemove(o, bufio.NewReader(os.Stdin),
+		target.Project+"/"+target.Service, interactive)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("aborted; nothing was removed")
+	}
+	if _, err := client.DeleteService(ctx, target.Project, target.Service); err != nil {
+		return err
+	}
+	// The v1.83 rule, said where it matters: what went, and what did not.
+	o.printf("removed %s/%s - containers, alloc records, VIP, routes and mounts are gone; "+
+		"volume data is kept (re-apply the spec to bring it back)\n",
 		target.Project, target.Service)
 	return o.Err()
 }
