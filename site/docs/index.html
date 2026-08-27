@@ -3000,6 +3000,18 @@ restart {
       to allocs this deploy has already replaced.
     </p>
     <p>
+      <code>restart</code> bounds crash restarts: each one waits the next
+      <code>backoff</code> entry (the last repeats), and an alloc that exhausts
+      <code>attempts</code> is failed and left alone until a deploy or
+      <code>kanea restart</code> - either resets the count, because the budget belongs
+      to the spec hash that spent it. <b>The budget counts only crashes the daemon
+      watched</b> (v0.31.0): an alloc found already stopped at startup - a node reboot, a
+      power loss - is recovered immediately without spending an attempt, however many the
+      counter shows, and without waiting out a backoff armed before the outage. An alloc
+      already marked <i>failed</i> stays failed across a reboot: that verdict came from
+      crashes the platform saw, and the fix is the same deploy or restart as ever.
+    </p>
+    <p>
       <b><code>auto</code> is the watchtower feature, as policy rather than as a container
       holding your runtime socket.</b> Kanea re-resolves the tag the service already
       declares, and when the digest behind it moves it pins the new one: the tag stays in
@@ -5104,7 +5116,8 @@ kanea describe shop/web      # the full picture: spec, routes, volumes, allocs, 
       than failing one; a check-free service is never reported unhealthy, only running or
       not. <b>Restarts</b>: a climbing count is a crash loop; when it stops climbing the
       restart budget is exhausted and the alloc has been failed and left alone
-      (see <a href="#troubleshoot-common">below</a> for the way out).
+      (see <a href="#troubleshoot-common">below</a> for the way out). A node reboot moves
+      no counter: allocs found dead at boot are recovered without spending the budget.
     </p>
     <p>Then the processes underneath. A standard install runs four units:</p>
     <pre class="plain">systemctl status kanead kanea-edge kanea-containerd kanea-buildkit</pre>
@@ -5211,7 +5224,10 @@ cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
         <code>restart</code> budget is exhausted the alloc is failed and left alone on
         purpose: <code>kanea restart shop/web</code> clears it, because the restart count
         belongs to the spec hash that spent it and a restart is a new one. So does
-        deploying a fix.
+        deploying a fix. Only crashes the daemon watched count: after a power loss or
+        reboot, every alloc found stopped comes back on its own with the budget untouched
+        (v0.31.0; earlier versions charged one attempt per outage and could leave
+        services failed at boot).
       </li>
       <li>
         <b>A deploy did nothing.</b> A deploy is a spec-hash mismatch, not an invocation:
