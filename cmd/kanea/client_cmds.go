@@ -1140,12 +1140,14 @@ func runLogs(args []string) error {
 	tail := fs.Int("tail", 0, "show only the last N lines before following")
 	container := fs.String("c", "",
 		"read an init container's log instead of the task's, by its block name (PRD §6.2 R32)")
+	previous := fs.Bool("previous", false,
+		"read the log files a stopped or removed service left behind, from disk rather than live allocs")
 	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 
 	if fs.NArg() > 1 {
-		return errors.New("usage: kanea logs [-f] [-c NAME] [--project P | --alloc ID] [[project/]service]")
+		return errors.New("usage: kanea logs [-f] [-c NAME] [--previous] [--project P | --alloc ID] [[project/]service]")
 	}
 	service := ""
 	if fs.NArg() > 0 {
@@ -1173,16 +1175,29 @@ func runLogs(args []string) error {
 		if err != nil {
 			return err
 		}
-		target, err := findService(services, *project, service)
-		if err != nil {
-			return err
+		target, ferr := findService(services, *project, service)
+		switch {
+		case ferr == nil:
+			proj, service = target.Project, target.Service
+		case *previous:
+			// A removed service has no declaration to resolve against, and
+			// reading what its allocs left behind is exactly what --previous
+			// is for. The literal name is used instead - and it must carry
+			// its project, because the daemon finds the files by full name.
+			if p, s, ok := strings.Cut(service, "/"); ok {
+				proj, service = p, s
+			} else if proj == "" {
+				return fmt.Errorf("%w; --previous on a removed service needs the full "+
+					"project/service name", ferr)
+			}
+		default:
+			return ferr
 		}
-		proj, service = target.Project, target.Service
 	}
 
 	return client.Logs(ctx, api.LogOptions{
 		Project: proj, Service: service, AllocID: *alloc,
-		Follow: *follow, Tail: *tail, Container: *container,
+		Follow: *follow, Tail: *tail, Container: *container, Previous: *previous,
 		// Scrubbed (K-45): a workload's log line can carry terminal control
 		// sequences, and the operator's terminal is not the workload's.
 	}, scrubTerminal{os.Stdout})

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -49,5 +51,48 @@ func TestLogsContainerFlagAfterServiceReachesTheServer(t *testing.T) {
 func TestLogsRefusesExtraPositionals(t *testing.T) {
 	if err := runLogs([]string{"shop/api", "extra"}); err == nil {
 		t.Fatal("runLogs accepted a second positional")
+	}
+}
+
+// TestLogsPreviousReachesARemovedService (PRD v1.101): --previous must work on
+// a service that no longer exists - that is half its point - so when the name
+// resolves against nothing, the literal project/service passes through and the
+// daemon answers from disk. The fake daemon here declares no services at all.
+func TestLogsPreviousReachesARemovedService(t *testing.T) {
+	var query atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case api.PathServices:
+			if err := json.NewEncoder(w).Encode(api.ServicesResponse{}); err != nil {
+				t.Error(err)
+			}
+		case api.PathLogs:
+			query.Store(r.URL.Query())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	err := runLogs([]string{"shop/api", "--previous", "--url", srv.URL, "--token", "t"})
+	if err != nil {
+		t.Fatalf("runLogs: %v", err)
+	}
+	q, _ := query.Load().(url.Values)
+	if q.Get("previous") != "true" || q.Get("project") != "shop" || q.Get("service") != "api" {
+		t.Fatalf("server saw %v, want previous=true for shop/api", q)
+	}
+
+	// Without --previous the unresolvable name stays an error: the fallback
+	// exists for reading what remains, not for typos.
+	if err := runLogs([]string{"shop/api", "--url", srv.URL, "--token", "t"}); err == nil {
+		t.Fatal("a live query for an unknown service did not error")
+	}
+
+	// And a bare service name cannot fall back - the daemon finds files by
+	// their full name, so the project must be spelled.
+	err = runLogs([]string{"api", "--previous", "--url", srv.URL, "--token", "t"})
+	if err == nil || !strings.Contains(err.Error(), "project/service") {
+		t.Fatalf("bare-name --previous = %v, want a refusal asking for the full name", err)
 	}
 }

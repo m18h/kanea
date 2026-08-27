@@ -410,6 +410,91 @@ func TestLogsContainerReadsTheInitStream(t *testing.T) {
 	}
 }
 
+// TestPreviousLogsReadWhatAStoppedServiceLeftBehind (PRD v1.101): a torn-down
+// alloc leaves no record, so the live query answers "no matching allocs" - but
+// its log file stays on disk, and ?previous=true is the explicit request to
+// read it. Explicit on purpose: a live query silently answering old files
+// would blur "no allocs" into "these logs", and absence is not zero.
+func TestPreviousLogsReadWhatAStoppedServiceLeftBehind(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// No service record, no alloc records: the shape a removed service leaves.
+	writeLog(t, h.logDir, "shop-web-0", "zero's last words\n")
+	writeLog(t, h.logDir, "shop-web-1", "one's last words\n")
+	// Neither a sibling service sharing the prefix nor an init file is the
+	// task's log: the match requires a purely numeric index before ".log".
+	writeLog(t, h.logDir, "shop-web-front-0", "another service entirely\n")
+	writeLog(t, h.logDir, runtime.InitID("shop-web-0", 0, "migrate"), "alembic says no\n")
+
+	// The live query still refuses: nothing is running.
+	if err := h.client.Logs(ctx, api.LogOptions{Project: "shop", Service: "web"}, &bytes.Buffer{}); err == nil {
+		t.Fatal("a live query for a torn-down service answered instead of 404ing")
+	}
+
+	var buf bytes.Buffer
+	if err := h.client.Logs(ctx, api.LogOptions{Project: "shop", Service: "web", Previous: true}, &buf); err != nil {
+		t.Fatalf("previous logs: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "shop-web-0 | zero's last words") ||
+		!strings.Contains(out, "shop-web-1 | one's last words") {
+		t.Errorf("previous logs = %q, want both allocs' files, labelled", out)
+	}
+	if strings.Contains(out, "another service") || strings.Contains(out, "alembic") {
+		t.Errorf("previous logs leaked a neighbour's file: %q", out)
+	}
+
+	// One alloc by id, unlabelled like the live single-alloc stream.
+	buf.Reset()
+	if err := h.client.Logs(ctx, api.LogOptions{AllocID: "shop-web-0", Previous: true}, &buf); err != nil {
+		t.Fatalf("previous alloc logs: %v", err)
+	}
+	if got := buf.String(); got != "zero's last words\n" {
+		t.Errorf("previous alloc logs = %q", got)
+	}
+
+	// A bare project cannot name files; the refusal says so.
+	err := h.client.Logs(ctx, api.LogOptions{Project: "shop", Previous: true}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "project/service") {
+		t.Errorf("previous with a bare project = %v, want a refusal naming the need", err)
+	}
+
+	// Nothing on disk is a 404 that says so, not an empty 200.
+	err = h.client.Logs(ctx, api.LogOptions{Project: "shop", Service: "ghost", Previous: true}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "no log files remain") {
+		t.Errorf("previous with nothing on disk = %v, want a 404 naming the absence", err)
+	}
+}
+
+// And the init-container combination: a stopped service still declares its
+// sequence, so -c resolves the ordinal and --previous finds the file.
+func TestPreviousLogsReachAnInitContainersFile(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	svc := testService("web", 0)
+	svc.Init = []reconciler.InitContainer{{
+		Name: "migrate", Image: svc.Image, Command: []string{"true"},
+	}}
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{svc}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	writeLog(t, h.logDir, "shop-web-0", "task talking\n")
+	writeLog(t, h.logDir, runtime.InitID("shop-web-0", 0, "migrate"), "alembic says no\n")
+
+	var buf bytes.Buffer
+	err := h.client.Logs(ctx, api.LogOptions{
+		Project: "shop", Service: "web", Container: "migrate", Previous: true,
+	}, &buf)
+	if err != nil {
+		t.Fatalf("previous init logs: %v", err)
+	}
+	if got := buf.String(); got != "alembic says no\n" {
+		t.Errorf("previous init logs = %q, want the init container's stream", got)
+	}
+}
+
 func TestLogsPrefixesWhenFollowingSeveralAllocs(t *testing.T) {
 	// With one alloc the stream is clean; with several, each line must say
 	// which alloc it came from.

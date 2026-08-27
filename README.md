@@ -400,7 +400,9 @@ piped stdin is never prompted, so scripted removals work unchanged.)
 **Volume data is never deleted.** A service pruned by mistake comes back with
 its data by re-applying it; a deliberate prune frees no disk. What does go: the
 containers, the alloc records, the VIP, routes and mounts. Each removal emits
-`service.removed` and is named in the audit log.
+`service.removed` and is named in the audit log. The log files survive too:
+`kanea logs --previous shop/web` reads what a stopped or removed service last
+wrote, straight from disk.
 
 ### Volumes
 
@@ -975,7 +977,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.100) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.101) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | The decision record: status, trip-over bullets, refusals, spike log |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
