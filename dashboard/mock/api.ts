@@ -531,7 +531,11 @@ function liveSocket(ws: WebSocket): void {
       return
     }
     const scoped = frame.project || frame.service
-    const key = scoped ? `${frame.topic}:${frame.project ?? ''}/${frame.service ?? ''}` : (frame.topic ?? '')
+    // The daemon's key shape (internal/api/ws.go subscriptionKey): container is
+    // part of the key when set. The mock once omitted it, which let a client
+    // that also omitted it demo perfectly and fail against a real node.
+    let key = scoped ? `${frame.topic}:${frame.project ?? ''}/${frame.service ?? ''}` : (frame.topic ?? '')
+    if (scoped && frame.container) key += `:${frame.container}`
     if (frame.type === 'subscribe' && frame.topic) {
       const sub: {
         topic: string
@@ -548,10 +552,9 @@ function liveSocket(ws: WebSocket): void {
       if (frame.history_allocs) sub.allocs = true
       if (frame.project) sub.project = frame.project
       if (frame.service) sub.service = frame.service
-      // R32: a logs subscription may name an init container. The client keys
-      // task and init feeds identically, so re-subscribing with a different
-      // container replaces the sub at this key - which is the daemon's shape
-      // too: switching steps is a new feed, not a filter on the old one.
+      // R32: a logs subscription may name an init container, and the container
+      // is part of the key - switching steps opens a new feed beside the old
+      // one until its unsubscribe lands, exactly as the daemon behaves.
       if (frame.container) sub.container = frame.container
       subs.set(key, sub)
       snapshot(key)

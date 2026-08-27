@@ -36,4 +36,12 @@ func TestASubscriptionKeyDistinguishesContainers(t *testing.T) {
 		t.Errorf("the task's key changed shape: %q; every existing subscription depends on it",
 			taskKey)
 	}
+	// The dashboard composes this key client-side to route frames
+	// (dashboard/src/lib/api.ts subscriptionKey, pinned by api.test.ts's
+	// "includes the init container" case). Change one shape, change both:
+	// the client once omitted the container and every init frame was dropped.
+	if stepKey != "logs:shop/web:migrate" {
+		t.Errorf("the init stream's key changed shape: %q; the dashboard composes %q",
+			stepKey, "logs:shop/web:migrate")
+	}
 }

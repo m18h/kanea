@@ -24,7 +24,7 @@ func runDescribe(args []string) error {
 	fs := flag.NewFlagSet("describe", flag.ContinueOnError)
 	ep := endpointFlags(fs)
 	project := fs.String("project", "", "project name")
-	if err := fs.Parse(args); err != nil {
+	if err := parseArgs(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {

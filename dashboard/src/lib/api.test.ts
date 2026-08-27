@@ -22,6 +22,17 @@ describe('subscriptionKey', () => {
       'logs:shop/web',
     )
   })
+
+  // The expected literal mirrors the daemon's key exactly
+  // (internal/api/ws.go, TestASubscriptionKeyDistinguishesContainers): the
+  // container selects a different stream, so it is part of the key. Omitting
+  // it here once made every init log frame arrive under a key no listener
+  // matched, so the panel silently showed the task's log instead.
+  it('includes the init container, matching the daemon key', () => {
+    expect(
+      subscriptionKey({ topic: Topic.Logs, project: 'shop', service: 'web', container: 'migrate' }),
+    ).toBe('logs:shop/web:migrate')
+  })
 })
 
 describe('servicesResponseSchema', () => {
