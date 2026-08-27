@@ -929,6 +929,15 @@ const (
 	// it replaced. Folding them together would mean a service that crash-looped
 	// yesterday cannot be fixed by deploying the fix.
 	ActionReplace ActionKind = "replace"
+	// ActionRecover brings back an alloc whose exit this daemon never
+	// witnessed: it was first seen already stopped, which means a node reboot,
+	// a power loss, or an exit during a daemon restart (PRD v1.98, R29). The
+	// same remove-create-start as a restart, and a separate kind for the same
+	// reason ActionReplace is: the kinds differ in what they do to the alloc's
+	// history. A recovery carries the restart counter without incrementing it;
+	// the budget exists to stop a crash loop, and an exit nobody watched
+	// happen is the platform's outage, not the workload's.
+	ActionRecover ActionKind = "recover"
 	// ActionRemove tears an alloc down completely.
 	ActionRemove ActionKind = "remove"
 	// ActionInitStep starts (or adopts) one init container of an alloc whose

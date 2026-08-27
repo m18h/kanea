@@ -269,6 +269,13 @@ type Reconciler struct {
 	secrets     SecretResolver
 	secretsDir  string
 
+	// witnessed is the alloc ids this process has started or seen running
+	// (PRD v1.98, R29): the exits that spend the restart budget. In-memory by
+	// design - persisting it would recreate the cross-reboot charging it
+	// exists to prevent - and touched only from the reconcile loop's
+	// goroutine, so it needs no lock.
+	witnessed map[string]struct{}
+
 	interval      time.Duration
 	stopGrace     time.Duration
 	logDir        string
@@ -313,6 +320,7 @@ func New(cfg Config) (*Reconciler, error) {
 	}
 	return &Reconciler{
 		store:         cfg.Store,
+		witnessed:     make(map[string]struct{}),
 		vips:          vips,
 		prober:        cfg.Prober,
 		mounts:        cfg.Mounts,
@@ -404,13 +412,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 	if err != nil {
 		return result, fmt.Errorf("load actual state: %w", err)
 	}
+	r.witness(actual, initActual)
+	r.pruneWitnessed(records, actual)
 
 	// Read the datapath before planning: health checks need alloc addresses, and
 	// the planner needs the health verdicts to gate dependents.
 	attachments := r.attachments(ctx)
 	world := World{
 		Desired: desired, Records: records, Actual: actual,
-		InitActual: initActual, Now: r.now(),
+		InitActual: initActual, Now: r.now(), Witnessed: r.witnessed,
 	}
 	// Tell the usage sampler what exists. Cheap (one slice build and a pointer
 	// store) and idempotent, so it rides the pass rather than needing a loop of
@@ -454,7 +464,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		// *both* are counted: a node where every alloc dies on first start
 		// never reaches a restart budget, which is precisely the case §4.3's
 		// breaker exists for.
-		r.recordFailures(changed)
+		r.recordFailures(world, changed)
 	}
 
 	actions := Plan(world)
@@ -481,6 +491,14 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 		result.Applied++
 		r.log.Info("action applied",
 			"action", action.Kind, "alloc", action.AllocID, "reason", action.Reason)
+		// A container this daemon just started is witnessed: its next exit is
+		// a crash the budget must count, even one faster than the reconcile
+		// interval - without this, a service that dies before ever being seen
+		// running would recover free forever (PRD v1.98).
+		switch action.Kind {
+		case ActionCreate, ActionStart, ActionRestart, ActionReplace, ActionRecover, ActionInitStep:
+			r.witnessed[action.AllocID] = struct{}{}
+		}
 	}
 
 	// Everything below reasons about the world *after* the actions, so refresh
@@ -495,6 +513,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Result, error) {
 			r.log.Warn("cannot re-read alloc state after applying actions", "error", err)
 		} else {
 			world.Actual, world.InitActual = actual, initActual
+			r.witness(actual, initActual)
 		}
 		// The allocs just created are attached by now, and the ones just
 		// removed are not.
@@ -786,9 +805,51 @@ func (r *Reconciler) reapNetwork(ctx context.Context, w World, attachments map[s
 }
 
 // recordFailures feeds crash transitions to the circuit breaker.
-func (r *Reconciler) recordFailures(changed map[string]AllocRecord) {
+// witness folds one runtime view into the witnessed set (PRD v1.98):
+// everything reported running has been seen. A running init container
+// witnesses its alloc, since a step failure charges the alloc's budget.
+func (r *Reconciler) witness(actual map[string]runtime.Status, initActual map[string]InitStatus) {
+	for id, status := range actual {
+		if status.State == runtime.StateRunning {
+			r.witnessed[id] = struct{}{}
+		}
+	}
+	for _, status := range initActual {
+		if status.State == runtime.StateRunning {
+			r.witnessed[status.AllocID] = struct{}{}
+		}
+	}
+}
+
+// pruneWitnessed drops witnessed ids that exist nowhere any more, keeping the
+// set bounded by what the node actually runs. Called only at the start of a
+// pass, against freshly loaded records: mid-pass views are stale the moment an
+// action writes a record, and pruning against one would forget an alloc the
+// pass itself just started (an alloc mid-init has no container in actual and
+// its record write happens after the pass's load).
+func (r *Reconciler) pruneWitnessed(records map[string]AllocRecord, actual map[string]runtime.Status) {
+	for id := range r.witnessed {
+		if _, ok := records[id]; ok {
+			continue
+		}
+		if _, ok := actual[id]; ok {
+			continue
+		}
+		delete(r.witnessed, id)
+	}
+}
+
+func (r *Reconciler) recordFailures(w World, changed map[string]AllocRecord) {
 	for _, record := range changed {
 		crashed := record.State == AllocBackoff || record.State == AllocFailed
+		// An unwitnessed exit is being recovered, not crash-handled (PRD
+		// v1.98): eight services dying at power-off is one fact about the
+		// node, not eight about workloads. A breaker tripped by the outage
+		// would slow the very recovery it exists to protect, and the recovery
+		// is announced by its applied-action log line instead of an event.
+		if crashed && !w.witnessed(record.ID) {
+			continue
+		}
 		if crashed && r.breaker != nil {
 			r.breaker.RecordFailure(record.Project + "/" + record.Service)
 		}
@@ -947,6 +1008,19 @@ func Observe(w World) map[string]AllocRecord {
 			record.LastExitReason, record.LastExitMessage = classifyExit(status)
 			record.UpdatedAt = w.Now
 
+			// An exit nobody witnessed is not a crash (PRD v1.98, R29): this
+			// daemon neither started the container nor saw it run, so it died
+			// with the node or during a daemon restart. The exit is recorded -
+			// it happened - but the alloc goes straight to restartable with no
+			// deadline and no budget verdict; the planner recovers it without
+			// charge, however spent the counter is.
+			if !w.witnessed(id) {
+				record.State = AllocBackoff
+				record.NextRestartAt = time.Time{}
+				changed[id] = record
+				continue
+			}
+
 			if record.Restarts >= desired.Restart.attempts() {
 				record.State = AllocFailed
 			} else {
@@ -972,7 +1046,7 @@ func exitTime(status runtime.Status, fallback time.Time) time.Time {
 func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 	desired, ok := desiredFor(w, action)
 	switch action.Kind {
-	case ActionCreate, ActionStart, ActionRestart, ActionReplace:
+	case ActionCreate, ActionStart, ActionRestart, ActionReplace, ActionRecover:
 		if !ok {
 			return fmt.Errorf("no desired state for %s", action.AllocID)
 		}
@@ -991,13 +1065,14 @@ func (r *Reconciler) apply(ctx context.Context, w World, action Action) error {
 		}
 		return r.markRunning(ctx, w, action)
 
-	case ActionRestart, ActionReplace:
+	case ActionRestart, ActionReplace, ActionRecover:
 		// Tear the old container down first: containerd will not reuse the id,
 		// and a half-dead task would keep its cgroup and netns pinned.
 		//
-		// The two kinds do the same thing here and differ in what create makes
-		// of the record they leave behind: a crash spends the restart budget, a
-		// deploy starts a new one.
+		// The three kinds do the same thing here and differ in what create
+		// makes of the record they leave behind: a crash spends the restart
+		// budget, a deploy starts a new one, and a recovery carries the
+		// counter untouched (PRD v1.98).
 		if err := r.teardown(ctx, w, desired, action); err != nil {
 			return err
 		}

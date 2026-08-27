@@ -280,6 +280,16 @@ func observeInit(w World, d Desired, record AllocRecord) (AllocRecord, bool) {
 	}
 	record.UpdatedAt = w.Now
 
+	// A step this daemon never started or saw running died with the platform,
+	// not on its own (PRD v1.98): no budget verdict, no backoff. The planner
+	// recovers the sequence without charge; steps are idempotent by R32's own
+	// rule, so re-running is always the right recovery.
+	if !w.witnessed(record.ID) {
+		record.State = AllocBackoff
+		record.NextRestartAt = time.Time{}
+		return record, true
+	}
+
 	if record.Restarts >= d.Restart.attempts() {
 		record.State = AllocFailed
 	} else {

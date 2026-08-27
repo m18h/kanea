@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/m18h/kanea/internal/network"
+	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/storage"
@@ -1773,5 +1774,61 @@ func TestHostVolumeIsNeverChowned(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o755 {
 		t.Errorf("host directory mode = %04o, want the operator's 0755 untouched", got)
+	}
+}
+
+// TestReconcileRecoversAfterPowerLossWithoutChargingTheBudget is the
+// 2026-08-26 incident as a test (PRD v1.98): a fresh daemon - a reboot - finds
+// records that say running beside containers that say stopped. Nothing this
+// process started or watched produced those exits, so the alloc comes back,
+// the counter does not move even from its ceiling, no service.crashed event
+// fires, and the crash breaker is not fed.
+func TestReconcileRecoversAfterPowerLossWithoutChargingTheBudget(t *testing.T) {
+	var events []notify.Event
+	h := newHarness(t, func(cfg *reconciler.Config) {
+		cfg.Emit = func(e notify.Event) { events = append(events, e) }
+	})
+	d := desired(1)
+	d.Restart = reconciler.RestartPolicy{Attempts: 5}
+	h.setDesired(t, d)
+
+	id := reconciler.AllocID("shop", "web", 0)
+	rec := reconciler.AllocRecord{
+		ID: id, Project: "shop", Service: "web", Index: 0,
+		State: reconciler.AllocRunning, SpecHash: reconciler.SpecHash(d),
+		// Exhausted before the outage: exactly the shape that was marked
+		// failed and left down, silently, before v1.98.
+		Restarts:  5,
+		CreatedAt: h.now.Add(-24 * time.Hour), UpdatedAt: h.now.Add(-time.Hour),
+	}
+	if _, err := store.PutValue(context.Background(), h.store, store.KindAlloc, rec.Key(), rec); err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+	h.driver.crash(id, 0, h.now.Add(-time.Hour)) // found dead at boot
+
+	h.reconcile(t)
+
+	if got := h.driver.state(id); got != runtime.StateRunning {
+		t.Fatalf("state after boot recovery = %q, want running", got)
+	}
+	got := h.allocRecord(t, 0)
+	if got.Restarts != 5 {
+		t.Errorf("restarts = %d, want 5: recovery carries the counter without incrementing it", got.Restarts)
+	}
+	if got.State == reconciler.AllocFailed {
+		t.Error("the alloc was marked failed at boot; the budget verdict belongs to witnessed crashes")
+	}
+	for _, e := range events {
+		if e.Name == notify.EventServiceCrashed {
+			t.Errorf("boot recovery emitted %s: eight services dying at power-off is one fact about the node", e.Name)
+		}
+	}
+
+	// The free pass is per daemon start, not per exit: now that this daemon
+	// has started the container, a real crash charges as it always did.
+	h.driver.crash(id, 1, h.now)
+	h.reconcile(t)
+	if got := h.allocRecord(t, 0); got.State != reconciler.AllocFailed {
+		t.Errorf("state after a witnessed crash at the ceiling = %q, want failed", got.State)
 	}
 }
