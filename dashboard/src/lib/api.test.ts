@@ -38,6 +38,27 @@ describe('servicesResponseSchema', () => {
     })
     expect(result.success).toBe(false)
   })
+
+  // The key is lowercase `init`, as Desired's json tag marshals it. The schema
+  // said `Init` until v0.31.1 and no test fed it a real payload, so zod
+  // silently stripped the daemon's key and the init log picker and sequence
+  // row never rendered on a real node. This fixture is the daemon's actual
+  // shape; keep it lowercase.
+  it('parses init steps under the lowercase key the daemon sends', () => {
+    const parsed = servicesResponseSchema.parse({
+      services: [
+        {
+          Project: 'shop',
+          Service: 'web',
+          Count: 1,
+          Image: 'ghcr.io/acme/web:v1',
+          Resources: { CPUMillis: 0, MemoryBytes: 0 },
+          init: [{ name: 'migrate', image: 'ghcr.io/acme/web:v1' }],
+        },
+      ],
+    })
+    expect(parsed.services?.[0]?.init?.map((s) => s.name)).toEqual(['migrate'])
+  })
 })
 
 describe('logBatchSchema', () => {

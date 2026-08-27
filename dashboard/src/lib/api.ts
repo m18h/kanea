@@ -46,8 +46,11 @@ export const scalingPolicySchema = z.object({
 })
 
 // One init container: a step run to completion before the task (R32). The
-// outer key is PascalCase (Desired's field is untagged) while the inner fields
-// carry json tags, the same split every nested type here has.
+// The outer key is lowercase `init` like the inner fields: the whole feature
+// is post-v1.84, so Desired's field carries a json tag - unlike the untagged
+// PascalCase fields that predate the convention. The schema said `Init` until
+// v0.31.1 and the picker never rendered on a real node: zod strips unknown
+// keys, so the lowercase payload parsed cleanly to a null field.
 export const initContainerSchema = z.object({
   name: z.string(),
   image: z.string(),
@@ -83,7 +86,7 @@ export const serviceSchema = z.object({
   // absent on every record written before the fields existed, and pull_policy
   // is empty whenever the node's own default applies - which is not a value to
   // render as "none".
-  Init: z.array(initContainerSchema).nullish(),
+  init: z.array(initContainerSchema).nullish(),
   pull_policy: z.string().optional(),
   // v1.39: a service lowered from a `function` block. The marker is what the
   // Functions page filters on and the Services page filters out: one record,
