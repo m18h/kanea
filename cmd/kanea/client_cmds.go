@@ -1333,7 +1333,10 @@ func runDeploy(args []string) error {
 	}
 
 	previous := target.Image
-	target.Image = image
+	// Init steps declaring the task's previous image move with it (PRD v1.99):
+	// a migration running the app's own image must not run yesterday's bytes
+	// against today's application.
+	moved := reconciler.RetargetImage(&target, image)
 	if _, err := client.Apply(ctx, []reconciler.Desired{target}, nil); err != nil {
 		return err
 	}
@@ -1341,6 +1344,9 @@ func runDeploy(args []string) error {
 		o.printf("deploying %s/%s -> %s\n", target.Project, target.Service, image)
 	} else {
 		o.printf("deploying %s/%s: %s -> %s\n", target.Project, target.Service, previous, image)
+	}
+	if len(moved) > 0 {
+		o.printf("init steps declaring the same image follow: %s\n", strings.Join(moved, ", "))
 	}
 
 	if *noWait {

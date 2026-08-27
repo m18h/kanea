@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -127,4 +128,57 @@ func containsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// TestDeployCarriesInitStepsDeclaringTheTaskImage (PRD v1.99): the common init
+// shape is the app's own image with a different command - a migration - and a
+// deploy that moved the task alone ran yesterday's migrations against today's
+// application. A step on any other image is untouched.
+func TestDeployCarriesInitStepsDeclaringTheTaskImage(t *testing.T) {
+	svc := richService()
+	svc.Init = []reconciler.InitContainer{
+		{Name: "chown", Image: "busybox:1.36"},
+		{Name: "migrate", Image: svc.Image, Command: []string{"web", "migrate"}},
+	}
+
+	moved := reconciler.RetargetImage(&svc, "registry.example/web@sha256:abc")
+
+	if len(moved) != 1 || moved[0] != "migrate" {
+		t.Fatalf("moved = %v, want [migrate]", moved)
+	}
+	if svc.Init[0].Image != "busybox:1.36" {
+		t.Errorf("a step on its own image moved: %q", svc.Init[0].Image)
+	}
+	if svc.Init[1].Image != "registry.example/web@sha256:abc" {
+		t.Errorf("the migrate step did not follow: %q", svc.Init[1].Image)
+	}
+	if len(svc.Init[1].Command) != 2 {
+		t.Error("the step's command was not preserved")
+	}
+}
+
+// TestEveryDeploySiteRetargetsThroughTheOneHelper reads the source of the
+// three deploy sites - the CLI verb, MCP's deploy_service, and the GitOps
+// deployer - and fails when one stops calling reconciler.RetargetImage. The
+// lock-step property (a step that starts equal to the task stays equal
+// through every deploy) holds only while all three follow, so a site that
+// quietly goes back to assigning Image directly reintroduces the skew one
+// deploy at a time (PRD v1.99; the TestTheAgentWiresEveryOptionalReconciler-
+// Dependency shape, applied to a client-side recipe).
+func TestEveryDeploySiteRetargetsThroughTheOneHelper(t *testing.T) {
+	for _, site := range []struct{ name, path string }{
+		{"kanea deploy", "client_cmds.go"},
+		{"the GitOps deployer", "pipelines.go"},
+		{"MCP deploy_service", "../../internal/mcp/tools.go"},
+	} {
+		src, err := os.ReadFile(site.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", site.path, err)
+		}
+		if !strings.Contains(string(src), "reconciler.RetargetImage(") {
+			t.Errorf("%s (%s) no longer calls reconciler.RetargetImage: "+
+				"init steps on the task's image stop following its deploys there",
+				site.name, site.path)
+		}
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/m18h/kanea/internal/gitops"
@@ -297,7 +298,11 @@ func (d storeDeployer) Deploy(ctx context.Context, project, service, imageRef st
 		return nil
 	}
 	previous := current.Image
-	current.Image = imageRef
+	// Init steps declaring the task's previous image move with it (PRD v1.99).
+	// The pipeline is where the lock-step matters most: a step that starts
+	// equal to the task stays equal through every build, each deploy matching
+	// against the reference the previous one wrote.
+	moved := reconciler.RetargetImage(&current, imageRef)
 
 	mut, err := store.UpdateMutation(store.KindService, key, current, index)
 	if err != nil {
@@ -307,6 +312,9 @@ func (d storeDeployer) Deploy(ctx context.Context, project, service, imageRef st
 		return fmt.Errorf("deploy %s: %w", key, err)
 	}
 	d.log.Info("deployed a built image", "service", key, "image", imageRef, "previous", previous)
+	if len(moved) > 0 {
+		d.log.Info("init steps follow the task image", "service", key, "init", strings.Join(moved, ", "))
+	}
 
 	select {
 	case d.notify <- struct{}{}:

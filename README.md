@@ -894,7 +894,11 @@ itself, and GitLab hands the job script to the container as its command
 `kanea deploy` points a service at a new image and **leaves the rest of its
 spec alone** - it reads the record, changes the image, writes it back, and
 waits for the new image to be running so a failed deploy fails the pipeline.
-Prefer a digest to a tag: a tag can move between two allocs being replaced.
+An `init` step that declares the task's previous image moves with it (a
+migration running the app's own image must not run yesterday's bytes against
+today's application); a step on any other image is untouched, and the command
+names the steps that followed. Prefer a digest to a tag: a tag can move
+between two allocs being replaced.
 
 `--role admin` is required to deploy; a viewer token reads and changes nothing.
 `http://` beyond loopback is refused, because a bearer token would cross the
@@ -964,7 +968,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.98) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.99) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | The decision record: status, trip-over bullets, refusals, spike log |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
