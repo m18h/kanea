@@ -49,6 +49,10 @@ func initWorld(d reconciler.Desired, rec reconciler.AllocRecord, steps ...reconc
 		Actual:     map[string]runtime.Status{},
 		InitActual: map[string]reconciler.InitStatus{},
 		Now:        testNow,
+		// The daemon driving these sequences is the one that started them
+		// (PRD v1.98): init failures here are witnessed and spend the budget.
+		// Recovery tests build their own worlds without this.
+		Witnessed: witnessed(rec.ID),
 	}
 	for _, s := range steps {
 		w.InitActual[s.ID] = s
@@ -916,5 +920,32 @@ func TestAFollowerLeftInAllocInitByAnUpgradeDoesNotResumeASequence(t *testing.T)
 	}
 	if got.Kind != reconciler.ActionCreate {
 		t.Errorf("alloc 1 = %s (%s), want create", got.Kind, got.Reason)
+	}
+}
+
+// TestAnInitStepFoundDeadAtBootIsRecoveredWithoutCharge (PRD v1.98): a step
+// this daemon never started or saw running died with the platform, not on its
+// own. Steps are idempotent by R32's own rule, so the sequence re-runs - but
+// the restart budget, even an exhausted one, does not decide and does not move.
+func TestAnInitStepFoundDeadAtBootIsRecoveredWithoutCharge(t *testing.T) {
+	d := withInit(1, "migrate")
+	rec := initRecord(0, 0, "migrate", testNow.Add(-time.Second))
+	rec.Restarts = 5 // exhausted before the outage
+	w := initWorld(d, rec, initStatus(0, 0, "migrate", runtime.StateStopped, 1))
+	w.Witnessed = nil // first pass after a reboot
+
+	changed := reconciler.Observe(w)
+	got, ok := changed[rec.ID]
+	if !ok {
+		t.Fatal("an unwitnessed init exit produced no record change; the exit still happened")
+	}
+	if got.State != reconciler.AllocFailed && got.State != reconciler.AllocBackoff {
+		t.Fatalf("state = %q", got.State)
+	}
+	if got.State == reconciler.AllocFailed {
+		t.Error("the alloc was failed at boot; the budget verdict belongs to steps the daemon watched")
+	}
+	if !got.NextRestartAt.IsZero() {
+		t.Errorf("a backoff deadline %v was armed for a step nobody watched", got.NextRestartAt)
 	}
 }

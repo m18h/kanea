@@ -45,6 +45,18 @@ func record(index int, state reconciler.AllocState) reconciler.AllocRecord {
 	}
 }
 
+// witnessed marks allocs as started-or-seen-running by this daemon process
+// (PRD v1.98): the exits whose crashes spend the restart budget. A test that
+// omits it models the first pass after a reboot, where every stopped alloc is
+// recovered without charge.
+func witnessed(ids ...string) map[string]struct{} {
+	m := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		m[id] = struct{}{}
+	}
+	return m
+}
+
 // kinds summarises a plan for compact assertions.
 func kinds(actions []reconciler.Action) string {
 	parts := make([]string, 0, len(actions))
@@ -108,10 +120,11 @@ func TestPlanRestartsCrashedAlloc(t *testing.T) {
 	rec.LastExitCode = 137
 
 	got := reconciler.Plan(reconciler.World{
-		Desired: []reconciler.Desired{desired(1)},
-		Records: map[string]reconciler.AllocRecord{"shop-web-0": rec},
-		Actual:  map[string]runtime.Status{"shop-web-0": stopped(137)},
-		Now:     testNow,
+		Desired:   []reconciler.Desired{desired(1)},
+		Records:   map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:    map[string]runtime.Status{"shop-web-0": stopped(137)},
+		Now:       testNow,
+		Witnessed: witnessed("shop-web-0"),
 	})
 	if kinds(got) != "restart:shop-web-0" {
 		t.Fatalf("plan = %q, want restart:shop-web-0", kinds(got))
@@ -127,10 +140,11 @@ func TestPlanRespectsBackoffWindow(t *testing.T) {
 	rec.NextRestartAt = testNow.Add(20 * time.Second)
 
 	world := reconciler.World{
-		Desired: []reconciler.Desired{desired(1)},
-		Records: map[string]reconciler.AllocRecord{"shop-web-0": rec},
-		Actual:  map[string]runtime.Status{"shop-web-0": stopped(1)},
-		Now:     testNow,
+		Desired:   []reconciler.Desired{desired(1)},
+		Records:   map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:    map[string]runtime.Status{"shop-web-0": stopped(1)},
+		Now:       testNow,
+		Witnessed: witnessed("shop-web-0"),
 	}
 	if got := reconciler.Plan(world); len(got) != 0 {
 		t.Errorf("restarted during the backoff window: %q", kinds(got))
@@ -153,10 +167,11 @@ func TestPlanRemovesAllocAfterRestartBudgetExhausted(t *testing.T) {
 	rec.Restarts = 3
 
 	got := reconciler.Plan(reconciler.World{
-		Desired: []reconciler.Desired{d},
-		Records: map[string]reconciler.AllocRecord{"shop-web-0": rec},
-		Actual:  map[string]runtime.Status{"shop-web-0": stopped(1)},
-		Now:     testNow,
+		Desired:   []reconciler.Desired{d},
+		Records:   map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:    map[string]runtime.Status{"shop-web-0": stopped(1)},
+		Now:       testNow,
+		Witnessed: witnessed("shop-web-0"),
 	})
 	if kinds(got) != "remove:shop-web-0" {
 		t.Fatalf("plan = %q, want remove:shop-web-0", kinds(got))
@@ -339,10 +354,11 @@ func TestRestartPolicyDefaultsAndSchedule(t *testing.T) {
 	rec := record(0, reconciler.AllocBackoff)
 	rec.Restarts = reconciler.DefaultRestartAttempts
 	got := reconciler.Plan(reconciler.World{
-		Desired: []reconciler.Desired{d},
-		Records: map[string]reconciler.AllocRecord{"shop-web-0": rec},
-		Actual:  map[string]runtime.Status{"shop-web-0": stopped(1)},
-		Now:     testNow,
+		Desired:   []reconciler.Desired{d},
+		Records:   map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:    map[string]runtime.Status{"shop-web-0": stopped(1)},
+		Now:       testNow,
+		Witnessed: witnessed("shop-web-0"),
 	})
 	if kinds(got) != "remove:shop-web-0" {
 		t.Errorf("default attempts not applied: %q", kinds(got))
@@ -626,5 +642,135 @@ func TestWaitActionExplainsWhat(t *testing.T) {
 		if a.Kind == reconciler.ActionWait && !strings.Contains(a.Reason, "postgres") {
 			t.Errorf("wait reason %q does not name the dependency", a.Reason)
 		}
+	}
+}
+
+// --- unwitnessed exits: boot recovery (PRD v1.98) ---------------------------
+
+// TestAnUnwitnessedExitIsRecoveredNotRestarted: an alloc first seen already
+// stopped died with the node or during a daemon restart, not on the daemon's
+// watch, so it is recovered without spending the restart budget.
+func TestAnUnwitnessedExitIsRecoveredNotRestarted(t *testing.T) {
+	rec := record(0, reconciler.AllocBackoff)
+	rec.Restarts = 2
+
+	got := reconciler.Plan(reconciler.World{
+		Desired: []reconciler.Desired{desired(1)},
+		Records: map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:  map[string]runtime.Status{"shop-web-0": stopped(0)},
+		Now:     testNow,
+		// No Witnessed: this is the first pass after a reboot.
+	})
+	if kinds(got) != "recover:shop-web-0" {
+		t.Fatalf("plan = %q, want recover:shop-web-0", kinds(got))
+	}
+	if !strings.Contains(got[0].Reason, "budget untouched") {
+		t.Errorf("reason = %q, want it to say the budget is untouched", got[0].Reason)
+	}
+}
+
+// TestAnExhaustedBudgetDoesNotBlockBootRecovery is the 2026-08-26 power loss:
+// long-lived services whose counters had been walked to the ceiling by earlier
+// power events were marked failed at boot and left down, silently. The budget
+// verdict belongs to crashes the platform watched; an unwitnessed exit is
+// recovered however spent the counter is.
+func TestAnExhaustedBudgetDoesNotBlockBootRecovery(t *testing.T) {
+	d := desired(1)
+	d.Restart = reconciler.RestartPolicy{Attempts: 3}
+	rec := record(0, reconciler.AllocBackoff)
+	rec.Restarts = 3 // exhausted before the outage
+
+	got := reconciler.Plan(reconciler.World{
+		Desired: []reconciler.Desired{d},
+		Records: map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:  map[string]runtime.Status{"shop-web-0": stopped(0)},
+		Now:     testNow,
+	})
+	if kinds(got) != "recover:shop-web-0" {
+		t.Fatalf("plan = %q, want recover:shop-web-0 despite the exhausted counter", kinds(got))
+	}
+}
+
+// TestBootRecoveryIgnoresThePersistedBackoffDeadline: a deadline armed by a
+// daemon that no longer exists paces a loop nothing is watching.
+func TestBootRecoveryIgnoresThePersistedBackoffDeadline(t *testing.T) {
+	rec := record(0, reconciler.AllocBackoff)
+	rec.NextRestartAt = testNow.Add(5 * time.Minute) // armed before the reboot
+
+	got := reconciler.Plan(reconciler.World{
+		Desired: []reconciler.Desired{desired(1)},
+		Records: map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:  map[string]runtime.Status{"shop-web-0": stopped(1)},
+		Now:     testNow,
+	})
+	if kinds(got) != "recover:shop-web-0" {
+		t.Errorf("plan = %q, want recover:shop-web-0 without waiting out a dead daemon's backoff", kinds(got))
+	}
+}
+
+// TestAFailedRecordStaysFailedAcrossAReboot: that verdict was reached while
+// the platform watched and was visible before the outage; a reboot that
+// resurrected it would make "failed and left alone" mean "failed until the
+// next power blip". The fix is unchanged: a deploy or `kanea restart`.
+func TestAFailedRecordStaysFailedAcrossAReboot(t *testing.T) {
+	got := reconciler.Plan(reconciler.World{
+		Desired: []reconciler.Desired{desired(1)},
+		Records: map[string]reconciler.AllocRecord{"shop-web-0": record(0, reconciler.AllocFailed)},
+		Actual:  map[string]runtime.Status{"shop-web-0": stopped(1)},
+		Now:     testNow,
+		// No Witnessed: first pass after a reboot.
+	})
+	if len(got) != 0 {
+		t.Errorf("a failed record was acted on at boot: %q", kinds(got))
+	}
+}
+
+// TestObserveDoesNotFailAnUnwitnessedExit: the exit is recorded - it
+// happened - but there is no budget verdict and no backoff deadline; the
+// planner recovers the alloc immediately.
+func TestObserveDoesNotFailAnUnwitnessedExit(t *testing.T) {
+	d := desired(1)
+	d.Restart = reconciler.RestartPolicy{Attempts: 3}
+	rec := record(0, reconciler.AllocRunning)
+	rec.Restarts = 3 // exhausted: would be marked failed if witnessed
+
+	changed := reconciler.Observe(reconciler.World{
+		Desired: []reconciler.Desired{d},
+		Records: map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:  map[string]runtime.Status{"shop-web-0": stopped(0)},
+		Now:     testNow,
+	})
+	got, ok := changed["shop-web-0"]
+	if !ok {
+		t.Fatal("an unwitnessed exit produced no record change; the exit still happened")
+	}
+	if got.State != reconciler.AllocBackoff {
+		t.Errorf("state = %q, want %q: recoverable, not a verdict", got.State, reconciler.AllocBackoff)
+	}
+	if !got.NextRestartAt.IsZero() {
+		t.Errorf("a backoff deadline %v was armed for an exit nobody watched", got.NextRestartAt)
+	}
+	if got.LastExitCode != 0 || got.LastExitAt.IsZero() {
+		t.Error("the exit facts must still be recorded")
+	}
+}
+
+// TestAWitnessedExitStillSpendsTheBudget pins the boundary from the other
+// side: the same world with the alloc witnessed takes the crash path.
+func TestAWitnessedExitStillSpendsTheBudget(t *testing.T) {
+	d := desired(1)
+	d.Restart = reconciler.RestartPolicy{Attempts: 3}
+	rec := record(0, reconciler.AllocRunning)
+	rec.Restarts = 3
+
+	changed := reconciler.Observe(reconciler.World{
+		Desired:   []reconciler.Desired{d},
+		Records:   map[string]reconciler.AllocRecord{"shop-web-0": rec},
+		Actual:    map[string]runtime.Status{"shop-web-0": stopped(1)},
+		Now:       testNow,
+		Witnessed: witnessed("shop-web-0"),
+	})
+	if got := changed["shop-web-0"].State; got != reconciler.AllocFailed {
+		t.Errorf("state = %q, want %q: a witnessed exit at the ceiling is the verdict", got, reconciler.AllocFailed)
 	}
 }

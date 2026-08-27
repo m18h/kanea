@@ -34,6 +34,21 @@ type World struct {
 	InitActual map[string]InitStatus
 	// Now is the reference time for backoff decisions.
 	Now time.Time
+	// Witnessed holds the alloc ids whose containers this daemon process has
+	// started or observed running (PRD v1.98, R29). An exit spends the restart
+	// budget only when its alloc is in this set; one first seen already
+	// stopped - a node reboot, a power loss, an exit during a daemon
+	// restart - is recovered without charge. The set is in-memory by design:
+	// persisting "I saw it running" would recreate exactly the cross-reboot
+	// charging it exists to prevent. Nil means nothing has been witnessed,
+	// which is every daemon's truthful state at startup.
+	Witnessed map[string]struct{}
+}
+
+// witnessed reports whether this daemon process started or saw this alloc run.
+func (w World) witnessed(id string) bool {
+	_, ok := w.Witnessed[id]
+	return ok
 }
 
 // Plan computes the actions that close the gap between desired and actual.
@@ -156,8 +171,11 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 		// A backoff is a wait for the same alloc to be worth trying again. A new
 		// spec is not the same alloc: the operator changed something, quite
 		// possibly the thing that was crashing, and making them wait out the
-		// backoff of the image they just replaced helps nobody.
-		if hasRecord && record.State == AllocBackoff && w.Now.Before(record.NextRestartAt) && !stale {
+		// backoff of the image they just replaced helps nobody. An unwitnessed
+		// alloc does not wait either (PRD v1.98): its deadline was armed by a
+		// daemon that is gone, for a loop nothing is watching.
+		if hasRecord && record.State == AllocBackoff && w.Now.Before(record.NextRestartAt) &&
+			!stale && w.witnessed(id) {
 			return nil // still waiting out the backoff
 		}
 		// Dependencies gate creation, not restart: a dependent that is already
@@ -202,6 +220,15 @@ func planAlloc(w World, d Desired, index int, id, hash string, healthy map[strin
 			act.Kind = ActionRestart
 			act.Reason = fmt.Sprintf("restarting after init %q %s (attempt %d)",
 				record.InitName, initVerb(record.LastExitReason), record.Restarts+1)
+			// A failed step this daemon never started is a sequence interrupted
+			// by the platform, not by the step (PRD v1.98): re-run it without
+			// spending the budget. Steps are idempotent by R32's own rule, so
+			// re-running is always the right recovery.
+			if !w.witnessed(id) {
+				act.Kind = ActionRecover
+				act.Reason = fmt.Sprintf("recovering init %q that %s while the platform was down (restart budget untouched)",
+					record.InitName, initVerb(record.LastExitReason))
+			}
 			return []Action{act}
 		}
 		reason := "alloc missing"
@@ -523,6 +550,20 @@ func replaceBudget(w World, d Desired, hash string) int {
 
 // planRestart applies the restart policy to a stopped alloc.
 func planRestart(w World, d Desired, base Action, record AllocRecord, status runtime.Status) []Action {
+	// An exit this daemon never witnessed spends nothing (PRD v1.98, R29): the
+	// alloc was first seen already stopped, which is a node reboot, a power
+	// loss, or an exit during a daemon restart - the platform's outage, not
+	// the workload's crash. Recover it immediately: no budget check (the
+	// counter may well be exhausted, and that verdict belongs to crashes the
+	// platform watched), no backoff wait (the deadline was armed by a daemon
+	// that is gone, for a loop nothing is watching).
+	if !w.witnessed(base.AllocID) {
+		act := base
+		act.Kind = ActionRecover
+		act.Reason = fmt.Sprintf("recovering: exited with code %d while the platform was down (restart budget untouched)",
+			status.ExitCode)
+		return []Action{act}
+	}
 	if record.Restarts >= d.Restart.attempts() {
 		// Budget exhausted. Emit a remove so the dead container does not linger
 		// and confuse `ps`; the record is marked failed by the executor.
