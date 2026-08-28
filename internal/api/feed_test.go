@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/store"
 )
 
@@ -74,6 +75,67 @@ func readBatch(t *testing.T, conn *websocket.Conn) api.LogBatch {
 	}
 	t.Fatal("no log batch arrived")
 	return api.LogBatch{}
+}
+
+// TestAnInitContainerFeedStreamsItsOwnFile (R32): a container-qualified
+// subscription answers with the init container's stream, under the
+// container-qualified key. The key is the whole contract: the dashboard routes
+// frames by that exact string, so a frame under the task's key is one an init
+// listener never sees, and a task line in this feed is the v0.31.x symptom
+// ("the init shows the app's own log") come back.
+func TestAnInitContainerFeedStreamsItsOwnFile(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	svc := testService("web", 1)
+	svc.Init = []reconciler.InitContainer{{
+		Name: "migrate", Image: svc.Image, Command: []string{"true"},
+	}}
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{svc}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	seedAlloc(t, h, "shop", "web", 0)
+	writeLog(t, h.logDir, "shop-web-0", "task talking\n")
+	writeLog(t, h.logDir, runtime.InitID("shop-web-0", 0, "migrate"), "alembic says no\n")
+
+	conn := dialWS(t, h, "")
+	send(t, conn, api.ClientFrame{
+		Type: "subscribe", Topic: api.TopicLogs,
+		Project: "shop", Service: "web", Tail: 200, Container: "migrate",
+	})
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		frame := receive(t, conn)
+		if frame.Type == "error" {
+			t.Fatalf("feed error: %s", frame.Error)
+		}
+		if frame.Topic != api.TopicLogs || frame.Type != "data" {
+			continue
+		}
+		if frame.Key != "logs:shop/web:migrate" {
+			t.Fatalf("frame key = %q, want %q: the dashboard routes by this string",
+				frame.Key, "logs:shop/web:migrate")
+		}
+		var batch api.LogBatch
+		if err := json.Unmarshal(frame.Data, &batch); err != nil {
+			t.Fatalf("decode log batch: %v", err)
+		}
+		if len(batch.Lines) == 0 {
+			continue
+		}
+		for _, line := range batch.Lines {
+			if strings.Contains(line.Line, "task talking") {
+				t.Fatalf("the init feed carried the task's line: %q", line.Line)
+			}
+		}
+		if batch.Lines[0].Line != "alembic says no" {
+			t.Errorf("init feed first line = %q, want the init container's output",
+				batch.Lines[0].Line)
+		}
+		return
+	}
+	t.Fatal("no init log frame arrived")
 }
 
 // The bug this whole change exists for, as a test: the dashboard asks for a
