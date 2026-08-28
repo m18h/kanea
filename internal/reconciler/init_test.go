@@ -3,6 +3,8 @@ package reconciler_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -947,5 +949,54 @@ func TestAnInitStepFoundDeadAtBootIsRecoveredWithoutCharge(t *testing.T) {
 	}
 	if !got.NextRestartAt.IsZero() {
 		t.Errorf("a backoff deadline %v was armed for a step nobody watched", got.NextRestartAt)
+	}
+}
+
+// TestEachInitAttemptWritesItsSeparator (PRD v1.102): every start of a step -
+// the first, and each restart after a failure - appends one marker line to
+// the step's own log file, ahead of the attempt's output, so a tail of the
+// appended transcript says where the previous attempt ends instead of
+// leaving the reader to recognise tracebacks by shape.
+func TestEachInitAttemptWritesItsSeparator(t *testing.T) {
+	logDir := t.TempDir()
+	h := newHarness(t, func(cfg *reconciler.Config) { cfg.LogDir = logDir })
+	d := desired(1)
+	d.Init = []reconciler.InitContainer{{Name: "migrate", Image: "busybox:1"}}
+	h.setDesired(t, d)
+	allocID := reconciler.AllocID("shop", "web", 0)
+	initID := runtime.InitID(allocID, 0, "migrate")
+	path := filepath.Join(logDir, initID+".log")
+	const marker = `----- kanea: init "migrate" attempt started`
+
+	// Attempt 1 starts; its marker is already in the file, at line one.
+	h.reconcile(t)
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read init log after the first attempt: %v", err)
+	}
+	if got := strings.Count(string(first), marker); got != 1 {
+		t.Fatalf("markers after attempt 1 = %d, want 1:\n%s", got, first)
+	}
+	if !strings.HasPrefix(string(first), "-----") {
+		t.Errorf("a first attempt opened with something other than its marker:\n%s", first)
+	}
+
+	// The attempt fails; the pass records the crash and schedules the retry.
+	h.driver.exit(initID, 1)
+	h.reconcile(t)
+
+	// Past the backoff, the restart begins attempt 2: a second marker, and
+	// the first attempt's transcript intact above it.
+	h.now = h.now.Add(time.Minute)
+	h.reconcile(t)
+	both, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read init log after the retry: %v", err)
+	}
+	if got := strings.Count(string(both), marker); got != 2 {
+		t.Errorf("markers after attempt 2 = %d, want 2:\n%s", got, both)
+	}
+	if !strings.HasPrefix(string(both), string(first)) {
+		t.Errorf("the retry rewrote history; the file must only ever be appended to")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -468,6 +469,12 @@ func (r *Reconciler) startInitStep(
 	if err := r.ensureInitImage(ctx, d, step); err != nil {
 		return failedAt(phaseImage, err)
 	}
+	// After the pull, before the container: the marker's timestamp should name
+	// when the attempt ran, not when its image download began, and it must
+	// land ahead of the attempt's first output line. The crash-window adopt
+	// below can leave one extra marker - an attempt that produced no output,
+	// which is what it was.
+	r.markInitAttempt(spec.LogPath, step.Name)
 	if err := r.driver.Create(ctx, spec); err != nil {
 		// A step that already exists is the crash window, not a conflict: kanead
 		// died between starting it and writing the record. Adopt it - the record
@@ -481,6 +488,43 @@ func (r *Reconciler) startInitStep(
 	}
 
 	return r.stampInitStep(ctx, d, action, ordinal, step.Name)
+}
+
+// markInitAttempt appends the attempt separator to a step's log file (PRD
+// v1.102). The file is one appended transcript across attempts - the shim
+// opens it O_APPEND, and nothing deletes it at teardown (v1.101's contract) -
+// so without a boundary the previous attempt's failure and this attempt's
+// output read as one run, and the reader is left recognising tracebacks by
+// shape. One line, obviously kanea's and not the workload's, timestamped by
+// the daemon's clock. The leading newline guards an attempt that died
+// mid-line; skipped when the file is empty or absent, so a first attempt does
+// not open with a blank line.
+//
+// Best-effort, deliberately: a marker that cannot be written is a debug line,
+// never a failed migration.
+func (r *Reconciler) markInitAttempt(path, name string) {
+	if path == "" {
+		return
+	}
+	// #nosec G304; composed by initSpecFor from the configured log dir and an
+	// InitID built of DNS-1123-validated names, the same path the shim writes.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		r.log.Debug("init attempt marker", "path", path, "error", err)
+		return
+	}
+	prefix := "\n"
+	if info, err := f.Stat(); err == nil && info.Size() == 0 {
+		prefix = ""
+	}
+	line := fmt.Sprintf("%s----- kanea: init %q attempt started %s -----\n",
+		prefix, name, r.now().UTC().Format(time.RFC3339))
+	if _, err := f.Write([]byte(line)); err != nil {
+		r.log.Debug("init attempt marker", "path", path, "error", err)
+	}
+	if err := f.Close(); err != nil {
+		r.log.Debug("init attempt marker", "path", path, "error", err)
+	}
 }
 
 // stampInitStep writes which step is live and when it started. Nothing else on
