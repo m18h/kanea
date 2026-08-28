@@ -491,7 +491,10 @@ itself: its own image, command, args, env, resources, `user` and capabilities. R
 as root to fix a directory the task will own as uid 999 is the canonical use, so
 nothing is inherited from `task`.
 
-A step's output is its own: `kanea logs shop/api -c migrate`. A step that runs
+A step's output is its own: `kanea logs shop/api -c migrate`. Attempts append
+to one transcript per alloc, and each attempt opens with a separator line
+naming the step and the time it started, so a tail says where the previous
+attempt ends. A step that runs
 and fails, or outlives its `timeout`, fails the alloc and spends the restart
 budget, so a broken migration stops after `attempts` instead of hammering a
 database; a step that could not be *pulled* is retried without spending it,
@@ -977,7 +980,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.101) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.102) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | The decision record: status, trip-over bullets, refusals, spike log |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |

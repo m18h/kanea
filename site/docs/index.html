@@ -2669,7 +2669,10 @@ service "web" {
     </p>
     <p>
       A step's output goes to its own log: <code>kanea logs shop/api -c
-      migrate</code>. A step that <b>runs and exits non-zero</b>, or outlives
+      migrate</code>. Attempts append to one transcript per alloc, and each
+      attempt opens with a separator line naming the step and when it started,
+      so a tail says where the previous attempt ends. A step that <b>runs and
+      exits non-zero</b>, or outlives
       its timeout, fails the alloc and spends the restart budget (R29), so a
       broken migration stops after <code>attempts</code> rather than hammering a
       database forever; a step that could not be <i>pulled or created</i> is
