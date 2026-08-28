@@ -87,6 +87,68 @@ func TestTheServicesOwnEnvWinsOverAGroup(t *testing.T) {
 // TestOneGroupResolvesPerProject is why a group is evaluated once per consuming
 // service rather than once per spec: the service-reference namespace is
 // project-scoped, so the same group means two different addresses.
+// TestEnvGroupsReachInitContainers pins the R34/R32 intersection resolve.go
+// promises in prose: env_from is a statement about the service, so every
+// container of the alloc - the task and each init step - takes the groups as
+// its base, and each container's own env wins on top, separately. The
+// canonical use is exactly a migration step: reading the same DATABASE_URL
+// the app reads, without repeating it, so the two cannot drift.
+func TestEnvGroupsReachInitContainers(t *testing.T) {
+	const src = `spec_version = 1
+project "shop" {}
+
+env_group "common" {
+  LOG_LEVEL = "info"
+  APP_ENV   = "staging"
+}
+
+service "web" {
+  project  = "shop"
+  env_from = ["common"]
+  init "migrate" {
+    image   = "app:v1"
+    command = ["migrate"]
+    env = {
+      LOG_LEVEL = "debug"
+    }
+  }
+  task "app" {
+    image = "app:v1"
+    env = {
+      APP_ENV = "production"
+    }
+  }
+}
+`
+	spec, diags := parseSpec(t, src)
+	if diags.HasErrors() {
+		t.Fatalf("refused: %s", jobspec.FormatDiagnostics(diags))
+	}
+	svc := spec.ServiceByName("shop", "web")
+	initEnv := svc.Inits[0].Env
+	taskEnv := svc.Task.Env
+
+	if initEnv["APP_ENV"] != "staging" {
+		t.Errorf("init APP_ENV = %q, want the group's %q: an init step is one of the "+
+			"service's containers, and env_from is a statement about the service",
+			initEnv["APP_ENV"], "staging")
+	}
+	if initEnv["LOG_LEVEL"] != "debug" {
+		t.Errorf("init LOG_LEVEL = %q, want debug: the step's own env must win over a group",
+			initEnv["LOG_LEVEL"])
+	}
+	// And the overrides stay with their containers: neither block's env may
+	// leak into the other's.
+	if taskEnv["APP_ENV"] != "production" {
+		t.Errorf("task APP_ENV = %q, want production: the task's own env must win over a group",
+			taskEnv["APP_ENV"])
+	}
+	if taskEnv["LOG_LEVEL"] != "info" {
+		t.Errorf("task LOG_LEVEL = %q, want the group's info: the init's override leaked "+
+			"into the task", taskEnv["LOG_LEVEL"])
+	}
+}
+
 func TestOneGroupResolvesPerProject(t *testing.T) {
 	spec, diags := parseSpec(t, twoProjectSpec)
 	if diags.HasErrors() {
