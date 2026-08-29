@@ -57,7 +57,7 @@ var commands = []command{
 	{"scale", "manually scale a service", runScale},
 	{"build", "trigger a build pipeline", runBuild},
 	{"functions", "wasm functions: list (triggers, invocation rate, status)", runFunctions},
-	{"project", "project operations: sync, builds", runProject},
+	{"project", "project operations: sync, builds, remove", runProject},
 	{"backup", "backup create|list|verify", runBackup},
 	{"restore", "restore state from a snapshot", runRestore},
 	{"secret", "manage secrets: put, ls, rm (write-only; there is no get)", runSecret},

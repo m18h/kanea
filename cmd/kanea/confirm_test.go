@@ -250,3 +250,56 @@ func TestARunPreviewSaysVolumeDataSurvivesAPrune(t *testing.T) {
 		t.Errorf("a prune preview does not say the data survives:\n%s", buf.String())
 	}
 }
+
+// The project prompt names everything its yes would destroy: the services,
+// the config, and what survives. Its default is No, in confirmRemove's family
+// but through its own helper (v1.104): this gate covers strictly more.
+func TestConfirmRemoveProjectDefaultsToNoAndNamesTheServices(t *testing.T) {
+	var buf bytes.Buffer
+	ok, err := confirmRemoveProject(&out{w: &buf},
+		bufio.NewReader(strings.NewReader("\n")), "shop", []string{"api", "web"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("an empty line removed a project; the default must be no")
+	}
+	for _, want := range []string{"shop", "2 service(s)", "api, web", "pipeline/notification config", "volume data is kept", "[y/N]"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("prompt = %q, want it to carry %q", buf.String(), want)
+		}
+	}
+}
+
+func TestConfirmRemoveProjectAcceptsOnlyYes(t *testing.T) {
+	for answer, want := range map[string]bool{
+		"y\n": true, "yes\n": true, "Y\n": true,
+		"n\n": false, "no\n": false, "q\n": false, "\n": false,
+	} {
+		var buf bytes.Buffer
+		ok, err := confirmRemoveProject(&out{w: &buf},
+			bufio.NewReader(strings.NewReader(answer)), "shop", nil, true)
+		if err != nil {
+			t.Fatalf("answer %q: %v", answer, err)
+		}
+		if ok != want {
+			t.Errorf("answer %q = %v, want %v", answer, ok, want)
+		}
+	}
+}
+
+// A piped stdin is a script, and a script is never asked a question.
+func TestConfirmRemoveProjectNeverPromptsANonTerminal(t *testing.T) {
+	var buf bytes.Buffer
+	reader := bufio.NewReader(strings.NewReader("next\n"))
+	ok, err := confirmRemoveProject(&out{w: &buf}, reader, "shop", []string{"web"}, false)
+	if err != nil || !ok {
+		t.Fatalf("ok = %v, err = %v; a non-interactive remove proceeds", ok, err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a non-interactive run printed a prompt: %q", buf.String())
+	}
+	if line, _ := reader.ReadString('\n'); line != "next\n" {
+		t.Errorf("the prompt consumed stdin: next line is %q", line)
+	}
+}

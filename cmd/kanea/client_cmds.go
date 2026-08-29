@@ -396,6 +396,40 @@ func confirmRemove(o *out, in *bufio.Reader, target string, interactive bool) (b
 	return answer == "y" || answer == "yes", nil
 }
 
+// confirmRemoveProject asks before a whole project is deleted (PRD v1.104).
+//
+// confirmRemove's family - default no, only y or yes proceeds, a
+// non-interactive stdin is never asked - through its own helper, per v1.100's
+// rule that confirm families never share one: this prompt gates strictly more
+// destruction (every service, plus the pipeline config a re-apply does not
+// bring back) and its wording must be free to say so without moving
+// confirmRemove's.
+func confirmRemoveProject(o *out, in *bufio.Reader, project string, services []string, interactive bool) (bool, error) {
+	if !interactive {
+		return true, nil
+	}
+	if len(services) > 0 {
+		o.printf("Remove project %s and its %d service(s) (%s)?\n", project,
+			len(services), strings.Join(services, ", "))
+	} else {
+		o.printf("Remove project %s, which declares no services?\n", project)
+	}
+	o.printf("This deletes the declarations and the project's pipeline/notification config; "+
+		"volume data is kept. [y/N] ")
+	// Flushed before the read, for confirmApply's reason: an unflushed prompt
+	// is a question nobody can see.
+	if err := o.Err(); err != nil {
+		return false, err
+	}
+	line, err := in.ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if err != nil && answer == "" {
+		// EOF with nothing typed is an abort, not an error: the default is no.
+		return false, nil
+	}
+	return answer == "y" || answer == "yes", nil
+}
+
 // pruneScope decides what a `--remove-orphans` apply may claim authority over.
 //
 // The two refusals are the point of the function. A selector filters the

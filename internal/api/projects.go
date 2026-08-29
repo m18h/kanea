@@ -21,6 +21,11 @@ import (
 // create route: declaring a service in a project is how a project comes to be,
 // and a second way to make one would be a second source of truth about which
 // projects exist.
+//
+// Delete is not that class of problem, and exists since v1.104: it destroys
+// the records that make a project exist - its service declarations and its
+// pipeline/notification config - so it cannot disagree with the spec-driven
+// path about what exists, only about what no longer does.
 
 // ProjectSummary describes one project.
 type ProjectSummary struct {
@@ -173,6 +178,100 @@ func notificationChannels(cfg gitops.Config) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ---- delete ----
+
+// DeleteProjectResponse reports what a project deletion destroyed.
+type DeleteProjectResponse struct {
+	Project string `json:"project"`
+	// Removed names every deleted service as "project/service", sorted.
+	Removed []string `json:"removed"`
+	// ConfigRemoved reports that the project's stored pipeline/notification
+	// config existed and went with it.
+	ConfigRemoved bool   `json:"config_removed"`
+	Index         uint64 `json:"index"`
+}
+
+// handleDeleteProject deletes every service in a project and the project's
+// own config record, in one batch (PRD v1.104).
+//
+// One store.Apply on purpose: the reconciler must never observe half a
+// project gone. The config mutation is added only when the record exists
+// (steady state writes nothing), which is also what keeps ConfigRemoved
+// honest. What survives is the v1.83/v1.101 list: volume data, the project's
+// secrets, and the log directory, which this handler must never learn to
+// clean.
+func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("project")
+	// Named before the outcome is known: a delete that is refused should still
+	// say what it was aimed at.
+	auditTarget(r, name)
+
+	services, err := listAll[reconciler.Desired](r.Context(), s.store, store.KindService)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	var keys []string
+	for _, svc := range services {
+		if svc.Project == name {
+			keys = append(keys, svc.Project+"/"+svc.Service)
+		}
+	}
+	sort.Strings(keys)
+
+	hasConfig := true
+	if _, _, err := store.GetValue[gitops.Config](
+		r.Context(), s.store, store.KindProject, name); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		hasConfig = false
+	}
+
+	// A config-only project (git-backed, pre-first-sync) is deletable - that
+	// is half this route's point - so only the absence of both is a 404.
+	if len(keys) == 0 && !hasConfig {
+		writeError(w, http.StatusNotFound, fmt.Errorf("api: no such project: %s", name))
+		return
+	}
+
+	muts := make([]store.Mutation, 0, len(keys)+1)
+	for _, key := range keys {
+		muts = append(muts, store.DeleteMutation(store.KindService, key))
+	}
+	if hasConfig {
+		muts = append(muts, store.DeleteMutation(store.KindProject, name))
+	}
+	index, err := s.store.Apply(r.Context(), muts...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.wake()
+
+	// The audit line names what was destroyed (applyServices' doctrine): a
+	// destructive action whose record does not say what it removed is the one
+	// outcome worth avoiding here.
+	target := name
+	if len(keys) > 0 {
+		target += " -" + strings.Join(keys, ",-")
+	}
+	auditTarget(r, target)
+
+	// One event per service, from this path as from every other (§11); none
+	// for the config record, which no event vocabulary names.
+	for _, key := range keys {
+		service := strings.TrimPrefix(key, name+"/")
+		s.emit(notify.EventServiceRemoved, name, service, "project deleted by request")
+	}
+	s.log.Info("deleted project", "project", name,
+		"services", len(keys), "config_removed", hasConfig, "index", index)
+	writeJSON(w, http.StatusOK, DeleteProjectResponse{
+		Project: name, Removed: keys, ConfigRemoved: hasConfig, Index: index,
+	})
 }
 
 // ---- restart ----

@@ -410,6 +410,7 @@ func registry() []*tool {
 		{
 			name: "delete_project", tier: tierDestructive,
 			description: "Delete every service in a project and stop everything it is running. " +
+				"Also removes the project's pipeline configuration and notification channels. " +
 				"There is no undo. Requires confirm=true, and should only be called when an " +
 				"operator has explicitly asked for it.",
 			schema: object(map[string]property{
@@ -839,46 +840,35 @@ func runDeleteProject(ctx context.Context, s *Server, sess *Session, args argume
 	}
 	project := args.text("project")
 
-	services, err := s.services(ctx, sess)
-	if err != nil {
+	// One request against DELETE /v1/projects/{p} (v1.104): the server deletes
+	// every service and the project's own config record in one atomic batch,
+	// and emits one service.removed per service. Looping the service DELETE
+	// route here (the pre-v1.104 shape) left the config record behind, which
+	// kept a git-synced project resurrecting its services on the next sync.
+	var out struct {
+		Project       string   `json:"project"`
+		Removed       []string `json:"removed"`
+		ConfigRemoved bool     `json:"config_removed"`
+	}
+	path := pathProjects + "/" + escape(project)
+	if err := s.call(ctx, sess, http.MethodDelete, path, nil, &out); err != nil {
 		return callToolResult{}, err
-	}
-	var targets []string
-	for _, svc := range services {
-		if svc.Project == project {
-			targets = append(targets, svc.Service)
-		}
-	}
-	if len(targets) == 0 {
-		return callToolResult{}, fmt.Errorf("project %q declares no services", project)
-	}
-	sort.Strings(targets)
-
-	// Deleted one at a time, and the failures are reported rather than
-	// aggregated away: a half-deleted project is a state someone has to finish
-	// cleaning up, and they need to know which half.
-	var deleted, failures []string
-	for _, service := range targets {
-		path := fmt.Sprintf("%s/%s/%s", pathServices, escape(project), escape(service))
-		if err := s.call(ctx, sess, http.MethodDelete, path, nil, nil); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", service, err))
-			continue
-		}
-		deleted = append(deleted, service)
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Deleted %d of %d service(s) in project %q: %s\n",
-		len(deleted), len(targets), project, strings.Join(deleted, ", "))
-	if len(failures) > 0 {
-		fmt.Fprintf(&b, "\nFailed:\n  %s\n", strings.Join(failures, "\n  "))
+	if len(out.Removed) > 0 {
+		fmt.Fprintf(&b, "Deleted project %q and its %d service(s): %s\n",
+			project, len(out.Removed), strings.Join(out.Removed, ", "))
+	} else {
+		fmt.Fprintf(&b, "Deleted project %q, which declared no services.\n", project)
 	}
-	fmt.Fprint(&b, "\nSecrets under this project were not touched; delete them separately if "+
-		"they are no longer needed.")
-
-	result := textResult(b.String())
-	result.IsError = len(failures) > 0
-	return result, nil
+	if out.ConfigRemoved {
+		fmt.Fprint(&b, "Its pipeline configuration and notification channels were removed; "+
+			"the repository, if any, is no longer synced.\n")
+	}
+	fmt.Fprint(&b, "\nVolume data is kept, and secrets under this project were not touched; "+
+		"delete them separately if they are no longer needed.")
+	return textResult(b.String()), nil
 }
 
 // ---- shared helpers ----
