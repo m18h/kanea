@@ -177,7 +177,7 @@ func runProjectRemove(args []string) error {
 	sort.Strings(names)
 
 	o := newOut()
-	interactive := !(*yes || *yesShort) && term.IsTerminal(int(os.Stdin.Fd()))
+	interactive := !*yes && !*yesShort && term.IsTerminal(int(os.Stdin.Fd()))
 	ok, err := confirmRemoveProject(o, bufio.NewReader(os.Stdin), project, names, interactive)
 	if err != nil {
 		return err
