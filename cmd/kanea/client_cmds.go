@@ -414,7 +414,7 @@ func confirmRemoveProject(o *out, in *bufio.Reader, project string, services []s
 	} else {
 		o.printf("Remove project %s, which declares no services?\n", project)
 	}
-	o.printf("This deletes the declarations and the project's pipeline/notification config; "+
+	o.printf("This deletes the declarations and the project's pipeline/notification config; " +
 		"volume data is kept. [y/N] ")
 	// Flushed before the read, for confirmApply's reason: an unflushed prompt
 	// is a question nobody can see.
