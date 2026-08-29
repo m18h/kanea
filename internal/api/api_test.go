@@ -314,6 +314,19 @@ func TestServiceRemovedFiresFromEveryDeletionPath(t *testing.T) {
 	if got := removedFor("web"); got != 1 {
 		t.Errorf("a service the prune kept got %d service.removed events, want the delete's 1", got)
 	}
+
+	// The project route (v1.104) is the third deletion path under the same
+	// pin: one event per service it removed, none extra for the record that
+	// makes the project a project.
+	if _, err := h.client.DeleteProject(ctx, "shop"); err != nil {
+		t.Fatalf("delete project: %v", err)
+	}
+	if got := removedFor("web"); got != 2 {
+		t.Errorf("the project delete emitted %d service.removed events for web in total, want 2", got)
+	}
+	if got := removedFor("api"); got != 1 {
+		t.Errorf("a service already pruned got %d events after the project delete, want its 1", got)
+	}
 }
 
 func TestListAllocsFilters(t *testing.T) {

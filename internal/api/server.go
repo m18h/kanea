@@ -460,6 +460,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET "+PathProjects, s.route(policy{action: "project.list"}, s.handleListProjects))
 	mux.Handle("GET "+PathProjects+"/{project}",
 		s.route(policy{action: "project.get"}, s.handleGetProject))
+	// A project delete (v1.104) destroys every service declaration and the
+	// project's pipeline/notification config in one batch; volume data,
+	// secrets and log files survive, and the handler says so.
+	mux.Handle("DELETE "+PathProjects+"/{project}",
+		s.route(policy{action: "project.delete", mutates: true}, s.handleDeleteProject))
 	mux.Handle("GET "+PathStats, s.route(policy{action: "stats.read"}, s.handleStats))
 	mux.Handle("GET "+PathStatsHistory,
 		s.route(policy{action: "stats.history"}, s.handleStatsHistory))

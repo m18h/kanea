@@ -18,6 +18,10 @@ type applier struct {
 	mu    sync.Mutex
 	specs []*jobspec.Spec
 	err   error
+	// onApply, when set, runs mid-apply: the window between the sync reading
+	// the config and writing its state back, which is where a concurrent
+	// project delete lands.
+	onApply func()
 }
 
 func (a *applier) Apply(_ context.Context, spec *jobspec.Spec) ([]string, error) {
@@ -25,6 +29,9 @@ func (a *applier) Apply(_ context.Context, spec *jobspec.Spec) ([]string, error)
 	defer a.mu.Unlock()
 	if a.err != nil {
 		return nil, a.err
+	}
+	if a.onApply != nil {
+		a.onApply()
 	}
 	a.specs = append(a.specs, spec)
 
@@ -422,5 +429,34 @@ service "web" {
 	}
 	if _, ok := gitops.ConfigFromSpec(plain, "shop"); ok {
 		t.Fatal("an image-only spec produced a pipeline config")
+	}
+}
+
+// TestSyncDoesNotResurrectADeletedProject pins v1.104's CAS: the sync-state
+// write lands only if the config record survived the sync. The old
+// unconditional put is what re-created a project deleted mid-sync - and the
+// poll loop is driven by exactly that record, so the resurrection was
+// permanent: the next poll found the record, synced, and wrote it again.
+func TestSyncDoesNotResurrectADeletedProject(t *testing.T) {
+	h := newServiceHarness(t, nil)
+	h.configure(t, gitops.Config{
+		Project: "shop", Source: gitops.Source{URL: syncRepo(t)},
+	})
+
+	// The delete lands mid-apply: after the sync read the config, before it
+	// writes its state back. DELETE /v1/projects/{p} removes the record.
+	h.applier.onApply = func() {
+		if _, err := h.store.Apply(context.Background(),
+			store.DeleteMutation(store.KindProject, "shop")); err != nil {
+			t.Fatalf("delete config mid-sync: %v", err)
+		}
+	}
+
+	if _, err := h.svc.Sync(context.Background(), "shop", "tester"); err == nil ||
+		!strings.Contains(err.Error(), "deleted during sync") {
+		t.Fatalf("Sync = %v, want a deleted-during-sync refusal", err)
+	}
+	if _, err := h.store.Get(context.Background(), store.KindProject, "shop"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("the config record was resurrected: %v", err)
 	}
 }

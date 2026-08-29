@@ -250,6 +250,16 @@ func (c *Client) DeleteService(ctx context.Context, project, service string) (Ap
 	return out, err
 }
 
+// DeleteProject deletes every service in a project and the project's own
+// pipeline/notification config, in one batch (PRD v1.104). Volume data,
+// secrets and log files survive.
+func (c *Client) DeleteProject(ctx context.Context, project string) (DeleteProjectResponse, error) {
+	var out DeleteProjectResponse
+	path := fmt.Sprintf("%s/%s", PathProjects, url.PathEscape(project))
+	err := c.do(ctx, http.MethodDelete, path, nil, &out)
+	return out, err
+}
+
 // Scale sets a service's replica count.
 func (c *Client) Scale(ctx context.Context, project, service string, count int) (ApplyResponse, error) {
 	var out ApplyResponse

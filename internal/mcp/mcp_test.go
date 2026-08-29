@@ -59,6 +59,11 @@ func (f *fakeAPI) handler() http.Handler {
 			})
 		case r.URL.Path == "/v1/services" && r.Method == http.MethodPut:
 			_ = json.NewEncoder(w).Encode(map[string]any{"applied": []string{"shop/web"}})
+		case r.URL.Path == "/v1/projects/shop" && r.Method == http.MethodDelete:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"project": "shop", "removed": []string{"shop/web"},
+				"config_removed": true, "index": 9,
+			})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{})
 		}
@@ -248,17 +253,27 @@ func TestDestructiveToolsNeedConfirmation(t *testing.T) {
 		t.Errorf("the refusal does not say how to confirm: %s", text)
 	}
 	// And nothing was deleted: the gate is before the work, not after it.
-	if api.called(http.MethodDelete, "/v1/services/shop/web") {
-		t.Fatal("delete_project deleted a service before being confirmed")
+	if api.called(http.MethodDelete, "/v1/projects/shop") {
+		t.Fatal("delete_project deleted before being confirmed")
 	}
 
-	if _, isError := callTool(t, s, "delete_project", map[string]any{
+	text, isError = callTool(t, s, "delete_project", map[string]any{
 		"project": "shop", "confirm": true,
-	}); isError {
+	})
+	if isError {
 		t.Fatal("a confirmed delete_project was still refused")
 	}
-	if !api.called(http.MethodDelete, "/v1/services/shop/web") {
+	// One request against the project route (v1.104), never a per-service
+	// loop: the atomic batch and the config-record removal are the server's.
+	if !api.called(http.MethodDelete, "/v1/projects/shop") {
 		t.Error("a confirmed delete_project deleted nothing")
+	}
+	if api.called(http.MethodDelete, "/v1/services/shop/web") {
+		t.Error("delete_project still loops the service DELETE route")
+	}
+	// The result names what went, the config included.
+	if !strings.Contains(text, "shop/web") || !strings.Contains(text, "pipeline configuration") {
+		t.Errorf("result does not name what was removed: %s", text)
 	}
 }
 
