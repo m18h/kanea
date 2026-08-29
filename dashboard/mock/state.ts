@@ -567,6 +567,57 @@ export function uptimeSeconds(): number {
   return Math.floor((Date.now() - startedAt) / 1000)
 }
 
+// ---- the spec editor (PRD v1.38, v1.103) ----
+
+/**
+ * specSource renders one service's generated HCL the way GET /v1/spec/source
+ * would: literals from the mock's desired state, no comments, no variables.
+ */
+export function specSource(svc: MockService): string {
+  const lines = [
+    `service "${svc.service}" {`,
+    `  project = "${svc.project}"`,
+    `  count   = ${svc.count}`,
+    ``,
+    `  task "app" {`,
+    `    image = "${svc.image}"`,
+    `  }`,
+  ]
+  if (svc.expose) {
+    lines.push(
+      ``,
+      `  network {`,
+      `    port "http" { container = ${svc.expose.port} }`,
+      `  }`,
+      ``,
+      `  expose {`,
+      `    domains = [${svc.expose.domains.map((d) => `"${d}"`).join(', ')}]`,
+      `  }`,
+    )
+  }
+  lines.push(`}`)
+  return `spec_version = 1\n\nproject "${svc.project}" {}\n\n${lines.join('\n')}\n`
+}
+
+/**
+ * applySpecText applies the crude facts a spec text states about one known
+ * service: its count and its image. Regex-to-mock-state is the mock's
+ * documented register - a real parser here would be a second implementation
+ * of jobspec, and encoding the client's assumptions is how a mock demos
+ * perfectly and fails on a real node.
+ */
+export function applySpecText(svc: MockService, text: string): void {
+  const image = /image\s*=\s*"([^"]+)"/.exec(text)?.[1]
+  const count = /count\s*=\s*(\d+)/.exec(text)?.[1]
+  if (image !== undefined && image !== svc.image) {
+    svc.image = image
+    restartService(svc)
+  }
+  if (count !== undefined && Number(count) !== svc.count) {
+    scaleService(svc, Number(count))
+  }
+}
+
 // ---- pipelines ----
 
 /**
