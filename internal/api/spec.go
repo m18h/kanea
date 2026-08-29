@@ -234,20 +234,16 @@ func (s *Server) handleSpecSource(w http.ResponseWriter, r *http.Request) {
 	if cfg, _, err := store.GetValue[gitops.Config](
 		r.Context(), s.store, store.KindProject, project); err == nil {
 		configured := cfg.HasSource() || len(cfg.Builds) > 0 || cfg.Notifications != nil
-		if service != "" && configured {
-			// A one-service spec cannot carry the project's pipeline state:
-			// applying it would re-derive the project config from the one
-			// service present and silently drop every other service's build
-			// block. Refuse rather than generate a spec that applies as less
-			// than what is running.
-			writeError(w, http.StatusUnprocessableEntity,
-				fmt.Errorf("api: project %s has a git or build pipeline; generate the whole "+
-					"project (omit service=) or edit the repository's spec instead", project))
-			return
-		}
 		if service == "" && configured {
 			pipelines = append(pipelines, cfg)
 		}
+		// A one-service spec deliberately omits the project's pipeline state
+		// (v1.103; a 422 before that). The omission is safe on the round trip
+		// because the apply path is additive on pipelines: a request that
+		// names none leaves the stored config untouched, so the generated
+		// spec cannot drop a build block or a notification channel by being
+		// applied. What it must not be used as is the project's spec of
+		// record - `generated: true` and the git-sync warning both say so.
 	}
 
 	hcl, err := s.spec.Generate(services, pipelines)
