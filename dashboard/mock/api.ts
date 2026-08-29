@@ -499,18 +499,18 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const service = url.searchParams.get('service')
     if (!project) return json(res, 400, { error: 'api: spec source needs a project' })
     if (service) {
-      // The daemon refuses a one-service spec for a pipeline project
-      // (§16.1): shop is the mock's git-backed project, so its services
-      // demo the refusal path and the others demo the editable one.
-      if (project === 'shop') {
-        return json(res, 422, {
-          error:
-            `api: project ${project} has a git or build pipeline; generate the whole ` +
-            `project (omit service=) or edit the repository's spec instead`,
-        })
-      }
       const svc = findService(project, service)
       if (!svc) return json(res, 404, { error: `api: no services in project ${project} match` })
+      // The daemon refuses generation for a field it cannot express (v1.38)
+      // rather than emit a spec that applies as something else; the wasm
+      // function is the mock's demoable case of that path. A pipeline
+      // project is deliberately NOT a refusal (v1.103): a one-service spec
+      // omits pipeline state by construction, so shop's services pre-fill.
+      if (svc.isFunction) {
+        return json(res, 422, {
+          error: `api: cannot generate a spec for ${project}/${service}: its function fields are not expressible`,
+        })
+      }
       return json(res, 200, { hcl: specSource(svc), generated: true })
     }
     const matched = services.filter((s) => s.project === project)
