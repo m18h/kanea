@@ -219,7 +219,7 @@ func TestApplyRefusesTheFullR25List(t *testing.T) {
 			d := wasm()
 			tc.mutate(&d)
 			if _, err := h.client.Apply(ctx, []reconciler.Desired{d}, nil); err == nil ||
-				!strings.Contains(err.Error(), "R25") {
+				!strings.Contains(err.Error(), "wasm") {
 				t.Fatalf("a wasm service with %s applied: %v", tc.name, err)
 			}
 		})
@@ -243,7 +243,7 @@ func TestApplyRefusesDisagreeingRouteAuth(t *testing.T) {
 		Auth: &reconciler.AuthPolicy{BasicRef: "secret:shop/htpasswd"},
 	}}
 	if _, err := h.client.Apply(ctx, []reconciler.Desired{d}, nil); err == nil ||
-		!strings.Contains(err.Error(), "R16") {
+		!strings.Contains(err.Error(), "must declare the same auth") {
 		t.Fatalf("disagreeing route auth applied: %v", err)
 	}
 

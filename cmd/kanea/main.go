@@ -36,10 +36,10 @@ type command struct {
 // slice and does not care either way.
 var commands = []command{
 	{"init", "interactive first-install: config, auth, deps/kernel/NTP checks, key ceremony", runInit},
-	{"install", "install the pinned host components: containerd, runc, buildkit (PRD §5.2.12)", runInstall},
+	{"install", "install the pinned host components: containerd, runc, buildkit", runInstall},
 	{"bundle", "author an offline component bundle for an air-gapped node: create", runBundle},
 	{"agent", "run the control-plane daemon (kanead)", runAgent},
-	{"edge", "run the edge ingress proxy (kanea-edge, separate process; PRD §5.2.6)", runEdge},
+	{"edge", "run the edge ingress proxy (kanea-edge, separate process)", runEdge},
 	{"doctor", "verify node health: deps, versions, disk, clock", runDoctor},
 	{"firewall", "print the host-firewall rules this node's workloads need (it never applies them)", runFirewall},
 	{"plan", "dry-run diff of a job spec; selectors (shop, shop/web) scope it", runPlan},
@@ -66,7 +66,7 @@ var commands = []command{
 	{"user", "manage accounts: add, ls, rm", runUser},
 	{"token", "manage API tokens: create, ls, rm", runToken},
 	{"upgrade", "fetch + verify the latest release, drain edge, restart, migrate (--check, --no-fetch)", runUpgrade},
-	{"mcp", "stdio MCP server for local AI agents (PRD §16.3)", runMCP},
+	{"mcp", "stdio MCP server for local AI agents", runMCP},
 	{"ui", "open the dashboard URL", runUI},
 	{"version", "print version and exit", runVersion},
 }
@@ -126,7 +126,7 @@ func runVersion([]string) error {
 }
 
 func printUsage(w io.Writer) error {
-	if _, err := fmt.Fprintln(w, "kanea: lightweight container orchestration (north star: PRD.md)"); err != nil {
+	if _, err := fmt.Fprintln(w, "kanea: lightweight container orchestration in one binary"); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintln(w, "\nUsage: kanea <command> [args]\n\nCommands:"); err != nil {

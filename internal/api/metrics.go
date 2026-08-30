@@ -141,7 +141,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		if s.breaker.Open() {
 			open = 1
 		}
-		out.printf("# HELP kanea_circuit_breaker_open Whether scale actions are paused (PRD §4.3).\n")
+		out.printf("# HELP kanea_circuit_breaker_open Whether scale actions are paused.\n")
 		out.printf("# TYPE kanea_circuit_breaker_open gauge\n")
 		out.printf("kanea_circuit_breaker_open %d\n", open)
 		out.printf("# HELP kanea_circuit_breaker_trips_total Times the breaker has opened.\n")

@@ -100,7 +100,7 @@ func validateFiles(svc *Service) hcl.Diagnostics {
 	if total > MaxServiceFileBytes {
 		diags = append(diags, fileDiag(svc.Files[0], "Service file content is too large",
 			fmt.Sprintf("Service %q declares %d bytes of file content; the limit is %d. "+
-				"A service record is replicated in full on every deploy (§21).",
+				"A service record is replicated in full on every deploy.",
 				svc.Name, total, MaxServiceFileBytes)))
 	}
 	return diags
@@ -132,7 +132,7 @@ func validateFilePath(svc *Service, f *File, seenPath map[string]hcl.Range) hcl.
 	}
 	if p == "/etc/resolv.conf" {
 		return bad("mounts at /etc/resolv.conf, which Kanea writes so the alloc can resolve " +
-			"its peers by name (§5.2.5). Shadowing it would take the service off the internal zone.")
+			"its peers by name. Shadowing it would take the service off the internal zone.")
 	}
 	if prev, dup := seenPath[p]; dup {
 		return bad(fmt.Sprintf("mounts at %q, which is already mounted at %s. Two things on one "+
@@ -184,7 +184,7 @@ func validateFileMode(svc *Service, f *File) hcl.Diagnostics {
 // CheckFileSize is the shared core of the parse-time and apply-time size rules.
 func CheckFileSize(name string, n int) error {
 	if n > MaxFileBytes {
-		return fmt.Errorf("file %q is %d bytes; the limit is %d (PRD §21)", name, n, MaxFileBytes)
+		return fmt.Errorf("file %q is %d bytes; the limit is %d", name, n, MaxFileBytes)
 	}
 	return nil
 }
@@ -330,7 +330,7 @@ func validateSpecFileBudget(spec *Spec) hcl.Diagnostics {
 		Severity: hcl.DiagError,
 		Summary:  "Too much file content in one apply",
 		Detail: fmt.Sprintf("This spec declares %d bytes of file content across every service; "+
-			"the limit is %d (PRD §21). An apply is one request, and one request is bounded.",
+			"the limit is %d. An apply is one request, and one request is bounded.",
 			total, MaxSpecFileBytes),
 	}}
 }

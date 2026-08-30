@@ -952,13 +952,13 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 		// can never pass, which reads as a service that is permanently down.
 		if svc.Runtime != "" && svc.Runtime != runtime.RuntimeWasmtime {
 			return ApplyResponse{}, http.StatusBadRequest,
-				fmt.Errorf("service %s names runtime %q; only %q is supported (PRD §6.2 R25)",
+				fmt.Errorf("service %s names runtime %q; only %q is supported",
 					key, svc.Runtime, runtime.RuntimeWasmtime)
 		}
 		if svc.Runtime == runtime.RuntimeWasmtime && svc.Check != nil && svc.Check.Type == reconciler.HealthExec {
 			return ApplyResponse{}, http.StatusBadRequest,
 				fmt.Errorf("service %s is a wasm function with an exec health check; the wasm runtime "+
-					"has no exec primitive (PRD §6.2 R25): probe it over http or tcp", key)
+					"has no exec primitive: probe it over http or tcp", key)
 		}
 		mut, err := store.PutMutation(store.KindService, key, svc)
 		if err != nil {

@@ -175,7 +175,7 @@ func validateCommand(svc *Service) hcl.Diagnostics {
 			Summary:  "Empty args",
 			Detail: fmt.Sprintf("Service %q declares args = []. An empty override cannot be "+
 				"recorded apart from an absent one; omit the field to keep the image's own "+
-				"arguments, or use command to replace the entrypoint outright (PRD §6.2 R12).",
+				"arguments, or use command to replace the entrypoint outright.",
 				svc.Name),
 			Subject: svc.Task.DefRange.Ptr(),
 		})

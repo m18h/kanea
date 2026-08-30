@@ -763,7 +763,7 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 				Severity: hcl.DiagError,
 				Summary:  "Init container declares pids",
 				Detail: fmt.Sprintf("Init %q of service %q declares resources.pids; an init "+
-					"step's pids cap is the alloc's (PRD §6.2 R11). Set resources.pids on the "+
+					"step's pids cap is the alloc's. Set resources.pids on the "+
 					"task's resources block instead.", init.Name, s.Name),
 				Subject: init.Resources.DefRange.Ptr(),
 			})

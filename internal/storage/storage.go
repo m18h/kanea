@@ -126,7 +126,7 @@ type Request struct {
 // dependency from storage to jobspec, which would point the wrong way.
 var ownershipRefusedBy = map[string]string{
 	TypeHost: "a host volume is the operator's own directory, which Kanea neither creates " +
-		"nor changes (R15)",
+		"nor changes",
 	TypeNFS: "the kernel NFS client has no uid= or gid= mount option; ownership is the " +
 		"server's to decide",
 }

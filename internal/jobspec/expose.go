@@ -260,7 +260,7 @@ func validateExposePort(svc *Service, e *Expose) hcl.Diagnostics {
 			Severity: hcl.DiagError,
 			Summary:  "Exposed port is udp",
 			Detail: fmt.Sprintf("Service %q exposes port %q, which is udp. The edge routes "+
-				"HTTP over a service frontend and udp ports have no frontend (R21); "+
+				"HTTP over a service frontend and udp ports have no frontend; "+
 				"publish the port instead (network { publish … mode = %q }).",
 				svc.Name, name, PublishUDP),
 			Subject: rng.Ptr(),

@@ -67,7 +67,7 @@ func ensureFuseConf(log *slog.Logger) error {
 		body += "\n"
 	}
 	body += "# Added by kanea: S3 volumes are mounted by an unprivileged helper and\n" +
-		"# traversed by root-run containerd, which needs allow_other (PRD §8).\n" +
+		"# traversed by root-run containerd, which needs allow_other.\n" +
 		fuseOption + "\n"
 
 	if err := writeFileAtomic(FuseConfPath, strings.NewReader(body), 0o644); err != nil {

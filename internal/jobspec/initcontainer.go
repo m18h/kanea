@@ -53,13 +53,13 @@ func CheckPullPolicy(policy string, allowAlways bool) error {
 	}
 	if !pullPolicies[policy] {
 		return fmt.Errorf("pull_policy %q is not a policy; it must be %q, %q or %q, "+
-			"or omitted to take the node's default (PRD §6.2 R33)",
+			"or omitted to take the node's default",
 			policy, runtime.PullIfNotPresent, runtime.PullNever, runtime.PullAlways)
 	}
 	if policy == runtime.PullAlways && !allowAlways {
 		return fmt.Errorf("pull_policy %q is not available on an init container: it lowers to "+
 			"update { auto = true }, which pins a digest, and the pinned image belongs to the "+
-			"task. Declare it on the task instead (PRD §6.2 R33)", runtime.PullAlways)
+			"task. Declare it on the task instead", runtime.PullAlways)
 	}
 	return nil
 }
@@ -85,7 +85,7 @@ func validateInits(svc *Service) hcl.Diagnostics {
 			Severity: hcl.DiagError,
 			Summary:  "Function declares init containers",
 			Detail: fmt.Sprintf("Function %q declares %d init block(s); the wasm runtime runs one "+
-				"module and has no second container to run (PRD §6.2 R25). Use an ordinary service.",
+				"module and has no second container to run. Use an ordinary service.",
 				svc.Name, len(svc.Inits)),
 			Subject: svc.Inits[0].DefRange.Ptr(),
 		})
@@ -129,7 +129,7 @@ func validateInits(svc *Service) hcl.Diagnostics {
 		if len(init.Command) > 0 && strings.TrimSpace(init.Command[0]) == "" {
 			diags = append(diags, initDiag(init, "Empty command",
 				fmt.Sprintf("Init %q of service %q declares a command whose first element is empty; "+
-					"it names the program to run (PRD §6.2 R12).", init.Name, svc.Name)))
+					"it names the program to run.", init.Name, svc.Name)))
 		}
 		// R12's v1.97 half, the task's rule duplicated on purpose (recurring
 		// rule 5): a declared-empty args cannot survive serialization.
@@ -137,7 +137,7 @@ func validateInits(svc *Service) hcl.Diagnostics {
 			diags = append(diags, initDiag(init, "Empty args",
 				fmt.Sprintf("Init %q of service %q declares args = []. An empty override cannot "+
 					"be recorded apart from an absent one; omit the field to keep the image's own "+
-					"arguments, or use command to replace the entrypoint outright (PRD §6.2 R12).",
+					"arguments, or use command to replace the entrypoint outright.",
 					init.Name, svc.Name)))
 		}
 

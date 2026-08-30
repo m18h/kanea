@@ -171,7 +171,7 @@ func validateGit(p *Project) hcl.Diagnostics {
 					Severity: hcl.DiagError,
 					Summary:  "Git url embeds credentials",
 					Detail: fmt.Sprintf("Project %q sets git.url with a credential in the userinfo "+
-						"part. Credentials are referenced, never inlined (R3): use "+
+						"part. Credentials are referenced, never inlined: use "+
 						"git.auth_ref = \"secret:%s/<name>\".", p.Name, p.Name),
 					Subject: p.DefRange.Ptr(),
 				})
@@ -191,7 +191,7 @@ func validateGit(p *Project) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  "Git credential is not a secret reference",
 				Detail: fmt.Sprintf("Project %q sets git.%s = %q. Credentials are referenced, "+
-					"never inlined (R3): use secret:%s/<name> or secret:%s/<name>.",
+					"never inlined: use secret:%s/<name> or secret:%s/<name>.",
 					p.Name, field, ref, p.Name, SharedSecretScope),
 				Subject: p.DefRange.Ptr(),
 			})
@@ -282,7 +282,7 @@ func validateNotifications(p *Project) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  "Notification channel has no credential reference",
 				Detail: fmt.Sprintf("Project %q needs notifications.%s. Credentials are "+
-					"referenced, never inlined (R3): use secret:%s/<name>.", p.Name, field, p.Name),
+					"referenced, never inlined: use secret:%s/<name>.", p.Name, field, p.Name),
 				Subject: rng.Ptr(),
 			})
 			continue
@@ -1162,7 +1162,7 @@ func validateUpdate(svc *Service) hcl.Diagnostics {
 			Severity: hcl.DiagError,
 			Summary:  "Unknown update strategy",
 			Detail: fmt.Sprintf("Service %q has update strategy = %q; it must be %q or %q. "+
-				"Canary deployments are a post-v1 feature (PRD §19.3).",
+				"Canary deployments are a post-v1 feature.",
 				svc.Name, up.Strategy, reconciler.StrategyRolling, reconciler.StrategyReplace),
 			Subject: svc.DefRange.Ptr(),
 		})
@@ -1270,7 +1270,7 @@ func validateAutoUpdate(svc *Service) hcl.Diagnostics {
 	if svc.Build != nil {
 		return reject("Auto-update conflicts with build",
 			fmt.Sprintf("%s follows a tag in a registry, but this service builds its own image "+
-				"and the pipeline pins the digest it produces (§10.2). Remove one of them.", wrote))
+				"and the pipeline pins the digest it produces. Remove one of them.", wrote))
 	}
 	if svc.Task == nil || svc.Task.Image == "" {
 		return reject("Auto-update needs an image",
@@ -1726,7 +1726,7 @@ func validateGrant(kind, service, name, grant string, rng hcl.Range) hcl.Diagnos
 			Severity: hcl.DiagError,
 			Summary:  "Missing grant",
 			Detail: fmt.Sprintf("%s %q of service %q must name a `grant` the operator has "+
-				"defined on the node (§15.1).", kind, name, service),
+				"defined on the node.", kind, name, service),
 			Subject: rng.Ptr(),
 		}}
 	}
@@ -1798,7 +1798,7 @@ func CheckSecretRefScope(ref, project, where string) error {
 	if !strings.HasPrefix(ref, SecretPrefix) {
 		return &secretRefError{
 			summary: "Credential is not a secret reference",
-			detail: fmt.Sprintf("%s is %q. Credentials are referenced, never inlined (R3): "+
+			detail: fmt.Sprintf("%s is %q. Credentials are referenced, never inlined: "+
 				"use secret:%s/<name> or secret:%s/<name>.",
 				where, ref, project, SharedSecretScope),
 		}
@@ -1815,7 +1815,7 @@ func CheckSecretRefScope(ref, project, where string) error {
 		return &secretRefError{
 			summary: "Cross-project secret reference",
 			detail: fmt.Sprintf("%s references %q, which belongs to another project. "+
-				"Only secret:%s/… or secret:%s/… may be read here (R5).",
+				"Only secret:%s/… or secret:%s/… may be read here.",
 				where, ref, project, SharedSecretScope),
 		}
 	}

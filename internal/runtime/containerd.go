@@ -605,7 +605,7 @@ func (d *containerdDriver) execTask(ctx context.Context, id string) (containerd.
 		return nil, fmt.Errorf("load %s: %w", id, err)
 	}
 	if info, err := container.Info(ctx); err == nil && info.Runtime.Name == RuntimeWasmtime {
-		return nil, fmt.Errorf("%w: %s is a wasm function (PRD §6.2 R25); use its http endpoint or logs", ErrNoExec, id)
+		return nil, fmt.Errorf("%w: %s is a wasm function; use its http endpoint or logs", ErrNoExec, id)
 	}
 	task, err := container.Task(ctx, nil)
 	if err != nil {

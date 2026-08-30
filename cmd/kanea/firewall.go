@@ -115,7 +115,7 @@ func runFirewall(args []string) error {
 	o.printf("These are printed, never applied: Kanea owns one nftables table (%q) and\n", "kanea")
 	o.printf("writes nothing outside it, because a rule in a manager's ruleset is flushed\n")
 	o.printf("away by that manager on its next reload.\n")
-	o.printf("A published port (PRD §7.2.2) needs its own inbound allow; this command\n")
+	o.printf("A published port needs its own inbound allow; this command\n")
 	o.printf("cannot know which ports are published without asking the daemon.\n")
 	return o.Err()
 }

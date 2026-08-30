@@ -223,7 +223,7 @@ func validateVolumeOwnership(spec *Spec, svc *Service, v *Volume) hcl.Diagnostic
 // detect that it was false.
 var ownershipRefusedBy = map[string]string{
 	StorageHost: "a host volume is a directory the operator owns, and Kanea never changes its " +
-		"ownership (R15; it may create a missing one with create = true, and even then it " +
+		"ownership (it may create a missing one with create = true, and even then it " +
 		"does not chown it). Set the ownership on the node, outside Kanea",
 	StorageNFS: "the kernel NFS client has no uid= or gid= mount option; ownership is the NFS " +
 		"server's to decide, through its export options and idmapd",

@@ -20,12 +20,12 @@ import (
 // evaluation contexts own - `service` (R9, resolve.go) and `secret` (R35,
 // secretref.go), which a variable of the same name would shadow.
 var reservedVarNames = map[string]string{
-	"GIT_SHA":       "a build-time built-in (R2)",
-	"GIT_SHA_SHORT": "a build-time built-in (R2)",
-	"GIT_BRANCH":    "a build-time built-in (R2)",
-	"KANEA_PROJECT": "a built-in (R2)",
-	"service":       "the service-reference namespace (R9)",
-	"secret":        "the secret-interpolation namespace (R35)",
+	"GIT_SHA":       "a build-time built-in",
+	"GIT_SHA_SHORT": "a build-time built-in",
+	"GIT_BRANCH":    "a build-time built-in",
+	"KANEA_PROJECT": "a built-in",
+	"service":       "the service-reference namespace",
+	"secret":        "the secret-interpolation namespace",
 }
 
 // variablesSchema pulls just the variables blocks out of the merged body,

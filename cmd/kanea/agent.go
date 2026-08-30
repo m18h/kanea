@@ -77,14 +77,14 @@ func runAgent(args []string) error {
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	dataDir := fs.String("data-dir", defaultDataDir, "state directory")
 	backupDir := fs.String("backup-dir", "",
-		"replicate state to this directory (PRD §15.3)")
+		"replicate state to this directory")
 	backupS3 := fs.String("backup-s3", "",
 		"replicate state to s3://bucket[/prefix]")
 	backupS3Endpoint := fs.String("backup-s3-endpoint", "", "S3 endpoint URL")
 	backupS3Region := fs.String("backup-s3-region", "", "S3 region")
 	backupS3AccessKey := fs.String("backup-s3-access-key", "", "S3 access key id")
 	backupS3Secret := fs.String("backup-s3-secret-key", "",
-		"`secret:` reference to the S3 secret key (never a literal; R3)")
+		"`secret:` reference to the S3 secret key (never a literal)")
 	backupS3PathStyle := fs.Bool("backup-s3-path-style", true,
 		"address the bucket as /bucket/key rather than as a subdomain")
 	backupInterval := fs.Duration("backup-interval", backup.DefaultSnapshotInterval,
@@ -94,7 +94,7 @@ func runAgent(args []string) error {
 	backupRetention := fs.Int("backup-retention", backup.DefaultRetention,
 		"how many snapshots to keep")
 	autoRestore := fs.Bool("restore-if-empty", false,
-		"restore the newest archive when this node has no state at all (§15.3 first-boot)")
+		"restore the newest archive when this node has no state at all (first-boot)")
 	logDir := fs.String("log-dir", defaultLogDir, "per-alloc log directory")
 	volumeDir := fs.String("volume-dir", "", "local volume root (default <data-dir>/volumes)")
 	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
@@ -108,13 +108,13 @@ func runAgent(args []string) error {
 	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
 		"what the masquerade rule treats as internal; must contain --node-cidr")
 	nodeCIDR6 := fs.String("node-cidr6", "",
-		"this node's IPv6 container subnet (PRD v1.41); requires --cluster-cidr6 and --service-cidr6, ULA recommended")
+		"this node's IPv6 container subnet; requires --cluster-cidr6 and --service-cidr6, ULA recommended")
 	clusterCIDR6 := fs.String("cluster-cidr6", "",
 		"the routed IPv6 range; must contain --node-cidr6")
 	serviceCIDR6 := fs.String("service-cidr6", "",
 		"IPv6 pool for service frontend twins; enables dual-stack with the other two *6 flags")
 	serverConfig := fs.String("config", "",
-		"server config file (PRD §15.1; default: "+nodeconfig.DefaultPath+
+		"server config file (default: "+nodeconfig.DefaultPath+
 			" when it exists; \"off\" disables the file)")
 	hostPaths := fs.String("allowed-host-paths", "",
 		"comma-separated directories that `host` volumes may mount from "+
@@ -126,7 +126,7 @@ func runAgent(args []string) error {
 		"HCL file mapping external provider secrets (Doppler, AWS SM, Vault, Azure KV, GCP SM) "+
 			"into this node's store (default: no providers)")
 	secretsSyncInterval := fs.Duration("secrets-sync-interval", secretSyncDefaultInterval,
-		"how often external secret providers are polled (PRD §5.2.13; floor "+
+		"how often external secret providers are polled (floor "+
 			secretSyncMinInterval.String()+")")
 	serviceCIDR := fs.String("service-cidr", reconciler.DefaultServiceCIDR, "pool for service frontend addresses")
 	dnsListen := fs.String("dns-listen", "",
@@ -136,9 +136,9 @@ func runAgent(args []string) error {
 		"comma-separated upstream resolvers for external names (default: the host's)")
 	imagePullPolicy := fs.String("image-pull-policy", "",
 		"node default for where images may come from: if-not-present (default) or never "+
-			"(PRD §6.2 R33; a service's own task.pull_policy wins)")
+			"(a service's own task.pull_policy wins)")
 	baseDomain := fs.String("base-domain", "",
-		"domain exposed services get an FQDN under, e.g. apps.example.com (PRD §7.2)")
+		"domain exposed services get an FQDN under, e.g. apps.example.com")
 	edgeRoutes := fs.String("edge-routes", edge.DefaultSnapshotPath,
 		"where to publish the route table for kanea-edge (\"off\" disables)")
 	edgeCerts := fs.String("edge-certs", edge.DefaultBundlePath,
@@ -147,7 +147,7 @@ func runAgent(args []string) error {
 		"group allowed to read the certificate bundle; the kanea-edge user's (default: owner only)")
 	tlsDefault := fs.String("tls-default", string(certsource.ModeACME),
 		"certificate source for an exposed service whose spec declares no tls block: "+
-			"acme, self-signed, provided, or plaintext (PRD §6.2 R20)")
+			"acme, self-signed, provided, or plaintext")
 	tlsCAName := fs.String("tls-ca-name", "",
 		"how this node's self-signed CA is named in a device's trust list (default: --base-domain, else the hostname)")
 	tlsCertsConfig := fs.String("tls-certs-config", "",
@@ -222,15 +222,15 @@ func runAgent(args []string) error {
 		"containerd's Prometheus endpoint (\"off\" disables cgroup metrics)")
 	edgeMetrics := fs.String("edge-metrics", scaling.DefaultEdgeMetricsURL,
 		"kanea-edge's metrics endpoint (\"off\" disables the L7 signal)")
-	autoscale := fs.Bool("autoscale", true, "act on the scaling policies services declare (PRD §9.2)")
+	autoscale := fs.Bool("autoscale", true, "act on the scaling policies services declare")
 	buildkit := fs.String("buildkit", gitops.DefaultBuildkitSocket,
-		"rootless buildkitd address (\"off\" disables GitOps and builds, PRD §10.2)")
+		"rootless buildkitd address (\"off\" disables GitOps and builds)")
 	buildLogDir := fs.String("build-log-dir", "",
 		"where build logs are written (default <data-dir>/builds)")
 	syncInterval := fs.Duration("sync-interval", DefaultSyncInterval,
 		"how often projects with a git source are polled; a webhook makes a push land sooner")
 	notifyAllowPrivate := fs.Bool("notify-allow-private", false,
-		"allow notification targets on private/loopback addresses: for an internal chat server (PRD §11)")
+		"allow notification targets on private/loopback addresses: for an internal chat server")
 	notifyAllowHTTP := fs.Bool("notify-allow-http", false,
 		"allow plain-http notification targets; https is required by default")
 	eventRetention := fs.Int("event-retention", notify.DefaultRetention,
@@ -712,7 +712,7 @@ func runAgent(args []string) error {
 		// decided that rather than defaulted into it.
 		logger.Warn("state replication is not configured",
 			"detail", "this node's state exists only on its own disk; "+
-				"set --backup-dir or --backup-s3, or PUT /v1/settings/backup (PRD §15.3)")
+				"set --backup-dir or --backup-s3, or PUT /v1/settings/backup")
 	}
 
 	// The settings service (v1.46): the API's window onto what this block just
@@ -1366,7 +1366,7 @@ func resolveNodePullPolicy(flag, fromFile, configPath string, logger *slog.Logge
 		return flag, nil
 	case runtime.PullAlways:
 		return "", fmt.Errorf("--image-pull-policy %q is not a node default: it turns on image "+
-			"auto-update for one service (PRD §6.2 R19/R33). Declare it on the service's task",
+			"auto-update for one service. Declare it on the service's task",
 			flag)
 	default:
 		return "", fmt.Errorf("--image-pull-policy %q is not a policy; it must be %q or %q",

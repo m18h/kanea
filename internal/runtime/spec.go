@@ -137,7 +137,7 @@ func (s AllocSpec) Validate() error {
 		// grant surface for something nobody asked for.
 		if len(s.Devices) > 0 {
 			return fmt.Errorf("%w: init container %s declares devices; an init block has no "+
-				"device grant (PRD §6.2 R32)", ErrInvalidSpec, s.ID)
+				"device grant", ErrInvalidSpec, s.ID)
 		}
 		if s.Init.AllocID == "" {
 			return fmt.Errorf("%w: init container %s names no alloc", ErrInvalidSpec, s.ID)

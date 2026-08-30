@@ -202,7 +202,7 @@ export function Projects() {
 
       <p className="text-xs text-muted-foreground">
         There is no create or delete verb here: a project is the namespace its services declare
-        themselves into (§4.2), and it is gone when the last one is. Deploy a service into a new
+        themselves into, and it is gone when the last one is. Deploy a service into a new
         name and the project exists. A synced repository speaks for its own project and no
         other: a spec that declares a different one is refused at sync, which is the boundary
         between "can push to one repo" and "owns every service on the node".
