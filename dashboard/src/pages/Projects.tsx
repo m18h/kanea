@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { TableSkeleton } from '@/components/Skeletons'
@@ -20,8 +21,10 @@ import { useSession } from '@/hooks/useSession'
 import {
   Topic,
   allocsResponseSchema,
+  deleteProject,
   fetchProjects,
   servicesResponseSchema,
+  stopProject,
   syncProject,
   type Alloc,
   type ProjectSummary,
@@ -34,11 +37,18 @@ import { groupAllocs, relativeAge, serviceHealth, serviceStatusTone } from '@/li
  * Projects (PRD §4.2, §10.1, §12.2).
  *
  * A project is the namespace a service declares itself into, not a record;
- * which is why there is no "new project" button and no delete: declaring a
- * service into a name is how a project comes to exist, and a second way to make
- * one would be a second source of truth about which projects there are. The
- * page says so rather than offering a verb the daemon deliberately does not
- * have.
+ * which is why there is no "new project" button: declaring a service into a
+ * name is how a project comes to exist, and a second way to make one would be
+ * a second source of truth about which projects there are. Delete exists
+ * (v1.104) because it is not that class of problem: it destroys the records
+ * that make a project exist - its services and its pipeline config - so it
+ * cannot disagree with the spec-driven path about what exists.
+ *
+ * Stop is the CLI's own recipe, not a route: every full record re-read over
+ * HTTP and applied at count zero in one batch (stopProject in lib/api.ts says
+ * why the scale route cannot do it). Remove goes through a dialog that names
+ * every service it will delete, because the daemon's response and MCP's
+ * result do the same: a destruction announces its scope first.
  *
  * Git sync status leads, because for a GitOps project it is the answer to "is
  * what I pushed what is running", and "Sync" here does what the poll loop
@@ -72,6 +82,25 @@ export function Projects() {
     mutationFn: (project: string) => syncProject(project, csrf),
     onSuccess: () => {
       setError('')
+      void client.invalidateQueries({ queryKey: ['projects'] })
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+  const stop = useMutation({
+    mutationFn: (project: string) => stopProject(project, csrf),
+    onSuccess: () => {
+      setError('')
+      void client.invalidateQueries({ queryKey: ['projects'] })
+    },
+    onError: (err: Error) => setError(err.message),
+  })
+  // The dialog holds the project being confirmed; the mutation fires from it.
+  const [removing, setRemoving] = useState<ProjectSummary | null>(null)
+  const remove = useMutation({
+    mutationFn: (project: string) => deleteProject(project, csrf),
+    onSuccess: () => {
+      setError('')
+      setRemoving(null)
       void client.invalidateQueries({ queryKey: ['projects'] })
     },
     onError: (err: Error) => setError(err.message),
@@ -168,7 +197,7 @@ export function Projects() {
                     </SortHeader>
                     <TH className="pt-2">Git</TH>
                     <TH className="pt-2">Notifications</TH>
-                    <TH className="pt-2 text-right">Sync</TH>
+                    <TH className="pt-2 text-right">Actions</TH>
                   </tr>
                 </THead>
                 <TBody>
@@ -188,6 +217,9 @@ export function Projects() {
                       canWrite={canWrite}
                       syncing={sync.isPending && sync.variables === project.name}
                       onSync={() => sync.mutate(project.name)}
+                      stopping={stop.isPending && stop.variables === project.name}
+                      onStop={() => stop.mutate(project.name)}
+                      onRemove={() => setRemoving(project)}
                     />
                   ))}
                 </TBody>
@@ -200,14 +232,95 @@ export function Projects() {
         </>
       )}
 
+      {removing ? (
+        <RemoveProjectDialog
+          project={removing}
+          services={(services.data?.services ?? [])
+            .filter((s) => s.Project === removing.name)
+            .map((s) => s.Service)
+            .sort()}
+          pending={remove.isPending}
+          onConfirm={() => remove.mutate(removing.name)}
+          onClose={() => setRemoving(null)}
+        />
+      ) : null}
+
       <p className="text-xs text-muted-foreground">
-        There is no create or delete verb here: a project is the namespace its services declare
-        themselves into (§4.2), and it is gone when the last one is. Deploy a service into a new
-        name and the project exists. A synced repository speaks for its own project and no
-        other: a spec that declares a different one is refused at sync, which is the boundary
-        between "can push to one repo" and "owns every service on the node".
+        There is no create verb here: a project is the namespace its services declare themselves
+        into (§4.2), so deploy a service into a new name and the project exists. Remove (v1.104)
+        deletes every service declaration and the project's pipeline config in one step; volume
+        data, secrets and log files survive it. A synced repository speaks for its own project
+        and no other: a spec that declares a different one is refused at sync, which is the
+        boundary between "can push to one repo" and "owns every service on the node".
       </p>
     </div>
+  )
+}
+
+/**
+ * RemoveProjectDialog names everything a yes destroys before offering one:
+ * the services by name (the daemon's response and MCP's result do the same),
+ * the pipeline config on a git-backed project, and what survives.
+ */
+function RemoveProjectDialog({
+  project,
+  services,
+  pending,
+  onConfirm,
+  onClose,
+}: {
+  project: ProjectSummary
+  services: string[]
+  pending: boolean
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Remove project · ${project.name}`}
+      className="w-[90vw] max-w-md"
+    >
+      <div className="space-y-3 text-sm">
+        {services.length > 0 ? (
+          <p>
+            This deletes {services.length} service declaration{services.length === 1 ? '' : 's'}:{' '}
+            <span className="font-mono text-xs">{services.join(', ')}</span>
+          </p>
+        ) : (
+          <p>
+            This project declares no services; what goes is its stored configuration. (A
+            git-backed project between its first apply and its first sync looks like this.)
+          </p>
+        )}
+        {project.git ? (
+          <p className="rounded-md border border-status-warn/40 bg-status-warn/10 px-3 py-2">
+            {/* A repository URL comes from operator config and renders as text. */}
+            This project syncs from <span className="font-mono">{project.git.url}</span>. Its
+            pipeline config and notification channels are deleted with it, and the repository
+            stops syncing.
+          </p>
+        ) : null}
+        <p className="text-muted-foreground">
+          Volume data is kept, secrets under the project are not touched, and log files remain
+          on disk. Re-applying a spec brings the services back with their data.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            className="border-destructive text-destructive hover:bg-destructive/10"
+            disabled={pending}
+            onClick={onConfirm}
+          >
+            {pending ? 'Removing…' : 'Remove project'}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   )
 }
 
@@ -242,6 +355,9 @@ function ProjectRows({
   canWrite,
   syncing,
   onSync,
+  stopping,
+  onStop,
+  onRemove,
 }: {
   project: ProjectSummary
   services: Service[]
@@ -252,9 +368,22 @@ function ProjectRows({
   canWrite: boolean
   syncing: boolean
   onSync: () => void
+  stopping: boolean
+  onStop: () => void
+  onRemove: () => void
 }) {
   const state = health(project)
   const byService = groupAllocs(allocs)
+
+  // Stop's two-click confirm, ServiceActions' pattern: armed by the first
+  // click, fired by the second, and auto-disarmed after a beat - a button
+  // left reading "confirm stop?" for minutes is a trap.
+  const [confirmStop, setConfirmStop] = useState(false)
+  useEffect(() => {
+    if (!confirmStop) return
+    const timer = setTimeout(() => setConfirmStop(false), 4000)
+    return () => clearTimeout(timer)
+  }, [confirmStop])
 
   return (
     <>
@@ -298,20 +427,55 @@ function ProjectRows({
           )}
         </TD>
         <TD className="text-right">
-          {project.git ? (
+          <div className="flex justify-end gap-1.5">
+            {project.git ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                disabled={!canWrite || syncing}
+                title={canWrite ? undefined : 'Requires the admin role'}
+                onClick={onSync}
+              >
+                {syncing ? 'Syncing…' : 'Sync now'}
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              className={`h-7 px-2 text-xs ${confirmStop ? 'border-destructive text-destructive hover:bg-destructive/10' : ''}`}
+              disabled={!canWrite || stopping || project.services === 0}
+              title={
+                canWrite
+                  ? 'Scale every service in the project to zero'
+                  : 'Requires the admin role'
+              }
+              onClick={() => {
+                if (!confirmStop) {
+                  setConfirmStop(true)
+                  return
+                }
+                setConfirmStop(false)
+                onStop()
+              }}
+            >
+              {stopping ? 'Stopping…' : confirmStop ? 'Confirm stop?' : 'Stop'}
+            </Button>
             <Button
               size="sm"
               variant="outline"
               className="h-7 px-2 text-xs"
-              disabled={!canWrite || syncing}
-              title={canWrite ? undefined : 'Requires the admin role'}
-              onClick={onSync}
+              disabled={!canWrite}
+              title={
+                canWrite
+                  ? 'Delete every service and the project config; volume data is kept'
+                  : 'Requires the admin role'
+              }
+              onClick={onRemove}
             >
-              {syncing ? 'Syncing…' : 'Sync now'}
+              Remove
             </Button>
-          ) : (
-            <span className="font-mono text-xs text-muted-foreground">-</span>
-          )}
+          </div>
         </TD>
       </TR>
 
