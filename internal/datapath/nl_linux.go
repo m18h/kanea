@@ -406,11 +406,19 @@ func writeSysctl(path, value string) error {
 	return os.WriteFile(path, []byte(value), 0o644) // #nosec G306: /proc/sys modes are the kernel's
 }
 
-// writePeerSysctls configures the alloc netns's v6 posture before eth0 comes
-// up. Entered via setns on a locked OS thread: sysctls are /proc/sys, which
-// is per-netns, and a netlink handle cannot reach them.
+// writePeerSysctls configures the alloc netns's port floor and v6 posture
+// before eth0 comes up. Entered via setns on a locked OS thread: sysctls are
+// /proc/sys, which is per-netns, and a netlink handle cannot reach them.
 func writePeerSysctls(netnsPath string, v6 bool) error {
 	return inNetns(netnsPath, func() error {
+		// No privileged-port floor inside the netns (v1.103): binding :80
+		// then needs no capability, which is what let CAP_NET_BIND_SERVICE
+		// leave the R13 baseline. The sysctl is per-netns and reaches nothing
+		// on the host; it covers both address families, so it is written on
+		// v4-only and dual-stack nodes alike.
+		if err := writeSysctl("/proc/sys/net/ipv4/ip_unprivileged_port_start", "0"); err != nil {
+			return fmt.Errorf("unprivileged ports in %s: %w", netnsPath, err)
+		}
 		if !v6 {
 			// Belt and braces beside the tc drop: with IPv6 off in the netns
 			// the link-local never exists, so the drop counter stays quiet on
