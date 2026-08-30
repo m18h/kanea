@@ -217,14 +217,29 @@ func verifyChecksum(path, wantHex string) error {
 
 // verifySignature checks the cosign keyless signature over checksums.txt,
 // with exactly the install script's posture: required to *pass* when it can
-// run, never required to be runnable. cosign absent and signature absent are
-// each a note the caller prints; a signature that fails to verify is fatal.
-func verifySignature(ctx context.Context, base, checksums, sig, pem string) (note string, err error) {
+// run, and - by default - never required to be runnable. cosign absent and
+// signature absent are each a note the caller prints; a signature that fails
+// to verify is fatal. required turns the two notes into refusals (v1.103,
+// `--require-signature` / KANEA_REQUIRE_SIGNATURE): a checksum fetched from
+// the same place as the binary proves only that the two agree, and a node
+// that cares gets to insist on the signature. Deliberately never downloads
+// cosign itself: a verifier fetched over the same channel would be a second
+// trust root vouching for the first.
+func verifySignature(ctx context.Context, base, checksums, sig, pem string, required bool) (note string, err error) {
 	cosign, lookErr := exec.LookPath("cosign")
 	if lookErr != nil {
+		if required {
+			return "", errors.New("--require-signature: cosign is not installed, so the " +
+				"signature cannot be checked. Install the cosign package (sigstore) and re-run; " +
+				"the upgrade deliberately does not download a verifier for itself")
+		}
 		return "cosign not found; checksum verified but signature not checked", nil
 	}
 	if sig == "" || pem == "" {
+		if required {
+			return "", errors.New("--require-signature: this release publishes no signature " +
+				"(checksums.txt.sig/.pem are missing); refusing the checksum-only archive")
+		}
 		return "no signature published for this release; checksum only", nil
 	}
 	identity := base + "/" // the release workflow of this repository, any ref
@@ -340,8 +355,9 @@ func runningBinaryPath() (string, error) {
 
 // selfUpdate downloads and verifies the release asset for tag and installs
 // it over target. It returns notes the caller should print: the signature
-// posture is a fact the operator must see either way.
-func (s *releaseSource) selfUpdate(ctx context.Context, tag, asset, target string) (notes []string, err error) {
+// posture is a fact the operator must see either way. requireSig makes a
+// missing verifier or an unsigned release fatal (v1.103).
+func (s *releaseSource) selfUpdate(ctx context.Context, tag, asset, target string, requireSig bool) (notes []string, err error) {
 	work, err := os.MkdirTemp("", "kanea-upgrade-")
 	if err != nil {
 		return nil, err
@@ -376,7 +392,7 @@ func (s *releaseSource) selfUpdate(ctx context.Context, tag, asset, target strin
 	if err != nil {
 		return nil, err
 	}
-	note, err := verifySignature(ctx, s.base, checksums, sig, pem)
+	note, err := verifySignature(ctx, s.base, checksums, sig, pem, requireSig)
 	if err != nil {
 		return nil, err
 	}
