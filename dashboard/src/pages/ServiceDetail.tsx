@@ -178,6 +178,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
                 service={service}
                 desired={desired}
                 rollout={rollout}
+                degraded={mine.some((a) => a.state === 'failed')}
               />
             ) : null}
           </div>
@@ -287,6 +288,17 @@ export function ServiceDetail({ project, service }: { project: string; service: 
  * here is a second path to the runtime. The buttons stay visible for a viewer
  * but disabled: a viewer who does not know they are a viewer reads a missing
  * button as a broken dashboard.
+ *
+ * A degraded service (v1.106) is the one case where the recovery control is not
+ * about the declared count. A service whose allocs exhausted the restart budget
+ * is `AllocFailed`: the reconciler leaves it alone until its spec hash changes
+ * (R29), so `count > 0` yet nothing runs. It is down but not stopped, so the
+ * recovery is a restart (the generation bump is the spec-hash change that
+ * revives a failed alloc) - and the button says so, reading "Start" rather than
+ * "Restart", because an operator looking at a down service reaches for the verb
+ * that brings it back, not the one that rolls a healthy one. It is the same
+ * control relabelled by state, never a second button; Remove is the other half
+ * of "start or remove a degraded service" and already sits outside the branch.
  */
 /** How long a rollout may hold the buttons before honesty re-enables them. */
 const rolloutLockMs = 5 * 60 * 1000
@@ -296,11 +308,15 @@ export function ServiceActions({
   service,
   desired,
   rollout,
+  degraded,
 }: {
   project: string
   service: string
   desired: Service
   rollout: RolloutStatus
+  // degraded is true when at least one alloc has given up (AllocFailed): the
+  // service is down but declared, so the recovery control becomes "Start".
+  degraded: boolean
 }) {
   const { session, csrf } = useSession()
   const { navigate } = useRouter()
@@ -435,6 +451,11 @@ export function ServiceActions({
               run('scale', () => scaleService(project, service, count, csrf))
             }}
           />
+          {/* The recovery control. For a healthy service it is a Restart (a
+              deliberate roll); for a degraded one it is a Start, because the
+              service is down and the generation bump is what revives its
+              failed allocs (R29). Same action, same rollout wiring - only the
+              verb and icon change with state. */}
           <Button
             size="sm"
             variant="outline"
@@ -442,10 +463,14 @@ export function ServiceActions({
             title={title}
             onClick={() => run('restart', () => restartService(project, service, csrf))}
           >
-            {spinner('restart') ?? <RotateCw size={14} />}
+            {spinner('restart') ?? (degraded ? <Play size={14} /> : <RotateCw size={14} />)}
             {busy === 'restart' || (initiated === 'restart' && converging)
-              ? 'Restarting…'
-              : 'Restart'}
+              ? degraded
+                ? 'Starting…'
+                : 'Restarting…'
+              : degraded
+                ? 'Start'
+                : 'Restart'}
           </Button>
           <Button
             size="sm"

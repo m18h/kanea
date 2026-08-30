@@ -27,11 +27,18 @@ function renderActions(
   rollout: RolloutStatus,
   session: SessionState = adminSession,
   desired: Service = service,
+  degraded = false,
 ) {
   return render(
     <SessionContext.Provider value={session}>
       <Router>
-        <ServiceActions project="shop" service="web" desired={desired} rollout={rollout} />
+        <ServiceActions
+          project="shop"
+          service="web"
+          desired={desired}
+          rollout={rollout}
+          degraded={degraded}
+        />
       </Router>
     </SessionContext.Provider>,
   )
@@ -184,6 +191,7 @@ describe('ServiceActions scaling', () => {
             service="web"
             desired={withScaling(4, { min: 2, max: 10, metrics: [{ name: 'cpu', target: 70 }] })}
             rollout={{ deploying: false, updated: 4, total: 4 }}
+            degraded={false}
           />
         </Router>
       </SessionContext.Provider>,
@@ -329,6 +337,68 @@ describe('ServiceActions open', () => {
   it('is absent, not disabled, for a service with no public route', () => {
     renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, withScaling(2))
     expect(screen.queryByRole('link', { name: /Open/ })).toBeNull()
+  })
+})
+
+/**
+ * A degraded service (PRD v1.106): allocs that gave up (AllocFailed) leave the
+ * service down but declared (count > 0), so the recovery control reads "Start"
+ * and fires the restart route - the generation bump is the spec-hash change
+ * that revives a failed alloc (R29). Remove is the other half of "start or
+ * remove a degraded service", and stays available.
+ */
+describe('ServiceActions degraded', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function captureRequests(): { url: string; method: string }[] {
+    const calls: { url: string; method: string }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string | URL | Request, init?: RequestInit) => {
+        const href = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url
+        calls.push({ url: href, method: init?.method ?? 'GET' })
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) } as Response)
+      }),
+    )
+    return calls
+  }
+
+  it('offers Start, not Restart, when a service is degraded', () => {
+    renderActions({ deploying: false, updated: 0, total: 2 }, adminSession, withScaling(2), true)
+    expect(screen.getByRole('button', { name: /^Start$/ })).toHaveProperty('disabled', false)
+    expect(screen.queryByRole('button', { name: /Restart/ })).toBeNull()
+  })
+
+  it("Start fires the restart route, because a failed alloc needs its hash to move", () => {
+    const calls = captureRequests()
+    renderActions({ deploying: false, updated: 0, total: 2 }, adminSession, withScaling(2), true)
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toContain('/v1/services/shop/web/restart')
+    expect(calls[0]?.method).toBe('POST')
+  })
+
+  it('keeps Remove available on a degraded service, and it deletes', () => {
+    const calls = captureRequests()
+    renderActions({ deploying: false, updated: 0, total: 2 }, adminSession, withScaling(2), true)
+    const remove = screen.getByRole('button', { name: /Remove/ })
+    expect(remove).toHaveProperty('disabled', false)
+    fireEvent.click(remove)
+    fireEvent.click(remove)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toContain('/v1/services/shop/web')
+    expect(calls[0]?.method).toBe('DELETE')
+  })
+
+  it('a healthy running service still says Restart, not Start', () => {
+    renderActions({ deploying: false, updated: 2, total: 2 }, adminSession, withScaling(2), false)
+    expect(screen.getByRole('button', { name: /Restart/ })).toBeTruthy()
+    // Its only Start-ish control would be the stopped branch, which is absent
+    // at a non-zero count.
+    expect(screen.queryByRole('button', { name: /^Start$/ })).toBeNull()
   })
 })
 
