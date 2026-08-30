@@ -239,8 +239,11 @@ export const oidcStatusSchema = z.object({
 
 export const healthSchema = z.object({
   status: z.string(),
-  version: z.string(),
-  ws_connections: z.number(),
+  // Optional since v1.103: an unauthenticated caller gets status and oidc
+  // only (the login screen asks before it holds a credential), and even an
+  // identified caller omits ws_connections when the count is zero.
+  version: z.string().optional(),
+  ws_connections: z.number().optional(),
   oidc: oidcStatusSchema.nullish(),
   // The daemon also sends `pid` and `store_index`. Neither is declared, because
   // nothing here renders either one and zod drops what it is not told about: a

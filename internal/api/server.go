@@ -819,24 +819,34 @@ func (s *Server) Serve(ctx context.Context) error {
 // ---- handlers ----
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Read even for the slim answer: the index is a liveness signal, and a
+	// daemon whose Store cannot answer is not "ok" for anyone.
 	index, err := s.store.Index(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	health := Health{
-		Status: "ok", Version: s.version, StoreIndex: index,
-		WSConnections: s.ws.count(),
-		Listen:        s.listenAddr, TLS: s.tls != nil,
-		PID: s.pid, StartedAt: s.started,
-		UptimeSeconds: int64(s.now().Sub(s.started) / time.Second),
-	}
+	health := Health{Status: "ok"}
 	// What sign-in methods exist is part of what a client needs before it can
 	// authenticate, and health is the one route it can ask without a credential.
 	// It names the issuer and nothing else: a provider URL is public by
 	// definition; every browser sent there sees it.
 	if s.oidc != nil {
 		health.OIDC = &OIDCStatus{Enabled: true, Issuer: s.oidc.Issuer(), StartPath: PathOIDCStart}
+	}
+	// Version, PID, store index, listen address and uptime are reconnaissance
+	// when served to the world, so they need an identified caller (v1.103):
+	// bearer, cookie, or the unix socket, which is how the CLI asks.
+	// Identification is best-effort on this one route, deliberately: a bad
+	// token gets the slim 200 rather than a refusal, so a load balancer that
+	// forwards an Authorization header by mistake cannot flap a health check.
+	if id, idErr := s.identify(r); idErr == nil && id.Subject != "" {
+		health.Version = s.version
+		health.StoreIndex = index
+		health.WSConnections = s.ws.count()
+		health.Listen, health.TLS = s.listenAddr, s.tls != nil
+		health.PID, health.StartedAt = s.pid, s.started
+		health.UptimeSeconds = int64(s.now().Sub(s.started) / time.Second)
 	}
 	writeJSON(w, http.StatusOK, health)
 }
