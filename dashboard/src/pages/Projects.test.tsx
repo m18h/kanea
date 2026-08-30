@@ -198,4 +198,103 @@ describe('Projects', () => {
 
     expect(await screen.findByText(/there are no projects/)).toBeDefined()
   })
+
+  // The v1.104 verbs stay visible for a viewer but disabled with the title:
+  // a viewer who does not know they are a viewer reads a missing button as a
+  // broken dashboard.
+  it('disables Stop and Remove for a viewer and says why', async () => {
+    routeFetch({ '/v1/projects': projects })
+    renderProjects(viewer)
+
+    await screen.findByText('shop')
+    for (const name of ['Stop', 'Remove'] as const) {
+      for (const button of screen.getAllByRole('button', { name })) {
+        expect(button.hasAttribute('disabled')).toBe(true)
+        expect(button.getAttribute('title')).toBe('Requires the admin role')
+      }
+    }
+  })
+
+  it('removes through a dialog that names the services and the git consequence', async () => {
+    routeFetch({ '/v1/projects': projects, '/v1/projects/shop': { status: 200 } })
+    renderProjects(admin)
+    await screen.findByText('shop')
+    const resources = { CPUMillis: 0, MemoryBytes: 0 }
+    deliver('services', {
+      services: [
+        { Project: 'shop', Service: 'web', Image: 'nginx:1.27', Count: 1, Resources: resources },
+        { Project: 'shop', Service: 'api', Image: 'api:1', Count: 2, Resources: resources },
+      ],
+    })
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0] as HTMLElement)
+    // The dialog names what a yes destroys: the services, sorted, and the
+    // pipeline config on a git-backed project.
+    expect(screen.getByText('api, web')).toBeDefined()
+    expect(screen.getByText(/stops syncing/)).toBeDefined()
+    expect(screen.getByText(/Volume data is kept/)).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove project' }))
+    await waitFor(() => {
+      const calls = (globalThis.fetch as unknown as { mock: { calls: [unknown, RequestInit?][] } })
+        .mock.calls
+      const del = calls.find(
+        ([url, init]) => String(url).endsWith('/v1/projects/shop') && init?.method === 'DELETE',
+      )
+      expect(del).toBeDefined()
+      expect((del?.[1]?.headers as Record<string, string>)['X-Kanea-CSRF']).toBe('abc')
+    })
+  })
+
+  // The stop round-trip pin, and the most load-bearing test here: the PUT is
+  // built from the HTTP records kept opaque, so a field the page's schemas
+  // know nothing about (a config file's Content) must ride through unchanged
+  // with only Count zeroed. A zod parse or a WS-fed baseline would strip it,
+  // which on the daemon is a config file applied back empty.
+  it('stops by re-applying the full records at count zero', async () => {
+    routeFetch({
+      '/v1/projects': projects,
+      '/v1/services': {
+        status: 200,
+        body: {
+          services: [
+            {
+              Project: 'shop',
+              Service: 'web',
+              Count: 3,
+              Image: 'nginx:1.27',
+              Resources: { CPUMillis: 0, MemoryBytes: 0 },
+              Files: [{ Path: '/etc/app.conf', Content: 'listen 8080', Mode: 384 }],
+            },
+            { Project: 'lab', Service: 'toy', Count: 1, Image: 'busybox' },
+          ],
+        },
+      },
+    })
+    renderProjects(admin)
+    await screen.findByText('shop')
+
+    // Two-click confirm: armed by the first, fired by the second.
+    const stop = screen.getAllByRole('button', { name: 'Stop' })[0] as HTMLElement
+    fireEvent.click(stop)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Confirm stop?' })[0] as HTMLElement)
+
+    await waitFor(() => {
+      const calls = (globalThis.fetch as unknown as { mock: { calls: [unknown, RequestInit?][] } })
+        .mock.calls
+      const put = calls.find(
+        ([url, init]) => String(url).endsWith('/v1/services') && init?.method === 'PUT',
+      )
+      expect(put).toBeDefined()
+      const body = JSON.parse(put?.[1]?.body as string) as {
+        services: Record<string, unknown>[]
+      }
+      // Only the page's project, every record at zero, the opaque field intact.
+      expect(body.services).toHaveLength(1)
+      expect(body.services[0]?.['Count']).toBe(0)
+      expect(body.services[0]?.['Files']).toEqual([
+        { Path: '/etc/app.conf', Content: 'listen 8080', Mode: 384 },
+      ])
+    })
+  })
 })

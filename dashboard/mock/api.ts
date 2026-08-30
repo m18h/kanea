@@ -171,6 +171,21 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 
   // --- services and lifecycle ---
   if (path === '/v1/services' && method === 'GET') return json(res, 200, servicesPayload())
+  // The apply route, as much of it as the stop flow needs (v1.104): each
+  // record's Count converges through the same scale simulation.
+  if (path === '/v1/services' && method === 'PUT') {
+    const body = (await readBody(req)) as { services?: { Project?: string; Service?: string; Count?: number }[] }
+    const applied: string[] = []
+    for (const record of body.services ?? []) {
+      const svc = findService(record.Project ?? '', record.Service ?? '')
+      if (!svc) continue
+      applied.push(`${svc.project}/${svc.service}`)
+      if (typeof record.Count === 'number' && record.Count !== svc.count) {
+        scaleService(svc, Math.max(0, record.Count))
+      }
+    }
+    return json(res, 200, { applied, index: currentIndex() })
+  }
   if (path === '/v1/allocs') return json(res, 200, allocsPayload())
 
   const lifecycle = /^\/v1\/services\/([^/]+)\/([^/]+)\/(restart|scale)$/.exec(path)
@@ -185,6 +200,24 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       scaleService(svc, Math.max(0, body.count ?? 1))
     }
     return json(res, 200, { applied: [`${svc.project}/${svc.service}`], index: currentIndex() })
+  }
+
+  // The project DELETE route (PRD v1.104): every service goes in one batch
+  // and the config record with it. The mock derives projects from services,
+  // so only `shop` models a stored config to report removed.
+  const projectDelete = /^\/v1\/projects\/([^/]+)$/.exec(path)
+  if (projectDelete && method === 'DELETE') {
+    const [, name] = projectDelete
+    const mine = services.filter((s) => s.project === name)
+    if (mine.length === 0) return json(res, 404, { error: `api: no such project: ${name}` })
+    const removed = mine.map((s) => `${s.project}/${s.service}`).sort()
+    for (const svc of mine) removeService(svc)
+    return json(res, 200, {
+      project: name,
+      removed,
+      config_removed: name === 'shop',
+      index: currentIndex(),
+    })
   }
 
   // The daemon's DELETE route (PRD v1.100): the declaration and its allocs

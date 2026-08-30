@@ -559,6 +559,53 @@ export async function syncProject(project: string, csrf?: string): Promise<void>
   })
 }
 
+/**
+ * deleteProject removes a whole project (PRD v1.104): every service
+ * declaration and the project's pipeline/notification config, in one batch on
+ * the daemon. Volume data, secrets and log files survive; a git-backed
+ * project stops syncing, because the record that drives the poll loop goes.
+ */
+export async function deleteProject(project: string, csrf?: string): Promise<void> {
+  await apiFetch(`/v1/projects/${enc(project)}`, {
+    method: 'DELETE',
+    ...(csrf ? { csrf } : {}),
+  })
+}
+
+/** applyServices is PUT /v1/services: full Desired records in, additively
+ * applied. The records are opaque here on purpose - see stopProject. */
+export async function applyServices(services: unknown[], csrf?: string): Promise<void> {
+  await apiFetch('/v1/services', {
+    method: 'PUT',
+    body: { services },
+    ...(csrf ? { csrf } : {}),
+  })
+}
+
+/**
+ * stopProject stops every service in a project: the CLI's own recipe (a fresh
+ * read of each full record, count zero, one atomic apply), not a per-service
+ * scale - the scale route refuses zero for an autoscaled service with a
+ * min above it, and the apply path is how `kanea stop` has always spelled it.
+ *
+ * Two traps make the records deliberately opaque `unknown`s. The read must be
+ * this HTTP GET, never the websocket topic: the live feed elides config-file
+ * contents, and a PUT built from it would apply every file back empty. And
+ * the records must not go through a zod object schema: parsing strips unknown
+ * keys, which is the same elision in client form. Only Project/Service/Count
+ * are looked at; everything else rides through byte-for-byte.
+ */
+export async function stopProject(project: string, csrf?: string): Promise<void> {
+  const resp = await apiFetch('/v1/services')
+  const body = (await resp.json()) as { services?: Record<string, unknown>[] | null }
+  const mine = (body.services ?? []).filter((s) => s['Project'] === project)
+  if (mine.length === 0) return
+  await applyServices(
+    mine.map((s) => ({ ...s, Count: 0 })),
+    csrf,
+  )
+}
+
 /** enc escapes one path segment. Names are DNS-1123, but URLs are URLs. */
 function enc(segment: string): string {
   return encodeURIComponent(segment)
