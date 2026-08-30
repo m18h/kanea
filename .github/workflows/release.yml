@@ -158,7 +158,7 @@ jobs:
       # one cosign signature over it extends to them too: the same reasoning
       # that puts the bundles under it. An SBOM nobody can authenticate
       # describes software nobody can authenticate.
-      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+      - uses: anchore/sbom-action/download-syft@aa80c8c5bd439a416a62804f2151ab38c671a638 # v0.24.1
         with:
           syft-version: v1.51.0
 
@@ -372,7 +372,7 @@ jobs:
           COSIGN_YES: "true"
         run: cosign sign "${IMAGE}@${DIGEST}"
 
-      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+      - uses: anchore/sbom-action/download-syft@aa80c8c5bd439a416a62804f2151ab38c671a638 # v0.24.1
         with:
           syft-version: v1.51.0
 
