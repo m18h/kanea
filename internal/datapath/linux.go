@@ -42,7 +42,11 @@ func New(cfg Config) (*Datapath, error) {
 		nl.serviceCIDR6 = cfg.ServiceCIDR6.Masked()
 		nl.clusterCIDR6 = cfg.ClusterCIDR6.Masked()
 	}
-	d, err := newDatapath(cfg, seams{nl: nl, maps: km, fw: nftFirewall{buildUID: cfg.BuildEgressUID}, netns: hostNetns{}, counters: km})
+	d, err := newDatapath(cfg, seams{nl: nl, maps: km, fw: nftFirewall{
+		buildUID:    cfg.BuildEgressUID,
+		subUIDStart: cfg.BuildSubUIDStart,
+		subUIDCount: cfg.BuildSubUIDCount,
+	}, netns: hostNetns{}, counters: km})
 	if err != nil {
 		coll.Close()
 		return nil, err

@@ -465,6 +465,8 @@ func runAgent(args []string) error {
 		logger.Info("external secret providers configured", "config", *secretsProvidersConfig)
 	}
 
+	buildUID := buildEgressUID(logger)
+	subStart, subCount := buildSubUIDRange(buildUID, logger)
 	net, err := buildNetwork(ctx, *networkMode, datapath.Config{
 		NodeCIDR:     cidrs.node,
 		ClusterCIDR:  cidrs.cluster,
@@ -479,8 +481,12 @@ func runAgent(args []string) error {
 		// node without the account (no install, no pipelines) gets no rule:
 		// there is no build traffic to filter, and a rule keyed on a uid
 		// nobody owns would match nothing anyway.
-		BuildEgressUID: buildEgressUID(logger),
-		Logger:         logger,
+		BuildEgressUID: buildUID,
+		// And on its subordinate range (v1.103): a Dockerfile USER step runs
+		// as a subuid, which the uid rule never matches.
+		BuildSubUIDStart: subStart,
+		BuildSubUIDCount: subCount,
+		Logger:           logger,
 	}, logger)
 	if err != nil {
 		return err
@@ -1199,6 +1205,29 @@ func buildEgressUID(logger *slog.Logger) int {
 		return 0
 	}
 	return uid
+}
+
+// buildSubUIDRange resolves the build account's subordinate uid range, which
+// keys the subuid half of the build-egress rule (v1.103): a Dockerfile USER
+// step runs as a subuid, which the uid rule never matches. 0/0 - no rule -
+// when the account is off (uid 0) or holds no range; a range without the
+// account would be somebody else's allocation and gets no rule either way.
+func buildSubUIDRange(buildUID int, logger *slog.Logger) (start, count int) {
+	if buildUID == 0 {
+		return 0, 0
+	}
+	start, count, err := provision.SubIDRange(provision.SubUIDFile, provision.BuildkitUser)
+	if err != nil {
+		logger.Warn("cannot read the build daemon's subordinate uid range; the subuid build-egress rule is off",
+			"user", provision.BuildkitUser, "error", err)
+		return 0, 0
+	}
+	if start == 0 || count == 0 {
+		logger.Debug("the build daemon has no subordinate uid range; the subuid build-egress rule is off",
+			"user", provision.BuildkitUser)
+		return 0, 0
+	}
+	return start, count
 }
 
 // DNS wiring.

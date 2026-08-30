@@ -23,7 +23,15 @@ const nftTable = NFTableName
 // buildUID is the kanea-buildkit account's uid, or 0 when there is no build
 // daemon on the node. It keys the build-egress rule below; the account is
 // resolved once by the caller, because a uid is what the kernel matches on.
-type nftFirewall struct{ buildUID int }
+// subUIDStart/subUIDCount are the account's subordinate range (v1.103): a
+// Dockerfile `USER <non-root>` step runs as a subuid under rootless
+// uid-mapping and would escape the uid match, so the same drop covers the
+// range. Both zero means no range on the node.
+type nftFirewall struct {
+	buildUID    int
+	subUIDStart int
+	subUIDCount int
+}
 
 // EnsureMasquerade installs the single NAT rule the datapath needs: traffic
 // from the cluster CIDR to anywhere outside it is masqueraded on the way out.
@@ -95,6 +103,18 @@ func (fw nftFirewall) EnsureMasquerade(clusterCIDR netip.Prefix, _ string) error
 			Chain: out,
 			Exprs: buildEgressExprs(fw.buildUID),
 		})
+		// The subuid half (v1.103): a Dockerfile `USER <non-root>` step runs
+		// as a subuid of the build account under rootless uid-mapping, which
+		// the uid rule above never matches. Gated on the uid, deliberately: a
+		// range with no build account is somebody else's allocation, and a
+		// rule keyed on it would drop traffic Kanea does not own.
+		if fw.subUIDStart > 0 && fw.subUIDCount > 0 {
+			conn.AddRule(&nftables.Rule{
+				Table: table,
+				Chain: out,
+				Exprs: buildEgressRangeExprs(fw.subUIDStart, fw.subUIDCount),
+			})
+		}
 	}
 	if err := conn.Flush(); err != nil {
 		return fmt.Errorf("nftables: install masquerade: %w", err)
@@ -114,6 +134,33 @@ func buildEgressExprs(uid int) []expr.Any {
 		// meta skuid == uid
 		&expr.Meta{Key: expr.MetaKeySKUID, Register: 1},
 		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: uidBytes},
+		// ip daddr & 255.255.0.0 == 169.254.0.0
+		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
+		&expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: 4,
+			Mask: []byte{0xff, 0xff, 0x00, 0x00}, Xor: []byte{0, 0, 0, 0}},
+		&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{169, 254, 0, 0}},
+		&expr.Verdict{Kind: expr.VerdictDrop},
+	}
+}
+
+// buildEgressRangeExprs is buildEgressExprs for the subordinate range: meta
+// skuid >= start, meta skuid < start+count, same metadata-CIDR drop. The
+// range is half-open exactly as /etc/subuid means it.
+//
+// The uid is byte-swapped to big-endian before the comparisons, because
+// nft_cmp compares bytes lexicographically: on a little-endian kernel a
+// native-endian >= would order 256 below 1. The equality rule above needs no
+// swap (equal bytes are equal either way); a range does, and it is the same
+// byteorder expression the nft CLI emits for `meta skuid >=`.
+func buildEgressRangeExprs(start, count int) []expr.Any {
+	from := binaryutil.BigEndian.PutUint32(uint32(start))       // #nosec G115: a uid is 32 bits by construction
+	to := binaryutil.BigEndian.PutUint32(uint32(start + count)) // #nosec G115: same bound
+	return []expr.Any{
+		// meta skuid, host order -> big-endian, then start <= skuid < start+count
+		&expr.Meta{Key: expr.MetaKeySKUID, Register: 1},
+		&expr.Byteorder{SourceRegister: 1, DestRegister: 1, Op: expr.ByteorderHton, Len: 4, Size: 4},
+		&expr.Cmp{Op: expr.CmpOpGte, Register: 1, Data: from},
+		&expr.Cmp{Op: expr.CmpOpLt, Register: 1, Data: to},
 		// ip daddr & 255.255.0.0 == 169.254.0.0
 		&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
 		&expr.Bitwise{SourceRegister: 1, DestRegister: 1, Len: 4,
