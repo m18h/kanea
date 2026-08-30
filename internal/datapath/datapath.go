@@ -60,7 +60,7 @@ type Config struct {
 	// with host networking, and the alloc-veth egress guard never sees it.
 	BuildEgressUID int
 	// BuildSubUIDStart and BuildSubUIDCount are the build account's
-	// subordinate uid range (v1.103), or 0/0 when it has none. A Dockerfile
+	// subordinate uid range (v1.105), or 0/0 when it has none. A Dockerfile
 	// `USER <non-root>` step runs as a subuid under rootless uid-mapping and
 	// would escape the uid-keyed rule above; set, the same drop covers the
 	// whole range. Meaningful only beside a non-zero BuildEgressUID.

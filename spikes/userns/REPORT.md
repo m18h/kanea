@@ -11,7 +11,7 @@
 ## Why this spike exists
 
 User namespaces are the hardening report's "real isolation bump" and the item
-PRD §19.3 (v1.103) parks explicitly behind a spike, "the way datapath and wasm
+PRD §19.3 (v1.105) parks explicitly behind a spike, "the way datapath and wasm
 were spiked". The accepted risk today is recorded in THREAT_MODEL §7: *container
 uid 0 is host uid 0, held back by capabilities, seccomp and namespaces rather
 than a uid map.* This spike answers whether a Kanea-shaped alloc — the full
@@ -65,9 +65,9 @@ PASS idmapped snapshots available           overlayfs advertises remap-ids (no c
 INFO image                                  docker.io/library/alpine:3.20 (pulled)
 INFO shape 1: runc-userns + init-owned netns refused: task: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: error during container init: error mounting "sysfs" to rootfs at "/sys": mount src=sysfs, dst=/sys, dstFd=/proc/thread-self/fd/15, flags=MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC: operation not permitted - sysfs mount checks ns_capable(net->user_ns), and runc's fresh userns does not own an `ip netns add` netns
 PASS kanead-side plumbing reaches an owned netns ip netns exec (setns + lo up) works against a child-owned netns from init-root
-INFO shape 2: joined userns + owned netns   refused: task: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: error during container init: error preparing rootfs: remount-private dst=/run/kanea/containerd/io.containerd.runtime.v2.task/kanea-spike-userns/spike-userns-b-1788091924/rootfs, flags=MS_PRIVATE: permission denied - runc unconditionally remounts the rootfs MS_PRIVATE, which a joined userns may not do to an init-owned mount
+INFO shape 2: joined userns + owned netns   refused: task: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: error during container init: error preparing rootfs: remount-private dst=/run/kanea/containerd/io.containerd.runtime.v2.task/kanea-spike-userns/spike-userns-b-1788094505/rootfs, flags=MS_PRIVATE: permission denied - runc unconditionally remounts the rootfs MS_PRIVATE, which a joined userns may not do to an init-owned mount
 PASS create+start under hardening + userns  runc-made userns + fresh netns, map 0:300000:65536
-INFO snapshot prep (create call)            45ms
+INFO snapshot prep (create call)            44ms
 PASS host uid is mapped                     task Uid on the host is 300000
 PASS exec into the userns task              the driver's copy-the-process-spec shape works
 PASS container root is uid 0 inside         id -u = 0
@@ -75,14 +75,14 @@ PASS a written file is mapped on the host   host owner is 300000
 PASS sees its netns (lo up)                 the workload observes the netns kanead wired
 PASS cannot modify the netns                ip link set lo down refused: ip: ioctl 0x8914 failed: Operation not permitted (NET_ADMIN stays forbidden, R13)
 PASS kanead plumbing reaches the userns netns lo up + sysctls applied from init-root by pid
-INFO port floor is the per-netns sysctl     the workload's :80 bind is not exercised (the stock probe image has no low-port listener); the floor is ip_unprivileged_port_start=1024 in this netns, kanead's v1.103 knob, unchanged by the userns
+INFO port floor is the per-netns sysctl     the workload's :80 bind is not exercised (the stock probe image has no low-port listener); the floor is ip_unprivileged_port_start=1024 in this netns, kanead's v1.105 knob, unchanged by the userns
 PASS shifted chown (base+999) is writable   uid 999 wrote its volume
 PASS today's chown (plain 999) is not       refused: touch: /vol-unmapped/no: Permission denied - the feature must shift every host-side chown, and host volumes (R15) stay incompatible
 PASS a shifted 0400 secret is readable      uid 999 read its secret
 PASS 0400 still excludes other uids         uid 1000 refused
 INFO an unmapped grant is unusable          host-root socket stats as the overflow uid 65534 and its 0600 sibling is unreadable: grants must be refused under a map (R21)
 INFO image                                  lscr.io/linuxserver/nginx:latest (pulled)
-INFO PUID snapshot prep (create call)       50ms
+INFO PUID snapshot prep (create call)       48ms
 PASS PUID image under a map                 the s6 init completed: chown /config, drop to PUID, serve - all inside the userns
 INFO PUID chown lands mapped on the host    /config/nginx host owner is 301000 (base+PUID is 301000)
 

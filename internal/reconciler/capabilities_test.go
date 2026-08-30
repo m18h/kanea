@@ -96,14 +96,14 @@ func TestDeclaringNoneRollsTheService(t *testing.T) {
 	}
 }
 
-// The v1.103 baseline shrink: NET_BIND_SERVICE is granted by the netns's
+// The v1.105 baseline shrink: NET_BIND_SERVICE is granted by the netns's
 // ip_unprivileged_port_start=0 instead of by a capability, so it must stay
 // out of the default set - and stay declarable for the image that raises a
 // privileged-port check of its own.
 func TestNetBindServiceIsDeclarableButNotBaseline(t *testing.T) {
 	if slices.Contains(reconciler.BaselineCapabilities, "CAP_NET_BIND_SERVICE") {
 		t.Error("CAP_NET_BIND_SERVICE is back in the baseline; the netns's " +
-			"unprivileged-port floor already covers binding :80 (v1.103)")
+			"unprivileged-port floor already covers binding :80 (v1.105)")
 	}
 	d := desired(1)
 	d.Capabilities = []string{"CAP_NET_BIND_SERVICE"}
@@ -113,7 +113,7 @@ func TestNetBindServiceIsDeclarableButNotBaseline(t *testing.T) {
 	}
 }
 
-// Restricted is drop-ALL at projection (v1.103): no baseline, and the "none"
+// Restricted is drop-ALL at projection (v1.105): no baseline, and the "none"
 // token beside it changes nothing. The validators refuse a real grant next to
 // the posture, so the projected set is empty - and it must enter the spec
 // hash, or naming the posture would never deploy.

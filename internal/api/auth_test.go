@@ -193,7 +193,7 @@ func TestHealthIsPublic(t *testing.T) {
 	}
 }
 
-// v1.103: the public payload is status (and oidc, when configured) and
+// v1.105: the public payload is status (and oidc, when configured) and
 // nothing else - version, PID, store index, listen address and uptime are
 // reconnaissance when served to the world. An identified caller gets the
 // full struct, and a *bad* credential still gets the slim 200: on this one

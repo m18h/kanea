@@ -74,7 +74,7 @@ func TestEnsureTraversalGrantsTheGroupExactlyOneBit(t *testing.T) {
 	}
 }
 
-// SubIDRange feeds the subuid build-egress rule (v1.103): the first range
+// SubIDRange feeds the subuid build-egress rule (v1.105): the first range
 // wins (newuidmap's reading), an absent user or file is 0/0 with no error
 // (the caller's "no rule", never a failure), and a corrupt entry for the
 // named user is an error rather than a silent zero.

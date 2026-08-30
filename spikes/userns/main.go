@@ -623,7 +623,7 @@ func checkNetnsUnmodifiable(ctx context.Context, task containerd.Task, container
 }
 
 // E: the port floor. The compatible baseline no longer grants
-// CAP_NET_BIND_SERVICE (v1.103), so :80 needs the per-netns
+// CAP_NET_BIND_SERVICE (v1.105), so :80 needs the per-netns
 // ip_unprivileged_port_start=0 that kanead writes - under a userns exactly
 // as without one. kanead-side plumbing (lo up, the sysctl) is applied by
 // entering the task's netns from init-root, which is what proves the datapath
@@ -648,13 +648,13 @@ func checkPortFloor(ctx context.Context, task containerd.Task, container contain
 	// against the floor needs a low-port LISTENer in the workload, and the
 	// stock alpine busybox has neither httpd nor a listening nc, so it is not
 	// exercised here rather than faked. The floor's effect is the same knob
-	// the non-userns path already carries (v1.103), which the container's
+	// the non-userns path already carries (v1.105), which the container's
 	// capability set (NET_BIND_SERVICE absent) does not change: the check
 	// applies in the netns's user namespace, and that is the container's own.
 	verified, _ := nsenter("cat", "/proc/sys/net/ipv4/ip_unprivileged_port_start")
 	report("INFO", "port floor is the per-netns sysctl",
 		"the workload's :80 bind is not exercised (the stock probe image has no low-port listener); the floor is ip_unprivileged_port_start="+
-			strings.TrimSpace(string(verified))+" in this netns, kanead's v1.103 knob, unchanged by the userns")
+			strings.TrimSpace(string(verified))+" in this netns, kanead's v1.105 knob, unchanged by the userns")
 }
 
 // F: the R24 chown arithmetic. The host dir chowned base+999 must be

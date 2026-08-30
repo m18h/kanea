@@ -328,8 +328,20 @@ func (s *Service) Sync(ctx context.Context, project, by string) (SyncResult, err
 	}
 	cfg.LastCommit = checkout.Commit
 	cfg.LastSyncAt = s.now()
-	if _, err := store.PutValue(ctx, s.store, store.KindProject, project, cfg); err != nil {
+	// A CAS against the record's current index, not an unconditional put
+	// (v1.104): the poll loop is driven by this very record, so a put here
+	// after `DELETE /v1/projects/{p}` removed it would resurrect the project
+	// and re-sync it forever. A record that vanished or changed mid-sync means
+	// someone else spoke for the project while this pass ran; record nothing
+	// and say so.
+	if _, idx, err := store.GetValue[Config](ctx, s.store, store.KindProject, project); err != nil {
+		return result, fmt.Errorf(
+			"record sync state: project %s was deleted during sync: %w", project, err)
+	} else if mut, err := store.UpdateMutation(store.KindProject, project, cfg, idx); err != nil {
 		return result, fmt.Errorf("record sync state: %w", err)
+	} else if _, err := s.store.Apply(ctx, mut); err != nil {
+		return result, fmt.Errorf(
+			"record sync state: project %s was deleted or changed during sync: %w", project, err)
 	}
 
 	for _, name := range buildable {

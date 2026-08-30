@@ -53,7 +53,7 @@ func TestBuildEgressExprs(t *testing.T) {
 }
 
 func TestBuildEgressRangeExprs(t *testing.T) {
-	// The subuid half (v1.103): a Dockerfile USER step runs as a subuid, so
+	// The subuid half (v1.105): a Dockerfile USER step runs as a subuid, so
 	// the same metadata drop must cover the whole /etc/subuid range. Shape
 	// again, for the reason above.
 	exprs := buildEgressRangeExprs(200000, 65536)

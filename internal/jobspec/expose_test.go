@@ -11,7 +11,7 @@ import (
 func exposeSpec(network, expose string) string {
 	// The task is fully hardened (digest-pinned, non-root, read-only rootfs)
 	// so tests asserting "no diagnostics at all" stay meaningful beside the
-	// v1.103 posture warnings.
+	// v1.105 posture warnings.
 	return `
 spec_version = 1
 

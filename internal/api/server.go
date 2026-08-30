@@ -460,6 +460,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	mux.Handle("GET "+PathProjects, s.route(policy{action: "project.list"}, s.handleListProjects))
 	mux.Handle("GET "+PathProjects+"/{project}",
 		s.route(policy{action: "project.get"}, s.handleGetProject))
+	// A project delete (v1.104) destroys every service declaration and the
+	// project's pipeline/notification config in one batch; volume data,
+	// secrets and log files survive, and the handler says so.
+	mux.Handle("DELETE "+PathProjects+"/{project}",
+		s.route(policy{action: "project.delete", mutates: true}, s.handleDeleteProject))
 	mux.Handle("GET "+PathStats, s.route(policy{action: "stats.read"}, s.handleStats))
 	mux.Handle("GET "+PathStatsHistory,
 		s.route(policy{action: "stats.history"}, s.handleStatsHistory))
@@ -835,7 +840,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		health.OIDC = &OIDCStatus{Enabled: true, Issuer: s.oidc.Issuer(), StartPath: PathOIDCStart}
 	}
 	// Version, PID, store index, listen address and uptime are reconnaissance
-	// when served to the world, so they need an identified caller (v1.103):
+	// when served to the world, so they need an identified caller (v1.105):
 	// bearer, cookie, or the unix socket, which is how the CLI asks.
 	// Identification is best-effort on this one route, deliberately: a bad
 	// token gets the slim 200 rather than a refusal, so a load balancer that

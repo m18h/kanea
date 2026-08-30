@@ -206,7 +206,7 @@ type hclService struct {
 	Project     string `hcl:"project,optional"`
 	Description string `hcl:"description,optional"`
 	Count       *int   `hcl:"count,optional"`
-	// Hardening is the service's posture (R13, v1.103): "compatible" (the
+	// Hardening is the service's posture (R13, v1.105): "compatible" (the
 	// default, written out or omitted) or "restricted". A function block has
 	// no such field, deliberately: R25's pattern, where the absence is the
 	// refusal.
@@ -264,7 +264,7 @@ type hclTask struct {
 	// because this file is parsed client-side and a node default resolved here
 	// would make one spec mean different things on two machines.
 	PullPolicy string `hcl:"pull_policy,optional"`
-	// ReadOnlyRootfs mounts the root filesystem read-only (§14 A05, v1.103).
+	// ReadOnlyRootfs mounts the root filesystem read-only (§14 A05, v1.105).
 	ReadOnlyRootfs bool        `hcl:"read_only_rootfs,optional"`
 	Devices        []hclDevice `hcl:"device,block"`
 	Sockets        []hclSocket `hcl:"socket,block"`
@@ -715,7 +715,7 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 		Count:       DefaultCount,
 		// "compatible" is the default written out; canonicalised to empty here
 		// so it is one spelling everywhere downstream and never SpecHash
-		// material (R13, v1.103). Unknown values travel through so validation
+		// material (R13, v1.105). Unknown values travel through so validation
 		// can refuse them with a diagnostic instead of a shrug.
 		Hardening: canonicalHardening(s.Hardening),
 		DependsOn: s.DependsOn,

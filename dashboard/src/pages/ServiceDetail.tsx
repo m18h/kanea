@@ -21,6 +21,7 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { BackChip } from '@/components/BackChip'
 import { EventRow } from '@/components/EventRow'
 import { ExecTerminal } from '@/components/ExecTerminal'
+import { SpecEditDialog } from '@/components/SpecEditDialog'
 import { KeyValue } from '@/components/KeyValue'
 import { LogViewer } from '@/components/LogViewer'
 import { MetricChartPanel } from '@/components/MetricChartPanel'
@@ -259,7 +260,7 @@ export function ServiceDetail({ project, service }: { project: string; service: 
 
         <div className="space-y-4">
           <AutoscalePanel desired={desired} events={myEvents} />
-          <SpecPanel desired={desired} />
+          <SpecPanel project={project} service={service} desired={desired} />
           <Card>
             <CardHeader>
               <CardTitle>Recent events</CardTitle>
@@ -695,15 +696,45 @@ function metricUnit(name: string): string {
   return ''
 }
 
-/** SpecPanel is the declared record, key facts only. */
-function SpecPanel({ desired }: { desired: Service | undefined }) {
+/** SpecPanel is the declared record, key facts only - and, since v1.103,
+ * where an admin edits it in place, scoped to this one service. */
+function SpecPanel({
+  project,
+  service,
+  desired,
+}: {
+  project: string
+  service: string
+  desired: Service | undefined
+}) {
+  const { session } = useSession()
+  const [editOpen, setEditOpen] = useState(false)
   if (!desired) return null
   const publish = desired.Publish ?? []
+  const admin = session?.role === 'admin'
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
         <CardTitle>Spec</CardTitle>
+        {/* Visible but disabled for a viewer, the page's own convention. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2"
+          disabled={!admin}
+          title={admin ? 'Edit the spec inline' : 'Requires the admin role'}
+          aria-label="Edit spec inline"
+          onClick={() => setEditOpen(true)}
+        >
+          <Pencil size={14} />
+        </Button>
+        <SpecEditDialog
+          project={project}
+          service={service}
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+        />
       </CardHeader>
       <CardContent>
         <KeyValue label="Image" mono>

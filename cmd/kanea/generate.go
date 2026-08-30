@@ -272,7 +272,7 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 	}
 	// resources.pids round-trips (R11, v1.89): a declared cap regenerates;
 	// the default regenerates as omission. read_only_rootfs and hardening
-	// round-trip too (v1.103): the record's field is the spec's field.
+	// round-trip too (v1.105): the record's field is the spec's field.
 
 	block := body.AppendNewBlock("service", []string{svc.Service}).Body()
 	block.SetAttributeValue("project", cty.StringVal(svc.Project))

@@ -90,7 +90,7 @@ type Desired struct {
 	// default that entered the record would re-hash (and roll) every
 	// capability-less service at upgrade (the R23 lesson).
 	Capabilities []string
-	// Hardening is the service's posture (jobspec R13, v1.103): "" for the
+	// Hardening is the service's posture (jobspec R13, v1.105): "" for the
 	// compatible baseline (the meaning of every record already in a Store,
 	// which is why omitempty is load-bearing: the R23 lesson), or
 	// HardeningRestricted for drop-ALL with a required non-root user. It IS

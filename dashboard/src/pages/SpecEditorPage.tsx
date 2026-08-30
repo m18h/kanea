@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { BackChip } from '@/components/BackChip'
 import { PageHeader } from '@/components/PageHeader'
+import { DiagnosticList, jumpToLine } from '@/components/SpecDiagnostics'
+import { GitSyncWarning } from '@/components/GitSyncWarning'
 import { useSession } from '@/hooks/useSession'
 import { useRouter } from '@/hooks/useRouter'
 import { fetchProjects, servicesResponseSchema, Topic } from '@/lib/api'
@@ -179,28 +181,11 @@ export function SpecEditorPage({
       ) : null}
 
       {gitSource ? (
-        <div className="rounded-md border border-status-warn/40 bg-status-warn/10 px-3 py-2 text-sm">
-          <p>
-            This project syncs from <span className="font-mono">{gitSource.url}</span>
-            {gitSource.branch ? (
-              <>
-                {' '}
-                (<span className="font-mono">{gitSource.branch}</span>)
-              </>
-            ) : null}
-            . Changes applied here will be overwritten on the next sync: edit the
-            repository instead, or confirm you want a hot-fix that the repository will
-            later replace.
-          </p>
-          <label className="mt-2 flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={confirmedOverwrite}
-              onChange={(e) => setConfirmedOverwrite(e.target.checked)}
-            />
-            Apply anyway; the next sync wins.
-          </label>
-        </div>
+        <GitSyncWarning
+          git={gitSource}
+          confirmed={confirmedOverwrite}
+          onConfirm={setConfirmedOverwrite}
+        />
       ) : null}
 
       <Card>
@@ -253,52 +238,6 @@ export function SpecEditorPage({
   )
 }
 
-/** DiagnosticList positions the daemon's findings for the editor. */
-function DiagnosticList({
-  diagnostics,
-  onJump,
-}: {
-  diagnostics: SpecDiagnostic[]
-  onJump: (line: number) => void
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Diagnostics</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {diagnostics.map((d, i) => (
-          <div key={i} className="flex items-start gap-2.5 text-sm">
-            <Badge
-              variant={d.severity === 'error' ? 'error' : 'warn'}
-              className="font-mono text-[11px]"
-            >
-              {d.severity}
-            </Badge>
-            <div className="min-w-0">
-              {/* Daemon-composed text quoting operator input: text, never markup. */}
-              <span>{d.summary}</span>
-              {d.line !== undefined && d.line > 0 ? (
-                <button
-                  type="button"
-                  className="ml-2 font-mono text-xs text-primary hover:underline"
-                  onClick={() => onJump(d.line ?? 1)}
-                >
-                  line {d.line}
-                  {d.column !== undefined && d.column > 0 ? `:${d.column}` : ''}
-                </button>
-              ) : null}
-              {d.detail ? (
-                <p className="mt-0.5 text-xs text-muted-foreground">{d.detail}</p>
-              ) : null}
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  )
-}
-
 /** ApplyPreview summarises what a valid spec would do. */
 function ApplyPreview({
   services,
@@ -337,16 +276,4 @@ function ApplyPreview({
       </CardContent>
     </Card>
   )
-}
-
-/** jumpToLine moves the textarea caret to a diagnostic's line. */
-function jumpToLine(el: HTMLTextAreaElement | null, text: string, line: number) {
-  if (!el) return
-  let offset = 0
-  const lines = text.split('\n')
-  for (let i = 0; i < Math.min(line - 1, lines.length); i++) {
-    offset += (lines[i]?.length ?? 0) + 1
-  }
-  el.focus()
-  el.setSelectionRange(offset, offset)
 }

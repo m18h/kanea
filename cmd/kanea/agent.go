@@ -482,7 +482,7 @@ func runAgent(args []string) error {
 		// there is no build traffic to filter, and a rule keyed on a uid
 		// nobody owns would match nothing anyway.
 		BuildEgressUID: buildUID,
-		// And on its subordinate range (v1.103): a Dockerfile USER step runs
+		// And on its subordinate range (v1.105): a Dockerfile USER step runs
 		// as a subuid, which the uid rule never matches.
 		BuildSubUIDStart: subStart,
 		BuildSubUIDCount: subCount,
@@ -1208,7 +1208,7 @@ func buildEgressUID(logger *slog.Logger) int {
 }
 
 // buildSubUIDRange resolves the build account's subordinate uid range, which
-// keys the subuid half of the build-egress rule (v1.103): a Dockerfile USER
+// keys the subuid half of the build-egress rule (v1.105): a Dockerfile USER
 // step runs as a subuid, which the uid rule never matches. 0/0 - no rule -
 // when the account is off (uid 0) or holds no range; a range without the
 // account would be somebody else's allocation and gets no rule either way.

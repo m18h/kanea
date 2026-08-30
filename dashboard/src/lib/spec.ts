@@ -35,6 +35,8 @@ export const renderResponseSchema = z.object({
   valid: z.boolean(),
   diagnostics: z.array(diagnosticSchema).default([]),
   services: z.array(renderedServiceSchema).nullish(),
+  // Opaque: the inline editor's scope check only asks whether any exist.
+  pipelines: z.array(z.unknown()).nullish(),
 })
 
 export const applyResponseSchema = z.object({
@@ -131,6 +133,32 @@ export async function fetchSpecSource(
   }
   if (!resp.ok) throw new Error(`spec source: ${resp.status}`)
   return { hcl: specSourceSchema.parse(await resp.json()).hcl }
+}
+
+// The scope check's baseline (v1.103): the record must keep every wire key,
+// so the schema asserts only the two used to find it and passes the rest
+// through untouched.
+const rawServicesSchema = z.object({
+  services: z
+    .array(z.object({ Project: z.string(), Service: z.string() }).passthrough())
+    .nullish(),
+})
+
+/**
+ * Fetch one service's stored record, whole, over HTTP. This is the inline
+ * editor's comparison baseline and it must never come from the websocket
+ * services topic: that projection elides file contents (`elidedServiceViews`),
+ * so a config-file-carrying service would read as changed - or, used as a
+ * write source, apply with its files emptied. The REST list keeps everything.
+ */
+export async function fetchServiceRecord(
+  project: string,
+  service: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | undefined> {
+  const resp = await apiFetch('/v1/services', signal ? { signal } : {})
+  const body = rawServicesSchema.parse(await resp.json())
+  return (body.services ?? []).find((s) => s.Project === project && s.Service === service)
 }
 
 /** The blank-deploy starting point, following PRD §6.1's minimal shape. */

@@ -219,7 +219,7 @@ func verifyChecksum(path, wantHex string) error {
 // with exactly the install script's posture: required to *pass* when it can
 // run, and - by default - never required to be runnable. cosign absent and
 // signature absent are each a note the caller prints; a signature that fails
-// to verify is fatal. required turns the two notes into refusals (v1.103,
+// to verify is fatal. required turns the two notes into refusals (v1.105,
 // `--require-signature` / KANEA_REQUIRE_SIGNATURE): a checksum fetched from
 // the same place as the binary proves only that the two agree, and a node
 // that cares gets to insist on the signature. Deliberately never downloads
@@ -356,7 +356,7 @@ func runningBinaryPath() (string, error) {
 // selfUpdate downloads and verifies the release asset for tag and installs
 // it over target. It returns notes the caller should print: the signature
 // posture is a fact the operator must see either way. requireSig makes a
-// missing verifier or an unsigned release fatal (v1.103).
+// missing verifier or an unsigned release fatal (v1.105).
 func (s *releaseSource) selfUpdate(ctx context.Context, tag, asset, target string, requireSig bool) (notes []string, err error) {
 	work, err := os.MkdirTemp("", "kanea-upgrade-")
 	if err != nil {

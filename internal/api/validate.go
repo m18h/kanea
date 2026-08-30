@@ -39,7 +39,7 @@ func validateDesired(svc reconciler.Desired) error {
 		return fmt.Errorf("service %s: %w", key, err)
 	}
 
-	// R13's v1.103 posture, through the same exported core the parser uses so
+	// R13's v1.105 posture, through the same exported core the parser uses so
 	// the two paths cannot drift: restricted needs a non-root user, refuses
 	// grants, and is not a thing a function record can carry.
 	rootUser := svc.User != nil && svc.User.UID == 0

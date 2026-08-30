@@ -67,7 +67,7 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			Files:        convertFiles(svc.Files),
 			Capabilities: jobspec.NormalizeCapabilities(svc.Task.Capabilities),
 			// Already canonical: "" or "restricted"; "compatible" folded to ""
-			// at parse so the default never enters the record (R13, v1.103).
+			// at parse so the default never enters the record (R13, v1.105).
 			Hardening:      svc.Hardening,
 			ReadOnlyRootfs: svc.Task.ReadOnlyRootfs,
 			Env:            svc.Task.Env,

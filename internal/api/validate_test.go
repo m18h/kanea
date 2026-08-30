@@ -72,7 +72,7 @@ func TestApplyRefusesWhatTheCapabilityAllowlistRefuses(t *testing.T) {
 	}
 }
 
-// Restricted's rules land at the seam too (v1.103): a hand-written record is
+// Restricted's rules land at the seam too (v1.105): a hand-written record is
 // checked by the same core the parser uses.
 func TestApplyRefusesABrokenHardeningPosture(t *testing.T) {
 	h := newHarness(t)

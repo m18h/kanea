@@ -232,11 +232,30 @@ func TestSpecSourceGeneratesForAProject(t *testing.T) {
 	}
 }
 
-func TestSpecSourceRefusesAServiceScopedEditOfAPipelinedProject(t *testing.T) {
-	// A one-service spec cannot carry the project's pipeline state; applying
-	// it would re-derive the config from that one service and drop every
-	// other build block. The refusal points at the whole-project path.
-	h := newAuthHarness(t, withRenderer(fakeRenderer{hcl: "service \"web\" {}\n"}))
+// recordingRenderer captures what Generate was asked to express.
+type recordingRenderer struct {
+	fakeRenderer
+	pipelines *[][]gitops.Config
+}
+
+func (r recordingRenderer) Generate(services []reconciler.Desired, p []gitops.Config) (string, error) {
+	*r.pipelines = append(*r.pipelines, p)
+	return r.fakeRenderer.Generate(services, p)
+}
+
+func TestSpecSourceServesAServiceScopedSpecOfAPipelinedProject(t *testing.T) {
+	// The inline editor's pre-fill (v1.103; a 422 before it). A one-service
+	// spec omits the project's pipeline state by construction, and the apply
+	// path is additive on pipelines, so the round trip cannot drop a build
+	// block: refusing it protected nothing and blanked the editor for every
+	// project with a git source or a notification channel. The whole-project
+	// form still carries the config, and only that form does.
+	var pipelineCalls [][]gitops.Config
+	rec := recordingRenderer{
+		fakeRenderer: fakeRenderer{hcl: "service \"web\" {}\n"},
+		pipelines:    &pipelineCalls,
+	}
+	h := newAuthHarness(t, func(cfg *api.ServerConfig) { cfg.Spec = rec })
 	ctx := context.Background()
 
 	svc := testService("web", 1)
@@ -258,17 +277,30 @@ func TestSpecSourceRefusesAServiceScopedEditOfAPipelinedProject(t *testing.T) {
 	req := h.request(t, http.MethodGet, api.PathSpecSource+"?project=shop&service=web", nil)
 	req.Header.Set("Authorization", "Bearer "+h.token(t, auth.RoleAdmin))
 	resp, body := h.do(t, req)
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("service-scoped source of a pipelined project = %d, want 422: %s",
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("service-scoped source of a pipelined project = %d, want 200: %s",
 			resp.StatusCode, body)
 	}
+	var out api.SpecSourceResponse
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Generated || out.HCL == "" {
+		t.Errorf("response = %+v", out)
+	}
+	if len(pipelineCalls) != 1 || len(pipelineCalls[0]) != 0 {
+		t.Errorf("a service-scoped generation was asked to express pipelines: %+v", pipelineCalls)
+	}
 
-	// The whole-project form still generates.
+	// The whole-project form still generates, and it alone carries the config.
 	req = h.request(t, http.MethodGet, api.PathSpecSource+"?project=shop", nil)
 	req.Header.Set("Authorization", "Bearer "+h.token(t, auth.RoleAdmin))
 	resp, body = h.do(t, req)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("project-scoped source = %d: %s", resp.StatusCode, body)
+	}
+	if len(pipelineCalls) != 2 || len(pipelineCalls[1]) != 1 {
+		t.Errorf("the whole-project generation should carry the one config: %+v", pipelineCalls)
 	}
 }
 

@@ -411,7 +411,7 @@ func writeSysctl(path, value string) error {
 // /proc/sys, which is per-netns, and a netlink handle cannot reach them.
 func writePeerSysctls(netnsPath string, v6 bool) error {
 	return inNetns(netnsPath, func() error {
-		// No privileged-port floor inside the netns (v1.103): binding :80
+		// No privileged-port floor inside the netns (v1.105): binding :80
 		// then needs no capability, which is what let CAP_NET_BIND_SERVICE
 		// leave the R13 baseline. The sysctl is per-netns and reaches nothing
 		// on the host; it covers both address families, so it is written on

@@ -413,8 +413,8 @@ func SpecHash(d Desired) string {
 		Args         []string `json:"args,omitempty"`
 		Capabilities []string `json:"capabilities,omitempty"`
 		// The posture decides the projected capability set, so changing it is
-		// a different container (jobspec R13, v1.103). omitempty is what keeps
-		// every pre-v1.103 record hashing exactly as it did (the R23 lesson).
+		// a different container (jobspec R13, v1.105). omitempty is what keeps
+		// every pre-v1.105 record hashing exactly as it did (the R23 lesson).
 		Hardening string            `json:"hardening,omitempty"`
 		Env       map[string]string `json:"env,omitempty"`
 		// The uid a process runs as is fixed when the container is created, so

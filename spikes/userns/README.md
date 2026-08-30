@@ -42,7 +42,7 @@ Copy the output into [REPORT.md](./REPORT.md). Do not fabricate results.
 | B | Create + start under the full Kanea opt set (caps, NNP, seccomp, masked paths, namespaces, resources) **plus** the userns and its map; snapshot-prep cost recorded |
 | C | The map is real both ways: host `/proc/<pid>/status` shows the base uid, `id -u` inside shows 0, a file written inside lands host-owned at the base |
 | D | The task joins a kanead-style pre-created netns and **cannot modify it** (foreign-owned; the hardening bonus) |
-| E | The port floor: the netns belongs to init, so the container's in-namespace `CAP_NET_BIND_SERVICE` cannot bind :80 - and v1.103's `ip_unprivileged_port_start=0` restores it. The sysctl is load-bearing for userns |
+| E | The port floor: the netns belongs to init, so the container's in-namespace `CAP_NET_BIND_SERVICE` cannot bind :80 - and v1.105's `ip_unprivileged_port_start=0` restores it. The sysctl is load-bearing for userns |
 | F | The R24 arithmetic: a host dir chowned base+999 is writable by container uid 999; one chowned plain 999 is not. Every host-side chown must shift; host volumes (R15) stay incompatible |
 | G | The secrets shape: a 0400 file owned base+999, bind-mounted read-only, readable by uid 999 and nobody else |
 | H | A PUID/s6 image (linuxserver) boots under the compatible baseline inside the userns - the v1.56 crash-loop question with mapped ids |

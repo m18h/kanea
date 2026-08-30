@@ -19,8 +19,8 @@ indistinguishable from one nobody checked.
 | S3 interoperability | §15.3 | `s3-interop` CI (MinIO, both addressing styles); real providers via `s3-cloud.yml`, **pending secrets** |
 | OOM kills are attributed, not guessed | §17, §5.2.11 (v1.68) | [§5](#5-oom-attribution-v168), **pending** |
 | Intel GPU occupancy is real and reaches the dashboard | §9.1, §17 (v1.96) | [§12](#12-intel-gpu-occupancy-v196), **confirmed 2026-08-21** |
-| A `USER <non-root>` build step cannot reach the metadata service | §10.2, §14 A10 (v1.103) | [§8](#8-a-build-cannot-reach-the-metadata-service-v175-v1103) check ③, **pending** |
-| :80 binds with no capability; restricted runs drop-ALL | §6.2 R13 (v1.103) | [§13](#13-the-v1103-posture-on-a-real-alloc), **pending** |
+| A `USER <non-root>` build step cannot reach the metadata service | §10.2, §14 A10 (v1.105) | [§8](#8-a-build-cannot-reach-the-metadata-service-v175-v1105) check ③, **pending** |
+| :80 binds with no capability; restricted runs drop-ALL | §6.2 R13 (v1.105) | [§13](#13-the-v1105-posture-on-a-real-alloc), **pending** |
 
 ---
 
@@ -337,12 +337,12 @@ kanea exec val/web -- /bin/true
 | ② `mount` fails with EPERM inside a baseline alloc | | | |
 | ③ a wasm function serves under the profile | | | |
 
-## 8. A build cannot reach the metadata service (v1.75, v1.103)
+## 8. A build cannot reach the metadata service (v1.75, v1.105)
 
 A Dockerfile `RUN` step is repo-controlled code with host networking
 (THREAT_MODEL §3.21), and the alloc-veth egress guard never sees it. The
 control is an nftables drop of `169.254.0.0/16` for the `kanea-buildkit`
-uid, and since v1.103 a second rule for its whole `/etc/subuid` range,
+uid, and since v1.105 a second rule for its whole `/etc/subuid` range,
 because a `USER <non-root>` step runs as a subuid and escaped the uid match.
 Unit tests pin both rules' shapes; what they cannot prove is that the
 rootless daemon's processes really do carry those uids on the host - and,
@@ -362,7 +362,7 @@ RUN wget -q -T 3 -O- http://169.254.169.254/latest/meta-data/ && exit 1 || exit 
 EOF
 kanea build shop/meta-probe --path /tmp   # succeeds; the wget timed out
 
-# ③ the same probe from a non-root Dockerfile user (v1.103): USER maps to a
+# ③ the same probe from a non-root Dockerfile user (v1.105): USER maps to a
 #    subuid of kanea-buildkit on the host, which only the range rule catches
 cat > /tmp/Dockerfile <<'EOF'
 FROM alpine:3
@@ -720,7 +720,7 @@ the numbers above are the spike's, which were.
   card rather than `i915`. `openI915Sampler` finds nothing there and reports the
   absence, which is correct but untested on such a node.
 
-## 13. The v1.103 posture on a real alloc
+## 13. The v1.105 posture on a real alloc
 
 The hardening amendment's kernel half. Unit tests pin the sysctl write, the
 shrunk baseline and the restricted projection; what none of them can answer is

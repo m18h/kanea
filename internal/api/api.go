@@ -49,7 +49,7 @@ const (
 
 // Health is the readiness payload.
 //
-// Two shapes since v1.103 (§5.2.1): an unauthenticated caller gets Status and
+// Two shapes since v1.105 (§5.2.1): an unauthenticated caller gets Status and
 // OIDC and nothing else - version, PID, store index, listen address and
 // uptime are reconnaissance when served to the world - while an identified
 // caller (bearer, cookie, or the unix socket, which is how the CLI asks)
@@ -73,7 +73,7 @@ type Health struct {
 	// Listen and TLS describe the network listener, for a client that reached
 	// the daemon over the unix socket and needs somewhere to point a browser
 	// (`kanea ui`). Empty when the socket is the only way in. Identified
-	// callers only since v1.103, which costs `kanea ui` nothing: it asks over
+	// callers only since v1.105, which costs `kanea ui` nothing: it asks over
 	// the socket, the local root of §13.1.
 	Listen string `json:"listen,omitempty"`
 	TLS    bool   `json:"tls,omitempty"`

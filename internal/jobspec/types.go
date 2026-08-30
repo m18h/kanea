@@ -195,7 +195,7 @@ type Service struct {
 	Description string
 	// Count is the desired alloc count. Defaults to 1.
 	Count int
-	// Hardening names the service's posture (R13, v1.103): empty for the
+	// Hardening names the service's posture (R13, v1.105): empty for the
 	// compatible baseline, HardeningRestricted for drop-ALL with a required
 	// non-root user. "compatible" is accepted as the explicit spelling of the
 	// default and canonicalised to empty at parse, so nothing downstream ever
@@ -350,7 +350,7 @@ type Task struct {
 	// expose.tls.mode shape, because this parse runs client-side.
 	PullPolicy string
 	// ReadOnlyRootfs mounts the container's root filesystem read-only
-	// (§14 A05, v1.103). The runtime has honoured the record's field all
+	// (§14 A05, v1.105). The runtime has honoured the record's field all
 	// along; this is the spec's way to ask for it. Volumes and files mount
 	// read-write as declared, so a writable /tmp is a volume away.
 	ReadOnlyRootfs bool

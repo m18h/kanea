@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/gitops"
@@ -121,16 +125,83 @@ func waitForBuildLog(ctx context.Context, client *api.Client, run gitops.Run) er
 // runProject implements `kanea project <sub>`.
 func runProject(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: kanea project sync <project> | kanea project builds <project>")
+		return errors.New(
+			"usage: kanea project sync <project> | kanea project builds <project> | kanea project remove <project>")
 	}
 	switch args[0] {
 	case "sync":
 		return runProjectSync(args[1:])
 	case "builds", "runs":
 		return runProjectBuilds(args[1:])
+	case "remove", "rm":
+		return runProjectRemove(args[1:])
 	default:
-		return fmt.Errorf("unknown project subcommand %q; expected sync or builds", args[0])
+		return fmt.Errorf("unknown project subcommand %q; expected sync, builds or remove", args[0])
 	}
+}
+
+// runProjectRemove implements `kanea project remove <project>` (PRD v1.104):
+// every service declaration and the project's pipeline/notification config go
+// in one batch on the daemon; volume data, secrets and log files survive.
+func runProjectRemove(args []string) error {
+	fs := flag.NewFlagSet("project remove", flag.ContinueOnError)
+	ep := endpointFlags(fs)
+	yes := fs.Bool("yes", false, "remove without asking; implied when stdin is not a terminal")
+	yesShort := fs.Bool("y", false, "alias for --yes")
+	if err := parseArgs(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: kanea project remove [--yes] <project>")
+	}
+	project := fs.Arg(0)
+
+	ctx := context.Background()
+	client, err := ep.client()
+	if err != nil {
+		return err
+	}
+
+	// Named before the prompt: an operator deciding on a deletion should see
+	// what it covers, the way MCP's delete_project announces each service.
+	services, err := client.Services(ctx)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for _, svc := range services {
+		if svc.Project == project {
+			names = append(names, svc.Service)
+		}
+	}
+	sort.Strings(names)
+
+	o := newOut()
+	interactive := !*yes && !*yesShort && term.IsTerminal(int(os.Stdin.Fd()))
+	ok, err := confirmRemoveProject(o, bufio.NewReader(os.Stdin), project, names, interactive)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("aborted; nothing was removed")
+	}
+
+	out, err := client.DeleteProject(ctx, project)
+	if err != nil {
+		return err
+	}
+	if len(out.Removed) > 0 {
+		o.printf("removed project %s and %d service(s): %s\n",
+			project, len(out.Removed), strings.Join(out.Removed, ", "))
+	} else {
+		o.printf("removed project %s, which declared no services\n", project)
+	}
+	if out.ConfigRemoved {
+		o.printf("its pipeline/notification config is gone; the repository, if any, is no longer synced\n")
+	}
+	// The v1.83 rule, said where it matters: what went, and what did not.
+	o.printf("volume data is kept, and secrets under the project were not touched\n")
+	return o.Err()
 }
 
 // runProjectSync implements `kanea project sync <project>`.

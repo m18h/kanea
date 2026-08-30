@@ -8,7 +8,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 )
 
-// The hardening posture (R13, v1.103): the strong profile as one named word,
+// The hardening posture (R13, v1.105): the strong profile as one named word,
 // beside the compatible default v1.56 chose.
 //
 // Restricted restricts the *task*. Init blocks keep their own rules on
@@ -116,7 +116,7 @@ func validateHardening(svc *Service) hcl.Diagnostics {
 }
 
 // warnHardening names the weak defaults an operator should see at plan
-// (v1.103). Warnings, never errors: the compatible default is a contract, and
+// (v1.105). Warnings, never errors: the compatible default is a contract, and
 // a stock image's spec keeps planning clean aside from these lines.
 //
 // Functions are skipped except for the tag warning: a wasm module has no uid

@@ -23,7 +23,7 @@ const nftTable = NFTableName
 // buildUID is the kanea-buildkit account's uid, or 0 when there is no build
 // daemon on the node. It keys the build-egress rule below; the account is
 // resolved once by the caller, because a uid is what the kernel matches on.
-// subUIDStart/subUIDCount are the account's subordinate range (v1.103): a
+// subUIDStart/subUIDCount are the account's subordinate range (v1.105): a
 // Dockerfile `USER <non-root>` step runs as a subuid under rootless
 // uid-mapping and would escape the uid match, so the same drop covers the
 // range. Both zero means no range on the node.
@@ -103,7 +103,7 @@ func (fw nftFirewall) EnsureMasquerade(clusterCIDR netip.Prefix, _ string) error
 			Chain: out,
 			Exprs: buildEgressExprs(fw.buildUID),
 		})
-		// The subuid half (v1.103): a Dockerfile `USER <non-root>` step runs
+		// The subuid half (v1.105): a Dockerfile `USER <non-root>` step runs
 		// as a subuid of the build account under rootless uid-mapping, which
 		// the uid rule above never matches. Gated on the uid, deliberately: a
 		// range with no build account is somebody else's allocation, and a

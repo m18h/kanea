@@ -629,7 +629,7 @@ func canonicalFiles(d reconciler.Desired) reconciler.Desired {
 	return d
 }
 
-// The hardening posture and the rootfs bit round-trip (v1.103): restricted is
+// The hardening posture and the rootfs bit round-trip (v1.105): restricted is
 // SpecHash material, so a regeneration that dropped either would apply as a
 // silently weaker service.
 func TestHardeningRoundTripsThroughGeneration(t *testing.T) {

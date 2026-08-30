@@ -88,7 +88,7 @@ func TestTheAgentWiresEveryOptionalReconcilerDependency(t *testing.T) {
 }
 
 // TestTheAgentWiresTheBuildEgressIdentity is the same source-reading guard
-// over datapath.Config (v1.103's half of recurring rule: every optional
+// over datapath.Config (v1.105's half of recurring rule: every optional
 // daemon dependency is wired in cmd/kanea, pinned by a test that reads the
 // source). Each zero here is a working node with a silently open hole: the
 // build-egress rules key on these and simply do not exist without them,

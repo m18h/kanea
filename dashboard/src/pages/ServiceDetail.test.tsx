@@ -142,6 +142,29 @@ describe('ServiceDetail', () => {
     expect(heading.parentElement?.textContent).toContain('nginx:1.27')
   })
 
+  // The spec card's inline edit (v1.103) stays visible for a viewer but
+  // disabled with the title, the page's own convention: a viewer who does
+  // not know they are a viewer reads a missing button as a broken dashboard.
+  it('offers the inline spec edit to a viewer as disabled, with the title', () => {
+    renderDetail('shop', 'web')
+    deliver('services', {
+      services: [
+        {
+          Project: 'shop',
+          Service: 'web',
+          Image: 'nginx:1.27',
+          Count: 1,
+          Resources: { CPUMillis: 0, MemoryBytes: 0 },
+          spec_hash: 'abc123',
+        },
+      ],
+    })
+
+    const edit = screen.getByRole('button', { name: 'Edit spec inline' })
+    expect((edit as HTMLButtonElement).disabled).toBe(true)
+    expect(edit.getAttribute('title')).toBe('Requires the admin role')
+  })
+
   it('distinguishes two services that share a name across projects', () => {
     const first = renderDetail('shop', 'web')
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('shop/web')

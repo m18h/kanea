@@ -1,6 +1,6 @@
 package jobspec_test
 
-// The hardening posture and its plan warnings (PRD v1.103, §6.2 R13).
+// The hardening posture and its plan warnings (PRD v1.105, §6.2 R13).
 
 import (
 	"fmt"

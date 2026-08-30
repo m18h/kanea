@@ -14,7 +14,7 @@ import (
 // since runc fails the whole task on an unknown capability name.
 const CapabilityNone = "none"
 
-// HardeningRestricted is the R13 posture that projects to drop-ALL (v1.103).
+// HardeningRestricted is the R13 posture that projects to drop-ALL (v1.105).
 // Duplicated from jobspec (jobspec.HardeningRestricted), the CapabilityNone
 // precedent: a dependency from reconciler to jobspec would point the wrong
 // way, and the contract is one lowercase word.
@@ -31,7 +31,7 @@ const HardeningRestricted = "restricted"
 // primitive against a SYN-gated, stateless policy layer. That is where
 // Docker's default set stops being a precedent.
 //
-// CAP_NET_BIND_SERVICE left in v1.103: every alloc netns sets
+// CAP_NET_BIND_SERVICE left in v1.105: every alloc netns sets
 // ip_unprivileged_port_start=0 (writePeerSysctls), so binding :80 needs no
 // capability at all. It stays declarable; do not put it back here for an
 // image that "needs :80" - the netns already grants that to everyone.

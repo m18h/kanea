@@ -21,7 +21,7 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// compatBaseline is reconciler.BaselineCapabilities as of PRD v1.103: the
+// compatBaseline is reconciler.BaselineCapabilities as of PRD v1.105: the
 // seven uid-switching grants, CAP_NET_BIND_SERVICE gone (the alloc netns
 // carries ip_unprivileged_port_start=0 instead — which is exactly what
 // check E interrogates under a userns).

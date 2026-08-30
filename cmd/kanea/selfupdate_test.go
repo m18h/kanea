@@ -314,7 +314,7 @@ func TestSelfUpdateBaseURLComposition(t *testing.T) {
 	}
 }
 
-// --require-signature (v1.103): the two soft endings become refusals. In CI
+// --require-signature (v1.105): the two soft endings become refusals. In CI
 // the release publishes no signature, and where cosign is absent the refusal
 // comes even earlier; either way the required run must fail closed without
 // touching the installed binary.

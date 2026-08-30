@@ -6,7 +6,9 @@ import {
   allocHistory,
   allocs,
   allocsPayload,
+  applySpecText,
   currentIndex,
+  desiredJSON,
   events,
   findService,
   initLogLines,
@@ -22,6 +24,7 @@ import {
   scaleService,
   services,
   servicesPayload,
+  specSource,
   serviceSeriesNames,
   serviceStats,
   uptimeSeconds,
@@ -429,26 +432,92 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
 
   // --- spec editor ---
-  if (path === '/v1/spec/render' && method === 'POST') {
-    return json(res, 200, {
-      valid: true,
-      diagnostics: [],
-      services: services.filter((s) => !s.isFunction).map((s) => ({
-        Project: s.project,
-        Service: s.service,
-        Count: s.count,
-        Image: s.image,
-      })),
+  // Regex over the posted HCL, deliberately (the mock's register): the shape
+  // is faithful - a foreign project 403s, an unknown declaration becomes a
+  // "new" service in the preview, a `volume` block surfaces as a rendered
+  // Volumes field so the inline editor's scope refusal (v1.103) is demoable.
+  if ((path === '/v1/spec/render' || path === '/v1/spec/apply') && method === 'POST') {
+    const body = (await readBody(req)) as { files?: Record<string, string>; project?: string }
+    const text = Object.values(body.files ?? {}).join('\n')
+    const declared = [...text.matchAll(/service\s+"([^"]+)"/g)].map((m) => m[1] ?? '')
+    const declaredProjects = new Set<string>()
+    for (const m of text.matchAll(/project\s+"([^"]+)"/g)) declaredProjects.add(m[1] ?? '')
+    for (const m of text.matchAll(/project\s*=\s*"([^"]+)"/g)) declaredProjects.add(m[1] ?? '')
+    if (body.project) {
+      const foreign = [...declaredProjects].filter((p) => p !== body.project)
+      if (foreign.length > 0) {
+        return json(res, 403, {
+          error: `api: a spec for project ${body.project} may not declare ${foreign.join(', ')}`,
+        })
+      }
+    }
+    if (declared.length === 0) {
+      return json(res, 200, {
+        valid: false,
+        diagnostics: [{ severity: 'error', summary: 'mock: the spec declares no service', line: 1 }],
+      })
+    }
+    const oneService = declared.length === 1
+    const count = /count\s*=\s*(\d+)/.exec(text)?.[1]
+    const image = /image\s*=\s*"([^"]+)"/.exec(text)?.[1]
+    const hasVolume = /\b(volume|device|socket)\s*["{]/.test(text)
+    const rendered = declared.map((name) => {
+      const svc = services.find(
+        (s) => s.service === name && (!body.project || s.project === body.project),
+      )
+      const base = svc
+        ? desiredJSON(svc)
+        : {
+            Project: body.project ?? [...declaredProjects][0] ?? 'default',
+            Service: name,
+            Count: 1,
+            Image: 'nginx:1.29-alpine',
+            Resources: { CPUMillis: 0, MemoryBytes: 0 },
+          }
+      return {
+        ...base,
+        // Only a one-service text can attribute its scalars crudely.
+        ...(oneService && count !== undefined ? { Count: Number(count) } : {}),
+        ...(oneService && image !== undefined ? { Image: image } : {}),
+        ...(hasVolume ? { Volumes: [{ Name: 'data', Storage: 'media', Path: '/data' }] } : {}),
+      }
     })
-  }
-  if (path === '/v1/spec/apply' && method === 'POST') {
-    return json(res, 200, { applied: services.map((s) => `${s.project}/${s.service}`), index: currentIndex() })
+    if (path === '/v1/spec/render') {
+      return json(res, 200, { valid: true, diagnostics: [], services: rendered })
+    }
+    for (const r of rendered) {
+      const svc = findService(String(r.Project), String(r.Service))
+      if (svc) applySpecText(svc, text)
+    }
+    return json(res, 200, {
+      applied: rendered.map((r) => `${r.Project}/${r.Service}`),
+      index: currentIndex(),
+    })
   }
   if (path === '/v1/spec/source') {
-    return json(res, 200, {
-      hcl: `# generated from the mock's desired state\nproject "shop" {\n  service "web" {\n    count = 3\n    task { image = "registry.example.com/shop/web:f47c1e2" }\n  }\n}\n`,
-      generated: true,
-    })
+    const project = url.searchParams.get('project')
+    const service = url.searchParams.get('service')
+    if (!project) return json(res, 400, { error: 'api: spec source needs a project' })
+    if (service) {
+      const svc = findService(project, service)
+      if (!svc) return json(res, 404, { error: `api: no services in project ${project} match` })
+      // The daemon refuses generation for a field it cannot express (v1.38)
+      // rather than emit a spec that applies as something else; the wasm
+      // function is the mock's demoable case of that path. A pipeline
+      // project is deliberately NOT a refusal (v1.103): a one-service spec
+      // omits pipeline state by construction, so shop's services pre-fill.
+      if (svc.isFunction) {
+        return json(res, 422, {
+          error: `api: cannot generate a spec for ${project}/${service}: its function fields are not expressible`,
+        })
+      }
+      return json(res, 200, { hcl: specSource(svc), generated: true })
+    }
+    const matched = services.filter((s) => s.project === project)
+    if (matched.length === 0) {
+      return json(res, 404, { error: `api: no services in project ${project} match` })
+    }
+    return json(res, 200, { hcl: matched.map(specSource).join('\n'), generated: true })
   }
 
   json(res, 404, { error: `mock: no handler for ${method} ${path}` })

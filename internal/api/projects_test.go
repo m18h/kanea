@@ -3,12 +3,15 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/store"
 )
@@ -286,4 +289,75 @@ func desiredFromStore(t *testing.T, h *harness, key string) reconciler.Desired {
 		t.Fatalf("read %s: %v", key, err)
 	}
 	return d
+}
+
+// TestDeleteProject pins v1.104's semantics: every service declaration and
+// the project's config record go in one batch, the response names what went,
+// and everything else - other projects included - is untouched.
+func TestDeleteProject(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.putService(t, "shop", "web", 2)
+	h.putService(t, "shop", "api", 1)
+	h.putService(t, "blog", "site", 1)
+	if _, err := store.PutValue(ctx, h.store, store.KindProject, "shop", gitops.Config{
+		Project: "shop", Source: gitops.Source{URL: "https://git.example/shop.git"},
+	}); err != nil {
+		t.Fatalf("put config: %v", err)
+	}
+
+	out, err := h.client.DeleteProject(ctx, "shop")
+	if err != nil {
+		t.Fatalf("delete project: %v", err)
+	}
+	if want := []string{"shop/api", "shop/web"}; !slices.Equal(out.Removed, want) {
+		t.Errorf("removed = %v, want %v (sorted)", out.Removed, want)
+	}
+	if !out.ConfigRemoved {
+		t.Error("the config record existed and the response does not say it went")
+	}
+
+	if _, err := h.store.Get(ctx, store.KindService, "shop/web"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("shop/web still exists: %v", err)
+	}
+	if _, err := h.store.Get(ctx, store.KindService, "shop/api"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("shop/api still exists: %v", err)
+	}
+	if _, err := h.store.Get(ctx, store.KindProject, "shop"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("the config record still exists: %v", err)
+	}
+	// The neighbour is untouched: the delete's scope is the one project.
+	if _, err := h.store.Get(ctx, store.KindService, "blog/site"); err != nil {
+		t.Errorf("blog/site should have survived: %v", err)
+	}
+}
+
+// A config-only project (git-backed, pre-first-sync) is deletable: that is
+// half the route's point, and the reason 404 needs both absences.
+func TestDeleteProjectOfConfigOnlyProject(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := store.PutValue(ctx, h.store, store.KindProject, "shop", gitops.Config{
+		Project: "shop", Source: gitops.Source{URL: "https://git.example/shop.git"},
+	}); err != nil {
+		t.Fatalf("put config: %v", err)
+	}
+
+	out, err := h.client.DeleteProject(ctx, "shop")
+	if err != nil {
+		t.Fatalf("delete config-only project: %v", err)
+	}
+	if len(out.Removed) != 0 || !out.ConfigRemoved {
+		t.Errorf("removed = %v config_removed = %v, want none and true", out.Removed, out.ConfigRemoved)
+	}
+	if _, err := h.store.Get(ctx, store.KindProject, "shop"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("the config record still exists: %v", err)
+	}
+}
+
+func TestDeleteProjectUnknownIs404(t *testing.T) {
+	h := newHarness(t)
+	if status, body := h.raw(t, http.MethodDelete, api.PathProjects+"/nope"); status != http.StatusNotFound {
+		t.Errorf("delete nope = %d, want 404: %s", status, body)
+	}
 }
