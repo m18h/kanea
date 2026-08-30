@@ -19,6 +19,8 @@ indistinguishable from one nobody checked.
 | S3 interoperability | §15.3 | `s3-interop` CI (MinIO, both addressing styles); real providers via `s3-cloud.yml`, **pending secrets** |
 | OOM kills are attributed, not guessed | §17, §5.2.11 (v1.68) | [§5](#5-oom-attribution-v168), **pending** |
 | Intel GPU occupancy is real and reaches the dashboard | §9.1, §17 (v1.96) | [§12](#12-intel-gpu-occupancy-v196), **confirmed 2026-08-21** |
+| A `USER <non-root>` build step cannot reach the metadata service | §10.2, §14 A10 (v1.103) | [§8](#8-a-build-cannot-reach-the-metadata-service-v175-v1103) check ③, **pending** |
+| :80 binds with no capability; restricted runs drop-ALL | §6.2 R13 (v1.103) | [§13](#13-the-v1103-posture-on-a-real-alloc), **pending** |
 
 ---
 
@@ -218,16 +220,22 @@ Five checks, on a node installed the ordinary way (`install.sh` + `kanea init`):
 ```bash
 # ① a declared limit, exceeded: the message must name the number
 cat > oom.hcl <<'EOF'
+spec_version = 1
+
 project "val" {}
+
 service "hog" {
   project = "val"
   count   = 1
-  task {
+
+  task "hog" {
     image   = "alpine:3.20"
     command = ["sh", "-c", "tail /dev/zero"]   # allocates until it is stopped
+
+    resources { memory = 64 }
   }
-  resources { memory = 64 }
-  restart   { attempts = 1 }
+
+  restart { attempts = 1 }
 }
 EOF
 kanea run oom.hcl
@@ -329,16 +337,22 @@ kanea exec val/web -- /bin/true
 | ② `mount` fails with EPERM inside a baseline alloc | | | |
 | ③ a wasm function serves under the profile | | | |
 
-## 8. A build cannot reach the metadata service (v1.75)
+## 8. A build cannot reach the metadata service (v1.75, v1.103)
 
 A Dockerfile `RUN` step is repo-controlled code with host networking
 (THREAT_MODEL §3.21), and the alloc-veth egress guard never sees it. The
 control is an nftables drop of `169.254.0.0/16` for the `kanea-buildkit`
-uid. Unit tests pin the rule's shape; what they cannot prove is that the
-rootless daemon's processes really do carry that uid on the host:
+uid, and since v1.103 a second rule for its whole `/etc/subuid` range,
+because a `USER <non-root>` step runs as a subuid and escaped the uid match.
+Unit tests pin both rules' shapes; what they cannot prove is that the
+rootless daemon's processes really do carry those uids on the host - and,
+for the range rule specifically, that the kernel's byte-wise `nft_cmp`
+accepts the big-endian range comparison and *matches*: a wrong byte order
+here is a rule that sits in the table and drops nothing, which no
+expression-shape test can see.
 
 ```bash
-# ① the rule is there
+# ① both rules are there: the uid match and the skuid range beside it
 sudo nft list table ip kanea
 
 # ② a RUN step cannot reach metadata, but the registry still works
@@ -348,14 +362,24 @@ RUN wget -q -T 3 -O- http://169.254.169.254/latest/meta-data/ && exit 1 || exit 
 EOF
 kanea build shop/meta-probe --path /tmp   # succeeds; the wget timed out
 
-# ③ buildkitd itself pulls/pushes: a normal build still pushes its image
+# ③ the same probe from a non-root Dockerfile user (v1.103): USER maps to a
+#    subuid of kanea-buildkit on the host, which only the range rule catches
+cat > /tmp/Dockerfile <<'EOF'
+FROM alpine:3
+USER 1000
+RUN wget -q -T 3 -O- http://169.254.169.254/latest/meta-data/ && exit 1 || exit 0
+EOF
+kanea build shop/meta-probe-subuid --path /tmp   # succeeds; the wget timed out
+
+# ④ buildkitd itself pulls/pushes: a normal build still pushes its image
 ```
 
 | Check | Result | Date | Node |
 |---|---|---|---|
-| ① the drop rule is in the `kanea` table | | | |
+| ① both drop rules are in the `kanea` table | | | |
 | ② a RUN step to 169.254.169.254 times out | | | |
-| ③ a normal build pushes to its registry | | | |
+| ③ a `USER 1000` RUN step times out too (the range rule matched) | | | |
+| ④ a normal build pushes to its registry | | | |
 
 ## 9. The audit hardening pass (K-09, K-20, K-12)
 
@@ -426,6 +450,8 @@ Seven checks, on a node installed the ordinary way (`install.sh` + `kanea init`)
 # The canonical shape: root fixes a directory the task will own as 999, then a
 # migration reaches the database by name, then the task starts.
 cat > init.hcl <<'EOF'
+spec_version = 1
+
 project "val" {}
 
 storage "d" { type = "local" }
@@ -433,19 +459,32 @@ storage "d" { type = "local" }
 service "db" {
   project = "val"
   count   = 1
+
   task "db" {
     image = "postgres:17-alpine"
     env   = { POSTGRES_PASSWORD = "val" }
   }
-  network { port "pg" { container = 5432 } }
-  health_check "up" { type = "tcp", port = "pg" }
+
+  network {
+    port "pg" {
+      container = 5432
+    }
+  }
+
+  health_check "up" {
+    type = "tcp"
+    port = "pg"
+  }
 }
 
 service "app" {
   project = "val"
   count   = 2
 
-  volume "data" { storage = "d", mount_path = "/data" }
+  volume "data" {
+    storage    = "d"
+    mount_path = "/data"
+  }
 
   init "fix-perms" {
     image        = "busybox:1.36"
@@ -459,57 +498,14 @@ service "app" {
     command = ["sh", "-c", "until nc -z $HOST 5432; do sleep 1; done; echo up"]
     env     = { HOST = "${service.db.host}" }
     timeout = "2m"
-## 11. Env groups and config files (v1.85, §6.2 R34/R35)
-
-The parse half is unit-tested hard, including the three properties that make a
-secret placeholder unforgeable. What no test here can answer is the half that is
-a conversation with runc and the kernel:
-
-> **does a bind-mounted file actually appear at its path, with the right mode
-> and owner, when the parent directory does not exist in the image - and does a
-> secret-bearing one really live on a tmpfs rather than on disk?**
-
-Everything about the design assumes yes. runc creates a missing mountpoint
-before binding and does so before the rootfs is remounted read-only; the
-secret-bearing tree is a tmpfs mounted lazily on first use; the plain tree lives
-under the data dir precisely so that mount cannot hide it. Each is the v1.53
-genre: dev mode has no runc and no `CAP_SYS_ADMIN`, so a wrong path, a mode that
-does not apply, or a file written to disk instead of RAM is invisible until the
-first systemd node runs one.
-
-```bash
-cat > files.hcl <<'EOF'
-project "val" {}
-
-env_group "common" {
-  LOG_LEVEL = "info"
-}
-
-service "web" {
-  project  = "val"
-  count    = 2
-  env_from = ["common"]
-
-  file "nginx" {
-    path    = "/etc/nginx/conf.d/default.conf"
-    content = <<-EOT
-      server {
-        listen 8080;
-        # a literal dollar-brace, which must survive as one
-        proxy_set_header Host $${host};
-      }
-    EOT
-  }
-
-  file "pgpass" {
-    path    = "/etc/app/pgpass"
-    mode    = "0400"
-    content = "db:5432:app:${secret.val["password"]}"
   }
 
   task "app" {
     image = "nginx:1.27-alpine"
-    user { uid = 999, gid = 999 }
+    user {
+      uid = 999
+      gid = 999
+    }
   }
 }
 EOF
@@ -567,7 +563,63 @@ services on the node must keep updating throughout ⑤, which is the whole
 | ⑤ a hung step is killed and classified `init_timeout` | | | |
 | ⑥ a kanead restart resumes without re-running finished steps | | | |
 | ⑦ `pull_policy = "never"` refuses and preloading works | | | |
-    user { uid = 101, gid = 101 }
+
+## 11. Env groups and config files (v1.85, §6.2 R34/R35)
+
+The parse half is unit-tested hard, including the three properties that make a
+secret placeholder unforgeable. What no test here can answer is the half that is
+a conversation with runc and the kernel:
+
+> **does a bind-mounted file actually appear at its path, with the right mode
+> and owner, when the parent directory does not exist in the image - and does a
+> secret-bearing one really live on a tmpfs rather than on disk?**
+
+Everything about the design assumes yes. runc creates a missing mountpoint
+before binding and does so before the rootfs is remounted read-only; the
+secret-bearing tree is a tmpfs mounted lazily on first use; the plain tree lives
+under the data dir precisely so that mount cannot hide it. Each is the v1.53
+genre: dev mode has no runc and no `CAP_SYS_ADMIN`, so a wrong path, a mode that
+does not apply, or a file written to disk instead of RAM is invisible until the
+first systemd node runs one.
+
+```bash
+cat > files.hcl <<'EOF'
+spec_version = 1
+
+project "val" {}
+
+env_group "common" {
+  LOG_LEVEL = "info"
+}
+
+service "web" {
+  project  = "val"
+  count    = 2
+  env_from = ["common"]
+
+  file "nginx" {
+    path    = "/etc/nginx/conf.d/default.conf"
+    content = <<-EOT
+      server {
+        listen 8080;
+        # a literal dollar-brace, which must survive as one
+        proxy_set_header Host $${host};
+      }
+    EOT
+  }
+
+  file "pgpass" {
+    path    = "/etc/app/pgpass"
+    mode    = "0400"
+    content = "db:5432:app:${secret.val["password"]}"
+  }
+
+  task "app" {
+    image = "nginx:1.27-alpine"
+    user {
+      uid = 101
+      gid = 101
+    }
   }
 }
 EOF
@@ -668,3 +720,98 @@ the numbers above are the spike's, which were.
   card rather than `i915`. `openI915Sampler` finds nothing there and reports the
   absence, which is correct but untested on such a node.
 
+## 13. The v1.103 posture on a real alloc
+
+The hardening amendment's kernel half. Unit tests pin the sysctl write, the
+shrunk baseline and the restricted projection; what none of them can answer is
+whether a real netns, a real runc and a real image agree:
+
+> **does an alloc with no `CAP_NET_BIND_SERVICE` actually bind :80 under the
+> per-netns `ip_unprivileged_port_start=0`, and does a stock PUID image run
+> under `hardening = "restricted"` with an empty capability set?**
+
+The first is the v1.53 genre at its purest: if the sysctl write silently fails
+(a read-only `/proc/sys`, an unshared netns, a kernel oddity), every web
+workload on the node fails to bind on the next roll, and no test environment
+has the netns to notice. The second is the §6.1 postgres example's claim, now
+spelled as one word in the spec.
+
+```bash
+# ① the floor is gone inside the netns, and nginx binds :80 without the cap
+cat > posture.hcl <<'HCL'
+spec_version = 1
+
+project "val" {}
+
+service "web" {
+  project = "val"
+  task "web" {
+    image = "docker.io/library/nginx:1.27-alpine"
+  }
+  network {
+    port "http" {
+      container = 80
+    }
+  }
+}
+HCL
+kanea run posture.hcl
+kanea exec val/web -- cat /proc/sys/net/ipv4/ip_unprivileged_port_start   # 0
+kanea exec val/web -- grep CapBnd /proc/1/status
+# decode it: capsh --decode=<value> must NOT list cap_net_bind_service,
+# while nginx is serving on :80 through the VIP anyway
+
+# ② a restricted postgres starts: chown in the init step, drop-ALL task
+cat > restricted.hcl <<'HCL'
+spec_version = 1
+
+project "val" {}
+
+storage "d" { type = "local" }
+
+service "pg" {
+  project   = "val"
+  hardening = "restricted"
+
+  init "fix-perms" {
+    image        = "busybox:1.36"
+    command      = ["chown", "-R", "999:999", "/data"]
+    capabilities = ["CAP_CHOWN"]
+  }
+
+  task "db" {
+    image = "docker.io/library/postgres:17-alpine"
+    env   = { POSTGRES_PASSWORD = "val", PGDATA = "/data/pgdata" }
+    user {
+      uid = 999
+      gid = 999
+    }
+  }
+
+  volume "data" {
+    storage    = "d"
+    mount_path = "/data"
+  }
+
+  network {
+    port "pg" {
+      container = 5432
+    }
+  }
+}
+HCL
+kanea run restricted.hcl
+kanea exec val/pg -- grep CapEff /proc/1/status    # 0000000000000000
+kanea exec val/pg -- id                            # uid=999
+
+# ③ the signature refusal is real where cosign is: CI has no cosign, so the
+#    verify-passes path only exists on a node. With cosign installed:
+sudo KANEA_REQUIRE_SIGNATURE=1 bash install.sh     # prints "Signature verified"
+sudo kanea upgrade --require-signature --check     # and the upgrade path agrees
+```
+
+| Check | Result | Date | Node |
+|---|---|---|---|
+| ① :80 binds with no `CAP_NET_BIND_SERVICE` in the bounding set | | | |
+| ② a restricted postgres runs with `CapEff` all zero | | | |
+| ③ `KANEA_REQUIRE_SIGNATURE=1` verifies for real with cosign present | | | |
