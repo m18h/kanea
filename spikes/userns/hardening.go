@@ -67,10 +67,23 @@ func withKaneaHardening(id string, caps []string, netnsPath string, mounts []spe
 			specs.PIDNamespace, specs.IPCNamespace, specs.UTSNamespace,
 			specs.MountNamespace, specs.CgroupNamespace)
 		if netnsPath != "" {
-			s.Linux.Namespaces = append(s.Linux.Namespaces, specs.LinuxNamespace{
-				Type: specs.NetworkNamespace,
-				Path: netnsPath,
-			})
+			// Replace-or-append, oci.WithLinuxNamespace's semantics: the
+			// default spec already carries a pathless network namespace, and a
+			// second entry of the same type is a malformed spec to runc.
+			replaced := false
+			for i, ns := range s.Linux.Namespaces {
+				if ns.Type == specs.NetworkNamespace {
+					s.Linux.Namespaces[i].Path = netnsPath
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				s.Linux.Namespaces = append(s.Linux.Namespaces, specs.LinuxNamespace{
+					Type: specs.NetworkNamespace,
+					Path: netnsPath,
+				})
+			}
 		}
 		s.Hostname = id
 
