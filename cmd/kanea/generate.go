@@ -138,6 +138,10 @@ func writeFunction(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Conf
 		return refuse("its scaling policy")
 	case svc.ReadOnlyRootfs:
 		return refuse("read_only_rootfs")
+	case svc.Hardening != "":
+		// A function block has no hardening field (R13/R25): the wasm sandbox
+		// has no capability or uid concept to restrict.
+		return refuse("its hardening posture")
 	case svc.Resources.PidsLimit != 0 && svc.Resources.PidsLimit != DefaultPidsLimit:
 		return refuse("a non-default pids limit")
 	}
@@ -266,15 +270,17 @@ func writeService(body *hclwrite.Body, svc *reconciler.Desired, cfg gitops.Confi
 	if len(svc.Volumes) > 0 {
 		return refuse("its volume blocks (the storage declarations are not reconstructible)")
 	}
-	if svc.ReadOnlyRootfs {
-		return refuse("read_only_rootfs")
-	}
 	// resources.pids round-trips (R11, v1.89): a declared cap regenerates;
-	// the default regenerates as omission.
+	// the default regenerates as omission. read_only_rootfs and hardening
+	// round-trip too (v1.103): the record's field is the spec's field.
 
 	block := body.AppendNewBlock("service", []string{svc.Service}).Body()
 	block.SetAttributeValue("project", cty.StringVal(svc.Project))
 	block.SetAttributeValue("count", cty.NumberIntVal(int64(svc.Count)))
+	// "" is compatible, the default; only restricted is stored, and only
+	// restricted is emitted: the round-trip depends on the generated spec
+	// converting back to the same "".
+	setOptionalString(block, "hardening", svc.Hardening)
 	if len(svc.DependsOn) > 0 {
 		block.SetAttributeValue("depends_on", stringList(svc.DependsOn))
 	}
@@ -441,6 +447,9 @@ func writeTask(block *hclwrite.Body, svc *reconciler.Desired) error {
 	// Empty means "the node decides" (R33) and must regenerate as an omission,
 	// or a spec generated on one node would pin the other node's default.
 	setOptionalString(task, "pull_policy", svc.PullPolicy)
+	if svc.ReadOnlyRootfs {
+		task.SetAttributeValue("read_only_rootfs", cty.True)
+	}
 
 	if len(svc.Env) > 0 {
 		keys := make([]string, 0, len(svc.Env))

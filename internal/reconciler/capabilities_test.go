@@ -96,6 +96,28 @@ func TestDeclaringNoneRollsTheService(t *testing.T) {
 	}
 }
 
+// Restricted is drop-ALL at projection (v1.103): no baseline, and the "none"
+// token beside it changes nothing. The validators refuse a real grant next to
+// the posture, so the projected set is empty - and it must enter the spec
+// hash, or naming the posture would never deploy.
+func TestRestrictedProjectsToNoCapabilities(t *testing.T) {
+	d := desired(1)
+	d.Hardening = reconciler.HardeningRestricted
+	if got := reconciler.AllocSpecFor(d, 0, "", "/vol").Capabilities; len(got) != 0 {
+		t.Errorf("restricted projected to %v, want nothing", got)
+	}
+
+	withNone := d
+	withNone.Capabilities = []string{"none"}
+	if got := reconciler.AllocSpecFor(withNone, 0, "", "/vol").Capabilities; len(got) != 0 {
+		t.Errorf("restricted beside [\"none\"] projected to %v, want nothing", got)
+	}
+
+	if reconciler.SpecHash(d) == reconciler.SpecHash(desired(1)) {
+		t.Error("declaring restricted did not change the spec hash; the posture would never deploy")
+	}
+}
+
 // R25 gives a function's spec no way to declare capabilities, and the
 // projection must not hand it the runc baseline either: a non-default runtime
 // passes through verbatim, so upgrading kanead changes nothing about what a

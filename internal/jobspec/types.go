@@ -195,6 +195,12 @@ type Service struct {
 	Description string
 	// Count is the desired alloc count. Defaults to 1.
 	Count int
+	// Hardening names the service's posture (R13, v1.103): empty for the
+	// compatible baseline, HardeningRestricted for drop-ALL with a required
+	// non-root user. "compatible" is accepted as the explicit spelling of the
+	// default and canonicalised to empty at parse, so nothing downstream ever
+	// sees it and only the restricted posture reaches a record.
+	Hardening string
 	// EnvFrom names the env groups this service takes (R34), in precedence
 	// order: later wins, and the task's own env wins over all of them. The
 	// groups are merged into Task.Env at parse, so nothing downstream of the
@@ -343,6 +349,11 @@ type Task struct {
 	// PullNever or PullAlways. Empty means the node decides (§15.1), the
 	// expose.tls.mode shape, because this parse runs client-side.
 	PullPolicy string
+	// ReadOnlyRootfs mounts the container's root filesystem read-only
+	// (§14 A05, v1.103). The runtime has honoured the record's field all
+	// along; this is the spec's way to ask for it. Volumes and files mount
+	// read-write as declared, so a writable /tmp is a volume away.
+	ReadOnlyRootfs bool
 	// Devices are host devices the task requests by grant name (R17).
 	Devices []*Device
 	// Sockets are host unix sockets the task requests by grant name (R18).

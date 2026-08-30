@@ -545,6 +545,8 @@ func validateServices(spec *Spec) hcl.Diagnostics {
 		}
 
 		diags = append(diags, validateTask(svc)...)
+		diags = append(diags, validateHardening(svc)...)
+		diags = append(diags, warnHardening(svc)...)
 		diags = append(diags, validateInits(svc)...)
 		diags = append(diags, warnInitOnPerAllocVolumes(spec, svc)...)
 		// Files are service-level, so they are checked here rather than off

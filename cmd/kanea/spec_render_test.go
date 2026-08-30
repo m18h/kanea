@@ -628,3 +628,50 @@ func canonicalFiles(d reconciler.Desired) reconciler.Desired {
 	d.Files = files
 	return d
 }
+
+// The hardening posture and the rootfs bit round-trip (v1.103): restricted is
+// SpecHash material, so a regeneration that dropped either would apply as a
+// silently weaker service.
+func TestHardeningRoundTripsThroughGeneration(t *testing.T) {
+	original, pipelines := renderText(t, `
+spec_version = 1
+project "shop" {}
+service "db" {
+  project   = "shop"
+  hardening = "restricted"
+  task "app" {
+    image            = "postgres:17"
+    read_only_rootfs = true
+    user {
+      uid = 999
+      gid = 999
+    }
+  }
+}
+service "web" {
+  project = "shop"
+  task "app" { image = "nginx" }
+}
+`)
+	if original[0].Hardening != "restricted" || !original[0].ReadOnlyRootfs {
+		t.Fatalf("converted record = hardening %q, rootfs %v", original[0].Hardening, original[0].ReadOnlyRootfs)
+	}
+
+	text, err := toHCL(original, pipelines)
+	if err != nil {
+		t.Fatalf("toHCL: %v", err)
+	}
+	// The defaults regenerate as omission: an emitted "compatible" would put
+	// the word into a record on the next apply, and the seam refuses it.
+	if strings.Contains(text, "compatible") {
+		t.Fatalf("generated spec spells out the default posture:\n%s", text)
+	}
+
+	regenerated, _ := renderText(t, text)
+	for i := range original {
+		if !reflect.DeepEqual(original[i], regenerated[i]) {
+			t.Errorf("service %s did not round-trip.\nwant: %+v\ngot:  %+v\ngenerated:\n%s",
+				original[i].Service, original[i], regenerated[i], text)
+		}
+	}
+}

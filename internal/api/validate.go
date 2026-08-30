@@ -39,6 +39,15 @@ func validateDesired(svc reconciler.Desired) error {
 		return fmt.Errorf("service %s: %w", key, err)
 	}
 
+	// R13's v1.103 posture, through the same exported core the parser uses so
+	// the two paths cannot drift: restricted needs a non-root user, refuses
+	// grants, and is not a thing a function record can carry.
+	rootUser := svc.User != nil && svc.User.UID == 0
+	if err := jobspec.CheckHardening(svc.Hardening, svc.Capabilities,
+		svc.User != nil, rootUser, svc.Runtime != ""); err != nil {
+		return fmt.Errorf("service %s: %w", key, err)
+	}
+
 	for _, v := range svc.Volumes {
 		if !jobspec.IsName(v.Name) {
 			return fmt.Errorf("service %s: volume name %q is not a DNS-1123 label", key, v.Name)

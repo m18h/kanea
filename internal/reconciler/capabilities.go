@@ -14,6 +14,12 @@ import (
 // since runc fails the whole task on an unknown capability name.
 const CapabilityNone = "none"
 
+// HardeningRestricted is the R13 posture that projects to drop-ALL (v1.103).
+// Duplicated from jobspec (jobspec.HardeningRestricted), the CapabilityNone
+// precedent: a dependency from reconciler to jobspec would point the wrong
+// way, and the contract is one lowercase word.
+const HardeningRestricted = "restricted"
+
 // BaselineCapabilities is what a runc alloc gets when its spec declares
 // nothing (PRD §6.2 R13, v1.56): the grants the PUID-pattern image class
 // needs to fix a root-owned volume, drop to its configured user, signal the
@@ -55,7 +61,10 @@ func effectiveCapabilities(d Desired) []string {
 	}
 
 	declared := make([]string, 0, len(d.Capabilities))
-	fromNothing := false
+	// Restricted starts from nothing exactly as the "none" token does; the
+	// validators (parse and apply seam alike) have already refused any real
+	// grant beside it, so a restricted projection is the empty set.
+	fromNothing := d.Hardening == HardeningRestricted
 	for _, c := range d.Capabilities {
 		if c == CapabilityNone {
 			fromNothing = true

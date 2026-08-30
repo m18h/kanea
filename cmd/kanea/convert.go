@@ -66,7 +66,11 @@ func toDesired(spec *jobspec.Spec) ([]reconciler.Desired, error) {
 			Init:         convertInits(svc.Inits),
 			Files:        convertFiles(svc.Files),
 			Capabilities: jobspec.NormalizeCapabilities(svc.Task.Capabilities),
-			Env:          svc.Task.Env,
+			// Already canonical: "" or "restricted"; "compatible" folded to ""
+			// at parse so the default never enters the record (R13, v1.103).
+			Hardening:      svc.Hardening,
+			ReadOnlyRootfs: svc.Task.ReadOnlyRootfs,
+			Env:            svc.Task.Env,
 			// The pull credential is a reference the node resolves, never a
 			// value: a resolved credential here would travel into the Store.
 			RegistryAuthRef: svc.Task.RegistryAuthRef,
