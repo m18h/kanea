@@ -39,6 +39,15 @@ func validateDesired(svc reconciler.Desired) error {
 		return fmt.Errorf("service %s: %w", key, err)
 	}
 
+	// R13's v1.105 posture, through the same exported core the parser uses so
+	// the two paths cannot drift: restricted needs a non-root user, refuses
+	// grants, and is not a thing a function record can carry.
+	rootUser := svc.User != nil && svc.User.UID == 0
+	if err := jobspec.CheckHardening(svc.Hardening, svc.Capabilities,
+		svc.User != nil, rootUser, svc.Runtime != ""); err != nil {
+		return fmt.Errorf("service %s: %w", key, err)
+	}
+
 	for _, v := range svc.Volumes {
 		if !jobspec.IsName(v.Name) {
 			return fmt.Errorf("service %s: volume name %q is not a DNS-1123 label", key, v.Name)
@@ -95,7 +104,7 @@ func validateDesired(svc reconciler.Desired) error {
 		initNames[step.Name] = struct{}{}
 		if step.Image == "" {
 			return fmt.Errorf("service %s: init container %q has no image; unlike a task it has "+
-				"no build block (PRD §6.2 R32)", key, step.Name)
+				"no build block", key, step.Name)
 		}
 		if err := jobspec.CheckCapabilities(step.Capabilities); err != nil {
 			return fmt.Errorf("service %s: init container %q: %w", key, step.Name, err)
@@ -105,7 +114,7 @@ func validateDesired(svc reconciler.Desired) error {
 		}
 		if step.Timeout < 0 {
 			return fmt.Errorf("service %s: init container %q declares a negative timeout; omit it "+
-				"for no timeout at all (PRD §6.2 R32)", key, step.Name)
+				"for no timeout at all", key, step.Name)
 		}
 		if ref := step.RegistryAuthRef; ref != "" {
 			if err := jobspec.CheckSecretRefScope(ref, svc.Project,
@@ -177,7 +186,7 @@ func validateDesired(svc reconciler.Desired) error {
 		totalFiles += len(f.Content)
 	}
 	if totalFiles > jobspec.MaxServiceFileBytes {
-		return fmt.Errorf("service %s declares %d bytes of file content; the limit is %d (PRD §21)",
+		return fmt.Errorf("service %s declares %d bytes of file content; the limit is %d",
 			key, totalFiles, jobspec.MaxServiceFileBytes)
 	}
 
@@ -190,7 +199,7 @@ func validateDesired(svc reconciler.Desired) error {
 	for _, step := range svc.Init {
 		if step.Resources.PidsLimit != 0 && step.Resources.PidsLimit != runtime.DefaultPidsLimit {
 			return fmt.Errorf("service %s: init step %q declares a pids cap; a step inherits "+
-				"the alloc's cap (PRD §6.2 R32)", key, step.Name)
+				"the alloc's cap", key, step.Name)
 		}
 	}
 
@@ -205,32 +214,32 @@ func validateDesired(svc reconciler.Desired) error {
 		switch {
 		case len(svc.Volumes) > 0:
 			return fmt.Errorf("service %s names runtime %q and declares volumes; the wasm runtime "+
-				"has no mount primitive (PRD §6.2 R25)", key, svc.Runtime)
+				"has no mount primitive", key, svc.Runtime)
 		case len(svc.Devices) > 0:
 			return fmt.Errorf("service %s names runtime %q and declares devices; the wasm runtime "+
-				"has no device passthrough (PRD §6.2 R25)", key, svc.Runtime)
+				"has no device passthrough", key, svc.Runtime)
 		case len(svc.Sockets) > 0:
 			return fmt.Errorf("service %s names runtime %q and declares sockets; the wasm runtime "+
-				"has no socket passthrough (PRD §6.2 R25)", key, svc.Runtime)
+				"has no socket passthrough", key, svc.Runtime)
 		case len(svc.Capabilities) > 0:
 			return fmt.Errorf("service %s names runtime %q and declares capabilities; the wasm "+
-				"runtime grants none (PRD §6.2 R25)", key, svc.Runtime)
+				"runtime grants none", key, svc.Runtime)
 		case svc.User != nil:
 			return fmt.Errorf("service %s names runtime %q and declares a user; the wasm runtime "+
-				"has no uid concept (PRD §6.2 R25)", key, svc.Runtime)
+				"has no uid concept", key, svc.Runtime)
 		case svc.Scaling != nil:
 			return fmt.Errorf("service %s names runtime %q and declares scaling; function scaling "+
-				"is event-driven, not replica-count (PRD §6.2 R25)", key, svc.Runtime)
+				"is event-driven, not replica-count", key, svc.Runtime)
 		case len(svc.Init) > 0:
 			return fmt.Errorf("service %s names runtime %q and declares init containers; the wasm "+
-				"runtime runs one module and has no second container to run (PRD §6.2 R25)",
+				"runtime runs one module and has no second container to run",
 				key, svc.Runtime)
 		case len(svc.Files) > 0:
 			return fmt.Errorf("service %s names runtime %q and declares files; the wasm runtime "+
-				"has no mount primitive (PRD §6.2 R25)", key, svc.Runtime)
+				"has no mount primitive", key, svc.Runtime)
 		case svc.Resources.PidsLimit != 0 && svc.Resources.PidsLimit != runtime.DefaultPidsLimit:
 			return fmt.Errorf("service %s names runtime %q and declares a pids cap; the wasm "+
-				"sandbox's caps are fixed (PRD §6.2 R25)", key, svc.Runtime)
+				"sandbox's caps are fixed", key, svc.Runtime)
 		}
 	}
 
@@ -249,7 +258,7 @@ func validateDesired(svc reconciler.Desired) error {
 		}
 		if !reflect.DeepEqual(first, e.Auth) {
 			return fmt.Errorf("service %s declares different auth configurations on different "+
-				"expose blocks (PRD §6.2 R16); every block that declares auth must declare "+
+				"expose blocks; every block that declares auth must declare "+
 				"the same auth", key)
 		}
 	}

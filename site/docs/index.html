@@ -485,6 +485,7 @@ kanea logs -f demo/web</pre>
           <tr><td><code>KANEA_VERSION</code></td><td><code>latest</code></td><td>The release tag to install, e.g. <code>vX.Y.Z</code>. <code>latest</code> is resolved from the redirect GitHub already serves, so no <code>jq</code> and no API rate limit.</td></tr>
           <tr><td><code>KANEA_PREFIX</code></td><td><code>/usr/local/bin</code></td><td>Directory the binary is installed into, mode 0755.</td></tr>
           <tr><td><code>KANEA_REPO</code></td><td><code>m18h/kanea</code></td><td>The <code>owner/repo</code> releases come from, so a fork installs from itself.</td></tr>
+          <tr><td><code>KANEA_REQUIRE_SIGNATURE</code></td><td><code>0</code></td><td>Set to <code>1</code> to make the cosign verification mandatory: a missing cosign binary or an unsigned release becomes fatal instead of a note. The script never downloads cosign for itself.</td></tr>
         </tbody>
       </table>
     </div>
@@ -519,6 +520,11 @@ kanea logs -f demo/web</pre>
       <li><b>cosign present, no signature published</b> - a note, then continues on the checksum alone.</li>
       <li><b>cosign absent</b> - prints <code>cosign not found; checksum verified but signature not checked</code> and continues. Installing cosign first is the stronger path; <a href="#install-manual">verifying by hand</a> is the same check written out.</li>
     </ul>
+    <p>
+      <code>KANEA_REQUIRE_SIGNATURE=1</code> turns the last two endings into refusals: a
+      node that cares gets to insist on the signature, and <code>kanea upgrade
+      --require-signature</code> is the same posture for every upgrade after this one.
+    </p>
 
     <div class="callout">
       <b class="label">One side effect, and only one</b>
@@ -877,6 +883,7 @@ runs any state migrations. Running workloads are untouched throughout.</pre>
           <tr><td><code>--check</code></td><td>Report the running, installed and latest versions, and stop.</td></tr>
           <tr><td><code>--version vX.Y.Z</code></td><td>Go to a specific release instead of the latest.</td></tr>
           <tr><td><code>--no-fetch</code></td><td>Download nothing; restart onto whatever binary is already installed. This is the half a package manager leaves for you.</td></tr>
+          <tr><td><code>--require-signature</code></td><td>Refuse the release unless its cosign signature verifies: a missing cosign binary, or a release published without one, becomes fatal instead of a note. Never downloads cosign itself - a verifier fetched over the same channel would be a second trust root vouching for the first.</td></tr>
           <tr><td><code>--allow-downgrade</code></td><td>Permit a target older than the running daemon. Refused otherwise, because the Store's schema is forward-only.</td></tr>
           <tr><td><code>--skip-backup</code></td><td>Skip the pre-upgrade backup. The schema migration still takes its own local copy.</td></tr>
           <tr><td><code>--dry-run</code></td><td>Print what would run and stop.</td></tr>
@@ -1031,9 +1038,10 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
         supported), task lifecycle, per-alloc netns setup, cgroup metrics sampling, and
         stdout/stderr capture.</li>
       <li><b>Hardening is not opt-in.</b> Every alloc starts from a baseline capability set;
-        the uid-switching grants PUID-style images need to chown a volume, drop to their
-        configured user and bind a low port, and nothing more (<code>CAP_NET_RAW</code> is
-        deliberately excluded); plus <code>no-new-privileges</code>, the default seccomp
+        the uid-switching grants PUID-style images need to chown a volume and drop to their
+        configured user, and nothing more (<code>CAP_NET_RAW</code> is deliberately
+        excluded, and binding :80 needs no capability at all - the alloc netns has no
+        privileged-port floor); plus <code>no-new-privileges</code>, the default seccomp
         profile, and its own PID and IPC namespaces. <code>capabilities = ["none"]</code>
         drops to nothing; a capability a workload genuinely needs beyond the baseline is
         named in the spec and drawn from a permitted set; the privilege-equivalent ones are
@@ -1041,6 +1049,14 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
         there is no <code>privileged</code> field. The one way past these defaults is a host device or
         socket the operator granted on the node (R17, R18), which a spec requests by name
         and can never define.</li>
+      <li><b>The strong posture has a name.</b> <code>hardening = "restricted"</code> on a
+        service requires a non-zero <code>user</code>, runs the task with no capabilities
+        at all, and refuses any grant declared beside it; a service that owns a volume
+        chowns it in a root init step first. <code>task.read_only_rootfs = true</code>
+        mounts the image read-only on top of that. Neither is the default - the baseline
+        exists so stock images start - but <code>kanea plan</code> warns on the weak
+        shapes it replaces: an effective uid of 0, a writable root filesystem, and an
+        image following a moving tag without opting into auto-update.</li>
       <li><b>Disk hygiene is part of the driver.</b> Image GC, build-cache caps across
         <i>both</i> content stores (containerd's and the rootless buildkitd user's) per-service
         log caps, and watermark alerts at 80% and 90%. One disk holds images, logs, state and
@@ -1330,7 +1346,12 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
     <p>
       The API is REST plus one multiplexed WebSocket, and <b>every route is deny-by-default</b>:
       including the WebSocket and every MCP route. The exceptions are enumerable:
-      <code>/login</code>, the ACME challenge path, and <code>/healthz</code>.
+      <code>/login</code>, the ACME challenge path, and <code>/healthz</code> - and even
+      the last one keeps its answers short. Unauthenticated, it returns the status and
+      the OIDC issuer (a login screen needs that before it holds a credential) and
+      nothing else; version, PID, store index, listen address and uptime need an
+      identified caller. A bad token still gets the slim 200, so a load balancer
+      forwarding a stale <code>Authorization</code> header cannot flap a health check.
     </p>
     <p>
       There is exactly one authentication mechanism that is not the §13 one: the git webhook
@@ -2418,6 +2439,7 @@ service "web" {
           <tr><td><code>project</code></td><td>string</td><td>-</td><td>The owning project.</td></tr>
           <tr><td><code>description</code></td><td>string</td><td>-</td><td>Free text, ≤ 512 chars.</td></tr>
           <tr><td><code>count</code></td><td>number</td><td><code>1</code></td><td>Replicas. Must sit inside <code>scaling</code>'s min/max if that block is present.</td></tr>
+          <tr><td><code>hardening</code></td><td>string</td><td><code>compatible</code></td><td>The service's posture (R13). <code>restricted</code> is the strong profile in one word: the task must declare a non-zero <code>user</code>, runs with no capabilities at all, and a capability grant beside it is refused. Init steps are deliberately unchanged - chown as root in a step, run the task restricted.</td></tr>
           <tr><td><code>depends_on</code></td><td>list(string)</td><td>-</td><td>Start ordering. See R10.</td></tr>
           <tr><td><code>task</code></td><td>block</td><td>-</td><td>Exactly one in v1.</td></tr>
           <tr><td><code>build</code></td><td>block</td><td>-</td><td>Build from source instead of pulling.</td></tr>
@@ -2445,6 +2467,7 @@ service "web" {
           <tr><td><code>resources</code></td><td>block</td><td><code>cpu</code> in MHz (1000 = one core), <code>memory</code> in MiB. An omitted limit is unbounded: all cores / all allocatable memory. <code>pids</code> overrides the per-alloc process cap (256 when omitted; the cap is always on).</td></tr>
           <tr><td><code>registry_auth_ref</code></td><td>string</td><td><code>secret:</code> reference to a docker <code>config.json</code> used to <b>pull</b> the image. Project-scoped like every other reference (R5).</td></tr>
           <tr><td><code>pull_policy</code></td><td>string</td><td>Where the image may come from (R33): <code>if-not-present</code> (default), <code>never</code>, or <code>always</code>. Omit it to take the node's default. See below.</td></tr>
+          <tr><td><code>read_only_rootfs</code></td><td>bool</td><td>Mounts the container's root filesystem read-only. Volumes and files still mount as declared, so a writable <code>/tmp</code> is a volume away. <code>kanea plan</code> warns when it is off.</td></tr>
           <tr><td><code>device</code></td><td>block</td><td>Requests a host device the operator granted, by name (R17). See below.</td></tr>
           <tr><td><code>socket</code></td><td>block</td><td>Requests a host unix socket the operator granted, by name (R18). See below.</td></tr>
         </tbody>
@@ -2467,6 +2490,10 @@ service "web" {
       declares for itself, and nothing is inherited from <code>task</code>.
     </p>
     <pre><code><span class="k">service</span> <span class="s">"api"</span> {
+  <span class="c"># The strong posture (R13): the chown happens in the root init step,</span>
+  <span class="c"># so the task itself runs as 999 with no capabilities at all.</span>
+  <span class="k">hardening</span> = <span class="s">"restricted"</span>
+
   <span class="c"># Runs as root to fix a directory the task will own as 999.</span>
   <span class="k">init</span> <span class="s">"fix-perms"</span> {
     <span class="k">image</span>        = <span class="s">"busybox:1.36"</span>
@@ -3188,7 +3215,7 @@ removed shop/legacy-worker
     <div class="rule"><b>R10</b><div><p><b>Dependencies gate starts, not stops.</b> <code>depends_on</code> and every implicit reference edge mean a dependent will not start until its dependencies are healthy. If a dependency degrades afterwards, dependents keep running and events are emitted: no cascading stops.</p></div></div>
     <div class="rule"><b>R11</b><div><p><b>A declared limit is enforced; an omitted one is the node's capacity.</b> Omit <code>resources</code> and the alloc gets all cores and all allocatable memory, bounded by the workload parent cgroup, not by a per-alloc number nobody typed. A default <code>pids.max</code> applies regardless; <code>resources.pids</code> declares a service's own cap (256 when omitted), and changes it like any other limit. A declared <code>memory.max</code> breach OOM-kills the alloc, emits an event, and the restart policy applies. Scaling on <code>cpu</code> or <code>memory</code> (percent-of-limit) requires the corresponding limit and is refused at plan without it. Declared values are the admission units counted against the node's workload budget. Functions keep small defaults (<code>cpu = 100</code>, <code>memory = 64</code>): the wasm sandbox's caps are promises.</p></div></div>
     <div class="rule"><b>R12</b><div><p><b><code>task.command</code> is an argument array.</b> The first element must be non-empty; later ones may be empty, because some programs use that meaningfully; <code>redis-server --save ""</code> is how you disable snapshots. <b><code>task.args</code> keeps the image's entrypoint and replaces its arguments</b> (v1.97): alone, argv is the image's ENTRYPOINT then <code>args</code>, resolved on the node from the image itself; beside <code>command</code>, argv is <code>command</code> then <code>args</code> - the Kubernetes pair. Its elements may all be empty (they are arguments, not a program), but <code>args = []</code> is refused: the record cannot carry "declared empty" apart from "absent", and <code>command</code> is the spelling for "run the bare entrypoint". Both apply to <code>init</code> blocks too; a <code>function</code> takes neither.</p></div></div>
-    <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> adds to a baseline, and <code>"none"</code> takes the baseline away.</b> Every runc alloc starts from the baseline set; <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>NET_BIND_SERVICE</code>, <code>SETGID</code>, <code>SETUID</code>, so PUID-style images start without a capability line. The effective grant is the union of baseline and declared list; <code>["none"]</code> is the full drop-ALL posture, <code>["none", "CAP_NET_RAW"]</code> exactly one grant. Declarable beyond the baseline: <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_RAW</code> (never baseline; the datapath's identity is the IP), <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. One honest caveat on <code>SETFCAP</code>: file capabilities are xattrs, so a binary given them inside an <b>rw host volume</b> keeps them on the host for whoever executes it later; <code>no-new-privileges</code> contains the grant inside the container, not the file. Privilege-equivalent ones; <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends; are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Effective capabilities go into the bounding, effective and permitted sets, never inheritable or ambient.</p></div></div>
+    <div class="rule"><b>R13</b><div><p><b><code>task.capabilities</code> adds to a baseline, and <code>"none"</code> takes the baseline away.</b> Every runc alloc starts from the baseline set; <code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>SETGID</code>, <code>SETUID</code>, so PUID-style images start without a capability line. Binding :80 needs no capability at all: every alloc netns sets <code>ip_unprivileged_port_start=0</code>, which is why <code>NET_BIND_SERVICE</code> is no longer baseline. The effective grant is the union of baseline and declared list; <code>["none"]</code> is the full drop-ALL posture, <code>["none", "CAP_NET_RAW"]</code> exactly one grant. Declarable beyond the baseline: <code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_BIND_SERVICE</code>, <code>NET_RAW</code> (never baseline; the datapath's identity is the IP), <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code>. One honest caveat on <code>SETFCAP</code>: file capabilities are xattrs, so a binary given them inside an <b>rw host volume</b> keeps them on the host for whoever executes it later; <code>no-new-privileges</code> contains the grant inside the container, not the file. Privilege-equivalent ones; <code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_PTRACE</code>, <code>BPF</code>, <code>PERFMON</code> and friends; are <b>rejected at parse time</b>: granting them would be the <code>privileged</code> escape hatch v1 deliberately does not have. Effective capabilities go into the bounding, effective and permitted sets, never inheritable or ambient. <b><code>hardening = "restricted"</code> on the service names the strong posture</b>: a non-zero <code>user</code> required, drop-ALL enforced, any declared grant refused - and init steps unchanged, because the canonical shape is a root init step that chowns and exits before a restricted task.</p></div></div>
     <div class="rule"><b>R14</b><div><p><b><code>allow_from</code> only ever adds reachability.</b> Each entry is a fully-qualified <code>"&lt;project&gt;/&lt;service&gt;"</code>; the datapath's ingress rules only ever union, so an entry can never weaken the project default-deny. <b>There is no wildcard</b>: <code>"analytics/*"</code> is a parse error, because naming the peer is the point. Same-project entries are accepted and redundant.</p></div></div>
     <div class="rule"><b>R15</b><div><p><b><code>host</code> volumes are operator-gated.</b> The path is validated as absolute, clean and <code>..</code>-free at parse time, but whether it may be mounted is not the spec's decision. <code>kanead</code> refuses any path outside <code>storage.allowed_host_paths</code> in the server config <code>/etc/kanea/kanea.hcl</code> (or <code>--allowed-host-paths</code>, which wins when set), <b>whose default is empty</b>. The check is applied after symlink resolution, and the directory must already exist - <b>unless the storage block sets <code>create = true</code></b>, which makes Kanea create it. The default has not moved: without that flag a missing path is still refused, because creating one on demand turns a typo into a volume that is silently empty. Creation is allowlist-gated first - the nearest <i>existing</i> parent is resolved and checked before anything is written - so a <code>create</code> outside a permitted prefix leaves no directory behind. Creating a directory is not owning it: Kanea still never chowns a host volume.</p></div></div>
     <div class="rule"><b>R16</b><div><p><b><code>expose</code> fails closed.</b> A service may only be exposed if it declares a port, and the upstream port must be unambiguous; declared with <code>port = "&lt;name&gt;"</code>, or named <code>http</code>, or the only one declared. The block may repeat, each one a complete route validated independently; only the first may omit <code>domains</code>, and blocks that declare <code>auth</code> must agree. Every domain is validated as a hostname, and no two services may claim the same one, counting generated FQDNs. Middleware is checked here too: CIDRs must parse, <code>rate_limit</code> needs a positive <code>requests</code> and a valid <code>window</code>, and <code>headers</code> may not touch the hop-by-hop or <code>X-Forwarded-*</code> sets.</p></div></div>
@@ -4145,12 +4172,13 @@ kanea ca info                       # its subject, fingerprint and validity</pre
     </p>
 
     <h4><code>kanea upgrade</code></h4>
-    <pre class="plain">kanea upgrade [--check] [--version vX.Y.Z] [--no-fetch] [--skip-backup] [--dry-run] [--timeout=2m]</pre>
+    <pre class="plain">kanea upgrade [--check] [--version vX.Y.Z] [--require-signature] [--no-fetch] [--skip-backup] [--dry-run] [--timeout=2m]</pre>
     <p>
       One command, both halves: it fetches the latest release (or <code>--version</code>),
       verifies it; sha256 against the release's <code>checksums.txt</code> always, the
       cosign keyless signature over that file when cosign is installed, a loud note when
-      it is not; installs it atomically over its own path, then takes a pre-upgrade
+      it is not (<code>--require-signature</code> turns both soft endings into refusals);
+      installs it atomically over its own path, then takes a pre-upgrade
       backup, restarts <code>kanea-edge</code> and then <code>kanead</code> in that order,
       runs any state migrations, and waits for health. Already at the target version means
       nothing to download, so running it twice is safe by construction.
@@ -4184,6 +4212,10 @@ kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       so the plan and the run cannot disagree. Multiple files are parsed as one set, so
       file order does not matter. This is where you find out about a cycle, a
       cross-project secret, a duplicate domain or a rate limit that would fail open.
+      It also <b>warns, never fails,</b> on the weak defaults: an effective uid of 0, a
+      writable root filesystem, and an image following a moving tag without opting into
+      auto-update - the shapes <code>hardening = "restricted"</code> and
+      <code>read_only_rootfs</code> exist to replace.
     </p>
     <pre class="plain">$ kanea plan app.hcl
 ~ update shop/web

@@ -379,7 +379,14 @@ storage "scratch" { type = "local" }
 service "web" {
   project = "shop"
   count   = %d
-  task "app" { image = "nginx:1.27-alpine" }
+  task "app" {
+    image            = "nginx:1.27-alpine@sha256:0f9e6ee1a1b0a2c6d3f0e0e3a3d3c1b0a2c6d3f0e0e3a3d3c1b0a2c6d3f0e0e3"
+    read_only_rootfs = true
+    user {
+      uid = 101
+      gid = 101
+    }
+  }
   %s
   volume "data" {
     storage = "scratch"
@@ -442,7 +449,14 @@ storage "shared" {
 service "web" {
   project = "shop"
   count   = 3
-  task "app" { image = "nginx:1.27-alpine" }
+  task "app" {
+    image            = "nginx:1.27-alpine@sha256:0f9e6ee1a1b0a2c6d3f0e0e3a3d3c1b0a2c6d3f0e0e3a3d3c1b0a2c6d3f0e0e3"
+    read_only_rootfs = true
+    user {
+      uid = 101
+      gid = 101
+    }
+  }
   init "seed" {
     image   = "busybox:1.36"
     command = ["sh", "-c", "seed"]

@@ -22,6 +22,12 @@ set -euo pipefail
 REPO="${KANEA_REPO:-m18h/kanea}"
 VERSION="${KANEA_VERSION:-latest}"
 PREFIX="${KANEA_PREFIX:-/usr/local/bin}"
+# KANEA_REQUIRE_SIGNATURE=1 makes the cosign verification below mandatory:
+# a missing cosign binary or a release without a signature becomes fatal
+# instead of a note. The script never downloads cosign itself; a verifier
+# fetched over the same channel would be a second trust root vouching for
+# the first.
+REQUIRE_SIGNATURE="${KANEA_REQUIRE_SIGNATURE:-0}"
 
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'install: %s\n' "$*" >&2; }
@@ -99,10 +105,11 @@ curl -fsSL "${BASE}/checksums.txt" -o "${WORK}/checksums.txt"
   fi
 ) || die "checksum mismatch: do not run this binary"
 
-# Signature verification, when cosign is present. Not required, because
-# requiring it would mean every installer needs cosign; strongly preferred,
-# because a checksum file fetched from the same place as the binary proves only
-# that the two agree.
+# Signature verification, when cosign is present. Not required by default,
+# because requiring it would mean every installer needs cosign; strongly
+# preferred, because a checksum file fetched from the same place as the binary
+# proves only that the two agree. KANEA_REQUIRE_SIGNATURE=1 turns both soft
+# endings below into refusals.
 if command -v cosign >/dev/null 2>&1; then
   note "Verifying the signature"
   curl -fsSL "${BASE}/checksums.txt.sig" -o "${WORK}/checksums.txt.sig" 2>/dev/null || true
@@ -115,9 +122,13 @@ if command -v cosign >/dev/null 2>&1; then
       --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
       "${WORK}/checksums.txt" >/dev/null 2>&1 || die "signature verification failed"
     note "Signature verified"
+  elif [ "$REQUIRE_SIGNATURE" = "1" ]; then
+    die "KANEA_REQUIRE_SIGNATURE is set and ${VERSION} publishes no signature; refusing the checksum-only archive"
   else
     note "No signature published for ${VERSION}; checksum only"
   fi
+elif [ "$REQUIRE_SIGNATURE" = "1" ]; then
+  die "KANEA_REQUIRE_SIGNATURE is set and cosign is not installed; install cosign and re-run (this script deliberately does not download a verifier for itself)"
 else
   note "cosign not found; checksum verified but signature not checked"
 fi

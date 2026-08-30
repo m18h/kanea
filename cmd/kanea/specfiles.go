@@ -61,7 +61,7 @@ func (dirReader) ReadSpecFile(specPath, rel string) ([]byte, error) {
 		return nil, fmt.Errorf("read %s: %w", rel, err)
 	}
 	if len(body) > jobspec.MaxFileBytes {
-		return nil, fmt.Errorf("%s is larger than %d bytes (PRD §21)", rel, jobspec.MaxFileBytes)
+		return nil, fmt.Errorf("%s is larger than %d bytes", rel, jobspec.MaxFileBytes)
 	}
 	return body, nil
 }

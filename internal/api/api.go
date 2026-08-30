@@ -48,16 +48,23 @@ const (
 )
 
 // Health is the readiness payload.
+//
+// Two shapes since v1.105 (§5.2.1): an unauthenticated caller gets Status and
+// OIDC and nothing else - version, PID, store index, listen address and
+// uptime are reconnaissance when served to the world - while an identified
+// caller (bearer, cookie, or the unix socket, which is how the CLI asks)
+// gets everything. The process fields carry omitempty/omitzero so the slim
+// payload does not serialise a page of zeros pretending to be facts.
 type Health struct {
 	Status  string `json:"status"`
-	Version string `json:"version"`
+	Version string `json:"version,omitempty"`
 	// StoreIndex is the latest applied store index: a cheap liveness signal
 	// that also tells the CLI whether its write landed.
-	StoreIndex uint64 `json:"store_index"`
+	StoreIndex uint64 `json:"store_index,omitempty"`
 	// WSConnections is how many live-data sockets are attached. It answers
 	// "why is this daemon busy" and "did my dashboard actually connect"
 	// without reading the log.
-	WSConnections int `json:"ws_connections"`
+	WSConnections int `json:"ws_connections,omitempty"`
 	// OIDC describes the identity provider, when one is configured. It is here
 	// rather than on a route of its own because §5.2.1 fixes the list of
 	// unauthenticated routes, and a client needs this answer before it has a
@@ -65,20 +72,17 @@ type Health struct {
 	OIDC *OIDCStatus `json:"oidc,omitempty"`
 	// Listen and TLS describe the network listener, for a client that reached
 	// the daemon over the unix socket and needs somewhere to point a browser
-	// (`kanea ui`). Empty when the socket is the only way in.
-	//
-	// Reported on the unauthenticated route for the same reason the issuer is:
-	// it is needed before there is a credential to ask with, and it is not a
-	// secret; a caller on the network already knows an address that works, and
-	// a caller on the socket is the local root of §13.1.
+	// (`kanea ui`). Empty when the socket is the only way in. Identified
+	// callers only since v1.105, which costs `kanea ui` nothing: it asks over
+	// the socket, the local root of §13.1.
 	Listen string `json:"listen,omitempty"`
 	TLS    bool   `json:"tls,omitempty"`
 	// PID, StartedAt and UptimeSeconds describe the process (v1.38). Both the
 	// start time and the elapsed seconds ride together so a client can render
 	// "up 41d 6h" without trusting its own clock to agree with the daemon's.
-	PID           int       `json:"pid"`
-	StartedAt     time.Time `json:"started_at"`
-	UptimeSeconds int64     `json:"uptime_seconds"`
+	PID           int       `json:"pid,omitempty"`
+	StartedAt     time.Time `json:"started_at,omitzero"`
+	UptimeSeconds int64     `json:"uptime_seconds,omitempty"`
 }
 
 // ApplyRequest replaces the desired state of the services it names. Services

@@ -127,8 +127,8 @@ func platformChecks(opts preflightOptions) []checkResult {
 func componentChecks(opts preflightOptions) []checkResult {
 	results := []checkResult{
 		checkSocket("containerd", opts.containerdSocket,
-			"run `kanea install`: Kanea installs and supervises its own containerd "+
-				"(PRD §5.2.12); or point --containerd at an existing one"),
+			"run `kanea install`: Kanea installs and supervises its own containerd; "+
+				"or point --containerd at an existing one"),
 		checkVersionMatrix(opts.layout),
 		checkSubnets(opts.layout, opts.serviceCIDR),
 		checkStateDBPerms(opts.dataDir),
@@ -161,7 +161,7 @@ func checkWasmShim(layout provision.Layout) checkResult {
 		// presence in BinDir is resolvability. Drift is the matrix's job.
 		if _, err := os.Stat(filepath.Join(layout.BinDir(), shim)); err != nil {
 			return warn("wasm shim", shim+" is not installed",
-				"functions (PRD §6.2 R25) need it; run `kanea install --only wasmtime-shim`")
+				"functions need it; run `kanea install --only wasmtime-shim`")
 		}
 		return pass("wasm shim", shim+" installed")
 	}
@@ -247,7 +247,7 @@ func checkSystemd() checkResult {
 	}
 	return warn("systemd", "not running this machine",
 		"`kanea install` will place binaries but write no units, and the component "+
-			"daemons are yours to supervise (PRD §5.2.11)")
+			"daemons are yours to supervise")
 }
 
 // checkVersionMatrix enforces PRD §15.4 and §22 R1.
@@ -460,7 +460,7 @@ func checkCgroupV2() checkResult {
 		return fail("cgroups v2", "the unified hierarchy is not mounted",
 			"boot with systemd.unified_cgroup_hierarchy=1 (cgroups v1 has no "+
 				"equivalent of memory.min, so the control-plane memory floor "+
-				"in PRD §5.2.11 cannot be enforced)")
+				"cannot be enforced)")
 	}
 	controllers, err := os.ReadFile("/sys/fs/cgroup/cgroup.controllers")
 	if err != nil {
@@ -492,7 +492,7 @@ func checkKernel() checkResult {
 	version := strings.TrimSpace(string(release))
 	if older, err := kernelOlderThan(version, minKernel); err == nil && older {
 		return fail("kernel", version,
-			"Kanea's eBPF datapath (PRD §5.2.5) needs "+minKernel+" or newer; upgrade the kernel")
+			"Kanea's eBPF datapath needs "+minKernel+" or newer; upgrade the kernel")
 	}
 	return pass("kernel", version)
 }
@@ -588,7 +588,8 @@ func checkEdgeUser() checkResult {
 	if _, err := user.Lookup(provision.EdgeUser); err != nil {
 		return warn("edge user", provision.EdgeUser+" does not exist",
 			"re-run `kanea init` (idempotent): it creates the account; until then the "+
-				"kanea-edge unit cannot start, or the edge runs as root and the §5.2.6 boundary is void")
+				"kanea-edge unit cannot start, or the edge runs as root and the process "+
+				"split stops being a privilege boundary")
 	}
 	body, err := os.ReadFile(filepath.Join(provision.DefaultUnitDir, "kanea-edge.service")) // #nosec G304; a fixed unit path
 	if errors.Is(err, fs.ErrNotExist) {

@@ -253,7 +253,7 @@ func (a *acmeSource) Ensure(ctx context.Context, reqs []certsource.Request) (cer
 		// the fix (a wildcard) needs a DNS-01 solver nobody has configured.
 		a.log.Warn("more per-service certificates than Let's Encrypt rate limits are comfortable with",
 			"certificates", plan.PerService, "threshold", acme.DefaultWildcardThreshold,
-			"detail", "configure --acme-dns-server to switch to per-project wildcards (PRD §7.3)")
+			"detail", "configure --acme-dns-server to switch to per-project wildcards")
 	}
 	if plan.Wildcard > 0 {
 		a.log.Info("issuing per-project wildcards",

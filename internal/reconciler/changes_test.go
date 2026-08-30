@@ -93,6 +93,7 @@ var mutations = []struct {
 	{"Command", "command", func(d *reconciler.Desired) { d.Command = []string{"/bin/app", "-v"} }},
 	{"Args", "args", func(d *reconciler.Desired) { d.Args = []string{"--port", "8080"} }},
 	{"Capabilities", "capabilities", func(d *reconciler.Desired) { d.Capabilities = []string{"none"} }},
+	{"Hardening", "hardening", func(d *reconciler.Desired) { d.Hardening = reconciler.HardeningRestricted }},
 	{"Env", "env", func(d *reconciler.Desired) { d.Env = map[string]string{"LOG_LEVEL": "debug"} }},
 	{"Files", "files", func(d *reconciler.Desired) { d.Files[0].Content = []byte("a=2") }},
 	{"User", "user", func(d *reconciler.Desired) { d.User = &runtime.User{UID: 2000, GID: 2000} }},

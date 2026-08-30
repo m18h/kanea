@@ -96,6 +96,45 @@ func TestDeclaringNoneRollsTheService(t *testing.T) {
 	}
 }
 
+// The v1.105 baseline shrink: NET_BIND_SERVICE is granted by the netns's
+// ip_unprivileged_port_start=0 instead of by a capability, so it must stay
+// out of the default set - and stay declarable for the image that raises a
+// privileged-port check of its own.
+func TestNetBindServiceIsDeclarableButNotBaseline(t *testing.T) {
+	if slices.Contains(reconciler.BaselineCapabilities, "CAP_NET_BIND_SERVICE") {
+		t.Error("CAP_NET_BIND_SERVICE is back in the baseline; the netns's " +
+			"unprivileged-port floor already covers binding :80 (v1.105)")
+	}
+	d := desired(1)
+	d.Capabilities = []string{"CAP_NET_BIND_SERVICE"}
+	got := reconciler.AllocSpecFor(d, 0, "", "/vol").Capabilities
+	if !slices.Contains(got, "CAP_NET_BIND_SERVICE") {
+		t.Errorf("a declared CAP_NET_BIND_SERVICE did not project: %v", got)
+	}
+}
+
+// Restricted is drop-ALL at projection (v1.105): no baseline, and the "none"
+// token beside it changes nothing. The validators refuse a real grant next to
+// the posture, so the projected set is empty - and it must enter the spec
+// hash, or naming the posture would never deploy.
+func TestRestrictedProjectsToNoCapabilities(t *testing.T) {
+	d := desired(1)
+	d.Hardening = reconciler.HardeningRestricted
+	if got := reconciler.AllocSpecFor(d, 0, "", "/vol").Capabilities; len(got) != 0 {
+		t.Errorf("restricted projected to %v, want nothing", got)
+	}
+
+	withNone := d
+	withNone.Capabilities = []string{"none"}
+	if got := reconciler.AllocSpecFor(withNone, 0, "", "/vol").Capabilities; len(got) != 0 {
+		t.Errorf("restricted beside [\"none\"] projected to %v, want nothing", got)
+	}
+
+	if reconciler.SpecHash(d) == reconciler.SpecHash(desired(1)) {
+		t.Error("declaring restricted did not change the spec hash; the posture would never deploy")
+	}
+}
+
 // R25 gives a function's spec no way to declare capabilities, and the
 // projection must not hand it the runc baseline either: a non-default runtime
 // passes through verbatim, so upgrading kanead changes nothing about what a

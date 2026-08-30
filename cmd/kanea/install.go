@@ -41,7 +41,7 @@ func runInstall(args []string) error {
 	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
 		"the native routing CIDR; it must contain --node-cidr")
 	nodeCIDR6 := fs.String("node-cidr6", "",
-		"this node's IPv6 container subnet (PRD v1.41, opt-in); requires --cluster-cidr6")
+		"this node's IPv6 container subnet (opt-in); requires --cluster-cidr6")
 	clusterCIDR6 := fs.String("cluster-cidr6", "",
 		"the routed IPv6 range; must contain --node-cidr6")
 	arch := fs.String("arch", provision.HostArch(),
@@ -185,7 +185,7 @@ func runInstall(args []string) error {
 	// mounts an S3 volume should not fail its install over it.
 	if err := provision.SetupFUSE(ctx, nil); err != nil {
 		o.printf("\nWARN  the FUSE stack could not be set up: %v\n", err)
-		o.println("      S3 volumes will fail to mount until it is (PRD §8).")
+		o.println("      S3 volumes will fail to mount until it is.")
 	}
 
 	// Phase two: bring containerd up, then pull the images through it.

@@ -184,10 +184,16 @@ Two deliberate gaps, stated rather than hidden:
 ### 3.5 Workloads (A01, A04)
 
 Every alloc runs with capabilities dropped to the **baseline set** (§6.2 R13,
-v1.56: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `KILL`, `NET_BIND_SERVICE`,
+v1.56, shrunk in v1.105: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`, `KILL`,
 `SETGID`, `SETUID`, the uid-switching grants the PUID-pattern image class needs
 at startup, confined by the alloc's own private PID namespace and netns;
-`capabilities = ["none"]` restores full drop-ALL per service), plus
+`NET_BIND_SERVICE` left the set because every alloc netns now carries
+`ip_unprivileged_port_start=0`, so binding :80 needs no capability at all;
+`capabilities = ["none"]` restores full drop-ALL per service, and
+`hardening = "restricted"` (v1.105) names the strong posture in one word: a
+non-zero `user` required, drop-ALL projected, any declared grant refused - the
+recommended shape for a volume-owning image being a root init step that chowns
+and exits before a restricted task), plus
 `no-new-privileges`, the default seccomp profile, private PID and IPC
 namespaces, and an always-on pids cap. Cpu/memory limits are enforced where
 declared (§6.2 R11, v1.58: an omitted limit means the node's capacity, and the
@@ -960,12 +966,14 @@ authenticated), and the Store file. The control that exists: an
 output-chain drop of `169.254.0.0/16` for the `kanea-buildkit` uid in the
 datapath's owned nftables table (v1.75), re-ensured with the masquerade
 rule, so the metadata class is closed for the daemon and its workers.
-Residuals, stated: a Dockerfile `USER <non-root>` step runs as a *subuid*
-of the build account and escapes the uid match (the metadata rule covers
-the default root shape); loopback diagnostics and cross-project VIP
-reachability remain, by design, until a worker network namespace is
-evaluated - both are reads the platform treats as low-value (metrics and
-route tables, not credentials), and both are now in §7.
+Since v1.105 a second rule in the same rewrite covers the account's whole
+`/etc/subuid` range, because a Dockerfile `USER <non-root>` step runs as a
+*subuid* of the build account and escaped the uid match: the metadata class
+is now closed for every identity a build can take. Residuals, stated:
+loopback diagnostics and cross-project VIP reachability remain, by design,
+until a worker network namespace is evaluated - both are reads the platform
+treats as low-value (metrics and route tables, not credentials), and both
+are in §7.
 
 **The build context is a boundary too.** The context reader resolves its
 root through symlinks *as root* (buildkit's fsutil, driven by `buildctl`
@@ -1302,7 +1310,7 @@ is one that has already reached a workload.
 | A provider credential file on the node reads every external secret its token can | 0600-checked and root-owned, but a scoped token is the provider's control, not Kanea's; docs prescribe least-privilege tokens (§3.19) |
 | A local-account name and a directory name are timing-distinguishable at login | LDAP bind time is the directory's, not Kanea's; equalising against network I/O would be theatre (§3.20) |
 | A directory user's revoked group membership outlives login by up to a session lifetime | Group→role mapping is evaluated at bind time only; the session's 12 h absolute expiry bounds it (§3.20) |
-| A build's `RUN` steps can read unauthenticated loopback diagnostics (containerd metrics, edge status) and reach every project's VIPs | Host networking is what keeps a node-local registry reachable; a worker network namespace is the real fix and is unevaluated (§3.21) |
-| A Dockerfile `USER <non-root>` step escapes the uid-keyed metadata drop | Rootless uid-mapping puts non-root container users on subuids, not the build account; the rule covers the default root shape (§3.21) |
+| A build's `RUN` steps can read unauthenticated loopback diagnostics (containerd metrics, edge status) and reach every project's VIPs | Host networking is what keeps a node-local registry reachable; a worker network namespace is the real fix and is unevaluated (§3.21; the subuid metadata escape it once shared this row with was closed in v1.105) |
+| Container uid 0 is host uid 0, held back by capabilities, seccomp and namespaces rather than a uid map | User namespaces are **spiked GO on the mechanics but unbuilt** (`spikes/userns/`, media node, kernel 6.1, 15/15): the map, the idmapped rootfs and the PUID image class all work, and the ownership arithmetic is a base-shift; the feature is gated on inverting Kanea's netns-first lifecycle (runc makes the netns with the userns, kanead attaches the datapath by pid after) plus a ≥ 5.19 kernel gate, and a grant that cannot be honoured under a map is still refused, not fudged (R21). Parked in PRD §19.3 |
 | One alloc can exhaust the resolver's TCP connection cap for the whole node | The cap is per node, not per source; UDP is unaffected, and every client is an alloc whose address the datapath assigned (§3.25) |
 | `kanea doctor` cannot prove a host firewall actually permits alloc traffic | It reads the ruleset rather than probing it; the accept-rule search is a heuristic, and only a live query from an alloc's netns could be conclusive (PRD v1.86) |

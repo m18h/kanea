@@ -14,23 +14,33 @@ import (
 // since runc fails the whole task on an unknown capability name.
 const CapabilityNone = "none"
 
+// HardeningRestricted is the R13 posture that projects to drop-ALL (v1.105).
+// Duplicated from jobspec (jobspec.HardeningRestricted), the CapabilityNone
+// precedent: a dependency from reconciler to jobspec would point the wrong
+// way, and the contract is one lowercase word.
+const HardeningRestricted = "restricted"
+
 // BaselineCapabilities is what a runc alloc gets when its spec declares
 // nothing (PRD §6.2 R13, v1.56): the grants the PUID-pattern image class
-// needs to fix a root-owned volume, drop to its configured user, signal the
-// children its root init supervises (confined by the per-alloc PID
-// namespace), and bind a port below the netns's 1024 floor.
+// needs to fix a root-owned volume, drop to its configured user, and signal
+// the children its root init supervises (confined by the per-alloc PID
+// namespace).
 //
 // CAP_NET_RAW is deliberately absent and must stay absent: the datapath's
 // identity is the IP (PRD §5.2.5), and a raw socket is a source-forging
 // primitive against a SYN-gated, stateless policy layer. That is where
 // Docker's default set stops being a precedent.
+//
+// CAP_NET_BIND_SERVICE left in v1.105: every alloc netns sets
+// ip_unprivileged_port_start=0 (writePeerSysctls), so binding :80 needs no
+// capability at all. It stays declarable; do not put it back here for an
+// image that "needs :80" - the netns already grants that to everyone.
 var BaselineCapabilities = []string{
 	"CAP_CHOWN",
 	"CAP_DAC_OVERRIDE",
 	"CAP_FOWNER",
 	"CAP_FSETID",
 	"CAP_KILL",
-	"CAP_NET_BIND_SERVICE",
 	"CAP_SETGID",
 	"CAP_SETUID",
 }
@@ -55,7 +65,10 @@ func effectiveCapabilities(d Desired) []string {
 	}
 
 	declared := make([]string, 0, len(d.Capabilities))
-	fromNothing := false
+	// Restricted starts from nothing exactly as the "none" token does; the
+	// validators (parse and apply seam alike) have already refused any real
+	// grant beside it, so a restricted projection is the empty set.
+	fromNothing := d.Hardening == HardeningRestricted
 	for _, c := range d.Capabilities {
 		if c == CapabilityNone {
 			fromNothing = true

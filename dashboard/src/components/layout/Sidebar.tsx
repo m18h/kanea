@@ -59,7 +59,7 @@ export function Sidebar({ className }: { className?: string | undefined }) {
       <div className="flex items-center gap-2 px-4 pb-4 pt-5">
         <Mark size={22} />
         <span className="text-base font-semibold tracking-tight">kanea</span>
-        {health.data ? (
+        {health.data?.version ? (
           <span className="ml-auto font-mono text-[11px] text-muted-foreground">
             v{health.data.version.replace(/^v/, '')}
           </span>

@@ -41,7 +41,7 @@ func checkBPF() checkResult {
 	if err := syscall.Statfs("/sys/fs/cgroup", &stat); err != nil || stat.Type != cgroup2Magic {
 		return fail("bpf", "/sys/fs/cgroup is not the unified cgroup2 mount",
 			"boot with systemd.unified_cgroup_hierarchy=1; connect-time load "+
-				"balancing attaches at the cgroup root (PRD §5.2.5)")
+				"balancing attaches at the cgroup root")
 	}
 
 	// The pin directory itself is kanead's to create; what has to be true in

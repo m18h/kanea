@@ -9,6 +9,9 @@ import (
 
 // exposeSpec builds a one-service spec with the given network and expose bodies.
 func exposeSpec(network, expose string) string {
+	// The task is fully hardened (digest-pinned, non-root, read-only rootfs)
+	// so tests asserting "no diagnostics at all" stay meaningful beside the
+	// v1.105 posture warnings.
 	return `
 spec_version = 1
 
@@ -16,7 +19,14 @@ project "shop" {}
 
 service "web" {
   project = "shop"
-  task "app" { image = "nginx:1.27-alpine" }
+  task "app" {
+    image            = "nginx:1.27-alpine@sha256:0f9e6ee1a1b0a2c6d3f0e0e3a3d3c1b0a2c6d3f0e0e3a3d3c1b0a2c6d3f0e0e3"
+    read_only_rootfs = true
+    user {
+      uid = 101
+      gid = 101
+    }
+  }
   ` + network + `
   expose {
     ` + expose + `

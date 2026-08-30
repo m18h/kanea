@@ -90,6 +90,14 @@ type Desired struct {
 	// default that entered the record would re-hash (and roll) every
 	// capability-less service at upgrade (the R23 lesson).
 	Capabilities []string
+	// Hardening is the service's posture (jobspec R13, v1.105): "" for the
+	// compatible baseline (the meaning of every record already in a Store,
+	// which is why omitempty is load-bearing: the R23 lesson), or
+	// HardeningRestricted for drop-ALL with a required non-root user. It IS
+	// SpecHash material: declaring it changes what the container runs with,
+	// so it must roll. "compatible" never reaches here: jobspec canonicalises
+	// it to "" at parse and the apply seam refuses the long spelling.
+	Hardening string `json:"hardening,omitempty"`
 	// Env is the fully resolved environment for each alloc.
 	Env map[string]string
 	// Files are content Kanea materialises and bind-mounts (jobspec R35).

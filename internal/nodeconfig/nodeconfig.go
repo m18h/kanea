@@ -268,7 +268,7 @@ func Parse(filename string, src []byte) (*Config, error) {
 			cfg.ImagePullPolicy = policy
 		case runtime.PullAlways:
 			return nil, fmt.Errorf("images: pull_policy %q is not a node default: it turns on "+
-				"image auto-update for one service (PRD §6.2 R19/R33), which is a per-service "+
+				"image auto-update for one service, which is a per-service "+
 				"decision. Declare it on the service's task instead", policy)
 		default:
 			return nil, fmt.Errorf("images: pull_policy %q is not a policy; it must be %q or %q",
@@ -339,7 +339,7 @@ func decodeVariables(body hcl.Body) (map[string]string, error) {
 	vars := make(map[string]string, len(attrs))
 	for name, attr := range attrs {
 		if reservedVarNames[name] {
-			return nil, fmt.Errorf("variables: %q is a reserved name (R30)", name)
+			return nil, fmt.Errorf("variables: %q is a reserved name", name)
 		}
 		v, diags := attr.Expr.Value(nil)
 		if diags.HasErrors() {
@@ -349,7 +349,7 @@ func decodeVariables(body hcl.Body) (map[string]string, error) {
 			return nil, fmt.Errorf("variables: %q is null", name)
 		}
 		if !v.Type().IsPrimitiveType() {
-			return nil, fmt.Errorf("variables: %q is a %s; a variable is a string, number or bool (R30)",
+			return nil, fmt.Errorf("variables: %q is a %s; a variable is a string, number or bool",
 				name, v.Type().FriendlyName())
 		}
 		s, err := convert.Convert(v, cty.String)

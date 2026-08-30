@@ -42,13 +42,13 @@ func runEdge(args []string) error {
 		"node-wide ceiling on live connections across every published tcp port")
 	functionsPort := fs.Int("functions-port", 0,
 		"node port dispatching /<project>/<function>/ to http-triggered functions "+
-			"on a node with no base domain (PRD §7.2.3); 0 disables")
+			"on a node with no base domain; 0 disables")
 	bodyTimeout := fs.Duration("body-timeout", edge.DefaultBodyTimeout,
 		"bound on reading a request body (0 disables)")
 	upstreamTimeout := fs.Duration("upstream-timeout", edge.DefaultResponseHeaderTimeout,
 		"bound on an upstream starting to answer (does not bound the body)")
 	securityHeaders := fs.Bool("security-headers", true,
-		"add the default security response headers (PRD §14 A05)")
+		"add the default security response headers")
 	limiterCap := fs.Int("rate-limit-buckets", ratelimit.DefaultCapacity,
 		"maximum tracked rate-limit buckets before least-recently-used eviction")
 	memLimit := fs.String("memory-limit", "", "GOMEMLIMIT for this process, e.g. 128MiB")

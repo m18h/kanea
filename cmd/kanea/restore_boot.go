@@ -60,7 +60,7 @@ func restoreAtStart(ctx context.Context, opts bootRestoreOptions) error {
 		// is what staging it meant.
 	case !stateExists && opts.autoRestore && opts.sink.configured():
 		opts.log.Warn("no state on this node and a backup destination is configured",
-			"detail", "restoring the newest archive (first-boot auto-restore, §15.3)")
+			"detail", "restoring the newest archive (first-boot auto-restore)")
 		request = &backup.Request{RequestedAt: time.Now().UTC(), RequestedBy: "first-boot"}
 	default:
 		return nil

@@ -410,9 +410,13 @@ func SpecHash(d Desired) string {
 		// Args are part of the argv the container is created with, so changing
 		// them rolls (the same reason as Command). omitempty is what keeps
 		// every pre-v1.97 record hashing exactly as it did (the R23 lesson).
-		Args         []string          `json:"args,omitempty"`
-		Capabilities []string          `json:"capabilities,omitempty"`
-		Env          map[string]string `json:"env,omitempty"`
+		Args         []string `json:"args,omitempty"`
+		Capabilities []string `json:"capabilities,omitempty"`
+		// The posture decides the projected capability set, so changing it is
+		// a different container (jobspec R13, v1.105). omitempty is what keeps
+		// every pre-v1.105 record hashing exactly as it did (the R23 lesson).
+		Hardening string            `json:"hardening,omitempty"`
+		Env       map[string]string `json:"env,omitempty"`
 		// The uid a process runs as is fixed when the container is created, so
 		// changing it has to roll the allocs. It is a pointer with omitempty
 		// for the same reason Volume's ownership fields are: a service that
@@ -454,7 +458,8 @@ func SpecHash(d Desired) string {
 	}{
 		Image: d.Image, PinnedImage: d.PinnedImage,
 		Command: d.Command, Args: d.Args, Capabilities: d.Capabilities,
-		Env: d.Env, User: d.User, Resources: d.Resources, Volumes: hashableVolumes(d.Volumes),
+		Hardening: d.Hardening,
+		Env:       d.Env, User: d.User, Resources: d.Resources, Volumes: hashableVolumes(d.Volumes),
 		Ports: d.Ports, ReadOnlyRootfs: d.ReadOnlyRootfs,
 		Files:   hashableFiles(d.Files),
 		Devices: d.Devices, Sockets: d.Sockets,

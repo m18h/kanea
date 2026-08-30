@@ -61,7 +61,7 @@ func evalEnvGroup(g *EnvGroup, ctx *hcl.EvalContext) (map[string]string, hcl.Dia
 				Severity: hcl.DiagError,
 				Summary:  "Invalid env group value",
 				Detail: fmt.Sprintf("env_group %q sets %q to a value that is not a string, "+
-					"number or bool. Environment values are primitives (R30's rule).",
+					"number or bool. Environment values are primitives.",
 					g.Name, name),
 				Subject: attr.Range.Ptr(),
 			})

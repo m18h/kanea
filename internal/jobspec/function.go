@@ -173,7 +173,7 @@ func convertFunction(f *hclFunction) (*Service, hcl.Diagnostics) {
 				Severity: hcl.DiagError,
 				Summary:  "Function declares pids",
 				Detail: fmt.Sprintf("Function %q declares resources.pids; functions take cpu "+
-					"and memory only (PRD §6.2 R25). The wasm runtime's process cap is fixed.",
+					"and memory only. The wasm runtime's process cap is fixed.",
 					f.Name),
 				Subject: f.Resources.DefRange.Ptr(),
 			})
@@ -324,7 +324,7 @@ func validateFunction(svc *Service) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  "Exec health check on a function",
 				Detail: fmt.Sprintf("Function %q declares an exec health check, and the wasm runtime has no "+
-					"exec primitive (R25). Probe it over http or tcp instead.", svc.Name),
+					"exec primitive. Probe it over http or tcp instead.", svc.Name),
 				Subject: h.DefRange.Ptr(),
 			})
 		}
@@ -373,7 +373,7 @@ func validateEventTrigger(svc *Service, ev *EventTrigger) hcl.Diagnostics {
 				Severity: hcl.DiagError,
 				Summary:  "Event pattern matches function events",
 				Detail: fmt.Sprintf("Function %q: pattern %q matches function.* events, and a function invoked "+
-					"by a function failure is a feedback loop (R26). Name the events you want instead.",
+					"by a function failure is a feedback loop. Name the events you want instead.",
 					svc.Name, p),
 				Subject: ev.DefRange.Ptr(),
 			})

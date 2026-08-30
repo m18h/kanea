@@ -120,7 +120,7 @@ func TestSelfUpdateInstallsAVerifiedRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	notes, err := source.selfUpdate(context.Background(), "v9.9.9", asset, target)
+	notes, err := source.selfUpdate(context.Background(), "v9.9.9", asset, target, false)
 	if err != nil {
 		t.Fatalf("selfUpdate: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestSelfUpdateRefusesACorruptArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := source.selfUpdate(context.Background(), "v9.9.9", asset, target)
+	_, err := source.selfUpdate(context.Background(), "v9.9.9", asset, target, false)
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("err = %v, want the checksum refusal", err)
 	}
@@ -176,7 +176,7 @@ func TestSelfUpdateRefusesAReleaseMissingItsChecksums(t *testing.T) {
 	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil { // #nosec G306; a binary
 		t.Fatal(err)
 	}
-	if _, err := source.selfUpdate(context.Background(), "v9.9.9", asset, target); err == nil {
+	if _, err := source.selfUpdate(context.Background(), "v9.9.9", asset, target, false); err == nil {
 		t.Fatal("a release without checksums.txt was installed")
 	}
 }
@@ -311,5 +311,34 @@ func TestSelfUpdateBaseURLComposition(t *testing.T) {
 	source := newReleaseSource()
 	if want := "https://github.com/someone/fork"; source.base != want {
 		t.Fatalf("base = %q, want %q", source.base, want)
+	}
+}
+
+// --require-signature (v1.105): the two soft endings become refusals. In CI
+// the release publishes no signature, and where cosign is absent the refusal
+// comes even earlier; either way the required run must fail closed without
+// touching the installed binary.
+func TestRequireSignatureFailsClosed(t *testing.T) {
+	archive := releaseArchive(t, "the new binary")
+	sum := sha256.Sum256(archive)
+	asset := "kanea_9.9.9_linux_amd64.tar.gz"
+	source := fakeRelease(t, "v9.9.9", map[string][]byte{
+		asset:           archive,
+		"checksums.txt": []byte(hex.EncodeToString(sum[:]) + "  " + asset + "\n"),
+		// no checksums.txt.sig / .pem
+	})
+
+	target := filepath.Join(t.TempDir(), "kanea")
+	if err := os.WriteFile(target, []byte("the old binary"), 0o755); err != nil { // #nosec G306: a binary
+		t.Fatal(err)
+	}
+
+	_, err := source.selfUpdate(context.Background(), "v9.9.9", asset, target, true)
+	if err == nil || !strings.Contains(err.Error(), "--require-signature") {
+		t.Fatalf("err = %v, want the require-signature refusal", err)
+	}
+	got, _ := os.ReadFile(target) // #nosec G304: a test path
+	if string(got) != "the old binary" {
+		t.Fatal("a refused archive still replaced the binary")
 	}
 }

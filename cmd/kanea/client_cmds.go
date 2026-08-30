@@ -817,7 +817,7 @@ func runStatus(args []string) error {
 	ep := endpointFlags(fs)
 	project := fs.String("project", "", "filter by project")
 	traffic := fs.Bool("traffic", false,
-		"show the edge's status-code and byte breakdown per service (PRD §9.1.1)")
+		"show the edge's status-code and byte breakdown per service")
 	asJSON := fs.Bool("json", false, "emit the status as JSON")
 	if err := parseArgs(fs, args); err != nil {
 		return err
@@ -1173,7 +1173,7 @@ func runLogs(args []string) error {
 	follow := fs.Bool("f", false, "follow the stream")
 	tail := fs.Int("tail", 0, "show only the last N lines before following")
 	container := fs.String("c", "",
-		"read an init container's log instead of the task's, by its block name (PRD §6.2 R32)")
+		"read an init container's log instead of the task's, by its block name")
 	previous := fs.Bool("previous", false,
 		"read the log files a stopped or removed service left behind, from disk rather than live allocs")
 	if err := parseArgs(fs, args); err != nil {

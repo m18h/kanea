@@ -72,6 +72,54 @@ func TestApplyRefusesWhatTheCapabilityAllowlistRefuses(t *testing.T) {
 	}
 }
 
+// Restricted's rules land at the seam too (v1.105): a hand-written record is
+// checked by the same core the parser uses.
+func TestApplyRefusesABrokenHardeningPosture(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	noUser := testService("web", 1)
+	noUser.Hardening = "restricted"
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{noUser}, nil); err == nil ||
+		!strings.Contains(err.Error(), "user block") {
+		t.Fatalf("restricted with no user applied: %v", err)
+	}
+
+	rootUser := testService("web", 1)
+	rootUser.Hardening = "restricted"
+	rootUser.User = &runtime.User{UID: 0, GID: 0}
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{rootUser}, nil); err == nil ||
+		!strings.Contains(err.Error(), "uid 0") {
+		t.Fatalf("restricted with uid 0 applied: %v", err)
+	}
+
+	granted := testService("web", 1)
+	granted.Hardening = "restricted"
+	granted.User = &runtime.User{UID: 999, GID: 999}
+	granted.Capabilities = []string{"CAP_NET_RAW"}
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{granted}, nil); err == nil ||
+		!strings.Contains(err.Error(), "CAP_NET_RAW") {
+		t.Fatalf("restricted beside a grant applied: %v", err)
+	}
+
+	// The long spelling of the default never reaches a record: the parser
+	// canonicalises it away, so a record carrying it did not come from the
+	// parser and would hash apart from the default it claims to be.
+	long := testService("web", 1)
+	long.Hardening = "compatible"
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{long}, nil); err == nil ||
+		!strings.Contains(err.Error(), "unknown hardening") {
+		t.Fatalf("the long spelling of the default applied: %v", err)
+	}
+
+	good := testService("web", 1)
+	good.Hardening = "restricted"
+	good.User = &runtime.User{UID: 999, GID: 999}
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{good}, nil); err != nil {
+		t.Fatalf("a valid restricted record refused: %v", err)
+	}
+}
+
 func TestApplyRefusesCrossProjectCredentialReferences(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
@@ -171,7 +219,7 @@ func TestApplyRefusesTheFullR25List(t *testing.T) {
 			d := wasm()
 			tc.mutate(&d)
 			if _, err := h.client.Apply(ctx, []reconciler.Desired{d}, nil); err == nil ||
-				!strings.Contains(err.Error(), "R25") {
+				!strings.Contains(err.Error(), "wasm") {
 				t.Fatalf("a wasm service with %s applied: %v", tc.name, err)
 			}
 		})
@@ -195,7 +243,7 @@ func TestApplyRefusesDisagreeingRouteAuth(t *testing.T) {
 		Auth: &reconciler.AuthPolicy{BasicRef: "secret:shop/htpasswd"},
 	}}
 	if _, err := h.client.Apply(ctx, []reconciler.Desired{d}, nil); err == nil ||
-		!strings.Contains(err.Error(), "R16") {
+		!strings.Contains(err.Error(), "must declare the same auth") {
 		t.Fatalf("disagreeing route auth applied: %v", err)
 	}
 

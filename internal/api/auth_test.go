@@ -193,6 +193,63 @@ func TestHealthIsPublic(t *testing.T) {
 	}
 }
 
+// v1.105: the public payload is status (and oidc, when configured) and
+// nothing else - version, PID, store index, listen address and uptime are
+// reconnaissance when served to the world. An identified caller gets the
+// full struct, and a *bad* credential still gets the slim 200: on this one
+// route identification is best-effort, so a load balancer that forwards a
+// stale Authorization header cannot flap a health check.
+func TestUnauthenticatedHealthIsSlim(t *testing.T) {
+	h := newAuthHarness(t)
+
+	decode := func(t *testing.T, body string) map[string]any {
+		t.Helper()
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(body), &payload); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return payload
+	}
+
+	resp, body := h.do(t, h.request(t, http.MethodGet, api.PathHealth, nil))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET healthz = %d, want 200: %s", resp.StatusCode, body)
+	}
+	anon := decode(t, body)
+	for _, leaked := range []string{"version", "pid", "store_index", "listen", "started_at", "uptime_seconds"} {
+		if _, present := anon[leaked]; present {
+			t.Errorf("unauthenticated healthz carries %q: %s", leaked, body)
+		}
+	}
+	if anon["status"] != "ok" {
+		t.Errorf("status = %v, want ok", anon["status"])
+	}
+
+	bad := h.request(t, http.MethodGet, api.PathHealth, nil)
+	bad.Header.Set("Authorization", "Bearer kanea_deadbeef.notthesecret")
+	resp, body = h.do(t, bad)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("healthz with a bad token = %d, want the slim 200: %s", resp.StatusCode, body)
+	}
+	if _, present := decode(t, body)["version"]; present {
+		t.Errorf("a bad token earned the full payload: %s", body)
+	}
+
+	identified := h.request(t, http.MethodGet, api.PathHealth, nil)
+	identified.Header.Set("Authorization", "Bearer "+h.token(t, auth.RoleViewer))
+	resp, body = h.do(t, identified)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("healthz with a token = %d: %s", resp.StatusCode, body)
+	}
+	full := decode(t, body)
+	if full["version"] != "test" {
+		t.Errorf("identified version = %v, want test: %s", full["version"], body)
+	}
+	if _, present := full["pid"]; !present {
+		t.Errorf("identified payload is missing pid: %s", body)
+	}
+}
+
 func TestSocketCallerIsLocalAdmin(t *testing.T) {
 	// The CLI's path: no auth configured, no credential presented, and the
 	// 0600 socket is what stands in for one (§13.1).

@@ -202,11 +202,16 @@ type hclSMTP struct {
 }
 
 type hclService struct {
-	Name        string   `hcl:"name,label"`
-	Project     string   `hcl:"project,optional"`
-	Description string   `hcl:"description,optional"`
-	Count       *int     `hcl:"count,optional"`
-	DependsOn   []string `hcl:"depends_on,optional"`
+	Name        string `hcl:"name,label"`
+	Project     string `hcl:"project,optional"`
+	Description string `hcl:"description,optional"`
+	Count       *int   `hcl:"count,optional"`
+	// Hardening is the service's posture (R13, v1.105): "compatible" (the
+	// default, written out or omitted) or "restricted". A function block has
+	// no such field, deliberately: R25's pattern, where the absence is the
+	// refusal.
+	Hardening string   `hcl:"hardening,optional"`
+	DependsOn []string `hcl:"depends_on,optional"`
 	// EnvFrom names the env groups this service takes, in precedence order:
 	// later wins, and the task's own env wins over all of them (R34).
 	EnvFrom      []string         `hcl:"env_from,optional"`
@@ -258,10 +263,12 @@ type hclTask struct {
 	// decides (§15.1's images stanza), the same shape expose.tls.mode has,
 	// because this file is parsed client-side and a node default resolved here
 	// would make one spec mean different things on two machines.
-	PullPolicy string      `hcl:"pull_policy,optional"`
-	Devices    []hclDevice `hcl:"device,block"`
-	Sockets    []hclSocket `hcl:"socket,block"`
-	DefRange   hcl.Range   `hcl:",def_range"`
+	PullPolicy string `hcl:"pull_policy,optional"`
+	// ReadOnlyRootfs mounts the root filesystem read-only (§14 A05, v1.105).
+	ReadOnlyRootfs bool        `hcl:"read_only_rootfs,optional"`
+	Devices        []hclDevice `hcl:"device,block"`
+	Sockets        []hclSocket `hcl:"socket,block"`
+	DefRange       hcl.Range   `hcl:",def_range"`
 }
 
 // hclInit is one init container: a step of a service, run to completion before
@@ -706,8 +713,13 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 		Project:     s.Project,
 		Description: s.Description,
 		Count:       DefaultCount,
-		DependsOn:   s.DependsOn,
-		EnvFrom:     s.EnvFrom,
+		// "compatible" is the default written out; canonicalised to empty here
+		// so it is one spelling everywhere downstream and never SpecHash
+		// material (R13, v1.105). Unknown values travel through so validation
+		// can refuse them with a diagnostic instead of a shrug.
+		Hardening: canonicalHardening(s.Hardening),
+		DependsOn: s.DependsOn,
+		EnvFrom:   s.EnvFrom,
 	}
 	for i := range s.Files {
 		f := &s.Files[i]
@@ -751,7 +763,7 @@ func convertService(s *hclService) (*Service, hcl.Diagnostics) {
 				Severity: hcl.DiagError,
 				Summary:  "Init container declares pids",
 				Detail: fmt.Sprintf("Init %q of service %q declares resources.pids; an init "+
-					"step's pids cap is the alloc's (PRD §6.2 R11). Set resources.pids on the "+
+					"step's pids cap is the alloc's. Set resources.pids on the "+
 					"task's resources block instead.", init.Name, s.Name),
 				Subject: init.Resources.DefRange.Ptr(),
 			})
@@ -886,6 +898,7 @@ func convertTask(t *hclTask) *Task {
 		Capabilities:    t.Capabilities,
 		RegistryAuthRef: t.RegistryAuthRef,
 		PullPolicy:      t.PullPolicy,
+		ReadOnlyRootfs:  t.ReadOnlyRootfs,
 		Env:             map[string]string{},
 		// Resources stay zero unless declared: zero means unbounded (R11,
 		// v1.58); the alloc gets no per-alloc quota and is bounded by the

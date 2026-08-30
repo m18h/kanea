@@ -75,7 +75,7 @@ export function Settings({ tab }: { tab?: string | undefined }) {
 
       {settings.isError && needsSettings ? (
         <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
-          Cannot read the settings view. The daemon may predate PRD v1.46.
+          Cannot read the settings view. The daemon may be too old to serve it.
         </p>
       ) : null}
 

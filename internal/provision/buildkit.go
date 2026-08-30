@@ -218,6 +218,49 @@ func ensureSubID(path, name string, log *slog.Logger) error {
 	return nil
 }
 
+// SubUIDFile is where the kernel's id-mapping tools read subordinate uid
+// ranges from; SetupBuildkit writes the build account's range there.
+const SubUIDFile = "/etc/subuid"
+
+// SubIDRange reads the subordinate id range allocated to name in path
+// (SubUIDFile or its gid sibling): the range ensureSubID wrote, or whatever
+// an operator allocated by hand. Zero values with a nil error mean the user
+// has no range there, which callers treat as "nothing to key a rule on"
+// rather than as a failure; a missing file means the same. Only the user's
+// first range is returned, matching newuidmap's reading and ensureSubID's
+// refusal to ever write a second.
+func SubIDRange(path, name string) (start, count int, err error) {
+	f, err := os.Open(path) // #nosec G304; a package constant, or a test's
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("read %s: %w", path, err)
+	}
+	defer f.Close() //nolint:errcheck // read-only
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Split(scanner.Text(), ":")
+		if len(fields) != 3 || fields[0] != name {
+			continue
+		}
+		start, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return 0, 0, fmt.Errorf("%s: %s's range start %q is not numeric", path, name, fields[1])
+		}
+		count, err := strconv.Atoi(fields[2])
+		if err != nil {
+			return 0, 0, fmt.Errorf("%s: %s's range count %q is not numeric", path, name, fields[2])
+		}
+		return start, count, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, 0, fmt.Errorf("scan %s: %w", path, err)
+	}
+	return 0, 0, nil
+}
+
 // ensureTraversal grants dir's traversal to the daemon's group.
 //
 // Group ownership plus the execute bit is the containerd directory's 0710

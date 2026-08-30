@@ -34,11 +34,11 @@ func runInit(args []string) error {
 	networkMode := fs.String("network", networkEBPF, "network mode: ebpf or netns")
 	containerdSocket := fs.String("containerd", runtime.DefaultSocket, "containerd socket")
 	reserve := fs.String("reserve", defaultReserve,
-		"memory reserved for the control plane (PRD §5.2.11)")
+		"memory reserved for the control plane")
 	skipChecks := fs.Bool("skip-checks", false, "run the ceremony without the preflight checks")
 	skipUnits := fs.Bool("skip-units", false, "do not write systemd units")
 	noInstall := fs.Bool("no-install", false,
-		"do not install the host components (PRD §5.2.12); assume they are already there")
+		"do not install the host components; assume they are already there")
 	bundlePath := fs.String("bundle", "", "install the host components from an offline bundle")
 	prefix := fs.String("prefix", provision.DefaultPrefix, "where component binaries are installed")
 	nodeCIDR := fs.String("node-cidr", provision.DefaultNodeCIDR,
@@ -46,7 +46,7 @@ func runInit(args []string) error {
 	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
 		"what the datapath masquerades as internal; it must contain --node-cidr")
 	nodeCIDR6 := fs.String("node-cidr6", "",
-		"this node's IPv6 container subnet (PRD v1.41, opt-in); requires the other two *6 flags, ULA recommended")
+		"this node's IPv6 container subnet (opt-in); requires the other two *6 flags, ULA recommended")
 	clusterCIDR6 := fs.String("cluster-cidr6", "",
 		"the routed IPv6 range; must contain --node-cidr6")
 	serviceCIDR6 := fs.String("service-cidr6", "",

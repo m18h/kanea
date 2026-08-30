@@ -47,7 +47,7 @@ func validateVolumeSize(spec *Spec, svc *Service, v *Volume) hcl.Diagnostics {
 		Summary:  "Storage driver cannot carry a volume budget",
 		Detail: fmt.Sprintf("Volume %q of service %q is backed by storage %q of type %q, which "+
 			"cannot be given a size: %s. Remove it, and note that size is a budget Kanea "+
-			"reports and notifies on, never a quota it enforces (R31).",
+			"reports and notifies on, never a quota it enforces.",
 			v.Name, svc.Name, v.Storage, st.Type, why),
 		Subject: v.DefRange.Ptr(),
 	}}

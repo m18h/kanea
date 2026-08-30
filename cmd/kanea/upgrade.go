@@ -45,6 +45,9 @@ func runUpgrade(args []string) error {
 		"permit a target older than the running daemon (the Store's schema may not support it; see docs/DR_RUNBOOK.md)")
 	noFetch := fs.Bool("no-fetch", false,
 		"do not download anything; restart onto whatever binary is already installed")
+	requireSig := fs.Bool("require-signature", false,
+		"refuse the release unless its cosign signature verifies: a missing cosign binary, "+
+			"or a release published without a signature, becomes fatal instead of a note")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,7 +124,7 @@ func runUpgrade(args []string) error {
 				return err
 			}
 			o.printf("Fetching %s (installed binary is %s)…\n", target, binaryVersion)
-			notes, err := source.selfUpdate(ctx, target, asset, binPath)
+			notes, err := source.selfUpdate(ctx, target, asset, binPath, *requireSig)
 			for _, note := range notes {
 				o.printf("  %s\n", note)
 			}

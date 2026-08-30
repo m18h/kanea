@@ -247,7 +247,7 @@ export function Projects() {
 
       <p className="text-xs text-muted-foreground">
         There is no create verb here: a project is the namespace its services declare themselves
-        into (§4.2), so deploy a service into a new name and the project exists. Remove (v1.104)
+        into, so deploy a service into a new name and the project exists. Remove (v1.104)
         deletes every service declaration and the project's pipeline config in one step; volume
         data, secrets and log files survive it. A synced repository speaks for its own project
         and no other: a spec that declares a different one is refused at sync, which is the

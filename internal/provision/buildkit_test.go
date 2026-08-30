@@ -2,6 +2,7 @@ package provision
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -70,5 +71,43 @@ func TestEnsureTraversalGrantsTheGroupExactlyOneBit(t *testing.T) {
 				t.Errorf("gid = %d, want %d", st.Gid, gid)
 			}
 		})
+	}
+}
+
+// SubIDRange feeds the subuid build-egress rule (v1.105): the first range
+// wins (newuidmap's reading), an absent user or file is 0/0 with no error
+// (the caller's "no rule", never a failure), and a corrupt entry for the
+// named user is an error rather than a silent zero.
+func TestSubIDRangeReadsTheFirstAllocation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "subuid")
+	content := "alice:100000:65536\nkanea-buildkit:200000:65536\nkanea-buildkit:900000:65536\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	start, count, err := SubIDRange(path, "kanea-buildkit")
+	if err != nil {
+		t.Fatalf("SubIDRange: %v", err)
+	}
+	if start != 200000 || count != 65536 {
+		t.Errorf("range = %d:%d, want 200000:65536 (the first allocation)", start, count)
+	}
+
+	start, count, err = SubIDRange(path, "nobody-here")
+	if err != nil || start != 0 || count != 0 {
+		t.Errorf("absent user = %d:%d, %v; want 0:0 and no error", start, count, err)
+	}
+
+	start, count, err = SubIDRange(filepath.Join(t.TempDir(), "missing"), "kanea-buildkit")
+	if err != nil || start != 0 || count != 0 {
+		t.Errorf("absent file = %d:%d, %v; want 0:0 and no error", start, count, err)
+	}
+
+	bad := filepath.Join(t.TempDir(), "subuid")
+	if err := os.WriteFile(bad, []byte("kanea-buildkit:not-a-number:65536\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := SubIDRange(bad, "kanea-buildkit"); err == nil {
+		t.Error("a corrupt range start parsed as a silent zero")
 	}
 }

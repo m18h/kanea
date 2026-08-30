@@ -133,6 +133,7 @@ func creation(want Desired) ServiceChange {
 	add("expose", prefixed("+", flatten(routeMap(want.AllExposes()))))
 	add("publish", prefixed("+", flatten(publishMap(want.Publish))))
 	add("depends_on", prefixed("+", want.DependsOn))
+	add("hardening", oneLine(want.Hardening, want.Hardening != ""))
 	add("check", oneLine(describeCheck(want.Check), want.Check != nil))
 	add("scaling", oneLine(describeScaling(want.Scaling), want.Scaling != nil))
 	add("function", oneLine(describeFunction(want.Function), want.Function != nil))
@@ -174,6 +175,7 @@ func update(have, want Desired) (ServiceChange, bool) {
 	scalar("args", true, describeArgs(have.Args), describeArgs(want.Args))
 	scalar("capabilities", true,
 		describeCapabilities(have.Capabilities), describeCapabilities(want.Capabilities))
+	scalar("hardening", true, describeHardening(have.Hardening), describeHardening(want.Hardening))
 	scalar("user", true, describeUser(have.User), describeUser(want.User))
 	scalar("resources", true, describeResources(have.Resources), describeResources(want.Resources))
 	scalar("read_only_rootfs", true, onOff(have.ReadOnlyRootfs), onOff(want.ReadOnlyRootfs))
@@ -895,6 +897,10 @@ func describeInitSettings(inits []InitContainer) string {
 // describeRuntime names a runtime for a plan line; the empty default reads as
 // what it is rather than as a blank.
 func describeRuntime(r string) string { return orDefault(r, "default") }
+
+// describeHardening names a posture for a plan line. The empty default reads
+// as the word the spec would write for it, not as a blank.
+func describeHardening(h string) string { return orDefault(h, "compatible (default)") }
 
 func rwRO(readOnly bool) string {
 	if readOnly {

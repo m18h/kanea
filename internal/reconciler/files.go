@@ -94,13 +94,13 @@ func (r *Reconciler) ensureFiles(ctx context.Context, d Desired, allocID string)
 		}
 		if len(body) > MaxRenderedFileBytes {
 			return allocFiles{}, fmt.Errorf(
-				"file %q renders to %d bytes; the limit is %d (PRD §21)",
+				"file %q renders to %d bytes; the limit is %d",
 				f.Name, len(body), MaxRenderedFileBytes)
 		}
 		rendered += len(body)
 		if rendered > MaxRenderedAllocBytes {
 			return allocFiles{}, fmt.Errorf(
-				"this alloc's files render to more than %d bytes (PRD §21)", MaxRenderedAllocBytes)
+				"this alloc's files render to more than %d bytes", MaxRenderedAllocBytes)
 		}
 
 		source, err := r.writeFile(d, f, body, d.User, secretDir, "")
