@@ -23,6 +23,7 @@ import { useRouter } from '@/hooks/useRouter'
 import { useSession } from '@/hooks/useSession'
 import { useSocketStatus } from '@/hooks/useSocketStatus'
 import { DisplaySettings } from '@/components/layout/DisplaySettings'
+import { UpgradeControl } from '@/components/layout/UpgradeControl'
 
 /** Sidebar is the shell's left rail: brand, nav, connection facts, user. */
 export function Sidebar({ className }: { className?: string | undefined }) {
@@ -60,9 +61,10 @@ export function Sidebar({ className }: { className?: string | undefined }) {
         <Mark size={22} />
         <span className="text-base font-semibold tracking-tight">kanea</span>
         {health.data?.version ? (
-          <span className="ml-auto font-mono text-[11px] text-muted-foreground">
-            v{health.data.version.replace(/^v/, '')}
-          </span>
+          // For an admin the version is a control (PRD v1.107): a dot when a
+          // newer release exists, a click for check-or-upgrade. Everyone else
+          // gets the plain text this always was.
+          <UpgradeControl version={health.data.version} />
         ) : null}
       </div>
 

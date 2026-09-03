@@ -87,6 +87,59 @@ func TestTheAgentWiresEveryOptionalReconcilerDependency(t *testing.T) {
 	}
 }
 
+// TestTheAgentWiresTheAPIServersOptionalDependencies is the same guard over
+// api.ServerConfig. Every field here is nil-tolerant by design (the route
+// answers 503), which is exactly what makes a missing wire invisible in dev:
+// the api package's own tests set their fakes, and only this literal decides
+// what a real node gets.
+func TestTheAgentWiresTheAPIServersOptionalDependencies(t *testing.T) {
+	required := map[string]string{
+		"Upgrader": "the dashboard's check-and-upgrade answers 503 on every node (PRD v1.107)",
+	}
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "agent.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse agent.go: %v", err)
+	}
+
+	found := map[string]bool{}
+	var seen bool
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		sel, ok := lit.Type.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "ServerConfig" {
+			return true
+		}
+		if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "api" {
+			return true
+		}
+		seen = true
+		for _, elt := range lit.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			if key, ok := kv.Key.(*ast.Ident); ok {
+				found[key.Name] = true
+			}
+		}
+		return false
+	})
+
+	if !seen {
+		t.Fatal("no api.ServerConfig literal in agent.go; this test can no longer see what it guards")
+	}
+	for field, consequence := range required {
+		if !found[field] {
+			t.Errorf("agent.go builds api.ServerConfig without %s: %s", field, consequence)
+		}
+	}
+}
+
 // TestTheAgentWiresTheBuildEgressIdentity is the same source-reading guard
 // over datapath.Config (v1.105's half of recurring rule: every optional
 // daemon dependency is wired in cmd/kanea, pinned by a test that reads the
