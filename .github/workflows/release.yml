@@ -158,7 +158,7 @@ jobs:
       # one cosign signature over it extends to them too: the same reasoning
       # that puts the bundles under it. An SBOM nobody can authenticate
       # describes software nobody can authenticate.
-      - uses: anchore/sbom-action/download-syft@aa80c8c5bd439a416a62804f2151ab38c671a638 # v0.24.1
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: v1.51.0
 
@@ -276,7 +276,7 @@ jobs:
       # The apk step in the Containerfile runs on the target platform, so the
       # arm64 half needs emulation. The binaries themselves never execute
       # during the build; they are copied.
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
 
       # Exactly what scripts/install.sh does, in its order: the signature over
       # checksums.txt first, then each archive against checksums.txt. An
@@ -372,7 +372,7 @@ jobs:
           COSIGN_YES: "true"
         run: cosign sign "${IMAGE}@${DIGEST}"
 
-      - uses: anchore/sbom-action/download-syft@aa80c8c5bd439a416a62804f2151ab38c671a638 # v0.24.1
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: v1.51.0
 
