@@ -876,6 +876,24 @@ runs any state migrations. Running workloads are untouched throughout.</pre>
       version means nothing to download, so running it twice is safe by construction.
     </p>
 
+    <p>
+      Since v0.34.0 an admin can run the same flow from the dashboard. The version in
+      the sidebar grows a dot when a newer release is published; clicking it opens a
+      dialog that checks for updates or installs one (<code>GET</code> and
+      <code>POST /v1/upgrade</code>, admin-only, audited). The daemon performs the
+      sequence above on itself - pre-upgrade backup, fetch and verify, atomic
+      install - then answers the request, restarts <code>kanea-edge</code>, and exits
+      into systemd's <code>Restart=always</code>; the page reloads once the new
+      version answers health, which is also what swaps in the new embedded dashboard.
+      The check never runs unprompted: the node asks GitHub only while an admin has
+      the dashboard open, and caches the answer for an hour, so a node never phones
+      home on its own. There is no downgrade over the API
+      (<code>--allow-downgrade</code> stays CLI-on-the-node), and outside systemd
+      nothing restarts: the binary is installed and the response says
+      <code>restart_required</code>. <code>KANEA_REQUIRE_SIGNATURE=1</code> on the
+      unit gives this path the <code>--require-signature</code> posture.
+    </p>
+
     <div class="tablewrap">
       <table>
         <thead><tr><th>Flag</th><th>Meaning</th></tr></thead>
@@ -1377,7 +1395,11 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       (node-wide defaults and per-project, each with a test button); plus accounts, API
       tokens and the audit log, one tab each; what belongs to the unit (listen address,
       subnets, DNS, the
-      port policy) is shown read-only with a note saying so. The MCP server exposes 24 tools
+      port policy) is shown read-only with a note saying so. The version in the sidebar is
+      itself a control for an admin: a dot marks a newer published release, and the
+      dialog behind it checks for or installs one, the daemon restarting into it (the
+      <a href="#install-upgrade">upgrade flow</a>, run by the node on itself; a viewer
+      keeps the plain text). The MCP server exposes 24 tools
       in three tiers (read, mutate, destructive) over stdio and streamable HTTP.
     </p>
     <div class="callout">

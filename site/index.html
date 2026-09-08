@@ -389,7 +389,7 @@
     </nav>
     <div style="flex:1"></div>
     <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;font-family:'Spline Sans Mono',monospace;font-size:12px;color:var(--muted-3);">
-      <span>v0.33.0</span>
+      <span>v0.34.0</span>
       <button sc-camel-on-click="{{ toggleTheme }}" title="Toggle light and dark" aria-label="Toggle light and dark" style="display:flex;align-items:center;justify-content:center;width:32px;height:31px;padding:0;border:1px solid var(--line-3);background:transparent;color:var(--muted-3);cursor:pointer;" style-hover="color:var(--text);border-color:var(--line-strong)">
         <sc-if value="{{ isDark }}" hint-placeholder-val="{{ false }}">
           <svg width="15" height="15" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M19.1 4.9l-1.5 1.5M6.4 17.6l-1.5 1.5"></path></svg>
@@ -851,7 +851,7 @@ class Component extends DCLogic {
       { name: 'kanea-edge', role: 'north–south traffic', kind: 'DATA PLANE', title: 'A separate process on purpose', body: 'The edge is not a child of the control plane, so restarting kanead never drops a request in flight. TLS is issued in the control plane and published here.', note: 'routes · middleware in fixed order · h2c behind' },
       { name: 'eBPF datapath', role: 'east–west, no CNI', kind: 'NETWORK', title: 'Three programs, compiled in', body: 'Connect-time service load balancing, per-project default-deny policy, and per-alloc plumbing. No network agent, no kvstore, no CNI - the programs travel inside the binary.', note: 'internal DNS · service VIPs · the autoscaler\u2019s own counters' },
       { name: 'containerd', role: 'hardened runtime', kind: 'RUNTIME', title: 'No privileged escape hatch', body: 'Capabilities dropped to a reviewed uid-switching baseline, no-new-privileges, the default seccomp profile, per-alloc PID and IPC namespaces. Workloads share a cgroup with a hard ceiling; the control plane holds a memory floor beneath it.', note: 'installed by kanea init, pinned by SHA-256' },
-      { name: 'dashboard', role: 'embedded, one socket', kind: 'INTERFACE', title: 'Served by the daemon itself', body: 'React and shadcn/ui embedded in the binary, over one multiplexed websocket: services, allocs, events, streaming logs, rollout progress - and a shell into any running alloc, from the browser.', note: 'kanea ui' },
+      { name: 'dashboard', role: 'embedded, one socket', kind: 'INTERFACE', title: 'Served by the daemon itself', body: 'React and shadcn/ui embedded in the binary, over one multiplexed websocket: services, allocs, events, streaming logs, rollout progress, a shell into any running alloc - and the upgrade itself: an admin installs a new release from the sidebar, and the daemon restarts into it.', note: 'kanea ui' },
       { name: 'mcp server', role: '20 tools, three tiers', kind: 'AGENTS', title: 'An agent can operate the platform', body: 'Over stdio and streamable HTTP. Tools reach the platform only over its own HTTP API - never a side channel - and no tool at any tier returns a secret.', note: 'deny-by-default on every route, audited' }
     ];
   }
