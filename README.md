@@ -64,7 +64,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.33.0; ARCH=amd64
+VERSION=v0.34.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -803,6 +803,16 @@ so a typo cannot silently stop working replication) and **notification channels*
 Accounts, API tokens and the audit log live there too, one tab each. What
 stays read-only is what belongs to the unit: listen address, subnets, DNS and
 the published-port policy, each shown with a note saying so.
+
+The version in the sidebar is a control for an admin: a dot appears beside it
+when a newer release is published, and clicking it opens a dialog that checks
+for updates or runs the upgrade - the same fetch-verify-backup-restart
+sequence as `sudo kanea upgrade`, run by the daemon on itself. The check never
+runs unprompted: the node asks GitHub only while an admin has the dialog open,
+and caches the answer for an hour. There is no downgrade over the API
+(`--allow-downgrade` stays on the node's CLI), and outside systemd the new
+binary is staged with a note that a restart is required, rather than
+restarted into. A viewer keeps the plain version text.
 
 If your LAN already uses `10.244.0.0/16`, move Kanea's:
 
