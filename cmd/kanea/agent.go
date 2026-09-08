@@ -862,6 +862,10 @@ func runAgent(args []string) error {
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
 		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
 		Backups: backups, Settings: settingsSvc, LDAPServer: ldapServerName(directory),
+		// The dashboard's upgrade (PRD v1.107) is the CLI's fetch half run by
+		// the daemon on itself; the restart half is the signal context's own
+		// stop, so an upgrade exit and a SIGTERM are the same clean shutdown.
+		Upgrader:     newDaemonUpgrader(logger, stop),
 		CA:           certificateAuthority(certs),
 		PublishPorts: portPolicy,
 		NodeVars:     nodeCfg.Variables,

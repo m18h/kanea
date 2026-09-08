@@ -93,6 +93,9 @@ type ServerConfig struct {
 	Backups Backups
 	// Settings backs the node-settings routes (v1.46, §15.1). Nil answers 503.
 	Settings SettingsService
+	// Upgrader backs the release routes (PRD v1.107, §15.4). Nil answers 503
+	// on them, pointing at `kanea upgrade` on the node.
+	Upgrader Upgrader
 	// LDAPServer names the configured directory (v1.47): audit Detail on
 	// directory logins, empty when LDAP is off. A name, never a credential.
 	LDAPServer string
@@ -249,6 +252,7 @@ type Server struct {
 	notifier     Notifier
 	backups      Backups
 	settings     SettingsService
+	upgrader     Upgrader
 	ldapServer   string
 	ca           CertificateAuthority
 	publishPorts PortPolicy
@@ -324,6 +328,18 @@ type Server struct {
 		entries map[aggKey][]scaling.Point
 	}
 
+	// upgradeCheck caches the resolved latest release (PRD v1.107): the
+	// answer changes when a release is cut, not when a dashboard refetches,
+	// and the cache is what keeps the demand-only check to at most one
+	// upstream request an hour. `running` serializes the install half: two
+	// concurrent installs racing rename(2) is a coin flip.
+	upgradeCheck struct {
+		mu      sync.Mutex
+		valid   bool
+		answer  UpgradeCheck
+		running atomic.Bool
+	}
+
 	// subjectCache memoizes which subjects carry a metric, keyed on the series
 	// epoch rather than on time: that set changes only when a series is created
 	// or dropped, which is far rarer than a slot, and the answer costs a scan
@@ -393,6 +409,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		secrets: cfg.Secrets, secretSync: cfg.SecretSync, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
 		notifier: cfg.Notifier, backups: cfg.Backups, settings: cfg.Settings,
+		upgrader:   cfg.Upgrader,
 		ldapServer: cfg.LDAPServer, ca: cfg.CA,
 		publishPorts: cfg.PublishPorts,
 		nodeVars:     cfg.NodeVars,
@@ -485,6 +502,15 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// The audit log is admin-only to read: it names who did what, and that is
 	// not something a viewer needs (§13.3).
 	mux.Handle("GET "+PathAudit, s.route(policy{action: "audit.list", adminOnly: true}, s.handleAudit))
+	// The release surface (PRD v1.107, §15.4). The check is a read with
+	// admin's blast radius (it makes the daemon originate a request to the
+	// release host); the upgrade replaces the binary under every unit and
+	// restarts the daemons, so it is a mutation like any other: admin, CSRF,
+	// audited.
+	mux.Handle("GET "+PathUpgrade,
+		s.route(policy{action: "upgrade.check", adminOnly: true}, s.handleUpgradeCheck))
+	mux.Handle("POST "+PathUpgrade,
+		s.route(policy{action: "upgrade.run", mutates: true}, s.handleUpgrade))
 	// Accounts. Admin-only throughout: minting a token is minting a credential,
 	// and listing users is a list of things worth attacking (§13.3).
 	mux.Handle("GET "+PathUsers, s.route(policy{action: "user.list", adminOnly: true}, s.handleListUsers))

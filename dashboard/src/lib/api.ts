@@ -991,6 +991,62 @@ export async function stageRestore(id: string, csrf?: string): Promise<StageRest
   return stageRestoreResponseSchema.parse(await resp.json())
 }
 
+// ---- upgrade (PRD v1.107, §15.4) ----
+
+/** Running vs latest release, from the daemon's ~1h cache. */
+export const upgradeCheckSchema = z.object({
+  running: z.string(),
+  latest: z.string(),
+  update_available: z.boolean(),
+  // When the daemon last asked the release host, which the cache can put
+  // well before "now": shown so a reader knows how stale "latest" may be.
+  checked_at: z.string().optional(),
+})
+
+export type UpgradeCheck = z.infer<typeof upgradeCheckSchema>
+
+export const upgradeResponseSchema = z.object({
+  installed: z.string(),
+  restarting: z.boolean(),
+  // The unsupervised case: installed, but the restart is the operator's.
+  restart_required: z.boolean().optional(),
+  notes: z.array(z.string()),
+})
+
+export type UpgradeResponse = z.infer<typeof upgradeResponseSchema>
+
+/**
+ * Ask the daemon whether a newer release exists. Admin-only, and the check
+ * runs only while a dashboard asks (PRD v1.107): the daemon caches the answer
+ * for an hour, so the refetch cadence here costs the release host at most one
+ * request an hour. 503 means this daemon cannot upgrade itself (no upgrader
+ * wired: a dev run, a non-Linux build), which hides the control rather than
+ * erroring: null.
+ */
+export async function fetchUpgradeCheck(signal?: AbortSignal): Promise<UpgradeCheck | null> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch('/v1/upgrade', init)
+  if (resp.status === 503) return null
+  if (!resp.ok) throw new Error(`upgrade check: ${resp.status}`)
+  return upgradeCheckSchema.parse(await resp.json())
+}
+
+/**
+ * Install a release over the running binary (PRD v1.107): the daemon runs
+ * `kanea upgrade`'s own fetch-verify-install, takes the pre-upgrade backup,
+ * answers, and then restarts the edge and itself. When the response says
+ * `restarting`, poll health until the new version answers and reload the
+ * page: the reload is what swaps in the new embedded dashboard.
+ */
+export async function runUpgrade(version?: string, csrf?: string): Promise<UpgradeResponse> {
+  const resp = await apiFetch('/v1/upgrade', {
+    method: 'POST',
+    ...(version ? { body: { version } } : {}),
+    ...(csrf ? { csrf } : {}),
+  })
+  return upgradeResponseSchema.parse(await resp.json())
+}
+
 // ---- node settings (PRD v1.46, §15.1) ----
 
 /**
