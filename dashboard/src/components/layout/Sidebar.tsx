@@ -9,7 +9,10 @@ import {
   HardDrive,
   LayoutDashboard,
   LogOut,
+  Moon,
+  RefreshCw,
   Settings2,
+  Sun,
   type LucideIcon,
 } from 'lucide-react'
 import { Avatar } from '@/components/Avatar'
@@ -22,12 +25,14 @@ import { useNavCounts } from '@/hooks/useNavCounts'
 import { useRouter } from '@/hooks/useRouter'
 import { useSession } from '@/hooks/useSession'
 import { useSocketStatus } from '@/hooks/useSocketStatus'
+import { useTheme } from '@/hooks/useTheme'
+import { useUpdateAttention } from '@/hooks/useUpdates'
 import { DisplaySettings } from '@/components/layout/DisplaySettings'
-import { UpgradeControl } from '@/components/layout/UpgradeControl'
 
 /** Sidebar is the shell's left rail: brand, nav, connection facts, user. */
 export function Sidebar({ className }: { className?: string | undefined }) {
   const counts = useNavCounts()
+  const attention = useUpdateAttention()
   const health = useQuery({
     queryKey: ['health'],
     queryFn: ({ signal }) => fetchHealth(signal),
@@ -61,11 +66,13 @@ export function Sidebar({ className }: { className?: string | undefined }) {
         <Mark size={22} />
         <span className="text-base font-semibold tracking-tight">kanea</span>
         {health.data?.version ? (
-          // For an admin the version is a control (PRD v1.107): a dot when a
-          // newer release exists, a click for check-or-upgrade. Everyone else
-          // gets the plain text this always was.
-          <UpgradeControl version={health.data.version} />
+          // Plain text again since v1.108: the Updates page is the control,
+          // and the pinned nav item below carries the attention badge.
+          <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+            {`v${health.data.version.replace(/^v/, '')}`}
+          </span>
         ) : null}
+        <ThemeToggle />
       </div>
 
       <nav className="flex flex-col gap-0.5 px-2">
@@ -74,7 +81,15 @@ export function Sidebar({ className }: { className?: string | undefined }) {
         ))}
       </nav>
 
-      <div className="mt-auto border-t border-sidebar-border px-4 py-3">
+      {/* Updates sits apart from the pages above it (PRD v1.108): those are
+          the workloads, this is the node itself. Its badge is amber, not the
+          muted count the others carry, because it counts actions waiting
+          rather than things existing. */}
+      <nav className="mt-auto flex flex-col px-2 pb-1">
+        <NavItem to="/updates" label="Updates" icon={RefreshCw} exact={false} badge={attention} alert />
+      </nav>
+
+      <div className="border-t border-sidebar-border px-4 py-3">
         <SocketLine />
       </div>
       <UserRow />
@@ -88,12 +103,16 @@ function NavItem({
   icon: Icon,
   exact,
   badge,
+  alert,
 }: {
   to: string
   label: string
   icon: LucideIcon
   exact: boolean
   badge?: number | undefined
+  /** alert renders the badge amber: it counts actions waiting, not things
+   * existing, which is the Updates item's case (PRD v1.108). */
+  alert?: boolean | undefined
 }) {
   const { path } = useRouter()
   const active = isActive(path, to, exact)
@@ -111,11 +130,37 @@ function NavItem({
       <Icon size={16} aria-hidden />
       <span>{label}</span>
       {badge !== undefined && badge > 0 ? (
-        <span className="ml-auto rounded-full bg-muted px-1.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+        <span
+          className={cn(
+            'ml-auto rounded-full px-1.5 font-mono text-[11px] tabular-nums',
+            alert ? 'bg-status-warn/20 text-status-warn' : 'bg-muted text-muted-foreground',
+          )}
+        >
           {badge}
         </span>
       ) : null}
     </Link>
+  )
+}
+
+/**
+ * ThemeToggle sits beside the version, out of the cog since v1.108: the one
+ * icon whose meaning is legible without a label, and the brand row is where
+ * the theme's evidence is.
+ */
+function ThemeToggle() {
+  const [theme, setTheme] = useTheme()
+  const dark = theme === 'dark'
+  return (
+    <button
+      type="button"
+      aria-label="Toggle theme"
+      title="Toggle theme"
+      className="rounded-md border border-sidebar-border p-1 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+      onClick={() => setTheme(dark ? 'light' : 'dark')}
+    >
+      {dark ? <Sun size={13} aria-hidden /> : <Moon size={13} aria-hidden />}
+    </button>
   )
 }
 

@@ -64,7 +64,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.34.0; ARCH=amd64
+VERSION=v0.35.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -804,15 +804,22 @@ Accounts, API tokens and the audit log live there too, one tab each. What
 stays read-only is what belongs to the unit: listen address, subnets, DNS and
 the published-port policy, each shown with a note saying so.
 
-The version in the sidebar is a control for an admin: a dot appears beside it
-when a newer release is published, and clicking it opens a dialog that checks
-for updates or runs the upgrade - the same fetch-verify-backup-restart
-sequence as `sudo kanea upgrade`, run by the daemon on itself. The check never
-runs unprompted: the node asks GitHub only while an admin has the dialog open,
-and caches the answer for an hour. There is no downgrade over the API
-(`--allow-downgrade` stays on the node's CLI), and outside systemd the new
-binary is staged with a note that a restart is required, rather than
-restarted into. A viewer keeps the plain version text.
+A pinned **Updates** item at the bottom of the sidebar carries an amber badge
+for an admin when something needs attention - a newer Kanea release, a pending
+reboot - and opens a page with both halves. The Kanea half checks for and runs
+the upgrade: the same fetch-verify-backup-restart sequence as
+`sudo kanea upgrade`, run by the daemon on itself. The OS half reads the node:
+pending package updates with their origins and a security count, when the
+package lists were last refreshed, whether a reboot is pending, and the host
+components Kanea manages against their pinned versions. It is read facts,
+never install controls - Kanea neither refreshes the lists nor installs an OS
+package; the page names the `apt` command to run on the node. The release
+check never runs unprompted: the node asks GitHub only while an admin has the
+dashboard open, and caches the answer for an hour; the OS probe reads local
+state only. There is no downgrade over the API (`--allow-downgrade` stays on
+the node's CLI), and outside systemd the new binary is staged with a note
+that a restart is required, rather than restarted into. A viewer keeps the
+plain version text.
 
 If your LAN already uses `10.244.0.0/16`, move Kanea's:
 
@@ -990,7 +997,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.107) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.108) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | The decision record: status, trip-over bullets, refusals, spike log |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |

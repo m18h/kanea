@@ -2,24 +2,19 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { Settings } from 'lucide-react'
 
 import { Select } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { useDateStyle } from '@/hooks/useDateStyle'
-import { useTheme } from '@/hooks/useTheme'
 import { DateStyles, type DateStyle, setDateStyle } from '@/lib/datetime'
 
 /**
  * DisplaySettings is the sidebar's cog: how this browser renders the app.
  *
- * Both settings inside it are properties of whoever is looking rather than of
- * the node - they live in localStorage, they reach no API, and they appear in
- * no audit line - which is also why they are here rather than on the Settings
- * page, which is admin-only at the daemon and would hide them from a viewer.
- *
- * Gathering them behind one control rather than lining them up in the footer
- * is what makes room for a third: two icon buttons were already competing with
- * sign-out for a strip about a hundred pixels wide, and a date format needed a
- * label rather than an icon because no icon says which of three orders is in
- * force.
+ * What is inside it is a property of whoever is looking rather than of the
+ * node - it lives in localStorage, reaches no API, and appears in no audit
+ * line - which is also why it is here rather than on the Settings page,
+ * which is admin-only at the daemon and would hide it from a viewer. The
+ * dark-mode toggle lived here until v1.108; it is an icon beside the version
+ * now, and the cog keeps the date format, which needs a label rather than an
+ * icon because no icon says which of three orders is in force.
  *
  * It is a **disclosure holding form controls, not a menu**, and carries
  * `aria-expanded` without `role="menu"` for OpenUrlMenu's reason: menu
@@ -31,7 +26,6 @@ import { DateStyles, type DateStyle, setDateStyle } from '@/lib/datetime'
  */
 export function DisplaySettings() {
   const [open, setOpen] = useState(false)
-  const [theme, setTheme] = useTheme()
   const style = useDateStyle()
   const ref = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -87,18 +81,6 @@ export function DisplaySettings() {
           aria-label="Display settings"
         >
           <p className="mb-2 text-xs font-medium text-muted-foreground">Display</p>
-
-          <div className="flex items-center justify-between gap-3 py-1.5">
-            {/* A span, not a label: Switch renders a button and takes no id,
-                so an htmlFor here would point at nothing. The control carries
-                its own aria-label, which is what a screen reader reads. */}
-            <span className="text-sm">Dark mode</span>
-            <Switch
-              checked={theme === 'dark'}
-              onCheckedChange={(on) => setTheme(on ? 'dark' : 'light')}
-              aria-label="Dark mode"
-            />
-          </div>
 
           <div className="py-1.5">
             <label htmlFor={dateId} className="mb-1 block text-sm">

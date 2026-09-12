@@ -877,9 +877,10 @@ runs any state migrations. Running workloads are untouched throughout.</pre>
     </p>
 
     <p>
-      Since v0.34.0 an admin can run the same flow from the dashboard. The version in
-      the sidebar grows a dot when a newer release is published; clicking it opens a
-      dialog that checks for updates or installs one (<code>GET</code> and
+      An admin can run the same flow from the dashboard's Updates page, reached
+      from a pinned sidebar item whose badge marks a newer published release or a
+      pending OS reboot. The page checks for updates and installs one
+      (<code>GET</code> and
       <code>POST /v1/upgrade</code>, admin-only, audited). The daemon performs the
       sequence above on itself - pre-upgrade backup, fetch and verify, atomic
       install - then answers the request, restarts <code>kanea-edge</code>, and exits
@@ -1395,11 +1396,12 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       (node-wide defaults and per-project, each with a test button); plus accounts, API
       tokens and the audit log, one tab each; what belongs to the unit (listen address,
       subnets, DNS, the
-      port policy) is shown read-only with a note saying so. The version in the sidebar is
-      itself a control for an admin: a dot marks a newer published release, and the
-      dialog behind it checks for or installs one, the daemon restarting into it (the
-      <a href="#install-upgrade">upgrade flow</a>, run by the node on itself; a viewer
-      keeps the plain text). The MCP server exposes 24 tools
+      port policy) is shown read-only with a note saying so. A pinned Updates page
+      holds the rest of the node's software: check for or install a Kanea release (the
+      <a href="#install-upgrade">upgrade flow</a>, run by the node on itself), and read
+      the OS's pending packages, security count, list freshness and reboot flag beside
+      the manifest-pinned host components - reported, never installed: the page names
+      the <code>apt</code> command to run on the node. The MCP server exposes 24 tools
       in three tiers (read, mutate, destructive) over stdio and streamable HTTP.
     </p>
     <div class="callout">

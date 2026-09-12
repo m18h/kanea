@@ -94,7 +94,8 @@ func TestTheAgentWiresEveryOptionalReconcilerDependency(t *testing.T) {
 // what a real node gets.
 func TestTheAgentWiresTheAPIServersOptionalDependencies(t *testing.T) {
 	required := map[string]string{
-		"Upgrader": "the dashboard's check-and-upgrade answers 503 on every node (PRD v1.107)",
+		"Upgrader":      "the dashboard's check-and-upgrade answers 503 on every node (PRD v1.107)",
+		"HostInspector": "the dashboard's updates view answers 503 on every node (PRD v1.108)",
 	}
 
 	fset := token.NewFileSet()

@@ -7,7 +7,6 @@ import { DefaultDateStyle, dateStyle, setDateStyle } from '@/lib/datetime'
 afterEach(() => {
   setDateStyle(DefaultDateStyle)
   window.localStorage.clear()
-  document.documentElement.classList.remove('dark')
 })
 
 function openPanel() {
@@ -20,19 +19,21 @@ describe('DisplaySettings', () => {
 
     const cog = screen.getByRole('button', { name: 'Display settings' })
     expect(cog.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByLabelText('Dark mode')).toBeNull()
+    expect(screen.queryByLabelText('Date format')).toBeNull()
 
     fireEvent.click(cog)
     expect(cog.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByLabelText('Dark mode')).toBeTruthy()
+    expect(screen.getByLabelText('Date format')).toBeTruthy()
   })
 
-  it('carries both settings, and only those', () => {
+  it('carries the date format, and only that', () => {
+    // The dark-mode toggle moved beside the version chip (PRD v1.108); a
+    // switch reappearing here would be two controls fighting over one class.
     render(<DisplaySettings />)
     openPanel()
 
-    expect(screen.getByRole('switch', { name: 'Dark mode' })).toBeTruthy()
     expect(screen.getByLabelText('Date format')).toBeTruthy()
+    expect(screen.queryByRole('switch')).toBeNull()
   })
 
   it('changes the date format from the picker', () => {
@@ -47,17 +48,6 @@ describe('DisplaySettings', () => {
     expect(window.localStorage.getItem('kanea-date-style')).toBe('MM/dd/yyyy')
   })
 
-  it('toggles the theme', () => {
-    render(<DisplaySettings />)
-    openPanel()
-
-    // The hook owns the class on <html>; this asserts the wiring reaches it
-    // rather than re-testing useTheme.
-    const before = document.documentElement.classList.contains('dark')
-    fireEvent.click(screen.getByRole('switch', { name: 'Dark mode' }))
-    expect(document.documentElement.classList.contains('dark')).toBe(!before)
-  })
-
   it('closes on Escape and gives focus back to the cog', () => {
     // A panel that closes and drops focus to the document leaves a keyboard
     // user at the top of the page.
@@ -66,7 +56,7 @@ describe('DisplaySettings', () => {
     openPanel()
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByLabelText('Dark mode')).toBeNull()
+    expect(screen.queryByLabelText('Date format')).toBeNull()
     expect(document.activeElement).toBe(cog)
   })
 
@@ -82,7 +72,7 @@ describe('DisplaySettings', () => {
     // mousedown, not click: an outside press should close this before whatever
     // it lands on gets to act.
     fireEvent.mouseDown(screen.getByRole('button', { name: 'elsewhere' }))
-    expect(screen.queryByLabelText('Dark mode')).toBeNull()
+    expect(screen.queryByLabelText('Date format')).toBeNull()
   })
 
   it('stays open when pressed inside', () => {
@@ -97,8 +87,8 @@ describe('DisplaySettings', () => {
 
   it('does not claim menu semantics', () => {
     // aria-expanded without role="menu": menu semantics promise arrow-key
-    // navigation, and a switch and a select reached by Tab is the honest
-    // description (the OpenUrlMenu rule).
+    // navigation, and a select reached by Tab is the honest description (the
+    // OpenUrlMenu rule).
     render(<DisplaySettings />)
     openPanel()
 

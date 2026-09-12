@@ -553,6 +553,69 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return json(res, 200, { hcl: matched.map(specSource).join('\n'), generated: true })
   }
 
+  // The updates surfaces (PRD v1.107/v1.108): a release behind, a reboot
+  // pending, one drifted component - the page's every state on one screen.
+  if (path === '/v1/upgrade' && method === 'GET') {
+    return json(res, 200, {
+      running: 'v0.34.0',
+      latest: 'v0.35.0',
+      update_available: true,
+      checked_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+    })
+  }
+  if (path === '/v1/upgrade' && method === 'POST') {
+    return json(res, 200, {
+      installed: 'v0.35.0',
+      restarting: false,
+      restart_required: true,
+      notes: ['mock: nothing was installed', 'cosign is not on this node; sha256 only'],
+      at: new Date().toISOString(),
+    })
+  }
+  if (path === '/v1/updates') {
+    return json(res, 200, {
+      os: {
+        name: 'Debian GNU/Linux 12 (bookworm)',
+        kernel: '6.1.0-37-amd64',
+        package_manager: 'apt',
+        pending: [
+          {
+            name: 'libssl3',
+            installed: '3.0.16-1~deb12u1',
+            candidate: '3.0.17-1~deb12u2',
+            origin: 'Debian-Security:12/stable-security',
+            security: true,
+          },
+          {
+            name: 'openssl',
+            installed: '3.0.16-1~deb12u1',
+            candidate: '3.0.17-1~deb12u2',
+            origin: 'Debian-Security:12/stable-security',
+            security: true,
+          },
+          { name: 'linux-image-amd64', candidate: '6.1.148-1', origin: 'Debian:12.12/stable' },
+          {
+            name: 'curl',
+            installed: '7.88.1-10+deb12u12',
+            candidate: '7.88.1-10+deb12u14',
+            origin: 'Debian:12.12/stable',
+          },
+        ],
+        pending_total: 14,
+        security_total: 3,
+        lists_refreshed_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
+        reboot_required: true,
+      },
+      components: [
+        { name: 'containerd', pinned: '2.3.3', installed: '2.3.3' },
+        { name: 'runc', pinned: '1.5.1', installed: '1.5.1' },
+        { name: 'buildkit', pinned: '0.20.2', installed: '0.19.0' },
+        { name: 'containerd-shim-wasmtime-v1', pinned: '0.6.1' },
+      ],
+      checked_at: new Date().toISOString(),
+    })
+  }
+
   json(res, 404, { error: `mock: no handler for ${method} ${path}` })
 }
 
