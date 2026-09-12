@@ -64,7 +64,7 @@ jobs:
             -e MINIO_ROOT_USER=kaneatest \
             -e MINIO_ROOT_PASSWORD=kaneatestsecret \
             -e MINIO_DOMAIN=localhost \
-            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
             server /data
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
