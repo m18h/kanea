@@ -865,11 +865,13 @@ func runAgent(args []string) error {
 		// The dashboard's upgrade (PRD v1.107) is the CLI's fetch half run by
 		// the daemon on itself; the restart half is the signal context's own
 		// stop, so an upgrade exit and a SIGTERM are the same clean shutdown.
-		Upgrader:     newDaemonUpgrader(logger, stop),
-		CA:           certificateAuthority(certs),
-		PublishPorts: portPolicy,
-		NodeVars:     nodeCfg.Variables,
-		OIDC:         provider, Sessions: users,
+		Upgrader: newDaemonUpgrader(logger, stop),
+		// The updates view (PRD v1.108): local reads only, never an install.
+		HostInspector: newHostInspector(logger),
+		CA:            certificateAuthority(certs),
+		PublishPorts:  portPolicy,
+		NodeVars:      nodeCfg.Variables,
+		OIDC:          provider, Sessions: users,
 		Metrics: metrics, EdgeMetrics: edgeExposition,
 		Invoker: invoker,
 		Usage:   volumeUsage, VolumeDir: volumes,

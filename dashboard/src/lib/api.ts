@@ -1047,6 +1047,57 @@ export async function runUpgrade(version?: string, csrf?: string): Promise<Upgra
   return upgradeResponseSchema.parse(await resp.json())
 }
 
+// ---- host updates (PRD v1.108) ----
+
+export const packageUpdateSchema = z.object({
+  name: z.string(),
+  // Absent for a package the upgrade newly pulls in.
+  installed: z.string().optional(),
+  candidate: z.string(),
+  origin: z.string().optional(),
+  security: z.boolean().optional(),
+})
+
+export type PackageUpdate = z.infer<typeof packageUpdateSchema>
+
+/**
+ * The host's update state. Absence is unknown, never zero (§9.2): an
+ * unsupported package manager sends no totals, and the page must render
+ * unknown for them rather than a reassuring 0.
+ */
+export const updatesViewSchema = z.object({
+  os: z.object({
+    name: z.string().optional(),
+    kernel: z.string().optional(),
+    package_manager: z.string().optional(),
+    pending: z.array(packageUpdateSchema).optional(),
+    pending_total: z.number().optional(),
+    security_total: z.number().optional(),
+    lists_refreshed_at: z.string().optional(),
+    reboot_required: z.boolean().optional(),
+  }),
+  components: z
+    .array(z.object({ name: z.string(), pinned: z.string(), installed: z.string().optional() }))
+    .optional(),
+  checked_at: z.string().optional(),
+})
+
+export type UpdatesView = z.infer<typeof updatesViewSchema>
+
+/**
+ * The node's OS and component update state (PRD v1.108). Admin-only; the
+ * daemon reads local state only and caches briefly, so the refetch cadence
+ * here bounds how often it execs the package manager. 503 means this daemon
+ * does not inspect its host (a dev run): null, hiding the cards.
+ */
+export async function fetchUpdates(signal?: AbortSignal): Promise<UpdatesView | null> {
+  const init: RequestInit = signal ? { signal } : {}
+  const resp = await fetch('/v1/updates', init)
+  if (resp.status === 503) return null
+  if (!resp.ok) throw new Error(`updates: ${resp.status}`)
+  return updatesViewSchema.parse(await resp.json())
+}
+
 // ---- node settings (PRD v1.46, §15.1) ----
 
 /**

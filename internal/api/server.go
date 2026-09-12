@@ -96,6 +96,9 @@ type ServerConfig struct {
 	// Upgrader backs the release routes (PRD v1.107, §15.4). Nil answers 503
 	// on them, pointing at `kanea upgrade` on the node.
 	Upgrader Upgrader
+	// HostInspector backs the updates view (PRD v1.108): the OS's pending
+	// packages and the component matrix, local reads only. Nil answers 503.
+	HostInspector HostInspector
 	// LDAPServer names the configured directory (v1.47): audit Detail on
 	// directory logins, empty when LDAP is off. A name, never a credential.
 	LDAPServer string
@@ -248,16 +251,17 @@ type Server struct {
 	// notifyStats reports the dispatcher's counters, so the feed can say when
 	// it is quiet because nothing happened rather than because the queue
 	// overflowed.
-	notifyStats  func() notify.Stats
-	notifier     Notifier
-	backups      Backups
-	settings     SettingsService
-	upgrader     Upgrader
-	ldapServer   string
-	ca           CertificateAuthority
-	publishPorts PortPolicy
-	nodeVars     map[string]string
-	publish      func(notify.Event)
+	notifyStats   func() notify.Stats
+	notifier      Notifier
+	backups       Backups
+	settings      SettingsService
+	upgrader      Upgrader
+	hostInspector HostInspector
+	ldapServer    string
+	ca            CertificateAuthority
+	publishPorts  PortPolicy
+	nodeVars      map[string]string
+	publish       func(notify.Event)
 
 	spec SpecRenderer
 
@@ -340,6 +344,15 @@ type Server struct {
 		running atomic.Bool
 	}
 
+	// updatesCache holds the host inspection (PRD v1.108): local reads only,
+	// but an exec of the package manager is not free, and the cache is what
+	// keeps a dashboard's refetch cadence to one probe per updatesTTL.
+	updatesCache struct {
+		mu     sync.Mutex
+		valid  bool
+		answer UpdatesView
+	}
+
 	// subjectCache memoizes which subjects carry a metric, keyed on the series
 	// epoch rather than on time: that set changes only when a series is created
 	// or dropped, which is far rarer than a slot, and the answer costs a scan
@@ -409,7 +422,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		secrets: cfg.Secrets, secretSync: cfg.SecretSync, pipelines: cfg.Pipelines,
 		events: cfg.Events, notifyStats: cfg.NotifyStats, publish: cfg.Publish,
 		notifier: cfg.Notifier, backups: cfg.Backups, settings: cfg.Settings,
-		upgrader:   cfg.Upgrader,
+		upgrader: cfg.Upgrader, hostInspector: cfg.HostInspector,
 		ldapServer: cfg.LDAPServer, ca: cfg.CA,
 		publishPorts: cfg.PublishPorts,
 		nodeVars:     cfg.NodeVars,
@@ -511,6 +524,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		s.route(policy{action: "upgrade.check", adminOnly: true}, s.handleUpgradeCheck))
 	mux.Handle("POST "+PathUpgrade,
 		s.route(policy{action: "upgrade.run", mutates: true}, s.handleUpgrade))
+	// The host-update view (PRD v1.108). Admin-only like Settings: what a
+	// node is missing is a list of things worth attacking. A read: the
+	// inspector never installs anything.
+	mux.Handle("GET "+PathUpdates,
+		s.route(policy{action: "updates.read", adminOnly: true}, s.handleUpdates))
 	// Accounts. Admin-only throughout: minting a token is minting a credential,
 	// and listing users is a list of things worth attacking (§13.3).
 	mux.Handle("GET "+PathUsers, s.route(policy{action: "user.list", adminOnly: true}, s.handleListUsers))
