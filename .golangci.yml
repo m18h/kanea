@@ -56,6 +56,17 @@ linters:
       # every current caller passes the same project.
       - path: _test\.go
         linters: [errcheck, gosec, forbidigo, depguard, unparam]
+      # x/net v0.59.0 deprecated http2.Transport in favour of net/http's
+      # native Protocols/HTTP2Config. The edge's h2c upstream transport
+      # (proxy.go, PRD v1.41 R28) is the one deliberate user: its ping
+      # keepalive and plaintext-HTTP/2 dial are tuned behaviour the grpc
+      # tests pin, so the migration is its own change with its own testing,
+      # not a lint chore ridden in on a version bump. The deprecated API
+      # still works; this exclusion is scoped to that one message in that
+      # one package so any other deprecation still fails the gate.
+      - path: internal/edge/
+        linters: [staticcheck]
+        text: 'SA1019: .*http2\.Transport'
 
 formatters:
   enable:
