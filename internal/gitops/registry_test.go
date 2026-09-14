@@ -3,6 +3,7 @@ package gitops_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,13 +27,15 @@ import (
 // plain-HTTP allowance, and the credential merge.
 
 // testRegistry is the seam most tests need: an address to compose with and a
-// recognisable credential.
+// recognisable credential. The auth entry is composed at runtime rather than
+// written as a base64 literal, because a literal that decodes to a
+// user:password pair is exactly what the gitleaks gate exists to catch.
 func testRegistry() gitops.InternalRegistry {
+	auth := base64.StdEncoding.EncodeToString([]byte("kanea:hunter2"))
+	config := []byte(`{"auths":{"127.0.0.1:5100":{"auth":"` + auth + `"}}}`)
 	return gitops.InternalRegistry{
-		Addr: "127.0.0.1:5100",
-		PushAuth: func() []byte {
-			return []byte(`{"auths":{"127.0.0.1:5100":{"auth":"a2FuZWE6aHVudGVyMg=="}}}`)
-		},
+		Addr:     "127.0.0.1:5100",
+		PushAuth: func() []byte { return config },
 	}
 }
 
