@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/store"
 )
 
@@ -25,6 +26,12 @@ func TestBuildPipelinesStartsWithDefaults(t *testing.T) {
 		buildkit: "unix:///run/does-not-need-to-exist/buildkitd.sock",
 		logDir:   filepath.Join(t.TempDir(), "builds"),
 		store:    st,
+		// The registry seam rides along the way agent.go passes it; a stack
+		// that refuses to construct with one would disable the §5.2.14
+		// default on every node.
+		registry: gitops.InternalRegistry{
+			Addr: "127.0.0.1:5100", PushAuth: func() []byte { return nil },
+		},
 	}, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("buildPipelines with default-shaped settings refused: %v", err)

@@ -79,9 +79,14 @@ type BuildRequest struct {
 	// Empty means an anonymous push, which only works against a registry that
 	// allows one.
 	RegistryAuth []byte
-	// Insecure allows a plain-HTTP registry. For a node-local registry; the
-	// flag exists because the spike needed it and real deployments should not.
+	// Insecure allows a plain-HTTP push of the image output. For a node-local
+	// registry: the node's --insecure-registry posture, or an internal-target
+	// build (§5.2.14), whose loopback listener is plain HTTP by design.
 	Insecure bool
+	// InsecureCache allows plain HTTP for the cache_repo flags. Separate from
+	// Insecure on purpose: an internal target must never downgrade an
+	// external cache push, so only --insecure-registry sets this.
+	InsecureCache bool
 }
 
 // Reference is the full image reference this request pushes.
@@ -333,7 +338,10 @@ func buildArgs(req BuildRequest, recipe, metadataFile string) []string {
 	if req.CacheRepo != "" {
 		exportCache := "type=registry,ref=" + req.CacheRepo + ",mode=max"
 		importCache := "type=registry,ref=" + req.CacheRepo
-		if req.Insecure {
+		// InsecureCache, never Insecure: the cache repository is wherever the
+		// spec pointed it, and an internal-target build's plain-HTTP allowance
+		// covers its own output alone (§10.2).
+		if req.InsecureCache {
 			exportCache += ",registry.insecure=true"
 			importCache += ",registry.insecure=true"
 		}

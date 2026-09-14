@@ -39,6 +39,7 @@ import (
 	"github.com/m18h/kanea/internal/passthrough"
 	"github.com/m18h/kanea/internal/provision"
 	"github.com/m18h/kanea/internal/reconciler"
+	"github.com/m18h/kanea/internal/registry"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/scaling"
 	"github.com/m18h/kanea/internal/secrets"
@@ -237,6 +238,9 @@ func runAgent(args []string) error {
 		"how many notification events are kept in the store")
 	insecureRegistry := fs.Bool("insecure-registry", false,
 		"allow pushing built images over plain HTTP; for a node-local registry only")
+	registryAddr := fs.String("registry", registry.DefaultAddr,
+		"internal build registry address, loopback only (\"off\" disables it; "+
+			"implied off when --buildkit is off)")
 	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -748,6 +752,14 @@ func runAgent(args []string) error {
 		return err
 	}
 
+	// The internal registry precedes the pipeline stack because the stack
+	// needs its bound address: the defaulted build target names the port that
+	// answers (§5.2.14).
+	reg, pipelineRegistry, err := buildRegistry(*registryAddr, *buildkit, *dataDir, st, logger)
+	if err != nil {
+		return err
+	}
+
 	pipelines, buildQueue, err := buildPipelines(pipelineSettings{
 		buildkit:   *buildkit,
 		logDir:     resolveBuildLogDir(*buildLogDir, *dataDir),
@@ -755,6 +767,7 @@ func runAgent(args []string) error {
 		baseDomain: *baseDomain,
 		nodeVars:   nodeCfg.Variables,
 		insecure:   *insecureRegistry,
+		registry:   pipelineRegistry,
 		store:      st,
 		secrets:    secretStore,
 		notify:     notify,
@@ -906,6 +919,9 @@ func runAgent(args []string) error {
 	if dns != nil {
 		tasks++
 	}
+	if reg != nil {
+		tasks++
+	}
 	if certs != nil {
 		tasks++
 	}
@@ -924,6 +940,9 @@ func runAgent(args []string) error {
 	go func() { errs <- rec.Run(ctx, reconcileNotify) }()
 	if dns != nil {
 		go func() { errs <- dns.Serve(ctx) }()
+	}
+	if reg != nil {
+		go func() { errs <- reg.Serve(ctx) }()
 	}
 	if certs != nil {
 		go func() {
