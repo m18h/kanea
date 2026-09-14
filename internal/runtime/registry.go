@@ -141,12 +141,22 @@ func (e dockerAuthEntry) userPass() (string, string, error) {
 // Docker Hub now needs one, and a service pulling a public base image should
 // not break because another service in the project has a credential.
 func resolverFor(auth []byte) (remotes.Resolver, error) {
-	creds, err := parseCredentials(auth)
+	options, err := resolverOptions(auth)
 	if err != nil {
 		return nil, err
 	}
+	return docker.NewResolver(options), nil
+}
+
+// resolverOptions is resolverFor's decision, separated so a test can inspect
+// the host configuration without dialing anything.
+func resolverOptions(auth []byte) (docker.ResolverOptions, error) {
+	creds, err := parseCredentials(auth)
+	if err != nil {
+		return docker.ResolverOptions{}, err
+	}
 	if creds == nil {
-		return docker.NewResolver(docker.ResolverOptions{}), nil
+		return docker.ResolverOptions{}, nil
 	}
 
 	authorizer := docker.NewDockerAuthorizer(
@@ -158,7 +168,17 @@ func resolverFor(auth []byte) (remotes.Resolver, error) {
 			return entry.userPass()
 		}),
 	)
-	return docker.NewResolver(docker.ResolverOptions{
-		Hosts: docker.ConfigureDefaultRegistries(docker.WithAuthorizer(authorizer)),
-	}), nil
+	return docker.ResolverOptions{
+		Hosts: docker.ConfigureDefaultRegistries(
+			docker.WithAuthorizer(authorizer),
+			// Plain HTTP for loopback hosts, exactly what NewResolver defaults
+			// to on the anonymous path above. Without this, pairing a
+			// registry_auth_ref (say, for a ghcr fallback image) with an
+			// internal-registry image (§5.2.14) strands the pull: the
+			// authenticated resolver would insist on HTTPS from a listener
+			// that is plain HTTP by design. TLS is not weakened for any
+			// non-loopback host.
+			docker.WithPlainHTTP(docker.MatchLocalhost),
+		),
+	}, nil
 }

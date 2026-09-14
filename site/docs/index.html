@@ -3086,13 +3086,25 @@ restart {
     <pre class="plain">build {
   context           = "./web"
   dockerfile        = "Containerfile"   # optional; auto-detected when omitted
-  target            = "registry.example.com/shop/web"
+  target            = "registry.example.com/shop/web"   # optional; omitted, the node's
+                                                        # internal registry fills in
+                                                        # &lt;registry&gt;/shop/web
   tag               = "${GIT_SHA_SHORT}"
   cache_repo        = "registry.example.com/shop/web-cache"
   registry_auth_ref = "secret:shop/registry"
 }</pre>
     <ul>
       <li>Builds run on rootless BuildKit, unprivileged end to end.</li>
+      <li><b>An omitted <code>target</code> means the node's internal registry.</b> Every
+        node runs a loopback-only build registry (<code>--registry</code>, default
+        <code>127.0.0.1:5100</code>; <code>off</code> disables it, and
+        <code>--buildkit off</code> implies that), and the target is composed
+        <i>on the node</i> as <code>&lt;registry&gt;/&lt;project&gt;/&lt;service&gt;</code>,
+        so <code>build { context = "." }</code> is a complete build configuration: no
+        external registry, no push credential. Pushes to it are credential-gated per boot;
+        pulls are loopback plain HTTP, which containerd already speaks. An explicit target
+        behaves exactly as before, and <code>cache_repo</code> may not point at the
+        internal registry.</li>
       <li><b><code>Containerfile</code> and <code>Dockerfile</code> both work, and
         <code>Containerfile</code> wins when both exist.</b></li>
       <li><code>context</code> and <code>dockerfile</code> are paths inside the checkout:
@@ -3319,9 +3331,9 @@ spec_version = 1
   depends_on  = [<span class="s">"postgres"</span>]
 
   <span class="k">build</span> {
+    <span class="c"># No target: the node's internal registry builds, pushes and deploys</span>
+    <span class="c"># this service without any external registry.</span>
     context = <span class="s">"./web"</span>
-    target  = <span class="s">"registry.example.com/shop/web"</span>
-    tag     = <span class="s">"${GIT_SHA_SHORT}"</span>
   }
 
   <span class="k">task</span> <span class="s">"app"</span> {
@@ -4577,7 +4589,7 @@ kanea restore --from s3://bucket/prefix [--snapshot=ID] [--target=path]
             [--volume-dir=…] [--socket=/run/kanea/kanead.sock]
             [--containerd=…] [--network=ebpf|netns] [--node-cidr=…] [--cluster-cidr=…]
             [--service-cidr=10.201.0.0/16] [--bpf-dir=/sys/fs/bpf/kanea]
-            [--dns-listen=…|off] [--dns-upstream=…]
+            [--dns-listen=…|off] [--dns-upstream=…] [--registry=127.0.0.1:5100|off]
             [--allowed-host-paths=…|off] [--passthrough-config=…|off]
             [--listen=…|none] [--listen-cert=…] [--listen-key=…]
             [--base-domain=…] [--tls-default=acme|self-signed|provided|plaintext]

@@ -957,7 +957,11 @@ netns and never crosses one, so the guard never saw it (the audit's K-07).
 **What that buys an attacker, and what is done about it.** Reachable from a
 `RUN` step: the cloud instance metadata service (instance credentials on
 IMDSv1), the node's unauthenticated loopback diagnostics (containerd's
-metrics listener, the edge's status listener), every workload VIP in every
+metrics listener, the edge's status listener), the internal build registry's
+*reads* (§5.2.14, v1.109: anonymous by design because containerd's pull must
+work with no credential, so a `RUN` step can pull any project's built images;
+its *writes* are gated by a per-boot credential the step never holds, so it
+cannot poison one), every workload VIP in every
 project (the connect-time LB is a root-cgroup hook and the policy layer
 passes host-sourced traffic by construction), and the LAN. **Not**
 reachable: the kanead and containerd unix sockets (different mount
@@ -1311,6 +1315,7 @@ is one that has already reached a workload.
 | A local-account name and a directory name are timing-distinguishable at login | LDAP bind time is the directory's, not Kanea's; equalising against network I/O would be theatre (§3.20) |
 | A directory user's revoked group membership outlives login by up to a session lifetime | Group→role mapping is evaluated at bind time only; the session's 12 h absolute expiry bounds it (§3.20) |
 | A build's `RUN` steps can read unauthenticated loopback diagnostics (containerd metrics, edge status) and reach every project's VIPs | Host networking is what keeps a node-local registry reachable; a worker network namespace is the real fix and is unevaluated (§3.21; the subuid metadata escape it once shared this row with was closed in v1.105) |
+| A build's `RUN` step can pull any project's images from the internal registry | Reads are anonymous by design - containerd's pull holds no credential - and the same class as the loopback-diagnostics row above; writes are gated by the per-boot credential, repository names are bounded to declared pipelines with refusals counted, and the worker netns is still the real fix (§5.2.14, v1.109) |
 | Container uid 0 is host uid 0, held back by capabilities, seccomp and namespaces rather than a uid map | User namespaces are **spiked GO on the mechanics but unbuilt** (`spikes/userns/`, media node, kernel 6.1, 15/15): the map, the idmapped rootfs and the PUID image class all work, and the ownership arithmetic is a base-shift; the feature is gated on inverting Kanea's netns-first lifecycle (runc makes the netns with the userns, kanead attaches the datapath by pid after) plus a ≥ 5.19 kernel gate, and a grant that cannot be honoured under a map is still refused, not fudged (R21). Parked in PRD §19.3 |
 | One alloc can exhaust the resolver's TCP connection cap for the whole node | The cap is per node, not per source; UDP is unaffected, and every client is an alloc whose address the datapath assigned (§3.25) |
 | `kanea doctor` cannot prove a host firewall actually permits alloc traffic | It reads the ruleset rather than probing it; the accept-rule search is a heuristic, and only a live query from an alloc's netns could be conclusive (PRD v1.86) |

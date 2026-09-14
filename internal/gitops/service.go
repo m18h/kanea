@@ -30,6 +30,14 @@ var (
 	// ErrNoBuild means the service has no build block, so it deploys a
 	// pre-built image and there is nothing to build.
 	ErrNoBuild = errors.New("gitops: service has no build block")
+	// ErrNoTarget means the build omits its target and this node has no
+	// internal registry to default it to (§5.2.14: --registry off, or
+	// --buildkit off which implies it).
+	ErrNoTarget = errors.New("gitops: build omits target and this node has no internal registry")
+	// ErrInternalCacheRepo means cache_repo names the internal registry,
+	// whose repository bound covers declared pipelines and nothing else
+	// (§10.2); BuildKit's own local cache is the single-node cache story.
+	ErrInternalCacheRepo = errors.New("gitops: cache_repo may not name the internal registry")
 	// ErrForeignProject means a synced spec declared services in a project
 	// other than the one whose repository it came from.
 	ErrForeignProject = errors.New("gitops: spec declares another project")
@@ -93,6 +101,19 @@ type SyncResult struct {
 	Unchanged bool
 }
 
+// InternalRegistry names the node's embedded build registry (§5.2.14).
+//
+// A seam rather than an import of internal/registry: this package needs an
+// address to compose targets with and a credential to push with, not a
+// server.
+type InternalRegistry struct {
+	// Addr is the listener's host:port. Empty means the node has none, and an
+	// omitted build target is refused rather than defaulted.
+	Addr string
+	// PushAuth returns a docker config.json granting push access to Addr.
+	PushAuth func() []byte
+}
+
 // Applier applies a synced job spec to the desired state.
 //
 // A seam, not an import: the conversion from a spec to what the reconciler runs
@@ -119,6 +140,7 @@ type Service struct {
 	// deployed with `kanea deploy`.
 	specOptions jobspec.Options
 	insecure    bool
+	registry    InternalRegistry
 	log         *slog.Logger
 	now         func() time.Time
 
@@ -143,6 +165,9 @@ type ServiceConfig struct {
 	SpecOptions jobspec.Options
 	// Insecure allows a plain-HTTP registry, for a node-local one.
 	Insecure bool
+	// Registry is the node's internal build registry (§5.2.14). A zero value
+	// means the node has none.
+	Registry InternalRegistry
 	Logger   *slog.Logger
 	Now      func() time.Time
 }
@@ -168,7 +193,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	return &Service{
 		store: cfg.Store, runs: cfg.Runs, runner: cfg.Runner, queue: cfg.Queue,
 		syncer: cfg.Syncer, webhooks: cfg.Webhooks, applier: cfg.Applier,
-		specOptions: cfg.SpecOptions, insecure: cfg.Insecure,
+		specOptions: cfg.SpecOptions, insecure: cfg.Insecure, registry: cfg.Registry,
 		log: cfg.Logger, now: cfg.Now,
 		wake: make(chan string, 16),
 	}, nil
@@ -245,6 +270,14 @@ func (s *Service) Trigger(
 }
 
 // request assembles the runner's Request from stored configuration.
+//
+// This is where an omitted build target becomes the internal registry's
+// (§5.2.14, §10.2): the one funnel both a manual Trigger and the sync loop
+// pass through, and it runs only on the node - the stored BuildSpec stays
+// empty, because a node address baked into the record client-side would make
+// one spec mean different things on two machines (the R33 / --tls-default
+// rule). Refusals happen here too, in front of the operator rather than
+// mid-build.
 func (s *Service) request(cfg Config, service string) (Request, error) {
 	if !cfg.HasSource() {
 		return Request{}, fmt.Errorf("%w: %s", ErrNoSource, cfg.Project)
@@ -253,9 +286,24 @@ func (s *Service) request(cfg Config, service string) (Request, error) {
 	if !ok {
 		return Request{}, fmt.Errorf("%w: %s/%s", ErrNoBuild, cfg.Project, service)
 	}
+	internal := false
+	if spec.Target == "" {
+		if s.registry.Addr == "" {
+			return Request{}, fmt.Errorf("%w: %s/%s", ErrNoTarget, cfg.Project, service)
+		}
+		// <project>/<service> are DNS-1123 labels, so the composed reference
+		// passes checkBuildOptions by construction.
+		spec.Target = s.registry.Addr + "/" + cfg.Project + "/" + service
+		internal = true
+	}
+	if s.registry.Addr != "" &&
+		(spec.CacheRepo == s.registry.Addr || strings.HasPrefix(spec.CacheRepo, s.registry.Addr+"/")) {
+		return Request{}, fmt.Errorf("%w: %s/%s", ErrInternalCacheRepo, cfg.Project, service)
+	}
 	return Request{
 		Project: cfg.Project, Service: service,
 		Source: cfg.Source, Build: spec, Insecure: s.insecure,
+		InternalTarget: internal,
 	}, nil
 }
 

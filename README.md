@@ -12,7 +12,7 @@
 
 <img src="./site/assets/shot-dashboard.webp" alt="The Kanea dashboard: counts for services, allocations, builds and events; sparklines for CPU, memory, load and running allocations; and panels for recent events, autoscaler decisions and backup replication" width="900">
 
-Kanea is a lightweight container orchestration platform written in Go. Services run on **containerd**, networking and load balancing are **Kanea's own eBPF datapath**, TLS comes from **Let's Encrypt, a per-node CA, or certificates you already have**, and it ships a real-time **shadcn/ui dashboard**, an **MCP server** for AI agents, **GitOps pipelines** (rootless BuildKit), **eBPF-driven autoscaling**, and **encrypted S3-backed state replication** with backup and restore.
+Kanea is a lightweight container orchestration platform written in Go. Services run on **containerd**, networking and load balancing are **Kanea's own eBPF datapath**, TLS comes from **Let's Encrypt, a per-node CA, or certificates you already have**, and it ships a real-time **shadcn/ui dashboard**, an **MCP server** for AI agents, **GitOps pipelines** (rootless BuildKit and an embedded build registry, so `build { context = "." }` needs no registry of yours), **eBPF-driven autoscaling**, and **encrypted S3-backed state replication** with backup and restore.
 
 [![CI](https://github.com/m18h/kanea/actions/workflows/ci.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/ci.yml) [![Release](https://github.com/m18h/kanea/actions/workflows/release.yml/badge.svg)](https://github.com/m18h/kanea/actions/workflows/release.yml) [![Latest release](https://img.shields.io/github/v/release/m18h/kanea?label=release)](https://github.com/m18h/kanea/releases/latest) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE) [![Go](https://img.shields.io/badge/go-1.26-00ADD8)](./go.mod)
 
@@ -960,7 +960,10 @@ This covers Kanea's own components; your workload images still come from a
 registry the node can reach - or, on a node where they are preloaded, from
 nowhere at all: `images { pull_policy = "never" }` makes an absent image fail
 immediately and by name instead of timing out against a registry the node
-cannot reach.
+cannot reach. Images the node *builds* need no registry either: a `build`
+block that omits `target` pushes to the node's own embedded registry
+(loopback-only, PRD §5.2.14), so a GitOps pipeline builds, pushes and deploys
+entirely on the node.
 
 ## Requirements
 

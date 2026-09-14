@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -66,6 +67,12 @@ type Request struct {
 	Deploy bool
 	// Insecure allows a plain-HTTP registry.
 	Insecure bool
+	// InternalTarget records that Build.Target was defaulted to the internal
+	// registry (§5.2.14). It grants the plain-HTTP allowance to this build's
+	// output alone and merges the per-boot push credential in - the cache
+	// flags never inherit either, so a defaulted target cannot downgrade an
+	// external cache_repo push.
+	InternalTarget bool
 }
 
 // RunnerConfig configures the pipeline runner.
@@ -78,6 +85,9 @@ type RunnerConfig struct {
 	Deployer Deployer
 	// Secrets resolves the registry credential.
 	Secrets Resolver
+	// Registry is the node's internal build registry (§5.2.14), for the push
+	// credential an InternalTarget build needs. A zero value means none.
+	Registry InternalRegistry
 	// LogDir is where build logs are written, one file per run.
 	LogDir string
 	// WorkDir is where checkouts are materialised.
@@ -93,6 +103,7 @@ type Runner struct {
 	builder  *Builder
 	deployer Deployer
 	secrets  Resolver
+	registry InternalRegistry
 	logDir   string
 	workDir  string
 	log      *slog.Logger
@@ -126,7 +137,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	}
 	return &Runner{
 		runs: cfg.Runs, syncer: cfg.Syncer, builder: cfg.Builder,
-		deployer: cfg.Deployer, secrets: cfg.Secrets,
+		deployer: cfg.Deployer, secrets: cfg.Secrets, registry: cfg.Registry,
 		logDir: cfg.LogDir, workDir: cfg.WorkDir, log: cfg.Logger, now: cfg.Now,
 	}, nil
 }
@@ -273,6 +284,22 @@ func (r *Runner) build(
 		run.EndStep(StepBuild, r.now(), err)
 		return BuildResult{}, err
 	}
+	if req.InternalTarget {
+		if r.registry.PushAuth == nil {
+			// Fail closed: an internal target with no credential to push it
+			// would fail at the registry anyway, with a worse message.
+			err := errors.New("gitops: this build targets the internal registry but the runner has no push credential")
+			run.EndStep(StepBuild, r.now(), err)
+			return BuildResult{}, err
+		}
+		// Merged rather than replaced: a spec's registry_auth_ref may still
+		// authenticate an external cache_repo push in the same build.
+		auth, err = mergeDockerConfigs(auth, r.registry.PushAuth())
+		if err != nil {
+			run.EndStep(StepBuild, r.now(), err)
+			return BuildResult{}, err
+		}
+	}
 
 	contextDir := dir
 	if req.Build.Context != "" {
@@ -296,7 +323,13 @@ func (r *Runner) build(
 	result, err := r.builder.Build(ctx, BuildRequest{
 		ContextDir: contextDir, Recipe: req.Build.Dockerfile,
 		Target: req.Build.Target, Tag: tag, CacheRepo: req.Build.CacheRepo,
-		RegistryAuth: auth, Insecure: req.Insecure,
+		RegistryAuth: auth,
+		// The output's allowance and the cache's are separate on purpose: an
+		// internal target is loopback plain HTTP by design, but the cache
+		// repository is wherever the spec pointed it, and only the node's
+		// explicit --insecure-registry posture may weaken that push.
+		Insecure:      req.Insecure || req.InternalTarget,
+		InsecureCache: req.Insecure,
 	}, logs)
 
 	run.EndStep(StepBuild, r.now(), err)
@@ -345,6 +378,48 @@ func (r *Runner) registryAuth(ctx context.Context, ref string) ([]byte, error) {
 		return nil, fmt.Errorf("gitops: resolve %s: %w", ref, err)
 	}
 	return value, nil
+}
+
+// mergeDockerConfigs overlays the internal registry's credential onto a
+// spec-resolved config.json, the internal entry winning for its own host.
+//
+// Top-level keys other than `auths` survive untouched (credential helpers are
+// a legitimate thing for a user config to carry), and no error here ever
+// echoes either document: both are credential files, and a parse error that
+// quotes one puts a password in a log line (the runtime package's rule).
+func mergeDockerConfigs(user, internal []byte) ([]byte, error) {
+	if len(user) == 0 {
+		return internal, nil
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(user, &doc); err != nil {
+		return nil, errors.New("gitops: the registry credential is not a docker config.json")
+	}
+	auths := map[string]json.RawMessage{}
+	if raw, ok := doc["auths"]; ok {
+		if err := json.Unmarshal(raw, &auths); err != nil {
+			return nil, errors.New("gitops: the registry credential's auths entry is malformed")
+		}
+	}
+	var extra struct {
+		Auths map[string]json.RawMessage `json:"auths"`
+	}
+	if err := json.Unmarshal(internal, &extra); err != nil {
+		return nil, errors.New("gitops: the internal push credential is malformed")
+	}
+	for host, entry := range extra.Auths {
+		auths[host] = entry
+	}
+	merged, err := json.Marshal(auths)
+	if err != nil {
+		return nil, errors.New("gitops: cannot merge registry credentials")
+	}
+	doc["auths"] = merged
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return nil, errors.New("gitops: cannot merge registry credentials")
+	}
+	return out, nil
 }
 
 // fail records a run's failure and returns it.

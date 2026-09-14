@@ -18,4 +18,10 @@ paths = [
 # real key that happens to sit near one is still caught.
 regexes = [
   '''certcrypto\.(EC256|EC384|RSA2048|RSA4096|RSA8192)''',
+  # base64("kanea:hunter2"): a fake push credential a gitops test committed as
+  # a literal before being rewritten to compose it at runtime
+  # (internal/gitops/registry_test.go). The literal is gone from the tree, but
+  # the PR-range scan still reads the commit that carried it. Exact string,
+  # not a pattern, so any real credential is still caught.
+  '''a2FuZWE6aHVudGVyMg==''',
 ]

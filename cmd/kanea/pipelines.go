@@ -43,6 +43,10 @@ type pipelineSettings struct {
 	// specs with the same defaults every other door uses.
 	nodeVars map[string]string
 	insecure bool
+	// registry is the internal build registry's seam (§5.2.14): the address
+	// an omitted build.target defaults to and the credential that pushes
+	// there. Zero when the node has none.
+	registry gitops.InternalRegistry
 
 	store   store.Store
 	secrets gitops.Resolver
@@ -102,6 +106,7 @@ func buildPipelines(cfg pipelineSettings, logger *slog.Logger) (*gitops.Service,
 		// nobody asked for, so the deployer is not optional here.
 		Deployer: storeDeployer{store: cfg.store, notify: cfg.notify, log: logger},
 		Secrets:  cfg.secrets,
+		Registry: cfg.registry,
 		LogDir:   cfg.logDir,
 		// Checkouts are materialised beside the build logs (the one directory
 		// §10.2 already gives the right permissions) under their own name.
@@ -142,6 +147,7 @@ func buildPipelines(cfg pipelineSettings, logger *slog.Logger) (*gitops.Service,
 		// thing whether it arrives over the API or out of a repository.
 		SpecOptions: jobspec.Options{BaseDomain: cfg.baseDomain, NodeVars: cfg.nodeVars},
 		Insecure:    cfg.insecure,
+		Registry:    cfg.registry,
 		Logger:      logger,
 	})
 	if err != nil {
