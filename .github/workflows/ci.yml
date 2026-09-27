@@ -425,7 +425,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gosec
-        uses: securego/gosec@8075fd2e520d33330afe168f26fc7a91f57f2cbc # master
+        uses: securego/gosec@8c77519419e934a3e158dbf1a3fbbc0871b8c691 # master
         with:
           args: -quiet ./...
       - name: govulncheck
