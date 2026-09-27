@@ -25,7 +25,7 @@
 # root filesystem, which is exactly what §5.2.12 refuses for the BuildKit
 # component. Dependabot bumps it (.github/dependabot.yml) - a digest nothing
 # updates is a frozen CVE surface rather than a pin.
-FROM alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 # TARGETARCH is buildx's, and it is what selects the binary below.
 ARG TARGETARCH
