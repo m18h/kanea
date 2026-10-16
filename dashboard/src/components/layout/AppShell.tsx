@@ -28,7 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             aria-label="Close navigation"
-            className="flex-1 bg-background/60 backdrop-blur-sm"
+            className="flex-1 bg-background/60 backdrop-blur-xs"
             onClick={() => setOpen(false)}
           />
         </div>
