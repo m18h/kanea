@@ -218,7 +218,7 @@ export function Sparkline({
       </svg>
       {hover !== null ? (
         <div
-          className="pointer-events-none absolute -top-6 z-10 -translate-x-1/2 whitespace-nowrap rounded border bg-card px-1.5 py-0.5 font-mono text-xs tabular-nums text-card-foreground shadow-sm"
+          className="pointer-events-none absolute -top-6 z-10 -translate-x-1/2 whitespace-nowrap rounded border bg-card px-1.5 py-0.5 font-mono text-xs tabular-nums text-card-foreground shadow-xs"
           style={{ left: Math.max(20, Math.min(w - 20, xAt(hover))) }}
         >
           {/* An em dash for a gap, not a zero: "measured nothing" is not

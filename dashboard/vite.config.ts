@@ -2,6 +2,7 @@
 // typed. It is the same function, re-exported with the test schema added.
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 import { mockApi } from './mock/api'
 
@@ -14,7 +15,7 @@ const useMock = process.env.MOCK_API === '1'
 // `make build` after `make dashboard` produces a binary with the current UI
 // and there is no copy step to forget.
 export default defineConfig({
-  plugins: [react(), ...(useMock ? [mockApi()] : [])],
+  plugins: [react(), tailwindcss(), ...(useMock ? [mockApi()] : [])],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },

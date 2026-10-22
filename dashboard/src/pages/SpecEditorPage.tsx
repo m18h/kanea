@@ -197,7 +197,7 @@ export function SpecEditorPage({
             spellCheck={false}
             disabled={!loaded}
             aria-label="Job spec HCL"
-            className="min-h-[24rem] w-full resize-y rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-h-[24rem] w-full resize-y rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           />
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button variant="outline" disabled={busy !== null || !loaded} onClick={validate}>

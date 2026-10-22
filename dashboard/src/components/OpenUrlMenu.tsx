@@ -85,7 +85,7 @@ export function OpenUrlMenu({ urls }: { urls: string[] }) {
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
-              className="block truncate rounded px-2 py-1.5 text-left font-mono text-xs hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+              className="block truncate rounded px-2 py-1.5 text-left font-mono text-xs hover:bg-muted focus-visible:bg-muted focus-visible:outline-hidden"
             >
               {url}
             </a>

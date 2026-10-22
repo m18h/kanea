@@ -74,7 +74,7 @@ export function Dialog({ open, onClose, title, dismissable = true, className, ch
         aria-modal="true"
         tabIndex={-1}
         className={cn(
-          'relative z-10 flex max-h-[90vh] flex-col rounded-lg border bg-card p-4 text-card-foreground shadow-lg outline-none',
+          'relative z-10 flex max-h-[90vh] flex-col rounded-lg border bg-card p-4 text-card-foreground shadow-lg outline-hidden',
           className,
         )}
       >
