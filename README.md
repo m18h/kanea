@@ -959,6 +959,15 @@ today's application); a step on any other image is untouched, and the command
 names the steps that followed. Prefer a digest to a tag: a tag can move
 between two allocs being replaced.
 
+The wait judges the deploy it made, not the one it replaced: an alloc still
+carrying the previous spec hash reads as `replacing`, so deploying the fix to a
+service whose allocs had given up no longer fails the pipeline on the crash it
+is fixing. An alloc that fails on the **new** hash fails the command, as
+before. And deploying the image a service already declares is still a no-op -
+unless its allocs have failed, in which case the command restarts the service
+instead, because a spec that is already right cannot be the spec change that
+revives a failed alloc.
+
 `--role admin` is required to deploy; a viewer token reads and changes nothing.
 `http://` beyond loopback is refused, because a bearer token would cross the
 network in clear text, and there is no skip-verify flag - `KANEA_CA_CERT`
@@ -1030,7 +1039,7 @@ The decisions a change is most likely to trip over live in
 
 | File | Content |
 |---|---|
-| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.112) |
+| [`PRD.md`](./PRD.md) | Product Requirements Document, the **north star** (v1.113) |
 | [`AGENTS.md`](./AGENTS.md) | Conventions and binding constraints for contributors (human & AI) |
 | [`docs/DECISIONS.md`](./docs/DECISIONS.md) | The decision record: status, trip-over bullets, refusals, spike log |
 | [`docs/THREAT_MODEL.md`](./docs/THREAT_MODEL.md) | Boundaries, adversaries, OWASP Top 10 as built |
