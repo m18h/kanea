@@ -528,6 +528,18 @@ func waitForRunning(ctx context.Context, client *api.Client, desired []reconcile
 	}
 
 	o := newOut()
+	// The spec hashes the server serves, read once rather than per poll: a
+	// second deploy landing mid-wait is not this command's business. Best
+	// effort, because this comparison only sharpens the verdict - a wait that
+	// went red because a diagnostic read failed would be a worse bug than the
+	// one it fixes.
+	hashes := map[string]string{}
+	if views, err := client.ServiceViews(ctx); err == nil {
+		for _, v := range views {
+			hashes[v.Project+"/"+v.Service] = v.SpecHash
+		}
+	}
+
 	// The first poll is a silent baseline: a service that was already up must
 	// not re-announce itself on every converged re-apply.
 	last := map[string]reconciler.AllocState{}
@@ -537,20 +549,7 @@ func waitForRunning(ctx context.Context, client *api.Client, desired []reconcile
 		if err != nil {
 			return err
 		}
-		ours := allocs[:0]
-		running, failed := 0, 0
-		for _, a := range allocs {
-			if !isDesiredAlloc(desired, a) {
-				continue
-			}
-			ours = append(ours, a)
-			switch a.State {
-			case reconciler.AllocRunning:
-				running++
-			case reconciler.AllocFailed:
-				failed++
-			}
-		}
+		ours, running, failed := allocProgress(desired, hashes, allocs)
 		for _, a := range ours {
 			if seeded && a.State != last[a.ID] {
 				switch a.State {
@@ -568,7 +567,7 @@ func waitForRunning(ctx context.Context, client *api.Client, desired []reconcile
 			return o.Err()
 		}
 		if failed > 0 || time.Now().After(deadline) {
-			printStragglers(o, desired, ours)
+			printStragglers(o, desired, hashes, ours)
 			if err := o.Err(); err != nil {
 				return err
 			}
@@ -581,10 +580,50 @@ func waitForRunning(ctx context.Context, client *api.Client, desired []reconcile
 	}
 }
 
+// allocProgress picks out the allocs this wait is about and counts them.
+//
+// An alloc carrying a spec hash other than the one the server now serves for
+// its service belongs to the deploy this one replaces, and the planner is
+// about to roll it (R29's AllocFailed && !stale). Its failure is the outgoing
+// deploy's, not the arriving one's, so it counts as neither running nor
+// failed: the wait keeps waiting and the deadline still governs. An alloc
+// failed on the hash being deployed is this deploy's failure and counts, which
+// is the signal the whole wait exists for. An unstamped record counts too -
+// the planner will not roll it either, so a slow timeout would only be a
+// worse-worded version of the same answer.
+func allocProgress(
+	desired []reconciler.Desired, hashes map[string]string, allocs []reconciler.AllocRecord,
+) (ours []reconciler.AllocRecord, running, failed int) {
+	for _, a := range allocs {
+		if !isDesiredAlloc(desired, a) {
+			continue
+		}
+		ours = append(ours, a)
+		switch {
+		case a.State == reconciler.AllocRunning:
+			running++
+		case a.State == reconciler.AllocFailed && !replacing(hashes, a):
+			failed++
+		}
+	}
+	return ours, running, failed
+}
+
+// replacing reports whether an alloc is the previous deploy's, by the planner's
+// own staleness rule: it carries a hash, and not the one its service now
+// serves. Absence on either side is never read as "changed", exactly as
+// reconciler.drifted treats an unstamped record.
+func replacing(hashes map[string]string, a reconciler.AllocRecord) bool {
+	want := hashes[a.Project+"/"+a.Service]
+	return want != "" && a.SpecHash != "" && a.SpecHash != want
+}
+
 // printStragglers lists every desired slot that is not up, with the state
 // detail `kanea ps` would show: including declared slots the reconciler has
 // not created yet, which have no record to explain themselves with.
-func printStragglers(o *out, desired []reconciler.Desired, allocs []reconciler.AllocRecord) {
+func printStragglers(
+	o *out, desired []reconciler.Desired, hashes map[string]string, allocs []reconciler.AllocRecord,
+) {
 	byID := map[string]reconciler.AllocRecord{}
 	for _, a := range allocs {
 		byID[a.ID] = a
@@ -600,7 +639,13 @@ func printStragglers(o *out, desired []reconciler.Desired, allocs []reconciler.A
 			case !ok:
 				o.printf("  %s\tpending (not created)\n", id)
 			case a.State != reconciler.AllocRunning:
-				o.printf("  %s\t%s\n", id, allocStateLabel(a))
+				label := allocStateLabel(a)
+				if replacing(hashes, a) {
+					// Said out loud, or the table reads as the reason the
+					// command is still waiting when it is the opposite.
+					label += " (replacing)"
+				}
+				o.printf("  %s\t%s\n", id, label)
 				crashed = crashed || a.State == reconciler.AllocBackoff || a.State == reconciler.AllocFailed
 			case !a.Healthy && !a.LastProbeAt.IsZero():
 				o.printf("  %s\trunning (unhealthy)\n", id)
@@ -1466,26 +1511,42 @@ func runDeploy(args []string) error {
 	// genuinely no work; a pin present means the running digest may differ from
 	// what Image names, and the apply is worth making.
 	if target.Image == image && target.PinnedImage == "" {
-		o.printf("%s/%s already declares %s; nothing to do\n",
-			target.Project, target.Service, image)
-		return o.Err()
-	}
-
-	previous := target.Image
-	// Init steps declaring the task's previous image move with it (PRD v1.99):
-	// a migration running the app's own image must not run yesterday's bytes
-	// against today's application.
-	moved := reconciler.RetargetImage(&target, image)
-	if _, err := client.Apply(ctx, []reconciler.Desired{target}, nil); err != nil {
-		return err
-	}
-	if previous == "" {
-		o.printf("deploying %s/%s -> %s\n", target.Project, target.Service, image)
+		failed, err := failedAllocs(ctx, client, target)
+		if err != nil {
+			return err
+		}
+		if failed == 0 {
+			o.printf("%s/%s already declares %s; nothing to do\n",
+				target.Project, target.Service, image)
+			return o.Err()
+		}
+		// A spec that is already right cannot be the spec change that revives a
+		// failed alloc (PRD v1.113, R29), so the deploy becomes the gesture that
+		// is: the generation bump the planner already treats as recovery. The
+		// image is deliberately not retargeted, which is what keeps v1.99's
+		// no-op boundary - a diverged init step is never repaired by accident.
+		o.printf("%s/%s already declares %s; %d alloc(s) failed, restarting it\n",
+			target.Project, target.Service, image, failed)
+		if _, err := client.Restart(ctx, target.Project, target.Service); err != nil {
+			return err
+		}
 	} else {
-		o.printf("deploying %s/%s: %s -> %s\n", target.Project, target.Service, previous, image)
-	}
-	if len(moved) > 0 {
-		o.printf("init steps declaring the same image follow: %s\n", strings.Join(moved, ", "))
+		previous := target.Image
+		// Init steps declaring the task's previous image move with it (PRD
+		// v1.99): a migration running the app's own image must not run
+		// yesterday's bytes against today's application.
+		moved := reconciler.RetargetImage(&target, image)
+		if _, err := client.Apply(ctx, []reconciler.Desired{target}, nil); err != nil {
+			return err
+		}
+		if previous == "" {
+			o.printf("deploying %s/%s -> %s\n", target.Project, target.Service, image)
+		} else {
+			o.printf("deploying %s/%s: %s -> %s\n", target.Project, target.Service, previous, image)
+		}
+		if len(moved) > 0 {
+			o.printf("init steps declaring the same image follow: %s\n", strings.Join(moved, ", "))
+		}
 	}
 
 	if *noWait {
@@ -1499,6 +1560,23 @@ func runDeploy(args []string) error {
 	}
 	o.printf("%s/%s is running %s\n", target.Project, target.Service, image)
 	return o.Err()
+}
+
+// failedAllocs counts the service's allocs that have given up (R29). It is
+// what makes a deploy of the image a service already declares worth making:
+// nothing about the spec needs changing, and the service is still down.
+func failedAllocs(ctx context.Context, client *api.Client, d reconciler.Desired) (int, error) {
+	allocs, err := client.Allocs(ctx, d.Project, d.Service)
+	if err != nil {
+		return 0, err
+	}
+	failed := 0
+	for _, a := range allocs {
+		if a.State == reconciler.AllocFailed {
+			failed++
+		}
+	}
+	return failed, nil
 }
 
 // runRestart implements `kanea restart`: ask the server to bump the service's

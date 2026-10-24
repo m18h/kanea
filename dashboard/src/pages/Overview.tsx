@@ -32,6 +32,7 @@ import {
   formatUptime,
   groupAllocs,
   serviceHealth,
+  serviceRecency,
   type Health,
 } from '@/lib/state'
 
@@ -108,6 +109,23 @@ export function Overview() {
   })
   const unsettled = statuses.filter((s) => !s.health.settled)
   const healthy = statuses.length - unsettled.length
+
+  // The card shows the few services that changed most recently; the Services
+  // page has all of them. Sorted on a copy so the banners below keep reading
+  // statuses in store order, and tie-broken by name because most nodes deploy
+  // several services at once - an unstable comparator would let every socket
+  // frame reorder the card.
+  const recentServices = statuses
+    .map((s) => ({ s, at: serviceRecency(s.allocs) }))
+    .sort(
+      (a, b) =>
+        b.at - a.at ||
+        `${a.s.svc.Project}/${a.s.svc.Service}`.localeCompare(
+          `${b.s.svc.Project}/${b.s.svc.Service}`,
+        ),
+    )
+    .slice(0, 6)
+    .map(({ s }) => s)
 
   const allAllocs = allocs.data?.allocs ?? []
   const running = allAllocs.filter((a) => a.state === 'running').length
@@ -223,7 +241,9 @@ export function Overview() {
             {statuses.length === 0 ? (
               <p className="py-3 text-sm text-muted-foreground">No services yet.</p>
             ) : (
-              statuses.map((s) => <ServiceLine key={`${s.svc.Project}/${s.svc.Service}`} {...s} />)
+              recentServices.map((s) => (
+                <ServiceLine key={`${s.svc.Project}/${s.svc.Service}`} {...s} />
+              ))
             )}
           </Card>
         </section>

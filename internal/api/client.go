@@ -141,15 +141,27 @@ func (c *Client) ImagesClean(ctx context.Context) (imagegc.Summary, error) {
 
 // Services lists the declared services.
 func (c *Client) Services(ctx context.Context) ([]reconciler.Desired, error) {
+	views, err := c.ServiceViews(ctx)
+	if err != nil {
+		return nil, err
+	}
+	services := make([]reconciler.Desired, len(views))
+	for i, view := range views {
+		services[i] = view.Desired
+	}
+	return services, nil
+}
+
+// ServiceViews lists the declared services with the fields the API computes at
+// projection time, which is how a caller reaches SpecHash: Services unwraps to
+// Desired and drops it, and a client that needs the planner's own staleness
+// rule must never recompute the hash from its own copy of the record.
+func (c *Client) ServiceViews(ctx context.Context) ([]ServiceView, error) {
 	var out ServicesResponse
 	if err := c.do(ctx, http.MethodGet, PathServices, nil, &out); err != nil {
 		return nil, err
 	}
-	services := make([]reconciler.Desired, len(out.Services))
-	for i, view := range out.Services {
-		services[i] = view.Desired
-	}
-	return services, nil
+	return out.Services, nil
 }
 
 // Apply declares services. Services not named are left alone.

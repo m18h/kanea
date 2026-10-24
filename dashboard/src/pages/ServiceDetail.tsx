@@ -1296,12 +1296,17 @@ function LogPanel({
           aria-label="Which container's log to follow"
           className="h-8 rounded-md border border-border bg-card px-2.5 font-mono text-xs"
         >
-          <option value="">task</option>
-          {inits.map((step) => (
+          {/* In run order, which is declaration order (R32), and numbered
+              because the names alone cannot say they are a sequence. The task
+              is last because it starts once every step has finished; the
+              value stays the bare block name, which is what the daemon
+              resolves back to a step index. */}
+          {inits.map((step, i) => (
             <option key={step.name} value={step.name}>
-              {step.name}
+              {i + 1}. {step.name}
             </option>
           ))}
+          <option value="">task</option>
         </select>
       ) : null}
       <input

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupAllocs, memoryUsageText, serviceHealth } from '@/lib/state'
+import { groupAllocs, memoryUsageText, serviceHealth, serviceRecency } from '@/lib/state'
 import type { Alloc, StatsSample } from '@/lib/api'
 
 function alloc(service: string, index: number, state = 'running'): Alloc {
@@ -40,6 +40,49 @@ describe('serviceHealth', () => {
   it('distinguishes a drained stop from one still draining', () => {
     expect(serviceHealth({ Count: 0 }, [])).toEqual({ label: 'stopped', settled: true })
     expect(serviceHealth({ Count: 0 }, running(1))).toEqual({ label: 'stopping', settled: false })
+  })
+})
+
+describe('serviceRecency', () => {
+  const at = (index: number, created_at: string | undefined): Alloc => ({
+    ...alloc('web', index),
+    created_at,
+  })
+
+  it('is the newest alloc, whatever order they arrive in', () => {
+    const allocs = [
+      at(0, '2026-10-01T09:00:00Z'),
+      at(1, '2026-10-20T18:30:00Z'),
+      at(2, '2026-10-11T12:00:00Z'),
+    ]
+
+    expect(serviceRecency(allocs)).toBe(Date.parse('2026-10-20T18:30:00Z'))
+  })
+
+  // A service scaled to zero has no allocs, and a timestamp nobody wrote is
+  // not a recent one: both sort below anything with a real clock on it,
+  // rather than ahead of it as a parsed zero time would.
+  it('is zero for no allocs, a missing created_at and Go\'s zero time', () => {
+    expect(serviceRecency([])).toBe(0)
+    expect(serviceRecency([at(0, undefined)])).toBe(0)
+    expect(serviceRecency([at(0, '0001-01-01T00:00:00Z')])).toBe(0)
+  })
+
+  it('reads a real timestamp past the ones it cannot', () => {
+    const allocs = [at(0, '0001-01-01T00:00:00Z'), at(1, '2026-10-20T18:30:00Z'), at(2, undefined)]
+
+    expect(serviceRecency(allocs)).toBe(Date.parse('2026-10-20T18:30:00Z'))
+  })
+
+  it('orders services newest first', () => {
+    const older = [at(0, '2026-09-01T00:00:00Z')]
+    const newer = [at(0, '2026-10-20T00:00:00Z')]
+    const sorted = [
+      { name: 'shop/api', allocs: older },
+      { name: 'shop/web', allocs: newer },
+    ].sort((a, b) => serviceRecency(b.allocs) - serviceRecency(a.allocs))
+
+    expect(sorted.map((s) => s.name)).toEqual(['shop/web', 'shop/api'])
   })
 })
 

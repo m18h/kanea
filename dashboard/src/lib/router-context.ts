@@ -3,7 +3,18 @@ import { createContext } from 'react'
 export interface RouterState {
   /** The current pathname, without origin or query. */
   path: string
-  navigate: (to: string) => void
+  /**
+   * The query string with its leading '?', or '' when there is none.
+   *
+   * Beside `path` rather than part of it: matchPath counts '/' segments, so a
+   * path carrying a query would match no route at all, and AppShell closes the
+   * mobile drawer on a changed path - which a filter typed character by
+   * character must not do.
+   */
+  search: string
+  /** navigate pushes a history entry, or replaces the current one: a filter
+   * writing itself into the URL must not leave an entry per keystroke. */
+  navigate: (to: string, opts?: { replace?: boolean }) => void
 }
 
 /**

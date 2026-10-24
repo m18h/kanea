@@ -8,23 +8,9 @@ import { NotificationsSection } from '@/components/settings/NotificationsSection
 import { CardSkeleton } from '@/components/Skeletons'
 import { fetchSettings } from '@/lib/api'
 import { Link } from '@/lib/router'
+import { isSettingsTab, settingsTabs, type SettingsTab } from '@/lib/settings'
 import { cn } from '@/lib/utils'
 import { useSession } from '@/hooks/useSession'
-
-/** The tab rail, in display order. Each id is a URL segment. */
-const settingsTabs = [
-  { id: 'node', label: 'Node' },
-  { id: 'backup', label: 'Backup' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'accounts', label: 'Accounts' },
-  { id: 'audit', label: 'Audit' },
-] as const
-
-type SettingsTab = (typeof settingsTabs)[number]['id']
-
-function isSettingsTab(tab: string): tab is SettingsTab {
-  return settingsTabs.some((t) => t.id === tab)
-}
 
 /**
  * Settings (PRD v1.46, §12.2): the node's flag-decided facts, the two Store

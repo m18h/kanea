@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@/components/ui/badge'
 import type { Alloc, StatsSample } from '@/lib/api'
+import { isZeroTime } from '@/lib/datetime'
 
 /** allocStateVariant maps an alloc state to how alarming it should look. */
 export function allocStateVariant(state: string): NonNullable<BadgeProps['variant']> {
@@ -83,6 +84,25 @@ export function groupAllocs(allocs: Alloc[]): Map<string, Alloc[]> {
     group.sort((a, b) => a.index - b.index)
   }
   return out
+}
+
+/**
+ * serviceRecency is when a service last had an alloc created: the newest
+ * created_at among them, 0 when it has none or they predate the field.
+ *
+ * updated_at is deliberately not read - a health probe writing it would
+ * reshuffle a list sorted by this every few seconds. Absence sorts to the
+ * bottom rather than to now: an alloc with no timestamp is of unknown age,
+ * not newly created.
+ */
+export function serviceRecency(allocs: Alloc[]): number {
+  let newest = 0
+  for (const alloc of allocs) {
+    if (isZeroTime(alloc.created_at)) continue
+    const at = Date.parse(alloc.created_at as string)
+    if (!Number.isNaN(at) && at > newest) newest = at
+  }
+  return newest
 }
 
 export interface Health {

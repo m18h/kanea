@@ -1,10 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/m18h/kanea/internal/api"
 	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
 )
@@ -154,6 +159,82 @@ func TestDeployCarriesInitStepsDeclaringTheTaskImage(t *testing.T) {
 	}
 	if len(svc.Init[1].Command) != 2 {
 		t.Error("the step's command was not preserved")
+	}
+}
+
+// A deploy of the image a service already declares is a no-op (PRD v1.99) -
+// unless the service is down, in which case the no-op was the only answer an
+// operator could not use. It now restarts it instead: the generation bump is
+// the spec change that revives a failed alloc (PRD v1.113, R29), and it goes
+// through the route that already means recovery rather than a new one.
+func TestADeployOntoADegradedServiceRestartsIt(t *testing.T) {
+	const image = "registry.example/website:544cd63e"
+	cases := []struct {
+		name        string
+		state       reconciler.AllocState
+		wantRestart bool
+	}{
+		{name: "a failed alloc is restarted", state: reconciler.AllocFailed, wantRestart: true},
+		{name: "a running one is still nothing to do", state: reconciler.AllocRunning},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var restarted, applied atomic.Bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == api.PathServices && r.Method == http.MethodGet:
+					resp := api.ServicesResponse{Services: []api.ServiceView{{
+						Desired: reconciler.Desired{
+							Project: "huddle", Service: "website", Count: 1, Image: image,
+						},
+						SpecHash: "sha256:current",
+					}}}
+					if err := json.NewEncoder(w).Encode(resp); err != nil {
+						t.Error(err)
+					}
+				case r.URL.Path == api.PathServices && r.Method == http.MethodPut:
+					applied.Store(true)
+					if err := json.NewEncoder(w).Encode(api.ApplyResponse{}); err != nil {
+						t.Error(err)
+					}
+				case r.URL.Path == api.PathAllocs:
+					resp := api.AllocsResponse{Allocs: []reconciler.AllocRecord{{
+						ID:      reconciler.AllocID("huddle", "website", 0),
+						Project: "huddle", Service: "website",
+						State: tc.state, LastExitCode: 1, SpecHash: "sha256:current",
+					}}}
+					if err := json.NewEncoder(w).Encode(resp); err != nil {
+						t.Error(err)
+					}
+				case strings.HasSuffix(r.URL.Path, "/restart"):
+					restarted.Store(true)
+					if err := json.NewEncoder(w).Encode(api.ApplyResponse{}); err != nil {
+						t.Error(err)
+					}
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+
+			// --no-wait because what is under test is which route the command
+			// reaches, not the convergence the wait watches.
+			err := runDeploy([]string{
+				"huddle/website", image, "--no-wait", "--url", srv.URL, "--token", "t",
+			})
+			if err != nil {
+				t.Fatalf("runDeploy: %v", err)
+			}
+			if got := restarted.Load(); got != tc.wantRestart {
+				t.Errorf("restart route called = %v, want %v", got, tc.wantRestart)
+			}
+			// Either way the image is already right, so nothing is applied:
+			// a retarget here would silently repair a diverged init step,
+			// which is exactly what v1.99's no-op boundary protects.
+			if applied.Load() {
+				t.Error("the deploy applied a spec for an image the service already declares")
+			}
+		})
 	}
 }
 
