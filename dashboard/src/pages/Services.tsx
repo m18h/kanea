@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,6 +29,8 @@ import { matchesQuery } from '@/lib/search'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { sortItems, useSort } from '@/hooks/useSort'
+import { useQueryEnum, useQueryParam } from '@/hooks/useQueryParam'
+import { useRouter } from '@/hooks/useRouter'
 
 /** When a service declares no p95 target, red starts here. */
 const defaultP95AlarmMs = 500
@@ -49,14 +50,19 @@ type StatusFilter = (typeof statusFilters)[number]['value']
 const statusRank: Record<string, number> = { degraded: 0, scaling: 1, running: 2, stopped: 3 }
 
 type SortKey = 'service' | 'status' | 'allocs'
+const sortKeys: readonly SortKey[] = ['service', 'status', 'allocs']
+const statusValues = statusFilters.map((f) => f.value)
 
 /** Services lists what is declared and how much of it is actually running. */
 export function Services() {
   const services = useLiveTopic({ topic: Topic.Services }, servicesResponseSchema)
   const allocs = useLiveTopic({ topic: Topic.Allocs }, allocsResponseSchema)
-  const [query, setQuery] = useState('')
-  const [status, setStatus] = useState<StatusFilter>('all')
-  const sort = useSort<SortKey>()
+  // In the URL, so leaving the page and coming back keeps the filter rather
+  // than asking for it again, and a filtered list is a link worth sending.
+  const [query, setQuery] = useQueryParam('q', '')
+  const [status, setStatus] = useQueryEnum<StatusFilter>('status', statusValues, 'all')
+  const sort = useSort<SortKey>(sortKeys)
+  const { search } = useRouter()
 
   // Functions are services underneath (v1.39) but have a page of their own:
   // one record, shown as what it is, on exactly one list.
@@ -82,7 +88,9 @@ export function Services() {
     allocs: (row) => row.allocs.filter((a) => a.state === 'running').length,
   })
   const pager = usePagination(sorted, {
-    resetKey: `${query} ${status} ${sort.key ?? ''} ${sort.dir}`,
+    // Every filter is in the query string now, so it is the whole key: one
+    // that cannot go stale the next time this page grows a filter.
+    resetKey: search,
   })
 
   const allocCount = allocs.data?.allocs?.length ?? 0

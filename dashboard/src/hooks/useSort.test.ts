@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { sortItems, useSort } from '@/hooks/useSort'
+import { formatSort, parseSort, sortItems, useSort } from '@/hooks/useSort'
+import { Router } from '@/lib/router'
 
 describe('useSort', () => {
+  // The sort lives in the URL now, which is global state vitest shares across
+  // the tests in a file.
+  beforeEach(() => window.history.pushState({}, '', '/'))
+
   it('cycles a header asc → desc → back to the list order', () => {
-    const { result } = renderHook(() => useSort<'name'>())
+    const { result } = renderHook(() => useSort<'name'>(['name']), { wrapper: Router })
     expect(result.current.key).toBeNull()
 
     act(() => result.current.toggle('name'))
@@ -14,19 +19,57 @@ describe('useSort', () => {
     expect(result.current).toMatchObject({ key: 'name', dir: 'desc' })
 
     // The third click restores the order the server chose: the only way back
-    // that is not "reload the page".
+    // that is not "reload the page". The param goes rather than going empty,
+    // so an unsorted list has a clean URL.
     act(() => result.current.toggle('name'))
     expect(result.current.key).toBeNull()
+    expect(window.location.search).toBe('')
   })
 
   it('starts a different column ascending, whatever the previous one was', () => {
-    const { result } = renderHook(() => useSort<'name' | 'allocs'>())
+    const { result } = renderHook(() => useSort<'name' | 'allocs'>(['name', 'allocs']), {
+      wrapper: Router,
+    })
     act(() => result.current.toggle('name'))
     act(() => result.current.toggle('name'))
     expect(result.current.dir).toBe('desc')
 
     act(() => result.current.toggle('allocs'))
     expect(result.current).toMatchObject({ key: 'allocs', dir: 'asc' })
+    expect(window.location.search).toBe('?sort=allocs%3Aasc')
+  })
+
+  it('reads a sort seeded on the URL before anything is clicked', () => {
+    window.history.pushState({}, '', '/services?sort=allocs:desc')
+    const { result } = renderHook(() => useSort<'name' | 'allocs'>(['name', 'allocs']), {
+      wrapper: Router,
+    })
+    expect(result.current).toMatchObject({ key: 'allocs', dir: 'desc' })
+  })
+})
+
+// sortItems looks an accessor up by name and calls it, so a key out of the URL
+// that the table has no column for is a crash rather than a wrong order.
+describe('parseSort', () => {
+  const keys = ['name', 'allocs'] as const
+
+  it('reads a column this table has', () => {
+    expect(parseSort('allocs:desc', keys)).toEqual({ key: 'allocs', dir: 'desc' })
+  })
+
+  it('falls back to the list order for anything it cannot trust', () => {
+    for (const raw of ['', 'allocs', 'nope:asc', 'allocs:sideways', ':asc', 'allocs:']) {
+      expect(parseSort(raw, keys)).toEqual({ key: null, dir: 'asc' })
+    }
+  })
+
+  it('round-trips through formatSort', () => {
+    expect(formatSort({ key: 'name' as const, dir: 'asc' as const })).toBe('name:asc')
+    expect(parseSort(formatSort({ key: 'name' as const, dir: 'asc' as const }), keys)).toEqual({
+      key: 'name',
+      dir: 'asc',
+    })
+    expect(formatSort({ key: null, dir: 'asc' })).toBe('')
   })
 })
 

@@ -15,6 +15,8 @@ import { StatusDot, type StatusTone } from '@/components/StatusDot'
 import { PaginationControls } from '@/components/Pagination'
 import { usePagination } from '@/hooks/usePagination'
 import { sortItems, useSort } from '@/hooks/useSort'
+import { useQueryParam } from '@/hooks/useQueryParam'
+import { useRouter } from '@/hooks/useRouter'
 import { fetchVolumes, type VolumeMount, type VolumeStorage } from '@/lib/api'
 import { matchesQuery } from '@/lib/search'
 import { formatBytes } from '@/lib/state'
@@ -44,10 +46,18 @@ export function Storage() {
     refetchInterval: 30_000,
   })
 
-  const [query, setQuery] = useState('')
-  const [type, setType] = useState('all')
+  // In the URL, so leaving the page and coming back keeps the filter rather
+  // than asking for it again, and a filtered list is a link worth sending.
+  const [query, setQuery] = useQueryParam('q', '')
+  // Unvalidated, unlike every other chip on these pages: the type options are
+  // derived from the volumes this page fetches, so on the first render there
+  // is nothing to check against and checking would reject a good ?type=nfs
+  // before the fetch lands. A type nothing matches shows the empty-filter
+  // card, which is what the URL asked for.
+  const [type, setType] = useQueryParam('type', 'all')
   const [open, setOpen] = useState<Record<string, boolean>>({})
-  const sort = useSort<SortKey>()
+  const sort = useSort<SortKey>(sortKeys)
+  const { search } = useRouter()
 
   const list = (volumes.data ?? []).map(summarise)
 
@@ -77,7 +87,9 @@ export function Storage() {
     used: (s) => s.usedBytes,
   })
   const pager = usePagination(sorted, {
-    resetKey: `${query} ${type} ${sort.key ?? ''} ${sort.dir}`,
+    // Every filter is in the query string now, so it is the whole key: one
+    // that cannot go stale the next time this page grows a filter.
+    resetKey: search,
   })
 
   // The tiles describe everything declared, not the filtered view.
@@ -197,6 +209,7 @@ export function Storage() {
 }
 
 type SortKey = 'storage' | 'type' | 'mounts' | 'used'
+const sortKeys: readonly SortKey[] = ['storage', 'type', 'mounts', 'used']
 
 /** A storage resource with the totals the table shows. */
 interface StorageRow {

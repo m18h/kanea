@@ -14,6 +14,8 @@ import { StatusDot, type StatusTone } from '@/components/StatusDot'
 import { PaginationControls } from '@/components/Pagination'
 import { usePagination } from '@/hooks/usePagination'
 import { sortItems, useSort } from '@/hooks/useSort'
+import { useQueryParam } from '@/hooks/useQueryParam'
+import { useRouter } from '@/hooks/useRouter'
 import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { useSession } from '@/hooks/useSession'
 import {
@@ -60,9 +62,12 @@ import { groupAllocs, relativeAge, serviceHealth, serviceStatusTone } from '@/li
 export function Projects() {
   const client = useQueryClient()
   const { session, csrf } = useSession()
-  const [query, setQuery] = useState('')
+  // In the URL, so leaving the page and coming back keeps the filter rather
+  // than asking for it again, and a filtered list is a link worth sending.
+  const [query, setQuery] = useQueryParam('q', '')
   const [error, setError] = useState('')
-  const sort = useSort<SortKey>()
+  const sort = useSort<SortKey>(sortKeys)
+  const { search } = useRouter()
 
   const projects = useQuery({
     queryKey: ['projects'],
@@ -111,7 +116,7 @@ export function Projects() {
     // is wrong, not the alphabet.
     health: (p) => healthRank[health(p).word],
   })
-  const pager = usePagination(sorted, { resetKey: `${query} ${sort.key ?? ''} ${sort.dir}` })
+  const pager = usePagination(sorted, { resetKey: search })
 
   const canWrite = session?.role === 'admin'
   const running = list.reduce((sum, p) => sum + p.running, 0)
@@ -312,6 +317,7 @@ function RemoveProjectDialog({
 }
 
 type SortKey = 'project' | 'health'
+const sortKeys: readonly SortKey[] = ['project', 'health']
 
 /** Ascending health sort reads problems-first. */
 const healthRank: Record<string, number> = { down: 0, degraded: 1, running: 2, stopped: 3, empty: 4 }

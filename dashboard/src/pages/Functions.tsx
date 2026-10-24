@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@/lib/router'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +15,8 @@ import { useLiveTopic } from '@/hooks/useLiveTopic'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { sortItems, useSort } from '@/hooks/useSort'
+import { useQueryEnum, useQueryParam } from '@/hooks/useQueryParam'
+import { useRouter } from '@/hooks/useRouter'
 import {
   Topic,
   fetchFunctions,
@@ -40,6 +41,8 @@ type StatusFilter = (typeof statusFilters)[number]['value']
 const statusRank: Record<string, number> = { trapping: 0, active: 1, idle: 2, stopped: 3 }
 
 type SortKey = 'function' | 'invocations' | 'memory' | 'status'
+const sortKeys: readonly SortKey[] = ['function', 'invocations', 'memory', 'status']
+const statusValues = statusFilters.map((f) => f.value)
 
 /**
  * Functions (v1.39): wasm functions; services underneath, so detail, restart
@@ -55,9 +58,12 @@ export function Functions() {
     refetchInterval: 10_000,
   })
 
-  const [query, setQuery] = useState('')
-  const [status, setStatus] = useState<StatusFilter>('all')
-  const sort = useSort<SortKey>()
+  // In the URL, so leaving the page and coming back keeps the filter rather
+  // than asking for it again, and a filtered list is a link worth sending.
+  const [query, setQuery] = useQueryParam('q', '')
+  const [status, setStatus] = useQueryEnum<StatusFilter>('status', statusValues, 'all')
+  const sort = useSort<SortKey>(sortKeys)
+  const { search } = useRouter()
 
   const list = functions.data?.functions ?? []
   const filtered = list.filter(
@@ -73,7 +79,9 @@ export function Functions() {
     status: (fn) => statusRank[fn.status],
   })
   const pager = usePagination(sorted, {
-    resetKey: `${query} ${status} ${sort.key ?? ''} ${sort.dir}`,
+    // Every filter is in the query string now, so it is the whole key: one
+    // that cannot go stale the next time this page grows a filter.
+    resetKey: search,
   })
 
   // The tiles summarise everything declared, not the filtered view: "Active

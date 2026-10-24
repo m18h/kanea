@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ShieldCheck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +14,8 @@ import { matchesQuery } from '@/lib/search'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { sortItems, useSort } from '@/hooks/useSort'
+import { useQueryEnum, useQueryParam } from '@/hooks/useQueryParam'
+import { useRouter } from '@/hooks/useRouter'
 
 /** The wire states as chips, labelled the way the status pills read
  * (runStateLabel): a running run is "building", a succeeded one is "ok". */
@@ -38,6 +39,8 @@ const stateRank: Record<string, number> = {
 }
 
 type SortKey = 'repository' | 'status' | 'duration'
+const sortKeys: readonly SortKey[] = ['repository', 'status', 'duration']
+const stateValues = stateFilters.map((f) => f.value)
 
 /**
  * The pipeline list (PRD §10.2).
@@ -59,9 +62,14 @@ export function Pipelines() {
       (query.state.data ?? []).some((run) => !isRunFinished(run)) ? 2_000 : 15_000,
   })
 
-  const [query, setQuery] = useState('')
-  const [state, setState] = useState<StateFilter>('all')
-  const sort = useSort<SortKey>()
+  // In the URL, so leaving the page and coming back keeps the filter rather
+  // than asking for it again, and a filtered list is a link worth sending.
+  // `state`, not `status`: the chip filters a run's state, which is this
+  // page's own word for it.
+  const [query, setQuery] = useQueryParam('q', '')
+  const [state, setState] = useQueryEnum<StateFilter>('state', stateValues, 'all')
+  const sort = useSort<SortKey>(sortKeys)
+  const { search } = useRouter()
 
   const list = runs.data ?? []
   const filtered = list.filter(
@@ -82,7 +90,9 @@ export function Pipelines() {
     duration: (run) => runDurationMs(run),
   })
   const pager = usePagination(sorted, {
-    resetKey: `${query} ${state} ${sort.key ?? ''} ${sort.dir}`,
+    // Every filter is in the query string now, so it is the whole key: one
+    // that cannot go stale the next time this page grows a filter.
+    resetKey: search,
   })
   // The queue serialises builds and refuses when full (§10.2): one slot, in
   // use whenever a run is going.

@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -19,6 +18,8 @@ import { useSession } from '@/hooks/useSession'
 import { usePagination } from '@/hooks/usePagination'
 import { PaginationControls } from '@/components/Pagination'
 import { FilterChips } from '@/components/FilterChips'
+import { useQueryEnum, useQueryParam } from '@/hooks/useQueryParam'
+import { useRouter } from '@/hooks/useRouter'
 
 const filters = [
   { value: 'all', label: 'all' },
@@ -28,6 +29,7 @@ const filters = [
   { value: 'audit', label: 'audit' },
 ] as const
 type Filter = (typeof filters)[number]['value']
+const filterValues = filters.map((f) => f.value)
 
 const severityVariant: Record<KaneaEvent['severity'], 'info' | 'warn' | 'error'> = {
   info: 'info',
@@ -51,9 +53,14 @@ const severityVariant: Record<KaneaEvent['severity'], 'info' | 'warn' | 'error'>
  */
 export function Events() {
   const style = useDateStyle()
-  const [filter, setFilter] = useState<Filter>('all')
-  const [glob, setGlob] = useState('')
-  const [query, setQuery] = useState('')
+  // In the URL, so leaving the page and coming back keeps the filter rather
+  // than asking for it again, and a filtered feed is a link worth sending.
+  // `filter` rather than `severity`: audit is a different feed, not a
+  // severity, and the chip picks between them.
+  const [filter, setFilter] = useQueryEnum<Filter>('filter', filterValues, 'all')
+  const [glob, setGlob] = useQueryParam('glob', '')
+  const [query, setQuery] = useQueryParam('q', '')
+  const { search } = useRouter()
   const { session } = useSession()
 
   const feed = useQuery({
@@ -94,7 +101,10 @@ export function Events() {
 
   // A changed filter resets to the first page: page 3 of "all" and page 3 of
   // "error" are unrelated places.
-  const pager = usePagination(events, { resetKey: `${glob} ${query} ${filter}` })
+  const pager = usePagination(events, { resetKey: search })
+  // The audit list keeps the chip alone as its key: the search and the glob
+  // filter the event feed, not this one, so paging it on them would send the
+  // reader back to page 1 for typing in a box that does not touch it.
   const auditPager = usePagination(audit.data ?? [], { resetKey: filter })
 
   return (
