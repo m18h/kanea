@@ -64,6 +64,9 @@ beforeEach(() => {
   // theme effect writes it, and a stub that afterEach removes is a global
   // that vanishes under an effect still in flight. See the note there.
   window.history.pushState({}, '', '/')
+  // The title is global and nothing resets it, so one test's page name would
+  // otherwise be the next test's starting state.
+  document.title = 'Kanea'
 })
 
 afterEach(() => {
@@ -129,6 +132,39 @@ describe('App', () => {
     ]) {
       expect(screen.getByRole('link', { name: label })).toBeDefined()
     }
+  })
+
+  // The router keeps the query beside the path rather than inside it, and
+  // this is why: matchPath counts '/' segments, so a path carrying `?q=api`
+  // would match no route and the sidebar would highlight nothing.
+  it('routes and highlights a path that carries a query', async () => {
+    routeFetch({
+      '/v1/auth/session': signedIn,
+      '/v1/healthz': healthy,
+      '/v1/services': { status: 200, body: { services: [] } },
+      '/v1/allocs': { status: 200, body: { allocs: [] } },
+      '/v1/pipelines': { status: 200, body: { runs: [] } },
+      '/v1/events': { status: 200, body: { events: [] } },
+      '/v1/stats': { status: 200, body: { version: 'test' } },
+      '/v1/backups': { status: 503 },
+    })
+    window.history.pushState({}, '', '/services?q=api')
+    renderApp()
+
+    await screen.findByLabelText('Sign out')
+    expect(screen.getByRole('heading', { name: 'Services' })).toBeDefined()
+    expect(screen.queryByText('No such page.')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Services' }).getAttribute('aria-current')).toBe('page')
+    // The tab names the page, and the filter on the URL is not part of it.
+    expect(document.title).toBe('Services · Kanea')
+  })
+
+  it('names the signed-out screen in the tab too', async () => {
+    routeFetch({ '/v1/auth/session': { status: 401 }, '/v1/healthz': healthy })
+    renderApp()
+
+    await screen.findByLabelText('Password')
+    expect(document.title).toBe('Sign in · Kanea')
   })
 
   it('returns to the login form when a request is refused mid-visit', async () => {

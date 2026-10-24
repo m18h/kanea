@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Input, Label } from '@/components/ui/input'
 import { Mark } from '@/components/Mark'
 import { useSession } from '@/hooks/useSession'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 import { login } from '@/lib/session'
 import { fetchHealth } from '@/lib/api'
+import { pageTitle } from '@/lib/title'
 
 /**
  * The login screen (PRD §13.2, basic auth).
@@ -18,6 +20,9 @@ import { fetchHealth } from '@/lib/api'
  */
 export function Login() {
   const { signIn } = useSession()
+  // Its own call: the signed-out screen renders outside the shell, so the
+  // route-derived title never reaches it.
+  useDocumentTitle(pageTitle('Sign in'))
   // Health is public, so this is the one thing the app can ask before it has a
   // credential: including which sign-in methods exist.
   const health = useQuery({ queryKey: ['health'], queryFn: ({ signal }) => fetchHealth(signal) })

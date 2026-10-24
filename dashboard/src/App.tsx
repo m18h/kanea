@@ -1,6 +1,8 @@
 import { Router } from '@/lib/router'
 import { useRouter } from '@/hooks/useRouter'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 import { matchPath } from '@/lib/paths'
+import { titleFor } from '@/lib/title'
 import { AppShell } from '@/components/layout/AppShell'
 import { Overview } from '@/pages/Overview'
 import { Projects } from '@/pages/Projects'
@@ -50,6 +52,9 @@ function Gate() {
 
 function Shell() {
   const { path } = useRouter()
+  // One call for every signed-in route, here because this is the one component
+  // above both the frame and the page that knows which path matched.
+  useDocumentTitle(titleFor(path))
   return (
     <AppShell>
       <Page path={path} />

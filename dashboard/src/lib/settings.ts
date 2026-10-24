@@ -10,6 +10,30 @@ import type { BackupSettingsRecord, WireNotifications } from './api'
  * breaks fast refresh.
  */
 
+// ---- the tab rail ----
+
+/**
+ * The tab rail, in display order. Each id is a URL segment.
+ *
+ * Here rather than in the page because the browser title names the active tab
+ * too, and it has to agree with the page about which tabs exist: a title
+ * reading "Banana · Settings" over a page saying "No such settings tab" is
+ * what two copies of this list would produce.
+ */
+export const settingsTabs = [
+  { id: 'node', label: 'Node' },
+  { id: 'backup', label: 'Backup' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'accounts', label: 'Accounts' },
+  { id: 'audit', label: 'Audit' },
+] as const
+
+export type SettingsTab = (typeof settingsTabs)[number]['id']
+
+export function isSettingsTab(tab: string): tab is SettingsTab {
+  return settingsTabs.some((t) => t.id === tab)
+}
+
 // ---- time ----
 
 /**

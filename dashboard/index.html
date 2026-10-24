@@ -3,7 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Kanea Dashboard</title>
+    <!-- The pre-mount state only: the app names the current page in the tab
+         (lib/title.ts), and a different name here would flash first. -->
+    <title>Kanea</title>
     <!-- Inlined rather than served from public/: the dashboard is embedded in
          the binary, and a data URI is one fewer asset to route. logo/ holds the
          source files this is drawn from. -->
