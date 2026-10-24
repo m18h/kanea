@@ -278,4 +278,45 @@ describe('ServiceDetail', () => {
     expect(items[1]?.textContent).toContain('1m')
     expect(screen.queryByLabelText('Init steps for shop-web-1')).toBeNull()
   })
+
+  // The picker is a sequence, so it reads in the order the daemon runs it:
+  // every init step, numbered, then the task that starts once they are done.
+  // `task` sat first, above steps that run before it.
+  it('lists the log containers in run order, task last', () => {
+    renderDetail('shop', 'web')
+    deliver('services', {
+      services: [
+        {
+          Project: 'shop',
+          Service: 'web',
+          Image: 'nginx:1.27',
+          Count: 1,
+          Resources: { CPUMillis: 0, MemoryBytes: 0 },
+          spec_hash: 'abc123',
+          init: [
+            { name: 'wait-for-postgres', image: 'busybox:1.36' },
+            { name: 'migrate', image: 'nginx:1.27' },
+          ],
+        },
+      ],
+    })
+    deliver('allocs', {
+      allocs: [{ id: 'shop-web-0', project: 'shop', service: 'web', index: 0, state: 'running' }],
+    })
+    fireEvent.click(screen.getByRole('tab', { name: 'Logs' }))
+
+    const picker = screen.getByLabelText("Which container's log to follow")
+    expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      '1. wait-for-postgres',
+      '2. migrate',
+      'task',
+    ])
+    // The task is still what the panel opens on, wherever its option sits.
+    expect((picker as HTMLSelectElement).value).toBe('')
+
+    // The label carries the ordinal; the value stays the bare block name,
+    // which is what the daemon resolves back to a step index.
+    fireEvent.change(picker, { target: { value: 'migrate' } })
+    expect((picker as HTMLSelectElement).value).toBe('migrate')
+  })
 })
