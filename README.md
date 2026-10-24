@@ -64,7 +64,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.37.1; ARCH=amd64
+VERSION=v0.38.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -756,6 +756,12 @@ streams logs live (filterable, with copy, download and a full-screen view), and
 shows every restart or deploy as **rollout progress**, which is the planner's
 own spec-hash rule on the wire. It also opens a **shell into any running alloc**
 from the browser, over the same exec websocket the CLI uses.
+
+Every list page keeps its **search, filter and sort in the URL**, so pressing
+Back after following a result returns to what you had filtered rather than an
+empty box, and `/services?q=api&status=degraded` is a link worth sending
+someone. The browser tab names the page it is on, down to the service
+(`shop/web · Kanea`), which is what makes two open dashboards tellable apart.
 
 The actions on that page write desired state and let the reconciler converge,
 so none of them is a second path to the runtime. **Scale** opens a picker for

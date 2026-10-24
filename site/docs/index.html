@@ -1404,7 +1404,12 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       <a href="#install-upgrade">upgrade flow</a>, run by the node on itself), and read
       the OS's pending packages, security count, list freshness and reboot flag beside
       the manifest-pinned host components - reported, never installed: the page names
-      the <code>apt</code> command to run on the node. The MCP server exposes 24 tools
+      the <code>apt</code> command to run on the node. Every list page keeps its
+      <b>search, filter and sort in the URL</b> (v0.38.0), so the browser's Back button
+      restores what you had filtered rather than an empty box, and
+      <code>/services?q=api&amp;status=degraded</code> is a link worth sending someone; the
+      browser tab names the page it is on, down to the service
+      (<code>shop/web · Kanea</code>). The MCP server exposes 24 tools
       in three tiers (read, mutate, destructive) over stdio and streamable HTTP.
     </p>
     <div class="callout">
@@ -5124,9 +5129,16 @@ kanea logs -f shop/web</pre>
     <p>
       It waits for the new image to be running and fails if it does not, so a pipeline
       goes red at the deploy rather than the next morning. <code>--no-wait</code> returns
-      as soon as the change is accepted. Deploying the image a service already declares is
-      reported and does nothing, so re-running a pipeline on an unchanged commit is not an
-      error.
+      as soon as the change is accepted. The wait judges <b>the deploy it just made</b>
+      (v0.38.0): an alloc still carrying the previous spec hash reads as
+      <code>replacing</code> and does not fail the command, so deploying the fix to a
+      service whose allocs had given up no longer goes red on the crash it is fixing -
+      while an alloc that fails on the <i>new</i> hash fails the command exactly as
+      before. Deploying the image a service already declares is reported and does
+      nothing, so re-running a pipeline on an unchanged commit is not an error -
+      <b>unless its allocs have failed</b>, in which case the command restarts the service
+      instead, because a spec that is already right cannot be the spec change that revives
+      a failed alloc.
     </p>
     <p>
       <b>Prefer a digest to a tag.</b> A tag can move under you, so two allocs replaced a
