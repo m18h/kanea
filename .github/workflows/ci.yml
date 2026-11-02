@@ -434,9 +434,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gosec
-        uses: securego/gosec@7b1b5cebe007d62fb58eacb90fc571112939ec30 # master
+        uses: securego/gosec@a7abd50b2947e53b26a7e200223e635ce36fac9b # master
         with:
-          args: -quiet ./...
+          # spikes/ is excluded to match what `make security` actually scans:
+          # each spike is its own module, so `gosec ./...` from the repo root
+          # never descended into them locally, while the action walks the
+          # workspace and does. They are throwaway validation code that ships
+          # in no binary, and 105 findings from them would bury the first real
+          # one in cmd/ or internal/.
+          args: -quiet -exclude-dir=spikes ./...
       - name: govulncheck
         uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1
         with:
