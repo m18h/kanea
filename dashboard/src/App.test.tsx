@@ -155,8 +155,11 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Services' })).toBeDefined()
     expect(screen.queryByText('No such page.')).toBeNull()
     expect(screen.getByRole('link', { name: 'Services' }).getAttribute('aria-current')).toBe('page')
-    // The tab names the page, and the filter on the URL is not part of it.
-    expect(document.title).toBe('Services · Kanea')
+    // Waited for, not read once: the title is written by an effect, and
+    // findBy* resolves on the render that shows the element rather than on
+    // the flush that follows it. Read eagerly this passes locally and fails
+    // in CI, which is the whole genre.
+    await waitFor(() => expect(document.title).toBe('Services · Kanea'))
   })
 
   it('names the signed-out screen in the tab too', async () => {
@@ -164,7 +167,7 @@ describe('App', () => {
     renderApp()
 
     await screen.findByLabelText('Password')
-    expect(document.title).toBe('Sign in · Kanea')
+    await waitFor(() => expect(document.title).toBe('Sign in · Kanea'))
   })
 
   it('returns to the login form when a request is refused mid-visit', async () => {
