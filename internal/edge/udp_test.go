@@ -233,10 +233,12 @@ func TestUDPRelayExpiresIdleSessions(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	// Waited for, not read once. The session's own goroutine removes it from
+	// the map and *then* reports it closed, so liveCount reaching zero does
+	// not mean the counter has moved yet: synchronising on one observable and
+	// asserting another is what failed a release build.
 	got := metrics.udpCounters("games/factorio", EntrypointForPort(34197))
-	if got.expired.Load() != 1 {
-		t.Error("the expiry was not counted as one")
-	}
+	waitFor(t, func() bool { return got.expired.Load() == 1 }, "the expiry to be counted as one")
 
 	setClock(relay, time.Now)
 	relay.handle([]byte("again"), client)
