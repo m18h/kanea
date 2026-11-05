@@ -64,7 +64,7 @@ and a **keyless cosign** signature over the checksums. The SBOMs are listed in
 the checksums, so that one signature covers them too:
 
 ```bash
-VERSION=v0.38.1; ARCH=amd64
+VERSION=v0.39.0; ARCH=amd64
 BASE=https://github.com/m18h/kanea/releases/download/$VERSION
 
 curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
@@ -531,6 +531,13 @@ digest. The unattended cadence is `update { interval }` (default 6 h, floor
 5 m), but **re-applying the spec forces an immediate re-check**: after pushing
 new bytes under the same tag, `kanea apply` has the digest re-resolved within
 about a minute instead of waiting out the interval.
+
+Editing the tag is the other half, and it is **one rolling deploy**: an apply
+that changes `image` resolves the new digest in the same write, so the
+reconciler sees a single change. It used to see two - one roll onto the bare
+tag, then another when the watcher pinned the digest behind it - which also ran
+any [`init` sequence](#setup-before-a-service-starts) twice. A registry that
+cannot be reached falls back to that older path rather than failing the deploy.
 
 ### Cleaning up old images
 

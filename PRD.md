@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Adopted v1.114 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-11-04 (v1.114) |
+| **Last updated** | 2026-11-05 (v1.114) |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments**: incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
