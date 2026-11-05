@@ -19,6 +19,20 @@ func settled(index int, hash string) reconciler.AllocRecord {
 	return rec
 }
 
+// ofKind filters a plan to one action kind. The rolling tests are about how
+// many allocs a pass *replaces*, and a pass that defers a replacement also
+// emits a wait naming the budget, so counting the whole plan would count the
+// explanation as if it were work.
+func ofKind(actions []reconciler.Action, kind reconciler.ActionKind) []reconciler.Action {
+	var out []reconciler.Action
+	for _, act := range actions {
+		if act.Kind == kind {
+			out = append(out, act)
+		}
+	}
+	return out
+}
+
 // world builds a World where every alloc of d is running and settled on hash.
 func world(d reconciler.Desired, hash string) reconciler.World {
 	w := reconciler.World{
@@ -158,14 +172,25 @@ func TestRollingReplacesOneAtATime(t *testing.T) {
 	next.Image = "nginx:1.28-alpine"
 	w.Desired = []reconciler.Desired{next}
 
-	got := reconciler.Plan(w)
+	plan := reconciler.Plan(w)
+	got := ofKind(plan, reconciler.ActionReplace)
 	if len(got) != 1 {
-		t.Fatalf("default policy replaced %d allocs at once, want 1: %s", len(got), kinds(got))
+		t.Fatalf("default policy replaced %d allocs at once, want 1: %s", len(got), kinds(plan))
 	}
 	// Lowest index first, so a deploy walks the service in a predictable order
 	// rather than a map-iteration one.
 	if got[0].AllocID != reconciler.AllocID("shop", "web", 0) {
 		t.Errorf("replaced %s first, want index 0", got[0].AllocID)
+	}
+	// The two that did not fit say so rather than vanishing from the plan: a
+	// replica that is not rolling this pass is the single hardest thing to
+	// diagnose about a rolling deploy.
+	deferred := ofKind(plan, reconciler.ActionWait)
+	if len(deferred) != 2 {
+		t.Fatalf("deferred replacements announced = %d, want 2: %s", len(deferred), kinds(plan))
+	}
+	if !strings.Contains(deferred[0].Reason, "max_parallel") {
+		t.Errorf("deferral reason = %q, want it to name the budget", deferred[0].Reason)
 	}
 }
 
@@ -183,14 +208,14 @@ func TestRollingWaitsForTheReplacementToSettle(t *testing.T) {
 	fresh.CreatedAt = testNow.Add(-time.Second)
 	w.Records[id] = fresh
 
-	if got := reconciler.Plan(w); len(got) != 0 {
+	if got := ofKind(reconciler.Plan(w), reconciler.ActionReplace); len(got) != 0 {
 		t.Fatalf("rolled on while the previous replacement was still settling: %s", kinds(got))
 	}
 
 	// Once it has been up for min_healthy, the roll continues.
 	fresh.CreatedAt = testNow.Add(-reconciler.DefaultMinHealthy - time.Second)
 	w.Records[id] = fresh
-	got := reconciler.Plan(w)
+	got := ofKind(reconciler.Plan(w), reconciler.ActionReplace)
 	if len(got) != 1 || got[0].AllocID != reconciler.AllocID("shop", "web", 1) {
 		t.Fatalf("the roll did not continue to index 1: %s", kinds(got))
 	}
@@ -224,7 +249,7 @@ func TestMaxParallelRaisesTheBudget(t *testing.T) {
 	next.Image = "nginx:1.28-alpine"
 	w.Desired = []reconciler.Desired{next}
 
-	if got := reconciler.Plan(w); len(got) != 2 {
+	if got := ofKind(reconciler.Plan(w), reconciler.ActionReplace); len(got) != 2 {
 		t.Fatalf("max_parallel = 2 planned %d replacements: %s", len(got), kinds(got))
 	}
 }

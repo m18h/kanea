@@ -36,11 +36,17 @@ export function rolloutStatus(desired: Service, allocs: Alloc[]): RolloutStatus 
       (a.spec_hash === hash || a.spec_hash === '' || a.spec_hash === undefined),
   )
   // A replacement that exists at the new hash but has not started yet: the
-  // window between an old alloc's teardown and its successor coming up.
-  // Deliberately only 'pending': a 'backoff' alloc at the new hash is a crash
-  // loop, and calling that "deploying" would disable the restart button that
-  // clears it (R29).
-  const pendingNew = allocs.filter((a) => a.state === 'pending' && a.spec_hash === hash)
+  // window between an old alloc's teardown and its successor coming up. 'init'
+  // belongs here beside 'pending' (R32): a leader running its init sequence is
+  // the longest part of a deploy on a service that declares one, and leaving it
+  // out made the badge report the deploy finished while the migrations were
+  // still running - with 'updated' short of 'total' and nothing to say why.
+  // Still deliberately not 'backoff': an alloc crash-looping at the new hash is
+  // a deploy that landed, and calling it "deploying" would disable the restart
+  // button that clears it (R29).
+  const pendingNew = allocs.filter(
+    (a) => (a.state === 'pending' || a.state === 'init') && a.spec_hash === hash,
+  )
 
   const deploying = stale.length > 0 || pendingNew.length > 0
   return { deploying, updated: Math.min(updatedRunning.length, total), total }

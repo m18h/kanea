@@ -144,6 +144,11 @@ type ServerConfig struct {
 	// cmd/kanea beside toDesired, the same seam shape as gitops.Applier. Nil
 	// means the spec routes answer 503.
 	Spec SpecRenderer
+	// Pinner resolves the digest behind a declared tag on the apply path
+	// (v1.114). Nil leaves an apply that changes the tag of an auto-updating
+	// service to the watcher's next poll, which is correct but costs a second
+	// rolling deploy - see applyServices.
+	Pinner ImagePinner
 
 	// Metrics backs the Prometheus exporter and the live stats topic. Nil
 	// disables both.
@@ -267,7 +272,8 @@ type Server struct {
 	nodeVars      map[string]string
 	publish       func(notify.Event)
 
-	spec SpecRenderer
+	spec   SpecRenderer
+	pinner ImagePinner
 
 	auth            Authenticator
 	audit           AuditLog
@@ -434,6 +440,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		auth:         cfg.Auth, audit: cfg.Audit,
 		accounts: cfg.Accounts, oidc: cfg.OIDC, sessions: cfg.Sessions,
 		spec:    cfg.Spec,
+		pinner:  cfg.Pinner,
 		metrics: cfg.Metrics, edgeMetrics: cfg.EdgeMetrics,
 		invoker:   cfg.Invoker,
 		usage:     cfg.Usage,
@@ -1009,6 +1016,7 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 				svc.ImageUpdatedAt = current.ImageUpdatedAt
 			}
 		}
+		s.pin(r.Context(), &svc)
 		// R22, and this is the boundary rather than a second opinion. `kanea
 		// plan` pre-checks the same policy over PathEdgePolicy so the refusal
 		// lands in front of whoever typed it, but a GitOps sync reaches the
@@ -1105,6 +1113,66 @@ func (s *Server) applyServices(r *http.Request, req ApplyRequest) (ApplyResponse
 	}
 	s.log.Info("applied services", "services", applied, "removed", removed, "index", index)
 	return ApplyResponse{Applied: applied, Removed: removed, Index: index}, 0, nil
+}
+
+// ImagePinner resolves the digest behind a service's declared tag (§6.2 R19).
+//
+// One method, because the apply path wants one answer. Implemented in
+// cmd/kanea over internal/autoupdate's exported resolve - the same seam shape
+// as SpecRenderer - so this package does not import the watcher's.
+type ImagePinner interface {
+	ResolvePin(ctx context.Context, d reconciler.Desired) (string, error)
+}
+
+// pinTimeout bounds one apply-path tag resolution. A registry round-trip on a
+// request that was not making one before needs a ceiling of its own: the
+// client's deadline covers the whole apply, and several services resolving
+// serially must not add up to it.
+const pinTimeout = 10 * time.Second
+
+// pin resolves an auto-updating service's tag on the apply path, so a release
+// is one rolling deploy instead of two (PRD v1.114).
+//
+// The pin is SpecHash material, and the carry-over above deliberately drops it
+// when the declared tag changes. That left the apply rolling every alloc onto
+// the bare tag and the watcher's next poll - a tick later, because an apply
+// also zeroes ImageCheckedAt - rolling them all again on the digest. Two
+// deploys for one release, and on a service with init containers two runs of
+// its migrations.
+//
+// Three decisions, each of which looks like an omission from the outside.
+// **Only when the pin is empty**: a carried-over pin is still the digest the
+// operator is running, and re-resolving every apply would put a registry
+// round-trip on a request that did not need one. (The watcher still re-checks
+// promptly, because the apply zeroed the clock; if the tag has not moved its
+// own write is a no-op, so there is no second roll there either.)
+// **Best-effort**: an unreachable registry falls back to exactly the previous
+// behaviour, pinned by the watcher on its next sweep. A deploy must not fail
+// because a registry is slow, and the fallback is a working deploy rather than
+// a broken one.
+// **RollbackImage and ImageUpdatedAt are left alone**, so R19's unattended
+// revert deadline does not arm against a release somebody typed - the same
+// call the ImageCheckedAt comment above makes about which case an apply is.
+func (s *Server) pin(ctx context.Context, svc *reconciler.Desired) {
+	if s.pinner == nil || !svc.Update.Auto || svc.PinnedImage != "" || svc.Image == "" {
+		return
+	}
+	// Bounded per service, and this is what makes "best-effort" true rather
+	// than aspirational: the mutation batch is built after this loop, so an
+	// apply of several services against a hanging registry would otherwise run
+	// past the client's own deadline and fail entirely - turning a slow
+	// registry into a failed deploy, which is the opposite of the trade.
+	ctx, cancel := context.WithTimeout(ctx, pinTimeout)
+	defer cancel()
+	pinned, err := s.pinner.ResolvePin(ctx, *svc)
+	if err != nil {
+		s.log.Warn("could not pin the declared tag on apply",
+			"service", svc.Project+"/"+svc.Service, "image", svc.Image, "error", err,
+			"detail", "the image watcher will pin it on its next sweep, which costs a second rolling deploy")
+		return
+	}
+	svc.PinnedImage = pinned
+	svc.ImageCheckedAt = s.now()
 }
 
 // pruneOrphans names the stored services a prune-scoped apply should delete:

@@ -96,6 +96,10 @@ func TestTheAgentWiresTheAPIServersOptionalDependencies(t *testing.T) {
 	required := map[string]string{
 		"Upgrader":      "the dashboard's check-and-upgrade answers 503 on every node (PRD v1.107)",
 		"HostInspector": "the dashboard's updates view answers 503 on every node (PRD v1.108)",
+		// Nil here is not a 503 but something worse to spot: every release of
+		// an auto-updating service silently costs two rolling deploys again,
+		// and two runs of any init sequence (PRD v1.114).
+		"Pinner": "an apply never resolves a changed tag, so every release rolls twice (PRD v1.114)",
 	}
 
 	fset := token.NewFileSet()

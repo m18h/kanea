@@ -915,10 +915,13 @@ type ActionKind string
 
 // Actions the planner can emit.
 const (
-	// ActionWait records that an alloc cannot be created yet because a
-	// dependency is not healthy. It has no side effect: it exists so that
-	// waiting is visible in `kanea plan` and in the log, rather than an alloc
-	// silently never appearing.
+	// ActionWait records that the planner has decided to do nothing to this
+	// alloc *yet*, and why: a dependency is not healthy (R10), the service's
+	// init leader has not finished its sequence (R32), a step of its own
+	// sequence is still running, or the rolling budget has no room for its
+	// replacement this pass. It has no side effect: it exists so that waiting
+	// is visible in `kanea plan` and in the log, rather than an alloc silently
+	// never appearing or never rolling.
 	ActionWait ActionKind = "wait"
 	// ActionCreate creates and starts a missing alloc.
 	ActionCreate ActionKind = "create"
