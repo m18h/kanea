@@ -3,6 +3,7 @@ package reconciler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -998,5 +999,137 @@ func TestEachInitAttemptWritesItsSeparator(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(both), string(first)) {
 		t.Errorf("the retry rewrote history; the file must only ever be appended to")
+	}
+}
+
+// --- the leader's clock ---------------------------------------------------
+
+// TestADeployResetsTheInitLeadersAge is the frozen-clock regression. The
+// leader's record is written by stampInitStep rather than by create, and that
+// write carried CreatedAt over unconditionally - so a service with init blocks
+// reported alloc 0 as days old minutes after rolling it (its own later writes,
+// and create's sameSpec carry, copied the stale value forward every time),
+// while every other alloc reported the truth. replaceBudget reads the same
+// field for min_healthy, so the leader also always looked settled.
+func TestADeployResetsTheInitLeadersAge(t *testing.T) {
+	h := newHarness(t)
+	d := desired(1)
+	d.Init = []reconciler.InitContainer{{Name: "migrate", Image: "migrate:1"}}
+	h.setDesired(t, d)
+	allocID := reconciler.AllocID("shop", "web", 0)
+	stepID := runtime.InitID(allocID, 0, "migrate")
+
+	// The first sequence, to completion.
+	h.reconcile(t)
+	h.driver.exit(stepID, 0)
+	h.reconcile(t)
+	if rec := h.allocRecord(t, 0); rec.State != reconciler.AllocRunning {
+		t.Fatalf("after the first sequence: state %q, want running", rec.State)
+	}
+
+	// Long enough that a carried-over timestamp is unmistakable.
+	h.now = h.now.Add(41 * 24 * time.Hour)
+	next := d
+	next.Image = "nginx:1.28-alpine"
+	h.setDesired(t, next)
+
+	// The deploy replaces the leader, which starts the new spec's sequence.
+	h.reconcile(t)
+	started := h.allocRecord(t, 0)
+	if started.State != reconciler.AllocInit {
+		t.Fatalf("the deploy did not restart the sequence: state %q", started.State)
+	}
+	if !started.CreatedAt.Equal(h.now) {
+		t.Errorf("the leader's age survived the deploy: created %s, want %s",
+			started.CreatedAt, h.now)
+	}
+	// And the step the pass started is still there. Actions sort by alloc id,
+	// which puts the reap of the *old* sequence after the create of the new
+	// one, so a reap that was not excluded for a torn-down alloc deleted the
+	// container this pass had just started - costing a pass on every deploy.
+	stepID = runtime.InitID(allocID, 0, "migrate")
+	if got := h.driver.state(stepID); got != runtime.StateRunning {
+		t.Fatalf("the new sequence's first step is %q after the deploy pass, want running", got)
+	}
+
+	// The rest of the sequence is the same container's life, so it keeps the
+	// timestamp the sequence began with rather than inventing another.
+	h.now = h.now.Add(time.Minute)
+	h.driver.exit(runtime.InitID(allocID, 0, "migrate"), 0)
+	h.reconcile(t)
+	done := h.allocRecord(t, 0)
+	if done.State != reconciler.AllocRunning {
+		t.Fatalf("the task was never created: state %q", done.State)
+	}
+	if !done.CreatedAt.Equal(started.CreatedAt) {
+		t.Errorf("finishing the sequence moved CreatedAt from %s to %s",
+			started.CreatedAt, done.CreatedAt)
+	}
+}
+
+// --- a step that cannot be started ----------------------------------------
+
+// TestAStepCreatedButNeverStartedIsRerunNotAdopted is the permanent wedge. One
+// transient Start failure left the step's container in `created`; Create then
+// answered ErrAlreadyExists, the crash-window adopt swallowed it, and Start was
+// never attempted again. Nothing could clear that: the timeout only fires on a
+// running step, the reaper keeps the live one, the budget is never spent, and
+// every follower waits on the leader's record forever.
+func TestAStepCreatedButNeverStartedIsRerunNotAdopted(t *testing.T) {
+	h := newHarness(t)
+	d := desired(1)
+	d.Init = []reconciler.InitContainer{{Name: "migrate", Image: "migrate:1"}}
+	h.setDesired(t, d)
+	stepID := runtime.InitID(reconciler.AllocID("shop", "web", 0), 0, "migrate")
+
+	// The setup, and the only thing this test stages: the container is created
+	// and the start fails. Nothing ran, so it is a create-path failure and is
+	// retried per pass without spending the restart budget (§17).
+	h.driver.failWith["start:"+stepID] = errors.New("shim refused")
+	if _, err := h.r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got := h.driver.state(stepID); got != runtime.StateCreated {
+		t.Fatalf("step state after a failed start = %q, want %q", got, runtime.StateCreated)
+	}
+	delete(h.driver.failWith, "start:"+stepID)
+
+	// Two passes: one to notice the alloc is mid-sequence, one to re-run the
+	// step. A third would mean something is still adopting it.
+	h.reconcile(t)
+	h.reconcile(t)
+	if got := h.driver.state(stepID); got != runtime.StateRunning {
+		t.Fatalf("the step is wedged in %q; the sequence can never finish", got)
+	}
+}
+
+// TestARunningStepIsNeverRerun is the other half: the planner asks for a
+// re-run only when the container is in a state a start cannot rescue. A
+// running step is adopted or waited on, and an adopt touches no container at
+// all - re-running one would rebuild the secrets tree under a live reader.
+func TestARunningStepIsNeverRerun(t *testing.T) {
+	d := withInit(1, "migrate")
+	for _, tc := range []struct {
+		name  string
+		state runtime.State
+		want  reconciler.InitOp
+	}{
+		{"created", runtime.StateCreated, reconciler.InitRerun},
+		{"unknown", runtime.StateUnknown, reconciler.InitRerun},
+		{"running", runtime.StateRunning, reconciler.InitAdopt},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A record naming no step, so a running container is adopted rather
+			// than waited on and every case emits an ActionInitStep.
+			rec := initRecord(0, 0, "", time.Time{})
+			got := reconciler.Plan(initWorld(d, rec,
+				initStatus(0, 0, "migrate", tc.state, 0)))
+			if len(got) != 1 || got[0].Init == nil {
+				t.Fatalf("plan for a %s step: %s", tc.name, kinds(got))
+			}
+			if got[0].Init.Op != tc.want {
+				t.Errorf("op for a %s step = %q, want %q", tc.name, got[0].Init.Op, tc.want)
+			}
+		})
 	}
 }

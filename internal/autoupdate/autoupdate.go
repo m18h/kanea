@@ -235,13 +235,7 @@ func (w *Watcher) pollIfDue(ctx context.Context, d reconciler.Desired, index uin
 		return nil
 	}
 
-	auth, err := w.auth(ctx, d)
-	if err != nil {
-		return err
-	}
-	digest, err := w.resolver.ResolveRemote(ctx, runtime.ImageRef{
-		Project: d.Project, Ref: d.Image, Auth: auth,
-	})
+	pinned, err := ResolvePin(ctx, w.resolver, w.secrets, d)
 	if err != nil {
 		// The check is still recorded, so an unreachable registry is retried on
 		// the service's own interval rather than on every tick.
@@ -250,11 +244,6 @@ func (w *Watcher) pollIfDue(ctx context.Context, d reconciler.Desired, index uin
 		if writeErr := w.write(ctx, checked, index); writeErr != nil {
 			return writeErr
 		}
-		return fmt.Errorf("resolve %s: %w", d.Image, err)
-	}
-
-	pinned, err := pinDigest(d.Image, digest)
-	if err != nil {
 		return err
 	}
 
@@ -300,6 +289,33 @@ func converged(d reconciler.Desired, allocs []reconciler.AllocRecord) bool {
 		count++
 	}
 	return count >= d.Count && d.Count > 0
+}
+
+// ResolvePin is how a declared tag becomes the digest a container is built
+// from: resolve it in its registry under the service's own credential, then
+// write it back as a canonical `name@sha256:...` reference.
+//
+// Exported because the apply path needs the same answer (PRD v1.114). An apply
+// that changes the tag of an auto-updating service drops the pin, and the pin
+// is SpecHash material, so without this the apply rolled every alloc onto the
+// bare tag and the watcher's next poll rolled them all again a minute later -
+// two deploys for one release, and on a service with init containers two runs
+// of its migrations. The resolve lives here, in one function with one caller
+// each side, because a tag resolved two ways is two different hashes.
+func ResolvePin(
+	ctx context.Context, resolver Resolver, secrets Secrets, d reconciler.Desired,
+) (string, error) {
+	auth, err := resolveAuth(ctx, secrets, d)
+	if err != nil {
+		return "", err
+	}
+	raw, err := resolver.ResolveRemote(ctx, runtime.ImageRef{
+		Project: d.Project, Ref: d.Image, Auth: auth,
+	})
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", d.Image, err)
+	}
+	return pinDigest(d.Image, raw)
 }
 
 // pinDigest composes the digest-pinned reference for a tag.
@@ -367,14 +383,14 @@ func (w *Watcher) allocs(ctx context.Context) (map[string][]reconciler.AllocReco
 }
 
 // auth resolves the registry credential, if one is named.
-func (w *Watcher) auth(ctx context.Context, d reconciler.Desired) ([]byte, error) {
+func resolveAuth(ctx context.Context, secrets Secrets, d reconciler.Desired) ([]byte, error) {
 	if d.RegistryAuthRef == "" {
 		return nil, nil
 	}
-	if w.secrets == nil {
+	if secrets == nil {
 		return nil, errors.New("service names a registry credential but no secret store is configured")
 	}
-	auth, err := w.secrets.Resolve(ctx, d.RegistryAuthRef)
+	auth, err := secrets.Resolve(ctx, d.RegistryAuthRef)
 	if err != nil {
 		return nil, fmt.Errorf("registry credential %q: %w", d.RegistryAuthRef, err)
 	}

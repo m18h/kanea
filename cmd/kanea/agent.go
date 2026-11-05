@@ -920,7 +920,12 @@ func runAgent(args []string) error {
 		// The editor's renderer parses with the node's own base domain and
 		// variables; the same options the GitOps sync uses, so a spec means
 		// the same thing whichever door it arrives through (v1.38, v1.63).
-		Spec:   specRenderer{opts: jobspec.Options{BaseDomain: *baseDomain, NodeVars: nodeCfg.Variables}},
+		Spec: specRenderer{opts: jobspec.Options{BaseDomain: *baseDomain, NodeVars: nodeCfg.Variables}},
+		// The apply path resolves a changed tag itself, so a release is one
+		// rolling deploy rather than one onto the bare tag and a second onto
+		// the digest a tick later (v1.114). The watcher's own resolve, behind
+		// the same credential: one function, two callers.
+		Pinner: imagePinner{resolver: driver, secrets: secretStore},
 		Exec:   driver,
 		Listen: apiL.addr, TLSCert: apiL.cert, TLSKey: apiL.key,
 		TLSGetCertificate: apiGetCert,

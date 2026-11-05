@@ -46,6 +46,15 @@ const (
 	// instead would plan a create for a container that already exists, which
 	// fails ErrAlreadyExists on every pass forever.
 	InitAdopt InitOp = "adopt"
+	// InitRerun replaces a step's leftover container before starting it again.
+	// It is distinct from InitStart because the two want opposite things from
+	// an existing container: a start adopts one (the crash window above), and a
+	// re-run must remove it, because the container it found is in a state a
+	// start cannot rescue - created and never started, or one containerd cannot
+	// describe. Adopting that one instead wedges the alloc in init forever:
+	// nothing restarts a created container, the timeout only fires on a running
+	// one, the reaper keeps the live step, and every follower waits on it.
+	InitRerun InitOp = "rerun"
 )
 
 // InitAction is the init half of an Action, set only for ActionInitStep.
@@ -222,8 +231,11 @@ func planInit(w World, d Desired, base Action, record AllocRecord) []Action {
 	default:
 		// Created but never started, stopped non-zero (Observe has not caught
 		// it yet this pass), or a state containerd cannot describe. Re-run the
-		// step: teardown of the leftover happens in reapInit, which removes any
-		// container the alloc is not currently expecting.
+		// step, and say so on the action: the leftover is the *live* step, so
+		// initContainersToReap deliberately keeps it (steps up to the live one
+		// are the evidence that they ran), which means the re-run is the only
+		// thing that can clear it.
+		act.Init.Op = InitRerun
 		act.Reason = fmt.Sprintf("re-running init %q (%d of %d) in state %q",
 			live.step.Name, live.ordinal+1, len(d.Init), live.status.State)
 		return []Action{act}
@@ -314,9 +326,17 @@ func observeInit(w World, d Desired, record AllocRecord) (AllocRecord, bool) {
 // AllocInit, or the container's ordinal is *past* the live step. Past, not
 // other than: steps before the live one are the evidence that they completed
 // and must survive until teardown.
-func initContainersToReap(w World, desiredByService map[string]Desired) []Action {
+//
+// recreating holds the allocs this pass is already rebuilding; their steps are
+// teardown's and create's to handle, not this sweep's (see Plan).
+func initContainersToReap(
+	w World, desiredByService map[string]Desired, recreating map[string]struct{},
+) []Action {
 	var actions []Action
 	for id, status := range w.InitActual {
+		if _, rebuilding := recreating[status.AllocID]; rebuilding {
+			continue
+		}
 		record, hasRecord := w.Records[status.AllocID]
 		keep := false
 		if hasRecord && record.State == AllocInit {
@@ -475,6 +495,27 @@ func (r *Reconciler) startInitStep(
 	// below can leave one extra marker - an attempt that produced no output,
 	// which is what it was.
 	r.markInitAttempt(spec.LogPath, step.Name)
+	// A re-run's leftover goes first. The planner only asks for one when the
+	// container it found is in a state a start cannot rescue, and Create would
+	// answer ErrAlreadyExists for it, which the adopt below would read as the
+	// crash window and leave the step wedged.
+	// An InitRerun's leftover goes first, and this is the only path that sweeps
+	// one: the reaper deliberately keeps the live step (it is the evidence that
+	// it ran), so nothing else can clear a container in a state a start cannot
+	// rescue. Every other path has vouched for what is there - InitStart means
+	// the planner saw no container, InitAdopt returns before reaching here, and
+	// Restart, Replace and Recover have already run teardown.
+	//
+	// Remove rather than Stop then Remove, which is what teardown does: Remove
+	// kills the process itself and is idempotent, and the grace period teardown
+	// pays for belongs to a workload that is serving. A step created and never
+	// started has nothing to drain; one whose state containerd cannot describe
+	// has nothing to ask politely.
+	if action.Init != nil && action.Init.Op == InitRerun {
+		if err := r.driver.Remove(ctx, d.Project, spec.ID); err != nil {
+			return failedAt(phaseCreate, wrapInitError(step, ordinal, len(d.Init), err))
+		}
+	}
 	if err := r.driver.Create(ctx, spec); err != nil {
 		// A step that already exists is the crash window, not a conflict: kanead
 		// died between starting it and writing the record. Adopt it - the record
@@ -540,11 +581,18 @@ func (r *Reconciler) stampInitStep(
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if existing, err := r.loadRecord(ctx, d.Project, d.Service, action.Index); err == nil {
-		record.CreatedAt = existing.CreatedAt
 		// The restart budget belongs to the spec hash that spent it (R29), so
 		// it carries over exactly as create()'s does and for the same reason: a
 		// service that exhausted its budget must be fixable by deploying a fix.
 		if existing.SpecHash == "" || existing.SpecHash == record.SpecHash {
+			// CreatedAt is inside this guard, not above it, and that is the
+			// whole of what "the life of *this* container" means (replaceBudget
+			// relies on it for min_healthy). A leader starting the new spec's
+			// sequence is a new occupant of the index: carrying the previous
+			// one's start would freeze its age for the life of the service,
+			// because every later write - the rest of the sequence, then
+			// create()'s own sameSpec carry - copies it forward again.
+			record.CreatedAt = existing.CreatedAt
 			record.Restarts = existing.Restarts
 			// And it is *spent* here, for the same reason create() spends it:
 			// this is the write that ends the retry, and create()'s own record

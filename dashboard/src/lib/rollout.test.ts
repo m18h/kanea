@@ -59,6 +59,21 @@ describe('rolloutStatus', () => {
     expect(r.updated).toBe(0)
   })
 
+  it('an alloc running its init sequence at the new hash is still deploying', () => {
+    // R32: the leader runs the sequence and the task does not exist yet, so
+    // nothing is stale and nothing is pending. Leaving 'init' out reported the
+    // deploy finished while the migrations were still running - for the
+    // longest part of a deploy on any service that declares one.
+    const r = rolloutStatus(svc(2, HASH), [alloc('init', HASH), alloc('running', OLD)])
+    expect(r.deploying).toBe(true)
+    expect(r.updated).toBe(0)
+
+    // And once the stale one is gone, which is when it used to flip to false.
+    const alone = rolloutStatus(svc(1, HASH), [alloc('init', HASH)])
+    expect(alone.deploying).toBe(true)
+    expect(alone.updated).toBe(0)
+  })
+
   it('a crash-looping alloc at the new hash is NOT deploying', () => {
     // R29: restart is what clears a crash loop, so the state must not read
     // as a rollout that disables the restart button.

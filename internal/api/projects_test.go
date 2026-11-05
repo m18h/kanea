@@ -229,6 +229,142 @@ func TestApplyDropsThePinWhenTheImageChanges(t *testing.T) {
 	}
 }
 
+// fakePinner stands in for the registry on the apply path.
+type fakePinner struct {
+	digest string
+	err    error
+	calls  []string
+}
+
+func (p *fakePinner) ResolvePin(_ context.Context, d reconciler.Desired) (string, error) {
+	p.calls = append(p.calls, d.Image)
+	if p.err != nil {
+		return "", p.err
+	}
+	return "docker.io/library/nginx@sha256:" + p.digest, nil
+}
+
+// A release is one rolling deploy (PRD v1.114). The pin is SpecHash material,
+// so an apply that changed the tag used to roll every alloc onto the bare tag
+// and then roll them all again when the watcher pinned the digest a tick later
+// - twice, for one release, and twice through any init sequence.
+func TestApplyResolvesANewTagSoTheReleaseRollsOnce(t *testing.T) {
+	ctx := context.Background()
+	pinner := &fakePinner{digest: strings.Repeat("c", 64)}
+	h := newHarness(t, func(cfg *api.ServerConfig) { cfg.Pinner = pinner })
+	h.putService(t, "shop", "web", 2)
+
+	pinned := desiredFromStore(t, h, "shop/web")
+	pinned.Update.Auto = true
+	pinned.Image = "nginx:1.27"
+	pinned.PinnedImage = "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64)
+	h.putDesired(t, pinned)
+
+	bumped := pinned
+	bumped.Image = "nginx:1.28"
+	bumped.PinnedImage = ""
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{bumped}, nil); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	got := desiredFromStore(t, h, "shop/web")
+	if want := "docker.io/library/nginx@sha256:" + pinner.digest; got.PinnedImage != want {
+		t.Errorf("PinnedImage = %q, want the new tag resolved in the same mutation (%q)",
+			got.PinnedImage, want)
+	}
+	if got.RunImage() != "docker.io/library/nginx@sha256:"+pinner.digest {
+		t.Errorf("RunImage() = %q, want the digest rather than the bare tag", got.RunImage())
+	}
+	if len(pinner.calls) != 1 || pinner.calls[0] != "nginx:1.28" {
+		t.Errorf("resolved %v, want exactly the newly declared tag", pinner.calls)
+	}
+	// The clock is armed by the resolve that just happened, so the watcher's
+	// next sweep finds nothing to do rather than re-resolving immediately.
+	if got.ImageCheckedAt.IsZero() {
+		t.Error("ImageCheckedAt is zero after the apply resolved the tag itself")
+	}
+	// Not an unattended update, so R19's revert deadline stays unarmed: a
+	// release somebody typed must not be rolled back by a timer.
+	if !got.ImageUpdatedAt.IsZero() || got.RollbackImage != "" {
+		t.Errorf("the apply armed the revert deadline: rollback %q updated %v",
+			got.RollbackImage, got.ImageUpdatedAt)
+	}
+}
+
+// Best-effort, deliberately: a registry that cannot be reached must not fail
+// the deploy. The fallback is exactly the previous behaviour - unpinned, and
+// pinned by the watcher on its next sweep.
+func TestApplySucceedsUnpinnedWhenTheRegistryIsUnreachable(t *testing.T) {
+	ctx := context.Background()
+	pinner := &fakePinner{err: errors.New("dial tcp: i/o timeout")}
+	h := newHarness(t, func(cfg *api.ServerConfig) { cfg.Pinner = pinner })
+	h.putService(t, "shop", "web", 2)
+
+	svc := desiredFromStore(t, h, "shop/web")
+	svc.Update.Auto = true
+	svc.Image = "nginx:1.28"
+	if _, err := h.client.Apply(ctx, []reconciler.Desired{svc}, nil); err != nil {
+		t.Fatalf("apply failed on an unreachable registry: %v", err)
+	}
+	got := desiredFromStore(t, h, "shop/web")
+	if got.PinnedImage != "" {
+		t.Errorf("PinnedImage = %q after a failed resolve, want empty", got.PinnedImage)
+	}
+	if !got.ImageCheckedAt.IsZero() {
+		t.Error("a failed resolve armed the check clock, so the watcher would not retry promptly")
+	}
+}
+
+// The two cases that must not reach the registry at all: a carried-over pin is
+// already the digest the service runs, and a service that never asked for
+// auto-update has no tag to follow.
+func TestApplyDoesNotResolveWhenItDoesNotNeedTo(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*reconciler.Desired)
+		seeded  func(*reconciler.Desired)
+		wantPin string
+	}{
+		{
+			name:    "the tag is unchanged, so the pin is carried",
+			seeded:  func(d *reconciler.Desired) { d.Update.Auto = true },
+			mutate:  func(d *reconciler.Desired) { d.Count = 3 },
+			wantPin: "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64),
+		},
+		{
+			name:   "auto-update is off",
+			seeded: func(d *reconciler.Desired) { d.Update.Auto = false },
+			mutate: func(d *reconciler.Desired) { d.Image = "nginx:1.28" },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pinner := &fakePinner{digest: strings.Repeat("c", 64)}
+			h := newHarness(t, func(cfg *api.ServerConfig) { cfg.Pinner = pinner })
+			h.putService(t, "shop", "web", 2)
+
+			seeded := desiredFromStore(t, h, "shop/web")
+			seeded.Image = "nginx:1.27"
+			seeded.PinnedImage = "docker.io/library/nginx@sha256:" + strings.Repeat("a", 64)
+			tc.seeded(&seeded)
+			h.putDesired(t, seeded)
+
+			next := seeded
+			next.PinnedImage = ""
+			tc.mutate(&next)
+			if _, err := h.client.Apply(ctx, []reconciler.Desired{next}, nil); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			if len(pinner.calls) != 0 {
+				t.Errorf("the apply reached the registry for %v", pinner.calls)
+			}
+			if got := desiredFromStore(t, h, "shop/web").PinnedImage; got != tc.wantPin {
+				t.Errorf("PinnedImage = %q, want %q", got, tc.wantPin)
+			}
+		})
+	}
+}
+
 // Turning auto off hands the spec back the authority over what runs.
 func TestApplyDropsThePinWhenAutoIsTurnedOff(t *testing.T) {
 	ctx := context.Background()

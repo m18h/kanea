@@ -79,7 +79,7 @@ func Plan(w World) []Action {
 		// before any of them are planned, because the answer is a property of the
 		// service as a whole: an alloc cannot decide on its own whether taking
 		// itself down would leave the service short.
-		budget := replaceBudget(w, d, hash)
+		budget, unavailable := replaceBudget(w, d, hash)
 
 		for i := range d.Count {
 			id := AllocID(d.Project, d.Service, i)
@@ -87,12 +87,27 @@ func Plan(w World) []Action {
 			planned := planAlloc(w, d, i, id, hash, healthy)
 			for _, act := range planned {
 				// The rolling gate. A replacement that does not fit in this
-				// pass's budget is simply not emitted: the next pass will
-				// reconsider it, by which time the ones that did go will have
-				// settled. Nothing is queued and nothing is remembered, which is
-				// what keeps the loop restartable at any instant (PRD §4.3).
+				// pass's budget is not performed: the next pass will reconsider
+				// it, by which time the ones that did go will have settled.
+				// Nothing is queued and nothing is remembered, which is what
+				// keeps the loop restartable at any instant (PRD §4.3).
+				//
+				// It is downgraded to a wait rather than dropped, though. A
+				// dropped action leaves no trace anywhere, and "one replica that
+				// never rolls" is then invisible in `kanea plan` and in the log
+				// alike - diagnosable only by reading the planner. The budget is
+				// the most common reason a deploy legitimately takes several
+				// minutes and the only reason it can stall indefinitely (an
+				// alloc that never becomes healthy never frees room), so it says
+				// so, in the vocabulary the dependency and init gates already
+				// use.
 				if act.Kind == ActionReplace {
 					if budget <= 0 {
+						act.Kind = ActionWait
+						act.Reason = fmt.Sprintf(
+							"replacement deferred: %d of %d alloc(s) unavailable, max_parallel %d",
+							unavailable, d.Count, d.Update.maxParallel(d.Count))
+						actions = append(actions, act)
 						continue
 					}
 					budget--
@@ -111,7 +126,15 @@ func Plan(w World) []Action {
 	// own prefix rather than by the spec's list (R32). They deliberately never
 	// go through planOrphans: an init container has no alloc record, so that
 	// function would read a running migration as an orphan.
-	actions = append(actions, initContainersToReap(w, desiredByService)...)
+	//
+	// Allocs whose containers teardown is about to remove are excluded, because
+	// the sweep would land *after* them: actions sort by alloc id, and an
+	// alloc's id sorts before its own steps'. On a deploy that meant teardown
+	// swept the old sequence, create started the new one, and then this reap -
+	// decided against the world as it was before any of that - deleted the step
+	// that had just started. The sequence recovered on the following pass, so
+	// it cost a pass per deploy rather than correctness.
+	actions = append(actions, initContainersToReap(w, desiredByService, recreating(actions))...)
 
 	sort.SliceStable(actions, func(i, j int) bool {
 		if actions[i].AllocID != actions[j].AllocID {
@@ -120,6 +143,22 @@ func Plan(w World) []Action {
 		return actions[i].Kind < actions[j].Kind
 	})
 	return actions
+}
+
+// recreating collects the allocs whose init containers teardown is about to
+// remove wholesale, so the reap does not also plan a removal for them. The
+// three kinds here are exactly the ones apply runs teardown for; a bare
+// ActionCreate is deliberately absent, because it sweeps only the step it is
+// about to start and the reaper is what clears the rest.
+func recreating(actions []Action) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, act := range actions {
+		switch act.Kind {
+		case ActionRestart, ActionReplace, ActionRecover:
+			out[act.AllocID] = struct{}{}
+		}
+	}
+	return out
 }
 
 // planAlloc decides about one alloc index of one service.
@@ -325,11 +364,7 @@ func hashableVolumes(volumes []Volume) []Volume {
 // Timeout (how long the step may take). Changing either must not roll a
 // service, for the reason Expose, Publish and R31's budget are out of the
 // material entirely.
-// hashableFiles canonicalises a service's files for hashing (jobspec R35).
 //
-// Two things happen here and both are load-bearing.
-//
-// **The nonce is canonicalised away.** It is fresh on every parse and it lives
 // It copies before it strips, like hashableVolumes: mutating the caller's
 // Desired from inside a hash function would silently rewrite the record the
 // reconciler is about to project.
@@ -494,16 +529,19 @@ func drifted(record AllocRecord, hash string) bool {
 	return record.SpecHash != "" && record.SpecHash != hash
 }
 
-// replaceBudget is how many of a service's allocs may be replaced this pass.
+// replaceBudget is how many of a service's allocs may be replaced this pass,
+// and how many of them are already unavailable - the second is returned because
+// it is the explanation for the first, and a deferred replacement that cannot
+// say why is the thing this function is hardest to diagnose through.
 //
 // The unit is availability, not progress: the policy says how many allocs may
 // be *down at once*, so anything already down (starting, unhealthy, or too
 // recently replaced to be trusted) spends the budget before a deliberate
 // replacement gets any. That is what makes a rolling deploy stop when it starts
 // going wrong, instead of walking through every replica taking each one down.
-func replaceBudget(w World, d Desired, hash string) int {
+func replaceBudget(w World, d Desired, hash string) (int, int) {
 	if d.Count == 0 {
-		return 0
+		return 0, 0
 	}
 	limit := d.Update.maxParallel(d.Count)
 	settled := d.Update.minHealthy()
@@ -548,9 +586,9 @@ func replaceBudget(w World, d Desired, hash string) int {
 	// unavailable is zero and the budget is one: the deploy happens, with the
 	// downtime that count = 1 has always implied.
 	if budget := limit - unavailable; budget > 0 {
-		return budget
+		return budget, unavailable
 	}
-	return 0
+	return 0, unavailable
 }
 
 // planRestart applies the restart policy to a stopped alloc.
