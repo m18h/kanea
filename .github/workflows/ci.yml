@@ -434,7 +434,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gosec
-        uses: securego/gosec@de05e72e1756ec5a5bfba6814d6dc36f20fd4b54 # master
+        uses: securego/gosec@14c713478ed40c9bdfa56d35d9c2142b91608106 # master
         with:
           # spikes/ is excluded to match what `make security` actually scans:
           # each spike is its own module, so `gosec ./...` from the repo root
