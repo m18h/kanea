@@ -15,7 +15,7 @@ require (
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
-	github.com/go-jose/go-jose/v4 v4.1.6
+	github.com/go-jose/go-jose/v4 v4.1.8
 	github.com/go-ldap/ldap/v3 v3.4.15
 	github.com/google/nftables v0.3.0
 	github.com/hashicorp/hcl/v2 v2.25.0
