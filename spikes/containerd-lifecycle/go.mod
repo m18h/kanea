@@ -3,7 +3,7 @@ module kanea-spike-containerd
 go 1.27.3
 
 require (
-	github.com/containerd/containerd/v2 v2.3.6
+	github.com/containerd/containerd/v2 v2.3.7
 	github.com/containernetworking/cni v1.3.0
 	github.com/opencontainers/runtime-spec v1.3.0
 )
