@@ -83,6 +83,8 @@ func runAgent(args []string) error {
 		return err
 	}
 	s := resolveAgentSettings(nodeCfg)
+	// The network mode is the platform's, not the file's (PRD v1.115).
+	mode := nodeNetworkMode()
 
 	// kanead is the IPAM (PRD v1.36): nothing downstream re-validates the
 	// subnets, so a typo has to be refused here rather than presenting as a
@@ -183,7 +185,7 @@ func runAgent(args []string) error {
 
 	// The internal resolver: the dns stanza's upstreams, or the host's
 	// resolv.conf when it names none (v1.66).
-	dns, err := buildDNS(s.dnsListen, s.dnsUpstream, cidrs.node, logger)
+	dns, err := buildDNS(mode, s.dnsListen, s.dnsUpstream, cidrs.node, logger)
 	if err != nil {
 		return err
 	}
@@ -271,7 +273,7 @@ func runAgent(args []string) error {
 
 	buildUID := buildEgressUID(logger)
 	subStart, subCount := buildSubUIDRange(buildUID, logger)
-	net, err := buildNetwork(ctx, datapath.Config{
+	net, err := buildNetwork(ctx, mode, datapath.Config{
 		NodeCIDR:     cidrs.node,
 		ClusterCIDR:  cidrs.cluster,
 		ServiceCIDR:  cidrs.service,
@@ -291,16 +293,18 @@ func runAgent(args []string) error {
 		BuildSubUIDStart: subStart,
 		BuildSubUIDCount: subCount,
 		Logger:           logger,
-	})
+	}, logger)
 	if err != nil {
 		return err
 	}
 
-	// The east-west metrics view. Nil where the platform seams carry no
-	// counters (every non-linux build); startMetrics says so.
+	// The east-west metrics view, when the network has one. Only the datapath
+	// does: netns mode has no counters, and startMetrics says so.
 	var flows scaling.FlowSource
-	if source := net.CounterSource(); source != nil {
-		flows = datapathFlows{source: source, datapath: net}
+	if dp, ok := net.(*datapath.Datapath); ok {
+		if source := dp.CounterSource(); source != nil {
+			flows = datapathFlows{source: source, datapath: dp}
+		}
 	}
 
 	// The API wakes the reconciler after every apply, so a deploy converges
@@ -528,7 +532,7 @@ func runAgent(args []string) error {
 		resolver: secretStore, wake: routesNotify, log: logger,
 		node: api.NodeConfigView{
 			Listen: apiL.addr, TLS: apiL.tlsEnabled(),
-			BaseDomain: s.baseDomain,
+			BaseDomain: s.baseDomain, NetworkMode: mode,
 			NodeCIDR:   s.nodeCIDR, ClusterCIDR: s.clusterCIDR, ServiceCIDR: s.serviceCIDR,
 			NodeCIDR6: s.nodeCIDR6, ClusterCIDR6: s.clusterCIDR6, ServiceCIDR6: s.serviceCIDR6,
 			DNSListen: s.dnsListen, DataDir: s.dataDir, LogDir: s.logDir,
@@ -746,7 +750,7 @@ func runAgent(args []string) error {
 
 	logger.Info("kanead starting",
 		"version", version, "state", statePath, "socket", s.socket,
-		"log_dir", s.logDir, "volume_dir", volumes)
+		"log_dir", s.logDir, "volume_dir", volumes, "network", mode)
 
 	tasks := 2
 	if dns != nil {
@@ -1031,15 +1035,22 @@ func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string,
 	return out, nil
 }
 
-// buildNetwork loads the datapath, the only network a node has (PRD v1.115).
+// buildNetwork returns the network for mode: the eBPF datapath on Linux, a
+// bare namespace per alloc anywhere else (networkModeFor).
 //
-// An Init failure is a hard startup error, deliberately unlike the
+// A datapath Init failure is a hard startup error, deliberately unlike the
 // warn-and-continue the old external agent got: there is no separate process
 // that might come up later. Loading the programs *is* the datapath: if that
 // fails, nothing will ever pass traffic, there is nothing to retry against,
 // and a control plane that started anyway would converge every alloc onto a
 // network that silently drops everything.
-func buildNetwork(ctx context.Context, cfg datapath.Config) (*datapath.Datapath, error) {
+func buildNetwork(ctx context.Context, mode string, cfg datapath.Config, logger *slog.Logger) (reconciler.Network, error) {
+	if mode == networkNetns {
+		logger.Warn("network policy, service load balancing and internal DNS are disabled",
+			"network", networkNetns,
+			"detail", "the eBPF datapath needs Linux; on this platform allocs get a bare namespace")
+		return reconciler.NetnsNetwork{}, nil
+	}
 	dp, err := datapath.New(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("network: %w", err)
@@ -1114,9 +1125,16 @@ const (
 // determines the address either way. The socket itself is bound in Serve,
 // which runAgent starts only after buildNetwork's Init has created the
 // interface, so the address is bindable by then.
-func buildDNS(listen string, upstreams []string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
+func buildDNS(mode, listen string, upstreams []string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
 	if listen == dnsOff {
 		logger.Warn("internal DNS is disabled; services are reachable only by address")
+		return nil, nil
+	}
+	if mode == networkNetns {
+		// Without the datapath there are no service frontends to answer with,
+		// so a resolver would serve an empty zone.
+		logger.Info("internal DNS is disabled in netns mode",
+			"detail", "no service frontends exist without the datapath")
 		return nil, nil
 	}
 
