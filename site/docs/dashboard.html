@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The dashboard - Kanea docs</title>
+<meta name="description" content="Reach the Kanea dashboard from your own machine, choose how its listener gets a certificate, and find what each page does.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1>The dashboard</h1>
+    <p>
+      Open the dashboard from your own machine, choose how its listener gets a certificate,
+      and find what each page does.
+    </p>
+
+    <h2 id="arch-dashboard">Reach the dashboard</h2>
+
+    <p>
+      <a href="concepts.html#term-kanead">kanead</a> serves the dashboard on its API
+      listener, the address the REST API and the MCP endpoint also use. Run this on the
+      node to print the URL:
+    </p>
+    <pre class="plain">kanea ui          # prints the dashboard URL
+kanea ui --open   # and opens it in a browser</pre>
+    <p>
+      The URL carries the listener's port, <code>8600</code> by default:
+      <code>https://&lt;node&gt;:8600</code>. Port 443 belongs to
+      <a href="concepts.html#term-edge">the edge</a>, which has no route to the dashboard.
+      The dashboard is not a service and takes no <code>expose</code> block.
+    </p>
+
+    <h3 id="dashboard-init">What kanea init set up</h3>
+
+    <p>
+      <code>kanea init</code> asks where the API and dashboard listen, then writes the
+      answer into the <code>bind</code> stanza of the
+      <a href="concepts.html#term-node-config">node config</a>. It ends by printing the
+      dashboard URL and the admin account it created.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Your answer</th><th>What you get</th></tr></thead>
+        <tbody>
+          <tr><td>Enter, for <code>127.0.0.1:8600</code></td><td>Plain HTTP on loopback. Only a browser on the node itself reaches it.</td></tr>
+          <tr><td>An address on your network, such as <code>192.168.1.10:8600</code></td><td>HTTPS with a 10-year self-signed pair at <code>/etc/kanea/api.crt</code> and <code>/etc/kanea/api.key</code>. Init creates the pair once and leaves it alone on later runs.</td></tr>
+          <tr><td>The same, with <code>--listen-cert</code> and <code>--listen-key</code></td><td>HTTPS with your own pair.</td></tr>
+          <tr><td><code>none</code></td><td>No network listener. The CLI works over the unix socket and there is no dashboard.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Init refuses <code>0.0.0.0:8600</code>, because the certificate it creates needs a host
+      to name. Give a specific address, or write the stanza yourself with
+      <code>api_domain</code> as below.
+    </p>
+
+    <h3 id="dashboard-listen">Change the listen address</h3>
+
+    <ol class="steps">
+      <li>
+        <h3>Edit the bind stanza</h3>
+        <p>
+          Open <code>/etc/kanea/kanea.hcl</code> and set the address. This example serves the
+          dashboard on one LAN address with a certificate from the node's own CA:
+        </p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">bind</span> {
+  <span class="k">api_addr</span> = <span class="s">"192.168.1.10:8600"</span>
+  <span class="k">api_tls</span>  = <span class="s">"self-signed"</span>
+}</code></pre>
+        <p>
+          Remove <code>api_cert</code> and <code>api_key</code> if init wrote them: a managed
+          mode beside a pair is refused at startup.
+        </p>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <p>
+          Run <code>sudo systemctl restart kanead</code>. Running workloads and the edge are
+          not interrupted. The dashboard and API return within a few seconds.
+        </p>
+      </li>
+      <li>
+        <h3>Open the new URL</h3>
+        <p>
+          <code>kanea ui</code> prints <code>https://192.168.1.10:8600</code>. If kanead did
+          not come back, see
+          <a href="troubleshooting.html#troubleshoot-config">kanead will not start after
+          editing kanea.hcl</a>.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      Every <code>bind</code> attribute, its default and the combinations kanead refuses
+      are in <a href="node-config.html#nodeconfig-bind">Node config: bind</a>.
+    </p>
+
+    <h3 id="dashboard-tls">Choose the certificate</h3>
+
+    <p>
+      <code>bind.api_tls</code> takes one of four modes. Pick by who has to trust the
+      dashboard:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Mode</th><th>Use it when</th><th>What you do</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>self-signed</code></td>
+            <td>The node is on a home or office network with no public name.</td>
+            <td>Install the node's CA on each device once: <code>kanea ca show</code> prints it. kanead issues and renews the certificate, with an IP SAN when <code>api_addr</code> is a bare address.</td>
+          </tr>
+          <tr>
+            <td><code>acme</code></td>
+            <td>The node has a public name and browsers should trust it without setup.</td>
+            <td>Set <code>api_domain</code> and <a href="node-config.html#nodeconfig-acme"><code>acme.email</code></a>, point a DNS record at the node, and keep port 80 reachable with the edge running.</td>
+          </tr>
+          <tr>
+            <td><code>provided</code></td>
+            <td>Something else manages the certificate.</td>
+            <td>Set <code>api_cert</code> and <code>api_key</code> to the PEM pair. Restart kanead after replacing the files.</td>
+          </tr>
+          <tr>
+            <td><code>plaintext</code></td>
+            <td>A trusted network where you accept HTTP.</td>
+            <td>Nothing. kanead logs a warning at startup and the session cookie loses its <code>Secure</code> attribute, so sign-in works over HTTP.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      With <code>api_tls</code> unset, a pair means <code>provided</code> and a loopback
+      address means plaintext. Any other address gets no listener: kanead keeps running on
+      its socket and logs the reason.
+    </p>
+    <p>
+      An <code>acme</code> certificate uses the same account and renewal loop as your
+      services. <a href="domains.html#dns-certificates">Domains and HTTPS</a> explains
+      issuance.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">Keep the port in the URL</b>
+      <p>
+        <code>https://kanea.apps.example.com</code> without <code>:8600</code> reaches the
+        edge on port 443. The browser then reports a TLS error, which looks like a broken
+        certificate. <a href="troubleshooting.html#troubleshoot-common">Troubleshooting</a>
+        covers this and the short wait before a new certificate arrives.
+      </p>
+    </div>
+
+    <h3 id="dashboard-signin">Sign in</h3>
+
+    <p>
+      Sign in with the admin account <code>kanea init</code> created.
+      <a href="auth.html#auth-accounts">Sign-in and access</a> covers more accounts,
+      single sign-on and directory login.
+    </p>
+    <p>
+      An account is an admin or a viewer. A viewer reads every page except Settings and
+      Updates and cannot change anything. The sidebar shows who you are and which role you
+      hold.
+    </p>
+    <p>
+      To turn the dashboard off and keep the API, set <code>dashboard.enabled = false</code>.
+      See <a href="node-config.html#nodeconfig-dashboard">Node config: dashboard</a>.
+    </p>
+
+    <h2 id="dashboard-tour">Tour of the pages</h2>
+
+    <p>
+      The sidebar lists nine pages. Actions on them write desired state and let kanead
+      converge, exactly as the CLI does.
+    </p>
+
+    <h3 id="dashboard-overview">Dashboard</h3>
+    <p>
+      The landing page answers "should I worry". It shows anything that needs attention
+      first, then counts, the node's CPU, memory and load, your services beside recent
+      events, and one line on backup health.
+    </p>
+    <p>
+      When the node has a visible GPU, its card charts utilisation first and VRAM second.
+      A card whose driver reports neither is named beside a dash.
+    </p>
+
+    <h3 id="dashboard-projects">Projects</h3>
+    <p>
+      Each <a href="concepts.html#term-project">project</a> is listed with its services, how
+      many <a href="concepts.html#term-alloc">allocs</a> are running, where its
+      <a href="concepts.html#term-spec">spec</a> comes from and when it last synced.
+    </p>
+    <ul>
+      <li><b>Sync</b> re-reads a git-backed project now, the same read the poll loop does.</li>
+      <li><b>Stop</b> scales every service in the project to zero.</li>
+      <li><b>Remove</b> deletes the project's services and pipeline configuration, after a
+        dialog that names what will go.</li>
+    </ul>
+    <p>
+      There is no "new project" button. A project exists once a service declares itself
+      into that name.
+    </p>
+
+    <h3 id="dashboard-services">Services</h3>
+    <p>
+      The list shows what is declared and how much of it is running, with CPU, memory,
+      request rate and p95 per service. Search, filter by status, or sort.
+      <b>Deploy service</b> opens the spec editor.
+    </p>
+
+    <h3 id="dashboard-service-page">A service page</h3>
+    <p>
+      Four charts sit at the top: CPU, memory, requests per second and p95 latency. Below
+      them are tabs:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tab</th><th>Shows</th></tr></thead>
+        <tbody>
+          <tr><td>Allocations</td><td>Each alloc with its state, health and restarts, a button for its logs and, for an admin, a shell into it.</td></tr>
+          <tr><td>Logs</td><td>The live stream, with a filter, copy, download and a full-screen view.</td></tr>
+          <tr><td>Spec</td><td>The declared image, replicas, resources, domains, published ports and dependencies.</td></tr>
+          <tr><td>Events</td><td>Events for this service only.</td></tr>
+          <tr><td>Edge</td><td>Request and byte totals from the edge. Present when the service has ingress traffic to report.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The actions, for an admin:</p>
+    <ul>
+      <li><b>Restart</b> rolls the service through its update policy. On a service that is
+        down it reads <b>Start</b>.</li>
+      <li><b>Open</b> follows the service's public address in a new tab, with a menu when
+        it has several.</li>
+      <li><b>Scale</b> sets the replica count.</li>
+      <li><b>Edit spec</b> opens the spec editor with the current spec.</li>
+      <li><b>Stop</b> scales to zero and <b>Remove</b> deletes the declaration. Both ask
+        for a second click. Volume data is kept.</li>
+    </ul>
+    <p>
+      Where a service declares a <code>scaling</code> block, the Scale picker stops at
+      that policy's bounds and says so:
+    </p>
+    <pre class="plain">Currently 3 · allowed 2-10
+Autoscales between 2 and 10: a manual count outside that is refused,
+and one inside it stands until the next autoscale decision.</pre>
+    <p>
+      Open uses <code>https</code> unless the route declares
+      <code>tls { mode = "plaintext" }</code>. A route with no <code>domains</code> is left
+      out, because its generated name under
+      <a href="domains.html#dns-base-domain"><code>base_domain</code></a> is visible to
+      admins only.
+    </p>
+    <p>
+      A restart or deploy shows as rollout progress. Memory reads
+      <code>108 MiB / 256 MiB</code>, or <code>512 MiB / all memory</code> when the spec
+      declares no limit.
+    </p>
+
+    <h3 id="dashboard-spec-editor">The spec editor</h3>
+    <p>
+      Deploy service and Edit spec open the same editor. kanead validates the spec and
+      renders the preview with this node's base domain, so the preview is what an apply
+      does here.
+    </p>
+    <p>
+      On a project synced from git, the editor warns that the next sync overwrites what
+      you apply here. Tick the box to confirm you read it.
+    </p>
+
+    <h3 id="dashboard-pipelines">Pipelines</h3>
+    <p>
+      Build and deploy runs, newest first, with state, commit and duration. A run's page
+      follows the build log while it runs, offers the log as a download, and shows the
+      digest that was built.
+    </p>
+
+    <h3 id="dashboard-functions">Functions</h3>
+    <p>
+      WebAssembly functions, with their status and invocations per minute. A function is a
+      service underneath, so its detail, restart and scale live on its service page.
+      <b>Deploy function</b> opens the spec editor.
+    </p>
+
+    <h3 id="dashboard-storage">Storage</h3>
+    <p>
+      Every storage resource that a volume mounts, with driver, target, host path and
+      measured usage against the <code>size</code> the volume declared.
+    </p>
+    <p>
+      A <code>size</code> is a budget and nothing enforces it. Usage that has not been
+      measured shows a dash, which for an <code>s3</code> volume is permanent.
+      <a href="volumes.html#volumes-local">Volumes and host access</a> has the drivers.
+    </p>
+
+    <h3 id="dashboard-events">Events</h3>
+    <p>
+      The feed of what happened on the node: deploys, crashes, health changes, scaling
+      decisions, certificates and builds. They are the same events your notification
+      channels receive. Filter by severity or search.
+    </p>
+    <p>
+      The <b>audit</b> filter switches to the audit log: who did what, when and from where.
+      It is admin-only.
+    </p>
+
+    <h3 id="dashboard-backups">Backups</h3>
+    <p>
+      The page leads with replication health: when a backup last succeeded. Below it is
+      the archive list.
+    </p>
+    <ul>
+      <li><b>Snapshot now</b> takes a backup on demand.</li>
+      <li><b>Verify</b> decrypts and reads one archive in full, then reports the verdict.</li>
+      <li><b>Stage</b> records a restore request that kanead applies at its next start.</li>
+    </ul>
+    <p>
+      <a href="backups.html#backups-restore">Back up a node</a> explains restoring.
+    </p>
+
+    <h3 id="dashboard-settings">Settings</h3>
+    <p>Settings is admin-only and has five tabs:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tab</th><th>What you do there</th></tr></thead>
+        <tbody>
+          <tr><td>Node</td><td>Read what the node config decided: listen address, TLS, base domain, DNS, directories and the published-port policy, plus the network mode the system gave it. Read-only: edit <code>/etc/kanea/kanea.hcl</code> and restart kanead to change them.</td></tr>
+          <tr><td>Backup</td><td>Set the backup destination, a directory or S3. kanead probes a new destination with a test write before saving it. See <a href="backups.html#backups-destination">Back up a node</a>.</td></tr>
+          <tr><td>Notifications</td><td>Configure channels node-wide and per project. Each has a test button.</td></tr>
+          <tr><td>Accounts</td><td>Manage accounts and API tokens. See <a href="auth.html#auth-tokens">Sign-in and access</a>.</td></tr>
+          <tr><td>Audit</td><td>Read the audit log.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="dashboard-updates">Updates</h3>
+    <p>
+      When a newer Kanea release exists or the node needs a reboot, the sidebar shows an
+      "updates available" link for an admin. It opens the Updates page, at
+      <code>/updates</code>.
+    </p>
+    <p>
+      The Kanea half checks for a release and runs the upgrade, the same sequence as
+      <a href="upgrade.html#install-upgrade"><code>sudo kanea upgrade</code></a>. The node
+      asks GitHub only while an admin has the dashboard open, and caches the answer for an
+      hour.
+    </p>
+    <p>
+      The OS half reports pending packages with a security count, when the package lists
+      were last refreshed, a pending reboot, and the host components against their pinned
+      versions. Kanea installs no OS package: the page names the <code>apt</code> command
+      to run on the node.
+    </p>
+
+    <h3 id="dashboard-display">Lists, charts and display</h3>
+    <ul>
+      <li>
+        Every list keeps its search, filter and sort in the URL. The Back button restores
+        them, and <code>/services?q=api&amp;status=degraded</code> is a link you can send.
+      </li>
+      <li>Tables page at 20, 50 or 100 rows.</li>
+      <li>
+        The browser tab names the page, down to the service:
+        <code>shop/web · Kanea</code>.
+      </li>
+      <li>
+        A chart arrives with its recent history already drawn. An empty one reads
+        <code>no samples yet</code>, which is normal for about ten seconds after kanead
+        restarts.
+      </li>
+      <li>
+        The icon beside the version switches light and dark. The cog beside your name sets
+        the date order: <code>yyyy-MM-dd</code>, <code>dd/MM/yyyy</code> or
+        <code>MM/dd/yyyy</code>. Both are stored in your browser only.
+      </li>
+    </ul>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

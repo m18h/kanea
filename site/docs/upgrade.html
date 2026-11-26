@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upgrade and uninstall - Kanea docs</title>
+<meta name="description" content="Upgrade a Kanea node with one command, convert a node configured with daemon flags to kanea.hcl, or remove Kanea from a machine.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1>Upgrade and uninstall</h1>
+    <p>
+      Move a node to a new release with one command, convert a node that was configured
+      with daemon flags, or remove Kanea from a machine.
+    </p>
+
+    <h2 id="install-upgrade">Upgrade a node</h2>
+
+    <ol class="steps">
+      <li>
+        <h3>See what is available</h3>
+        <pre class="plain">sudo kanea upgrade --check</pre>
+        <p>The command reports three versions and changes nothing:</p>
+        <pre class="plain">Running version: vX.Y.Z
+Binary version:  vX.Y.Z
+Latest release:  vX.Y.Z
+
+Run `sudo kanea upgrade` to move to it.</pre>
+      </li>
+      <li>
+        <h3>Upgrade</h3>
+        <pre class="plain">sudo kanea upgrade</pre>
+        <p>
+          The command downloads and verifies the release, installs it, takes a backup and
+          restarts both daemons. It ends when
+          <a href="concepts.html#term-kanead">kanead</a> answers on the new version:
+        </p>
+        <pre class="plain">Fetching vX.Y.Z (installed binary is vX.Y.Z)…
+Running version: vX.Y.Z
+Binary version:  vX.Y.Z
+
+Taking a pre-upgrade backup…
+  archive &lt;id&gt; at index &lt;n&gt;
+
+Restarting the edge proxy (kanea-edge)…
+Restarting the control plane (kanead)…
+
+Waiting for the control plane…
+kanead is up at vX.Y.Z</pre>
+      </li>
+      <li>
+        <h3>Check the host components</h3>
+        <pre class="plain">sudo kanea install --dry-run
+sudo kanea doctor</pre>
+        <p>
+          Each release pins its own component versions. The dry run shows whether any
+          component needs to move, and <code>sudo kanea install</code> moves it.
+          <code>kanea doctor</code> prints one <code>ok</code> line per check when the
+          node matches the release.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      Running <a href="concepts.html#term-alloc">allocs</a> are not touched at any point.
+      Running the command twice is safe: when the binary is already at the target
+      version, nothing is downloaded.
+    </p>
+
+    <h3 id="upgrade-sequence">What the command does</h3>
+    <ol>
+      <li>Resolves the latest release, or the one named by <code>--version</code>.</li>
+      <li>Downloads it and checks its sha256 against the release's <code>checksums.txt</code>.</li>
+      <li>Checks the cosign signature over that file when cosign is installed. A signature that fails is fatal.</li>
+      <li>Installs the binary atomically over its own path.</li>
+      <li>Takes a pre-upgrade backup, if a <a href="backups.html#backups-destination">backup destination</a> is set.</li>
+      <li>Restarts <code>kanea-edge</code>, then <code>kanead</code>.</li>
+      <li>Waits for kanead, which runs any state migration at startup, to answer its health check.</li>
+    </ol>
+    <p>
+      <a href="concepts.html#term-edge">The edge</a> restarts first because it drains and
+      returns in seconds. kanead restarts last so the state migration runs once everything
+      else has settled. If a migration runs, kanead keeps a copy of the earlier state in
+      the data directory; delete it once you are satisfied with the upgrade.
+    </p>
+    <p>
+      The command does not regenerate the systemd units. When release notes say the units
+      changed, re-run <code>sudo kanea init</code> and then
+      <code>sudo systemctl daemon-reload</code>. A
+      <a href="install.html#install-init-idempotent">re-run of init</a> keeps the master
+      key, the accounts and your settings.
+    </p>
+
+    <h3 id="upgrade-flags">Flags</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>--check</code></td><td>Report the running, installed and latest versions, and stop.</td></tr>
+          <tr><td><code>--version vX.Y.Z</code></td><td>Go to a specific release instead of the latest.</td></tr>
+          <tr><td><code>--no-fetch</code></td><td>Download nothing and restart onto the binary already installed. Use it after a package manager has replaced the binary.</td></tr>
+          <tr><td><code>--require-signature</code></td><td>Refuse the release unless its cosign signature verifies. A missing cosign binary or an unsigned release is then fatal. The command never downloads cosign itself.</td></tr>
+          <tr><td><code>--allow-downgrade</code></td><td>Permit a target older than the running kanead. Refused by default, because the Store's schema only moves forward.</td></tr>
+          <tr><td><code>--skip-backup</code></td><td>Skip the pre-upgrade backup. A state migration still takes its own local copy.</td></tr>
+          <tr><td><code>--timeout</code></td><td>How long to wait for each service. Default <code>2m</code>.</td></tr>
+          <tr><td><code>--dry-run</code></td><td>Print what would run and stop.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      To require a signature on every upgrade, set <code>require_signature = true</code>
+      in the <a href="node-config.html#nodeconfig-upgrade"><code>upgrade</code> stanza</a>.
+      The same stanza's <code>repo</code> names the repository releases come from.
+    </p>
+
+    <h3 id="upgrade-script">Replace the binary first</h3>
+    <p>
+      Re-running the install script replaces the binary and nothing else. The daemons
+      keep running the old one until you run <code>sudo kanea upgrade</code>:
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>re-running the install script</span></div>
+<pre class="plain">$ curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash
+Upgrading kanea &lt;installed&gt; -&gt; &lt;latest&gt; (linux/amd64)
+Verifying the checksum
+cosign not found; checksum verified but signature not checked
+Installed /usr/local/bin/kanea
+
+The running daemons are still on the old binary. Next:
+
+    sudo kanea upgrade
+
+It backs up, drains and restarts kanea-edge, then restarts kanead, which
+runs any state migrations. Running workloads are untouched throughout.</pre>
+    </div>
+
+    <h3 id="upgrade-dashboard">Upgrade from the dashboard</h3>
+    <p>
+      An admin can run the same upgrade from the dashboard's Updates page. kanead takes
+      the backup, fetches and verifies the release, installs it, restarts
+      <code>kanea-edge</code>, and exits so systemd starts it on the new binary. The page
+      reloads when the new version answers.
+    </p>
+    <p>
+      The node checks for a newer release only while an admin has the dashboard open,
+      and caches the answer for an hour. The dashboard cannot downgrade;
+      <code>--allow-downgrade</code> exists only on the node's CLI. Outside systemd
+      nothing restarts: the binary is installed and the response says
+      <code>restart_required</code>.
+    </p>
+
+    <h3 id="upgrade-airgapped">Nodes without egress</h3>
+    <p>
+      A node that cannot reach the release endpoint gets its binary and components from
+      the <a href="install.html#install-airgapped">offline bundle</a>. Install the new
+      binary, then run <code>sudo kanea upgrade --no-fetch</code>.
+    </p>
+
+    <h2 id="upgrade-migrate">Migrating from flags</h2>
+    <p>
+      Older releases configured the daemons with flags on the <code>ExecStart</code> line
+      of their systemd units, with three optional side files and two environment
+      variables. Both daemons now take no arguments and read one file,
+      <code>/etc/kanea/kanea.hcl</code>. A node installed under the old scheme converts
+      itself the first time it starts on a new binary.
+    </p>
+
+    <h3 id="upgrade-migrate-auto">What happens automatically</h3>
+    <p>
+      Run <code>sudo kanea upgrade</code> as usual. You do not need to do anything else.
+      After the binary is replaced:
+    </p>
+    <ol>
+      <li>The edge restarts, finds flags on its command line, and exits. systemd restarts it; this happens once or twice.</li>
+      <li>kanead starts, finds flags on its command line, and converts them into <code>/etc/kanea/kanea.hcl</code>. A flag beats a value already in the file, which is the precedence the node was running under.</li>
+      <li>If the file already existed, kanead first copies it to <code>/etc/kanea/kanea.hcl.pre-migrate</code>.</li>
+      <li>kanead rewrites both unit files so the lines read <code>ExecStart=/usr/local/bin/kanea agent</code> and <code>ExecStart=/usr/local/bin/kanea edge</code>. Nothing else in the units changes.</li>
+      <li>Any drop-in under <code>kanead.service.d/</code> or <code>kanea-edge.service.d/</code> that sets <code>ExecStart=</code> is renamed to <code>&lt;name&gt;.migrated</code>.</li>
+      <li>kanead reloads systemd, restarts the edge, and exits. systemd starts it again under the rewritten unit.</li>
+    </ol>
+    <p>
+      Both daemons are back within about ten seconds, well inside the two minutes
+      <code>kanea upgrade</code> waits. Workloads are not restarted.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">Note</b>
+      <p>
+        A renamed drop-in stops applying as a whole. If it carried other directives, such
+        as an <code>Environment=</code> line of your own, move them into a new drop-in
+        that does not set <code>ExecStart=</code>.
+      </p>
+    </div>
+
+    <h3 id="upgrade-migrate-manual">Preview it or run it by hand</h3>
+    <p>
+      To see the result before upgrading, run the conversion as a dry run on the new
+      binary:
+    </p>
+    <pre class="plain">sudo kanea config migrate --dry-run</pre>
+    <p>
+      It prints the <code>kanea.hcl</code> it would write and the two new
+      <code>ExecStart</code> lines, and writes nothing. To do the conversion yourself:
+    </p>
+    <pre class="plain">sudo kanea config migrate</pre>
+    <p>
+      This writes the file, rewrites the units, reloads systemd, and restarts
+      <code>kanea-edge</code> and <code>kanead</code>. <code>--unit-dir</code> names a
+      unit directory other than <code>/etc/systemd/system</code>. On a node with no flags
+      left to convert, the command reports <code>nothing to migrate</code> and writes
+      nothing.
+    </p>
+    <p>
+      The conversion stops without writing anything in three cases: a flag it does not
+      recognise, a result that is not a valid node config, and a kanead and edge unit
+      that name different route or certificate files. The error names the flag or the
+      two values. Fix the unit and run it again.
+    </p>
+    <p>
+      Starting a daemon with arguments by hand is refused, with a message that points at
+      <code>sudo kanea config migrate</code>.
+    </p>
+
+    <h3 id="upgrade-migrate-sidefiles">Side files</h3>
+    <p>
+      The files named by <code>--passthrough-config</code>,
+      <code>--secrets-providers-config</code> and <code>--tls-certs-config</code> are
+      folded into <code>kanea.hcl</code>: their <code>device</code>, <code>socket</code>,
+      <code>provider</code> and <code>certificate</code> blocks are copied in as written.
+      The side files stay on disk, but nothing reads them. Delete them once you have
+      checked the new file.
+    </p>
+    <p>
+      A change to one of these blocks now needs a restart of kanead. The certificate
+      pairs and credential files the blocks point at are still picked up when their
+      content changes.
+    </p>
+
+    <h3 id="upgrade-migrate-settings">Changing a setting afterwards</h3>
+    <p>
+      Edit <code>/etc/kanea/kanea.hcl</code> and restart the daemon, as described under
+      <a href="node-config.html#nodeconfig-apply">applying a change</a>. Do not add flags
+      back to a unit: a daemon started with arguments refuses to run.
+    </p>
+
+    <h3 id="upgrade-migrate-kanead">kanead flags</h3>
+    <p>
+      Each former <code>kanea agent</code> flag and the attribute that replaces it.
+      Types and defaults are in the
+      <a href="node-config.html#nodeconfig">node config reference</a>.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Former flag</th><th>Attribute in <code>kanea.hcl</code></th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>--data-dir</code></td><td><code>data_dir</code></td><td></td></tr>
+          <tr><td><code>--backup-dir</code></td><td><code>backup.dir</code></td><td></td></tr>
+          <tr><td><code>--backup-s3</code></td><td><code>backup.s3.url</code></td><td>Keeps the <code>s3://bucket[/prefix]</code> form.</td></tr>
+          <tr><td><code>--backup-s3-endpoint</code></td><td><code>backup.s3.endpoint</code></td><td></td></tr>
+          <tr><td><code>--backup-s3-region</code></td><td><code>backup.s3.region</code></td><td></td></tr>
+          <tr><td><code>--backup-s3-access-key</code></td><td><code>backup.s3.access_key</code></td><td></td></tr>
+          <tr><td><code>--backup-s3-secret-key</code></td><td><code>backup.s3.secret_key</code></td><td>A <code>secret:</code> reference, as before.</td></tr>
+          <tr><td><code>--backup-s3-path-style</code></td><td><code>backup.s3.path_style</code></td><td></td></tr>
+          <tr><td><code>--backup-interval</code></td><td><code>backup.snapshot_interval</code></td><td>Duration string, such as <code>"24h0m0s"</code>.</td></tr>
+          <tr><td><code>--backup-segment-interval</code></td><td><code>backup.segment_interval</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--backup-retention</code></td><td><code>backup.retention</code></td><td></td></tr>
+          <tr><td><code>--restore-if-empty</code></td><td><code>backup.restore_if_empty</code></td><td></td></tr>
+          <tr><td><code>--log-dir</code></td><td><code>alloc_log_dir</code></td><td></td></tr>
+          <tr><td><code>--volume-dir</code></td><td><code>storage.volume_dir</code></td><td></td></tr>
+          <tr><td><code>--socket</code></td><td><code>bind.api_socket</code></td><td></td></tr>
+          <tr><td><code>--containerd</code></td><td><code>containerd.socket</code></td><td></td></tr>
+          <tr><td><code>--network</code></td><td>none</td><td>The mode is no longer a setting: a Linux node always runs the eBPF datapath. <code>ebpf</code> converts to nothing. A unit with <code>--network netns</code> is refused, because a Linux node cannot run that mode. Take the flag out of the unit, then run the migration again.</td></tr>
+          <tr><td><code>--bpf-dir</code></td><td><code>network.bpf_dir</code></td><td></td></tr>
+          <tr><td><code>--node-cidr</code></td><td><code>network.node_cidr</code></td><td></td></tr>
+          <tr><td><code>--cluster-cidr</code></td><td><code>network.cluster_cidr</code></td><td></td></tr>
+          <tr><td><code>--node-cidr6</code></td><td><code>network.node_cidr6</code></td><td></td></tr>
+          <tr><td><code>--cluster-cidr6</code></td><td><code>network.cluster_cidr6</code></td><td></td></tr>
+          <tr><td><code>--service-cidr6</code></td><td><code>network.service_cidr6</code></td><td></td></tr>
+          <tr><td><code>--config</code></td><td>-</td><td>Removed. The path is fixed at <code>/etc/kanea/kanea.hcl</code>. <code>--config &lt;path&gt;</code> migrates that file's content; <code>--config off</code> starts from an empty file.</td></tr>
+          <tr><td><code>--allowed-host-paths</code></td><td><code>storage.allowed_host_paths</code></td><td>A list. <code>off</code> becomes <code>[]</code>.</td></tr>
+          <tr><td><code>--passthrough-config</code></td><td><code>device</code> and <code>socket</code> blocks</td><td>The side file's blocks are copied in. <code>off</code> removes both kinds of block.</td></tr>
+          <tr><td><code>--secrets-providers-config</code></td><td><code>provider</code> blocks</td><td>The side file's blocks are copied in.</td></tr>
+          <tr><td><code>--secrets-sync-interval</code></td><td><code>secrets.sync_interval</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--service-cidr</code></td><td><code>network.service_cidr</code></td><td></td></tr>
+          <tr><td><code>--dns-listen</code></td><td><code>dns.listen</code></td><td><code>"off"</code> still disables it.</td></tr>
+          <tr><td><code>--dns-upstream</code></td><td><code>dns.upstreams</code></td><td>A list.</td></tr>
+          <tr><td><code>--image-pull-policy</code></td><td><code>images.pull_policy</code></td><td></td></tr>
+          <tr><td><code>--image-gc</code></td><td><code>images.gc.enabled</code></td><td><code>on</code> becomes <code>true</code>, <code>off</code> becomes <code>false</code>.</td></tr>
+          <tr><td><code>--base-domain</code></td><td><code>base_domain</code></td><td></td></tr>
+          <tr><td><code>--edge-routes</code></td><td><code>edge.routes_file</code></td><td>Shared with the edge's <code>--routes</code>.</td></tr>
+          <tr><td><code>--edge-certs</code></td><td><code>edge.certs_file</code></td><td>Shared with the edge's <code>--certs</code>.</td></tr>
+          <tr><td><code>--edge-group</code></td><td><code>edge.certs_group</code></td><td></td></tr>
+          <tr><td><code>--tls-default</code></td><td><code>tls.default_mode</code></td><td></td></tr>
+          <tr><td><code>--tls-ca-name</code></td><td><code>tls.ca_name</code></td><td></td></tr>
+          <tr><td><code>--tls-certs-config</code></td><td><code>certificate</code> blocks</td><td>The side file's blocks are copied in.</td></tr>
+          <tr><td><code>--publish-ports</code></td><td><code>edge.publish.ports</code></td><td><code>"off"</code> still disables it.</td></tr>
+          <tr><td><code>--acme-email</code></td><td><code>acme.email</code></td><td></td></tr>
+          <tr><td><code>--acme-directory</code></td><td><code>acme.directory</code></td><td></td></tr>
+          <tr><td><code>--acme-ca-bundle</code></td><td><code>acme.ca_bundle_file</code></td><td></td></tr>
+          <tr><td><code>--acme-verify-url</code></td><td><code>acme.verify_url</code></td><td></td></tr>
+          <tr><td><code>--acme-dns-server</code></td><td><code>acme.dns01.server</code></td><td></td></tr>
+          <tr><td><code>--acme-dns-zone</code></td><td><code>acme.dns01.zone</code></td><td></td></tr>
+          <tr><td><code>--acme-dns-tsig-key</code></td><td><code>acme.dns01.tsig_key</code></td><td></td></tr>
+          <tr><td><code>--acme-dns-tsig-secret</code></td><td><code>acme.dns01.tsig_secret</code></td><td>A <code>secret:</code> reference, as before.</td></tr>
+          <tr><td><code>--acme-dns-tsig-algorithm</code></td><td><code>acme.dns01.tsig_algorithm</code></td><td></td></tr>
+          <tr><td><code>--dashboard</code></td><td><code>dashboard.enabled</code></td><td></td></tr>
+          <tr><td><code>--dashboard-origins</code></td><td><code>dashboard.origins</code></td><td>A list.</td></tr>
+          <tr><td><code>--listen</code></td><td><code>bind.api_addr</code></td><td>Replaces the file's five <code>bind.api_*</code> listener attributes. <code>--listen none</code> has no successor: the migration removes them, and an absent <code>api_addr</code> means socket only.</td></tr>
+          <tr><td><code>--listen-cert</code></td><td><code>bind.api_cert</code></td><td></td></tr>
+          <tr><td><code>--listen-key</code></td><td><code>bind.api_key</code></td><td></td></tr>
+          <tr><td><code>--insecure-cookies</code></td><td><code>auth.insecure_cookies</code></td><td></td></tr>
+          <tr><td><code>--audit-retention</code></td><td><code>audit.retention</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--oidc-issuer</code></td><td><code>auth.oidc.issuer</code></td><td></td></tr>
+          <tr><td><code>--oidc-client-id</code></td><td><code>auth.oidc.client_id</code></td><td></td></tr>
+          <tr><td><code>--oidc-client-secret</code></td><td><code>auth.oidc.client_secret</code></td><td>A <code>secret:</code> reference, as before.</td></tr>
+          <tr><td><code>--oidc-redirect-url</code></td><td><code>auth.oidc.redirect_url</code></td><td></td></tr>
+          <tr><td><code>--oidc-scopes</code></td><td><code>auth.oidc.scopes</code></td><td>A list. <code>[]</code> means no extra scopes.</td></tr>
+          <tr><td><code>--oidc-role-claim</code></td><td><code>auth.oidc.role_claim</code></td><td></td></tr>
+          <tr><td><code>--oidc-admin-claims</code></td><td><code>auth.oidc.admin_claims</code></td><td>A list.</td></tr>
+          <tr><td><code>--oidc-viewer-claims</code></td><td><code>auth.oidc.viewer_claims</code></td><td>A list.</td></tr>
+          <tr><td><code>--ldap-url</code></td><td><code>auth.ldap.url</code></td><td></td></tr>
+          <tr><td><code>--ldap-bind-dn</code></td><td><code>auth.ldap.bind_dn</code></td><td></td></tr>
+          <tr><td><code>--ldap-bind-password</code></td><td><code>auth.ldap.bind_password</code></td><td>A <code>secret:</code> reference, as before.</td></tr>
+          <tr><td><code>--ldap-user-base-dn</code></td><td><code>auth.ldap.user_base_dn</code></td><td></td></tr>
+          <tr><td><code>--ldap-user-filter</code></td><td><code>auth.ldap.user_filter</code></td><td></td></tr>
+          <tr><td><code>--ldap-group-base-dn</code></td><td><code>auth.ldap.group_base_dn</code></td><td></td></tr>
+          <tr><td><code>--ldap-group-filter</code></td><td><code>auth.ldap.group_filter</code></td><td></td></tr>
+          <tr><td><code>--ldap-admin-groups</code></td><td><code>auth.ldap.admin_groups</code></td><td>A list.</td></tr>
+          <tr><td><code>--ldap-viewer-groups</code></td><td><code>auth.ldap.viewer_groups</code></td><td>A list.</td></tr>
+          <tr><td><code>--ldap-ca</code></td><td><code>auth.ldap.ca_file</code></td><td></td></tr>
+          <tr><td><code>--metrics-interval</code></td><td><code>metrics.interval</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--containerd-metrics</code></td><td><code>metrics.containerd_url</code></td><td><code>"off"</code> still disables it.</td></tr>
+          <tr><td><code>--edge-metrics</code></td><td><code>metrics.edge_url</code></td><td><code>"off"</code> still disables it.</td></tr>
+          <tr><td><code>--autoscale</code></td><td><code>scaling.enabled</code></td><td></td></tr>
+          <tr><td><code>--buildkit</code></td><td><code>builds.buildkit_addr</code></td><td><code>"off"</code> still disables it.</td></tr>
+          <tr><td><code>--build-log-dir</code></td><td><code>builds.log_dir</code></td><td></td></tr>
+          <tr><td><code>--sync-interval</code></td><td><code>gitops.sync_interval</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--notify-allow-private</code></td><td><code>notifications.allow_private</code></td><td></td></tr>
+          <tr><td><code>--notify-allow-http</code></td><td><code>notifications.allow_http</code></td><td></td></tr>
+          <tr><td><code>--event-retention</code></td><td><code>notifications.event_retention</code></td><td></td></tr>
+          <tr><td><code>--insecure-registry</code></td><td><code>builds.insecure_registry</code></td><td></td></tr>
+          <tr><td><code>--registry</code></td><td><code>builds.registry_addr</code></td><td><code>"off"</code> still disables it.</td></tr>
+          <tr><td><code>--log-level</code></td><td><code>log_level</code></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="upgrade-migrate-edge">Edge flags</h3>
+    <p>Each former <code>kanea edge</code> flag and the attribute that replaces it.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Former flag</th><th>Attribute in <code>kanea.hcl</code></th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>--routes</code></td><td><code>edge.routes_file</code></td><td>Shared with kanead's <code>--edge-routes</code>.</td></tr>
+          <tr><td><code>--http</code></td><td><code>bind.edge_http</code></td><td></td></tr>
+          <tr><td><code>--https</code></td><td><code>bind.edge_https</code></td><td><code>"off"</code> still serves plaintext only.</td></tr>
+          <tr><td><code>--certs</code></td><td><code>edge.certs_file</code></td><td>Shared with kanead's <code>--edge-certs</code>.</td></tr>
+          <tr><td><code>--status</code></td><td><code>edge.status_addr</code></td><td><code>"off"</code> still disables it.</td></tr>
+          <tr><td><code>--poll</code></td><td><code>edge.poll_interval</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--drain</code></td><td><code>edge.drain_timeout</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--publish-drain</code></td><td><code>edge.publish.drain_timeout</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--max-published-conns</code></td><td><code>edge.publish.max_conns</code></td><td></td></tr>
+          <tr><td><code>--functions-port</code></td><td><code>edge.functions_port</code></td><td></td></tr>
+          <tr><td><code>--body-timeout</code></td><td><code>edge.body_timeout</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--upstream-timeout</code></td><td><code>edge.upstream_timeout</code></td><td>Duration string.</td></tr>
+          <tr><td><code>--security-headers</code></td><td><code>edge.security_headers</code></td><td></td></tr>
+          <tr><td><code>--rate-limit-buckets</code></td><td><code>edge.rate_limit_buckets</code></td><td></td></tr>
+          <tr><td><code>--memory-limit</code></td><td><code>edge.memory_limit</code></td><td></td></tr>
+          <tr><td><code>--log-level</code></td><td><code>edge.log_level</code></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="upgrade-migrate-env">Environment variables</h3>
+    <p>Two variables set on the kanead unit are attributes too.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Former variable</th><th>Attribute in <code>kanea.hcl</code></th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>KANEA_REPO</code></td><td><code>upgrade.repo</code></td><td>The install script still reads the variable for itself.</td></tr>
+          <tr><td><code>KANEA_REQUIRE_SIGNATURE=1</code></td><td><code>upgrade.require_signature</code></td><td>Becomes <code>true</code>. The install script still reads the variable for itself.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="upgrade-uninstall">Uninstall</h2>
+    <p>
+      These steps remove Kanea and everything it stored. The paths are the defaults; if
+      your <a href="concepts.html#term-node-config">node config</a> sets
+      <code>data_dir</code> or <code>alloc_log_dir</code>, use those paths instead.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">Note</b>
+      <p>
+        The data directory, <code>/var/lib/kanea</code>, holds the master key, every
+        stored secret and every local volume. Deleting it is permanent. If you may want
+        any of it again, <a href="backups.html#backups-destination">take a backup</a> and
+        copy the volume data off the node first.
+      </p>
+    </div>
+
+    <ol class="steps">
+      <li>
+        <h3>Stop and disable the units</h3>
+        <pre class="plain">sudo systemctl disable --now kanead kanea-edge kanea-buildkit kanea-containerd</pre>
+        <p>
+          <code>systemctl is-active kanead kanea-edge</code> then prints
+          <code>inactive</code> twice. On a node set up with
+          <code>--containerd external</code> there is no <code>kanea-containerd</code>
+          unit; leave it out.
+        </p>
+      </li>
+      <li>
+        <h3>Remove the unit files</h3>
+        <pre class="plain">cd /etc/systemd/system
+sudo rm -f kanead.service kanea-edge.service kanea-buildkit.service \
+  kanea-containerd.service kanea.slice kanea-workloads.slice
+sudo rm -rf kanead.service.d kanea-edge.service.d
+sudo systemctl daemon-reload</pre>
+        <p>
+          With an adopted containerd, also remove
+          <code>/etc/systemd/system/containerd.service.d/10-kanea-slice.conf</code>.
+        </p>
+      </li>
+      <li>
+        <h3>Reboot</h3>
+        <pre class="plain">sudo reboot</pre>
+        <p>
+          Stopping the daemons leaves workload containers running by design. A reboot
+          ends them and clears the runtime state under <code>/run/kanea</code>,
+          <code>/run/kanea-edge</code> and <code>/sys/fs/bpf/kanea</code>. With the units
+          gone, nothing of Kanea starts again.
+        </p>
+      </li>
+      <li>
+        <h3>Remove the component prefix</h3>
+        <pre class="plain">sudo rm -rf /usr/local/lib/kanea</pre>
+        <p>This removes containerd, runc, buildkit and the wasmtime shim that Kanea installed.</p>
+      </li>
+      <li>
+        <h3>Remove the configuration</h3>
+        <pre class="plain">sudo rm -rf /etc/kanea</pre>
+        <p>
+          This removes <code>kanea.hcl</code>, the containerd config and the
+          <code>api.crt</code>/<code>api.key</code> pair.
+        </p>
+      </li>
+      <li>
+        <h3>Remove the data directory</h3>
+        <pre class="plain">sudo rm -rf /var/lib/kanea</pre>
+        <p>
+          This is the step that cannot be undone: the master key, the Store, the secrets,
+          the volumes, the image store and the build cache all live here.
+        </p>
+      </li>
+      <li>
+        <h3>Remove the log directory</h3>
+        <pre class="plain">sudo rm -rf /var/log/kanea</pre>
+      </li>
+      <li>
+        <h3>Remove the service accounts</h3>
+        <pre class="plain">sudo userdel kanea-edge
+sudo userdel kanea-buildkit
+sudo userdel kanea-s3
+sudo groupdel kanea</pre>
+        <p>
+          <code>kanea-edge</code> runs the edge, <code>kanea-buildkit</code> runs builds,
+          <code>kanea-s3</code> runs the S3 mount helpers, and the <code>kanea</code>
+          group grants CLI access. A command that reports an unknown user or group means
+          that account was never created; carry on.
+        </p>
+      </li>
+      <li>
+        <h3>Remove the binary</h3>
+        <pre class="plain">sudo rm -f /usr/local/bin/kanea</pre>
+        <p><code>command -v kanea</code> then prints nothing.</p>
+      </li>
+    </ol>
+
+    <p>
+      Two edits to shared system files remain, and both are harmless to leave. The
+      installer adds <code>user_allow_other</code> to <code>/etc/fuse.conf</code> if it
+      is not already set, and a <code>kanea-buildkit</code> line to
+      <code>/etc/subuid</code> and <code>/etc/subgid</code>. Remove them by hand if you
+      want the machine exactly as it was.
+    </p>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

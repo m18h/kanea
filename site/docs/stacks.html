@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sample stacks - Kanea docs</title>
+<meta name="description" content="Copy a complete Kanea spec: a static site, apps with a database, a media server, SMB and S3 volumes, or a three-broker Kafka cluster.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1 id="stacks">Sample stacks</h1>
+    <p>
+      Five complete <a href="concepts.html#term-spec">specs</a> to copy, from a static site
+      to a Kafka cluster. Change the names and domains, then run <code>kanea plan</code>
+      first: it reports anything the copy broke before anything runs.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Stack</th><th>Shows</th><th>The node needs</th></tr></thead>
+        <tbody>
+          <tr><td><a href="#stacks-site">A static site</a></td><td>Replicas, a public domain, a health check</td><td><code>acme.email</code> in the <a href="concepts.html#term-node-config">node config</a></td></tr>
+          <tr><td><a href="#stacks-db">Two apps and a database</a></td><td><code>depends_on</code>, service references, one shared secret</td><td><code>acme.email</code>, one secret</td></tr>
+          <tr><td><a href="#stacks-media">Jellyfin with local media</a></td><td>A host directory, a GPU, a LAN-only port</td><td>An allowed host path and a device grant</td></tr>
+          <tr><td><a href="#stacks-storage">SMB and S3 volumes</a></td><td>Volumes backed by a NAS share and a bucket</td><td><code>acme.email</code>, two secrets</td></tr>
+          <tr><td><a href="#stacks-kafka">A Kafka cluster</a></td><td>Stateful peers with stable names</td><td>Nothing extra</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="stacks-site">A static site</h2>
+    <p>
+      Two replicas behind a Let's Encrypt certificate, with a health check.
+    </p>
+    <p>Before you run it:</p>
+    <ul>
+      <li>Point <code>example.com</code> and <code>www.example.com</code> at the node, and
+        keep ports 80 and 443 reachable.</li>
+      <li>Set <a href="node-config.html#nodeconfig-acme"><code>acme.email</code></a> in the
+        node config. Without it the node
+        requests no certificate. <a href="domains.html#dns-certificates">Domains and
+        HTTPS</a> has the steps.</li>
+    </ul>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>site.hcl</span></div>
+<pre>spec_version = 1
+
+<span class="k">project</span> <span class="s">"web"</span> {}
+
+<span class="k">service</span> <span class="s">"site"</span> {
+  project = <span class="s">"web"</span>
+  count   = 2
+
+  <span class="k">task</span> <span class="s">"nginx"</span> {
+    image = <span class="s">"nginx:1.27-alpine"</span>
+
+    <span class="k">resources</span> {
+      cpu    = 200
+      memory = 128
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"http"</span> { container = 80 }
+  }
+
+  <span class="k">expose</span> {
+    domains = [<span class="s">"example.com"</span>, <span class="s">"www.example.com"</span>]
+    <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
+  }
+
+  <span class="k">health_check</span> <span class="s">"http"</span> {
+    type     = <span class="s">"http"</span>
+    path     = <span class="s">"/"</span>
+    port     = <span class="s">"http"</span>
+    interval = <span class="s">"10s"</span>
+    timeout  = <span class="s">"2s"</span>
+    failures = 3
+  }
+}</pre>
+    </div>
+
+    <pre class="plain">kanea plan site.hcl
+kanea run site.hcl --wait=60s
+kanea status web/site</pre>
+    <p>
+      Keep the health check when you adapt this. A rolling deploy waits on it, and so does
+      any service that lists this one in <code>depends_on</code>. It is also how a replica
+      that stops answering shows up in <code>kanea status</code>.
+    </p>
+    <p>
+      To serve your own image, add a <a href="spec.html#spec-build"><code>build</code></a>
+      block. The pipeline then builds and pins a digest on every push.
+    </p>
+
+    <h2 id="stacks-db">Two apps and a database</h2>
+    <p>
+      A frontend and an API that share PostgreSQL and Redis. <code>depends_on</code> holds
+      the apps back until their backends are healthy, which is why postgres and redis
+      declare checks.
+    </p>
+    <p>
+      The <code>${service.…}</code> references resolve to internal DNS names when an
+      <a href="concepts.html#term-alloc">alloc</a> starts, so the file hard-codes no
+      address. One secret is referenced from two services and never written in the file.
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>paste.hcl</span></div>
+<pre>spec_version = 1
+
+<span class="k">project</span> <span class="s">"paste"</span> {
+  description = <span class="s">"Pastebin: frontend, API, database, cache"</span>
+}
+
+<span class="k">storage</span> <span class="s">"db-data"</span> {
+  type = <span class="s">"local"</span>
+}
+
+<span class="k">service</span> <span class="s">"postgres"</span> {
+  project = <span class="s">"paste"</span>
+
+  <span class="k">task</span> <span class="s">"db"</span> {
+    image = <span class="s">"postgres:16-alpine"</span>
+    env = {
+      POSTGRES_DB       = <span class="s">"paste"</span>
+      POSTGRES_USER     = <span class="s">"paste"</span>
+      POSTGRES_PASSWORD = <span class="s">"secret:paste/db-password"</span>
+    }
+    <span class="k">resources</span> {
+      cpu    = 1000
+      memory = 1024
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"pg"</span> { container = 5432 }
+  }
+
+  <span class="k">volume</span> <span class="s">"data"</span> {
+    storage    = <span class="s">"db-data"</span>
+    mount_path = <span class="s">"/var/lib/postgresql/data"</span>
+  }
+
+  <span class="k">health_check</span> <span class="s">"up"</span> {
+    type     = <span class="s">"tcp"</span>
+    port     = <span class="s">"pg"</span>
+    interval = <span class="s">"10s"</span>
+  }
+}
+
+<span class="k">service</span> <span class="s">"redis"</span> {
+  project = <span class="s">"paste"</span>
+
+  <span class="k">task</span> <span class="s">"cache"</span> {
+    image   = <span class="s">"redis:7-alpine"</span>
+    command = [<span class="s">"redis-server"</span>, <span class="s">"--save"</span>, <span class="s">""</span>]
+    <span class="k">resources</span> {
+      cpu    = 250
+      memory = 256
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"redis"</span> { container = 6379 }
+  }
+
+  <span class="k">health_check</span> <span class="s">"up"</span> {
+    type     = <span class="s">"tcp"</span>
+    port     = <span class="s">"redis"</span>
+    interval = <span class="s">"10s"</span>
+  }
+}
+
+<span class="k">service</span> <span class="s">"api"</span> {
+  project    = <span class="s">"paste"</span>
+  count      = 2
+  depends_on = [<span class="s">"postgres"</span>, <span class="s">"redis"</span>]
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    image = <span class="s">"registry.example.com/paste/api:1.4.2"</span>
+    env = {
+      DB_HOST     = <span class="s">"${service.postgres.host}"</span>
+      DB_PORT     = <span class="s">"${service.postgres.port.pg}"</span>
+      DB_USER     = <span class="s">"paste"</span>
+      DB_PASSWORD = <span class="s">"secret:paste/db-password"</span>
+      REDIS_ADDR  = <span class="s">"${service.redis.host}:${service.redis.port.redis}"</span>
+    }
+    <span class="k">resources</span> {
+      cpu    = 500
+      memory = 512
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"http"</span> { container = 8080 }
+  }
+
+  <span class="k">expose</span> {
+    domains = [<span class="s">"api.paste.example.com"</span>]
+    <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
+
+    <span class="k">rate_limit</span> {
+      requests = 300
+      window   = <span class="s">"1m"</span>
+      per      = <span class="s">"ip"</span>
+      burst    = 50
+    }
+  }
+
+  <span class="k">health_check</span> <span class="s">"http"</span> {
+    type     = <span class="s">"http"</span>
+    path     = <span class="s">"/healthz"</span>
+    port     = <span class="s">"http"</span>
+    interval = <span class="s">"10s"</span>
+    timeout  = <span class="s">"2s"</span>
+    failures = 3
+  }
+
+  <span class="k">update</span> {
+    strategy     = <span class="s">"rolling"</span>
+    max_parallel = 1
+    min_healthy  = <span class="s">"30s"</span>
+  }
+}
+
+<span class="k">service</span> <span class="s">"web"</span> {
+  project    = <span class="s">"paste"</span>
+  count      = 2
+  depends_on = [<span class="s">"api"</span>]
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    image = <span class="s">"registry.example.com/paste/web:1.4.2"</span>
+    env = {
+      API_URL = <span class="s">"http://${service.api.host}:${service.api.port.http}"</span>
+    }
+    <span class="k">resources</span> {
+      cpu    = 250
+      memory = 256
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"http"</span> { container = 3000 }
+  }
+
+  <span class="k">expose</span> {
+    domains = [<span class="s">"paste.example.com"</span>]
+    <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
+  }
+
+  <span class="k">health_check</span> <span class="s">"http"</span> {
+    type     = <span class="s">"http"</span>
+    path     = <span class="s">"/"</span>
+    port     = <span class="s">"http"</span>
+    interval = <span class="s">"10s"</span>
+    timeout  = <span class="s">"2s"</span>
+    failures = 3
+  }
+}</pre>
+    </div>
+
+    <p>
+      Create the secret, then deploy. <a href="secrets.html#secrets-put">Secrets</a>
+      explains <code>kanea secret put</code>.
+    </p>
+    <pre class="plain">kanea secret put paste/db-password     # value on stdin
+kanea run paste.hcl --wait=90s</pre>
+    <p>Three details worth copying:</p>
+    <ul>
+      <li><code>redis-server --save ""</code> is written as an argument array, which can
+        carry the empty argument. A shell string could not.</li>
+      <li>The rate limit sits on the API route only. On the frontend it would limit your
+        own pages.</li>
+      <li>postgres and redis declare no <code>expose</code> and no <code>publish</code>.
+        Only this project's services reach them.</li>
+    </ul>
+
+    <h2 id="stacks-media">Jellyfin with local media</h2>
+    <p>
+      A media server reads a directory you already own and transcodes on a GPU. A spec
+      cannot grant itself either one: the node has to allow the host path and define the
+      device grant.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Allow the path and define the grant on the node</h3>
+        <p>Add both to <code>/etc/kanea/kanea.hcl</code>:</p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">storage</span> {
+  <span class="k">allowed_host_paths</span> = [<span class="s">"/srv/media"</span>]
+}
+
+<span class="k">device</span> <span class="s">"gpu"</span> {
+  <span class="k">nodes</span> = [<span class="s">"/dev/dri/renderD128"</span>]
+  <span class="k">allow</span> = [<span class="s">"media"</span>]
+}</code></pre>
+        <p>
+          <code>/srv/media</code> must already exist.
+          <a href="volumes.html#volumes-host">Host paths</a> and
+          <a href="volumes.html#volumes-devices">device grants</a> are explained in Volumes
+          and host access.
+        </p>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <p>
+          Run <code>sudo systemctl restart kanead</code>.
+          <a href="concepts.html#term-kanead">kanead</a> reads the node config once, at
+          startup. Running workloads are not interrupted.
+        </p>
+      </li>
+      <li>
+        <h3>Deploy the spec</h3>
+        <p>
+          Save the file below as <code>media.hcl</code> and run
+          <code>kanea run media.hcl</code>. Jellyfin answers at
+          <code>http://&lt;node&gt;:8096</code> from the LAN.
+        </p>
+      </li>
+    </ol>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>media.hcl</span></div>
+<pre>spec_version = 1
+
+<span class="k">project</span> <span class="s">"media"</span> {}
+
+<span class="k">storage</span> <span class="s">"config"</span> {
+  type = <span class="s">"local"</span>
+}
+
+<span class="k">storage</span> <span class="s">"library"</span> {
+  type = <span class="s">"host"</span>
+  path = <span class="s">"/srv/media"</span>
+}
+
+<span class="k">service</span> <span class="s">"jellyfin"</span> {
+  project = <span class="s">"media"</span>
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    image = <span class="s">"jellyfin/jellyfin:10.9.11"</span>
+
+    <span class="k">device</span> <span class="s">"dri"</span> {
+      grant = <span class="s">"gpu"</span> <span class="c"># hardware transcoding; the grant is defined on the node</span>
+    }
+
+    <span class="k">resources</span> {
+      cpu    = 4000
+      memory = 4096
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"http"</span> { container = 8096 }
+
+    <span class="k">publish</span> <span class="s">"http"</span> {
+      host = 8096 <span class="c"># http://&lt;node&gt;:8096, LAN only</span>
+      <span class="k">ip_restriction</span> { allow = [<span class="s">"192.168.0.0/16"</span>] }
+    }
+  }
+
+  <span class="k">volume</span> <span class="s">"config"</span> {
+    storage    = <span class="s">"config"</span>
+    mount_path = <span class="s">"/config"</span>
+  }
+
+  <span class="k">volume</span> <span class="s">"media"</span> {
+    storage    = <span class="s">"library"</span>
+    mount_path = <span class="s">"/media"</span>
+    read_only  = true
+  }
+
+  <span class="k">health_check</span> <span class="s">"http"</span> {
+    type     = <span class="s">"http"</span>
+    path     = <span class="s">"/health"</span>
+    port     = <span class="s">"http"</span>
+    interval = <span class="s">"15s"</span>
+    timeout  = <span class="s">"5s"</span>
+    failures = 3
+  }
+}</pre>
+    </div>
+
+    <p>
+      Without the node's half the spec is valid and the alloc fails with a message naming
+      the missing grant. It does not start without the GPU, because a transcoder that falls
+      back to software looks healthy and is not.
+    </p>
+    <ul>
+      <li>The library is mounted <code>read_only</code>. <code>/config</code> is an
+        ordinary local volume that Kanea manages.</li>
+      <li>The <code>publish</code> block binds port 8096 on the node, and
+        <a href="concepts.html#term-edge">the edge</a> enforces the CIDR allowlist. The
+        port must be inside the node's
+        <a href="node-config.html#nodeconfig-edge"><code>edge.publish.ports</code></a>
+        range.</li>
+      <li>For access from outside, add an
+        <a href="spec.html#spec-expose"><code>expose</code></a> block with a domain. Do
+        not widen the CIDR.</li>
+    </ul>
+
+    <h2 id="stacks-storage">SMB and S3 volumes</h2>
+    <p>
+      The same <code>volume</code> block, backed by storage that is not on the node: a
+      file browser over a NAS share and a read-only bucket.
+    </p>
+    <p>
+      Each driver takes its credential from one secret whose value is
+      <code>&lt;user&gt;:&lt;secret&gt;</code>: username and password for SMB, access key
+      and secret key for S3. Omit <code>auth_ref</code> for a public bucket or an open
+      share.
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>files.hcl</span></div>
+<pre>spec_version = 1
+
+<span class="k">project</span> <span class="s">"files"</span> {}
+
+<span class="c"># A share on the NAS. The secret's value is "&lt;username&gt;:&lt;password&gt;".</span>
+<span class="k">storage</span> <span class="s">"nas"</span> {
+  type     = <span class="s">"smb"</span>
+  server   = <span class="s">"192.168.1.20"</span>
+  share    = <span class="s">"documents"</span>
+  auth_ref = <span class="s">"secret:files/nas"</span>
+}
+
+<span class="c"># A bucket, read-only. The secret's value is "&lt;access-key&gt;:&lt;secret-key&gt;".</span>
+<span class="k">storage</span> <span class="s">"archive"</span> {
+  type     = <span class="s">"s3"</span>
+  bucket   = <span class="s">"household-archive"</span>
+  endpoint = <span class="s">"https://minio.internal:9000"</span> <span class="c"># omit for AWS S3</span>
+  auth_ref = <span class="s">"secret:files/archive"</span>
+  mode     = <span class="s">"ro"</span>                          <span class="c"># mountpoint-s3; "rw" selects s3fs</span>
+}
+
+<span class="k">service</span> <span class="s">"filebrowser"</span> {
+  project = <span class="s">"files"</span>
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    image = <span class="s">"filebrowser/filebrowser:v2.32.0"</span>
+
+    <span class="k">user</span> {
+      uid = 1000
+      gid = 1000
+    }
+
+    <span class="k">resources</span> {
+      cpu    = 500
+      memory = 256
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"http"</span> { container = 80 }
+  }
+
+  <span class="k">expose</span> {
+    domains = [<span class="s">"files.example.com"</span>]
+    <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
+  }
+
+  <span class="k">volume</span> <span class="s">"documents"</span> {
+    storage    = <span class="s">"nas"</span>
+    mount_path = <span class="s">"/srv/documents"</span>
+  }
+
+  <span class="k">volume</span> <span class="s">"archive"</span> {
+    storage    = <span class="s">"archive"</span>
+    mount_path = <span class="s">"/srv/archive"</span>
+    read_only  = true
+  }
+
+  <span class="k">health_check</span> <span class="s">"http"</span> {
+    type     = <span class="s">"http"</span>
+    path     = <span class="s">"/health"</span>
+    port     = <span class="s">"http"</span>
+    interval = <span class="s">"15s"</span>
+    timeout  = <span class="s">"5s"</span>
+    failures = 3
+  }
+}</pre>
+    </div>
+
+    <p>Create both secrets, then deploy:</p>
+    <pre class="plain">kanea secret put files/nas          # username:password on stdin
+kanea secret put files/archive      # access-key:secret-key
+kanea run files.hcl</pre>
+    <ul>
+      <li>The <code>user</code> block makes the process run as <code>1000:1000</code>, and
+        the volumes inherit that ownership. It travels in the mount options, so it works
+        on a share the NAS controls.</li>
+      <li><code>host</code> and <code>nfs</code> volumes cannot carry ownership. Declaring
+        it on one is a plan error, and inheritance skips them.</li>
+      <li><code>mode</code> on the S3 storage selects the driver: <code>"ro"</code> is
+        mountpoint-s3 and the default, <code>"rw"</code> is s3fs. Keep a bucket for bulk,
+        read-mostly data.</li>
+      <li>A custom <code>endpoint</code> points at MinIO or another S3-compatible store.
+        Omit it for AWS.</li>
+      <li>An <code>nfs</code> export has the same shape, with <code>server</code> and
+        <code>export</code>.</li>
+      <li>A mount that cannot be established fails the alloc. A mount that dies later is
+        remounted.</li>
+    </ul>
+    <p>
+      <a href="volumes.html#volumes-network">Volumes and host access</a> covers the
+      network drivers, and the <a href="spec.html#spec-storage">storage reference</a> lists
+      every attribute.
+    </p>
+
+    <h2 id="stacks-kafka">A Kafka cluster (KRaft)</h2>
+    <p>
+      Three brokers and no ZooKeeper. Each broker is its own service with one replica,
+      because a broker has an identity: a node id and an advertised name that must survive
+      restarts. Replicas of one service are interchangeable.
+    </p>
+    <p>
+      Three services give each broker its own DNS name, its own data volume and its own
+      line in the quorum.
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>kafka.hcl</span></div>
+<pre>spec_version = 1
+
+<span class="k">project</span> <span class="s">"kafka"</span> {
+  description = <span class="s">"Three-broker KRaft cluster, no ZooKeeper"</span>
+}
+
+<span class="k">storage</span> <span class="s">"kafka-data"</span> {
+  type = <span class="s">"local"</span>
+}
+
+<span class="k">service</span> <span class="s">"kafka-1"</span> {
+  project = <span class="s">"kafka"</span>
+
+  <span class="k">task</span> <span class="s">"broker"</span> {
+    image = <span class="s">"apache/kafka:4.0.0"</span>
+    env = {
+      KAFKA_NODE_ID                          = <span class="s">"1"</span>
+      KAFKA_PROCESS_ROLES                    = <span class="s">"broker,controller"</span>
+      KAFKA_LISTENERS                        = <span class="s">"PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"</span>
+      KAFKA_ADVERTISED_LISTENERS             = <span class="s">"PLAINTEXT://kafka-1.kafka.kanea:9092"</span>
+      KAFKA_CONTROLLER_LISTENER_NAMES        = <span class="s">"CONTROLLER"</span>
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP   = <span class="s">"PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"</span>
+      KAFKA_CONTROLLER_QUORUM_VOTERS         = <span class="s">"1@kafka-1.kafka.kanea:9093,2@kafka-2.kafka.kanea:9093,3@kafka-3.kafka.kanea:9093"</span>
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR = <span class="s">"3"</span>
+      KAFKA_LOG_DIRS                         = <span class="s">"/var/lib/kafka/data"</span>
+      CLUSTER_ID                             = <span class="s">"MkU3OEVBNTcwNTJENDM2Qg"</span>
+    }
+    <span class="k">resources</span> {
+      cpu    = 1000
+      memory = 2048
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"client"</span>     { container = 9092 }
+    <span class="k">port</span> <span class="s">"controller"</span> { container = 9093 }
+  }
+
+  <span class="k">volume</span> <span class="s">"data"</span> {
+    storage    = <span class="s">"kafka-data"</span>
+    mount_path = <span class="s">"/var/lib/kafka/data"</span>
+  }
+
+  <span class="k">health_check</span> <span class="s">"up"</span> {
+    type     = <span class="s">"tcp"</span>
+    port     = <span class="s">"client"</span>
+    interval = <span class="s">"15s"</span>
+    timeout  = <span class="s">"5s"</span>
+    failures = 3
+  }
+}
+
+<span class="k">service</span> <span class="s">"kafka-2"</span> {
+  project = <span class="s">"kafka"</span>
+
+  <span class="k">task</span> <span class="s">"broker"</span> {
+    image = <span class="s">"apache/kafka:4.0.0"</span>
+    env = {
+      KAFKA_NODE_ID                          = <span class="s">"2"</span>
+      KAFKA_PROCESS_ROLES                    = <span class="s">"broker,controller"</span>
+      KAFKA_LISTENERS                        = <span class="s">"PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"</span>
+      KAFKA_ADVERTISED_LISTENERS             = <span class="s">"PLAINTEXT://kafka-2.kafka.kanea:9092"</span>
+      KAFKA_CONTROLLER_LISTENER_NAMES        = <span class="s">"CONTROLLER"</span>
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP   = <span class="s">"PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"</span>
+      KAFKA_CONTROLLER_QUORUM_VOTERS         = <span class="s">"1@kafka-1.kafka.kanea:9093,2@kafka-2.kafka.kanea:9093,3@kafka-3.kafka.kanea:9093"</span>
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR = <span class="s">"3"</span>
+      KAFKA_LOG_DIRS                         = <span class="s">"/var/lib/kafka/data"</span>
+      CLUSTER_ID                             = <span class="s">"MkU3OEVBNTcwNTJENDM2Qg"</span>
+    }
+    <span class="k">resources</span> {
+      cpu    = 1000
+      memory = 2048
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"client"</span>     { container = 9092 }
+    <span class="k">port</span> <span class="s">"controller"</span> { container = 9093 }
+  }
+
+  <span class="k">volume</span> <span class="s">"data"</span> {
+    storage    = <span class="s">"kafka-data"</span>
+    mount_path = <span class="s">"/var/lib/kafka/data"</span>
+  }
+
+  <span class="k">health_check</span> <span class="s">"up"</span> {
+    type     = <span class="s">"tcp"</span>
+    port     = <span class="s">"client"</span>
+    interval = <span class="s">"15s"</span>
+    timeout  = <span class="s">"5s"</span>
+    failures = 3
+  }
+}
+
+<span class="k">service</span> <span class="s">"kafka-3"</span> {
+  project = <span class="s">"kafka"</span>
+
+  <span class="k">task</span> <span class="s">"broker"</span> {
+    image = <span class="s">"apache/kafka:4.0.0"</span>
+    env = {
+      KAFKA_NODE_ID                          = <span class="s">"3"</span>
+      KAFKA_PROCESS_ROLES                    = <span class="s">"broker,controller"</span>
+      KAFKA_LISTENERS                        = <span class="s">"PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"</span>
+      KAFKA_ADVERTISED_LISTENERS             = <span class="s">"PLAINTEXT://kafka-3.kafka.kanea:9092"</span>
+      KAFKA_CONTROLLER_LISTENER_NAMES        = <span class="s">"CONTROLLER"</span>
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP   = <span class="s">"PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"</span>
+      KAFKA_CONTROLLER_QUORUM_VOTERS         = <span class="s">"1@kafka-1.kafka.kanea:9093,2@kafka-2.kafka.kanea:9093,3@kafka-3.kafka.kanea:9093"</span>
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR = <span class="s">"3"</span>
+      KAFKA_LOG_DIRS                         = <span class="s">"/var/lib/kafka/data"</span>
+      CLUSTER_ID                             = <span class="s">"MkU3OEVBNTcwNTJENDM2Qg"</span>
+    }
+    <span class="k">resources</span> {
+      cpu    = 1000
+      memory = 2048
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"client"</span>     { container = 9092 }
+    <span class="k">port</span> <span class="s">"controller"</span> { container = 9093 }
+  }
+
+  <span class="k">volume</span> <span class="s">"data"</span> {
+    storage    = <span class="s">"kafka-data"</span>
+    mount_path = <span class="s">"/var/lib/kafka/data"</span>
+  }
+
+  <span class="k">health_check</span> <span class="s">"up"</span> {
+    type     = <span class="s">"tcp"</span>
+    port     = <span class="s">"client"</span>
+    interval = <span class="s">"15s"</span>
+    timeout  = <span class="s">"5s"</span>
+    failures = 3
+  }
+}</pre>
+    </div>
+
+    <pre class="plain">kanea run kafka.hcl --wait=120s
+kanea ps --project=kafka
+kanea logs kafka/kafka-1 --tail=50    # watch the quorum form</pre>
+    <ul>
+      <li>The quorum voters and advertised listeners are literal internal DNS names,
+        <code>&lt;service&gt;.&lt;project&gt;.kanea</code>. A <code>${service.…}</code>
+        reference is also a start dependency, and three brokers referencing each other is
+        a cycle that <code>kanea plan</code> rejects.</li>
+      <li>The shared <code>storage "kafka-data"</code> block is safe. Each service's
+        volume gets its own directory beneath it.</li>
+      <li>A client in the same project bootstraps with all three names:
+        <code>kafka-1.kafka.kanea:9092,kafka-2.kafka.kanea:9092,kafka-3.kafka.kanea:9092</code>.</li>
+      <li>A service in another project also needs <code>allow_from</code> naming it on
+        each broker.</li>
+      <li>Do not publish port 9092. Kafka hands clients the advertised names, and those
+        resolve only inside the node.</li>
+      <li>Generate your own <code>CLUSTER_ID</code> with
+        <code>kafka-storage.sh random-uuid</code>.</li>
+    </ul>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

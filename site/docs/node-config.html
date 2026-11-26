@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Node config (kanea.hcl) - Kanea docs</title>
+<meta name="description" content="Every stanza and attribute of /etc/kanea/kanea.hcl with its type, default and meaning, and how to apply a change to a node.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Reference</p>
+    <h1 id="nodeconfig">Node config (kanea.hcl)</h1>
+    <p>
+      <code>/etc/kanea/kanea.hcl</code> is the <a href="concepts.html#term-node-config">node config</a>:
+      every setting of <a href="concepts.html#term-kanead">kanead</a> and
+      <a href="concepts.html#term-edge">the edge</a> on this machine. This page lists every
+      stanza and attribute, with its type and default.
+    </p>
+    <p>
+      The file belongs to whoever owns the machine. A <a href="concepts.html#term-spec">spec</a>
+      can reference what the file permits and can never add to it, so somebody who can push
+      to a synced repository cannot grant themselves a host path or a device.
+    </p>
+
+    <h2 id="nodeconfig-rules">The rules of the file</h2>
+
+    <ul id="nodeconfig-file">
+      <li><b>The path is fixed.</b> Both daemons read <code>/etc/kanea/kanea.hcl</code> and nothing else. They take no flags and no arguments.</li>
+      <li><b>It is read once, at startup.</b> Nothing watches or reloads it, so an edit needs a restart. See <a href="#nodeconfig-apply">Apply a change</a>.</li>
+      <li><b>An absent file means every default.</b> Every attribute is optional, and one left out takes the default in its table below. <code>kanea init</code> writes the file with the values it settled; see <a href="install.html">Install a node</a>.</li>
+      <li><b>A malformed file refuses startup.</b> A file that does not parse, or breaks a stanza's rules, stops the daemon with an error naming the file and line. Nothing is half applied.</li>
+      <li><b>It is trust-checked before it is parsed.</b> It must be a regular file, owned by root or the daemon's own uid, and not group- or world-writable. World-readable is fine: it holds policy, not secrets.</li>
+      <li><b>An unknown attribute inside a stanza is an error.</b> There it is almost always a typo, and a misspelt <code>allowed_host_paths</code> would be a control that quietly did nothing.</li>
+      <li><b>An unknown top-level stanza is a startup warning</b> that names it. The daemon starts and ignores the stanza.</li>
+      <li><b>The edge reads only <code>bind</code> and <code>edge</code>.</b> A mistake in any other stanza stops kanead and never stops ingress. A syntax error anywhere in the file stops both.</li>
+    </ul>
+
+    <p>Four conventions hold for every attribute:</p>
+    <ul>
+      <li>A duration is a string such as <code>"30s"</code>, <code>"5m"</code> or <code>"12h"</code>.</li>
+      <li>A list is an HCL list, <code>["a", "b"]</code>, never a comma-separated string.</li>
+      <li>An address, path or URL that can be switched off takes the literal <code>"off"</code>. Its table row says so.</li>
+      <li>A credential is a <code>secret:&lt;path&gt;</code> reference into the node's store, never the value itself. See <a href="secrets.html#overview-secrets">Secrets</a>.</li>
+    </ul>
+
+    <h2 id="nodeconfig-stanzas">Stanzas at a glance</h2>
+
+    <p>
+      Each stanza appears at most once, except <code>provider</code>, <code>certificate</code>,
+      <code>device</code> and <code>socket</code>, which are labelled blocks you repeat.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Stanza</th><th>What it configures</th></tr></thead>
+        <tbody>
+          <tr><td><a href="#nodeconfig-top"><i>top level</i></a></td><td>Data and log directories, kanead's log level, the base domain.</td></tr>
+          <tr><td><a href="#nodeconfig-bind"><code>bind</code></a></td><td>Every listener the node opens: the API socket, the API and dashboard address, the edge's public ports.</td></tr>
+          <tr><td><a href="#nodeconfig-auth"><code>auth</code></a></td><td>Session cookies, single sign-on (OIDC) and directory login (LDAP).</td></tr>
+          <tr><td><a href="#nodeconfig-audit"><code>audit</code></a></td><td>How long audit entries are kept.</td></tr>
+          <tr><td><a href="#nodeconfig-dashboard"><code>dashboard</code></a></td><td>Whether the dashboard is served, and which extra origins may connect.</td></tr>
+          <tr><td><a href="#nodeconfig-network"><code>network</code></a></td><td>The address ranges allocs and services use.</td></tr>
+          <tr><td><a href="#nodeconfig-dns"><code>dns</code></a></td><td>The internal resolver's address and its upstream resolvers.</td></tr>
+          <tr><td><a href="#nodeconfig-storage"><code>storage</code></a></td><td>Where local volumes live and which host directories a spec may mount.</td></tr>
+          <tr><td><a href="#nodeconfig-images"><code>images</code></a></td><td>The default pull policy and image garbage collection.</td></tr>
+          <tr><td><a href="#nodeconfig-containerd"><code>containerd</code></a></td><td>The containerd socket.</td></tr>
+          <tr><td><a href="#nodeconfig-metrics"><code>metrics</code></a></td><td>Where and how often metrics are scraped.</td></tr>
+          <tr><td><a href="#nodeconfig-scaling"><code>scaling</code></a></td><td>Whether autoscaling acts.</td></tr>
+          <tr><td><a href="#nodeconfig-builds"><code>builds</code></a></td><td>BuildKit, build logs and the internal registry.</td></tr>
+          <tr><td><a href="#nodeconfig-gitops"><code>gitops</code></a></td><td>How often git sources are polled.</td></tr>
+          <tr><td><a href="#nodeconfig-secrets"><code>secrets</code>, <code>provider</code></a></td><td>External secret providers and their sync schedule.</td></tr>
+          <tr><td><a href="#nodeconfig-tls"><code>tls</code>, <code>certificate</code></a></td><td>The default certificate source, and certificates you supply.</td></tr>
+          <tr><td><a href="#nodeconfig-acme"><code>acme</code></a></td><td>The ACME account, directory and DNS-01 settings.</td></tr>
+          <tr><td><a href="#nodeconfig-edge"><code>edge</code></a></td><td>The ingress proxy: its files, timeouts, limits and published ports.</td></tr>
+          <tr><td><a href="#nodeconfig-notifications"><code>notifications</code></a></td><td>Which notification targets are allowed, and event retention.</td></tr>
+          <tr><td><a href="#nodeconfig-backup"><code>backup</code></a></td><td>State replication to a directory or S3.</td></tr>
+          <tr><td><a href="#nodeconfig-upgrade"><code>upgrade</code></a></td><td>Where releases come from and whether a signature is required.</td></tr>
+          <tr><td><a href="#nodeconfig-grants"><code>device</code>, <code>socket</code></a></td><td>Named device and socket grants, and the projects that may claim them.</td></tr>
+          <tr><td><a href="#nodeconfig-variables"><code>variables</code></a></td><td>Node-wide defaults for spec variables.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-top">Top-level attributes</h2>
+
+    <p>These four sit outside any stanza.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>data_dir</code></td><td>string</td><td><code>/var/lib/kanea</code></td><td>Where kanead keeps its state, the master key and local volumes.</td></tr>
+          <tr><td><code>alloc_log_dir</code></td><td>string</td><td><code>/var/log/kanea/allocs</code></td><td>Where each alloc's workload logs are written.</td></tr>
+          <tr><td><code>log_level</code></td><td>string</td><td><code>"info"</code></td><td>kanead's log level: <code>debug</code>, <code>info</code>, <code>warn</code> or <code>error</code>. The edge has its own, <a href="#nodeconfig-edge"><code>edge.log_level</code></a>.</td></tr>
+          <tr><td><code>base_domain</code></td><td>string</td><td>none</td><td>The domain exposed services get a name under, as <code>&lt;service&gt;.&lt;project&gt;.&lt;base_domain&gt;</code>. See <a href="domains.html">Domains and HTTPS</a>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-bind">bind: listeners</h2>
+
+    <p>
+      <code>bind</code> holds every listener the node opens. It covers two processes, which is
+      why each attribute carries a prefix: <code>api_</code> attributes belong to kanead and
+      <code>edge_</code> attributes to the edge.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>api_socket</code></td><td>string</td><td><code>/run/kanea/kanead.sock</code></td><td>The unix socket the CLI talks to.</td></tr>
+          <tr><td><code>api_addr</code></td><td>string</td><td>none (socket only)</td><td>The <code>host:port</code> the API and dashboard listen on. Every other <code>api_</code> attribute except <code>api_socket</code> requires it.</td></tr>
+          <tr><td><code>api_tls</code></td><td>string</td><td>derived, see below</td><td>How that listener is secured: <code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code>.</td></tr>
+          <tr><td><code>api_domain</code></td><td>string</td><td>none</td><td>The name on the listener's certificate. Required by <code>acme</code>, and by <code>self-signed</code> when <code>api_addr</code> binds every interface.</td></tr>
+          <tr><td><code>api_cert</code></td><td>string</td><td>none</td><td>Path to your own PEM certificate, for <code>provided</code>. Always set together with <code>api_key</code>.</td></tr>
+          <tr><td><code>api_key</code></td><td>string</td><td>none</td><td>Path to that certificate's private key.</td></tr>
+          <tr><td><code>edge_http</code></td><td>string</td><td><code>":80"</code></td><td>The edge's public HTTP listen address.</td></tr>
+          <tr><td><code>edge_https</code></td><td>string</td><td><code>":443"</code></td><td>The edge's public HTTPS listen address. <code>"off"</code> serves plaintext only.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>api_cert</code> and <code>api_key</code> are file paths, although they lack the
+      <code>_file</code> suffix other path attributes carry. kanead loads the pair once, at startup.
+    </p>
+
+    <h3 id="nodeconfig-bind-tls">TLS modes for the API listener</h3>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th><code>api_tls</code></th><th>The listener serves</th><th>Needs</th></tr></thead>
+        <tbody>
+          <tr><td><code>acme</code></td><td>A public certificate from the ACME CA.</td><td><code>api_domain</code>, and <a href="#nodeconfig-acme"><code>acme.email</code></a></td></tr>
+          <tr><td><code>self-signed</code></td><td>A certificate from the node's own CA, named <code>api_domain</code> or else <code>api_addr</code>'s host.</td><td><code>api_domain</code> when <code>api_addr</code> binds every interface</td></tr>
+          <tr><td><code>provided</code></td><td>Your own pair.</td><td><code>api_cert</code> and <code>api_key</code></td></tr>
+          <tr><td><code>plaintext</code></td><td>Plain HTTP. Beyond loopback, kanead logs a loud warning.</td><td>nothing</td></tr>
+          <tr><td><i>unset</i></td><td><code>provided</code> when a pair is set, plaintext on a loopback address.</td><td>Any other address is refused.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      What each mode means for reaching the dashboard is in
+      <a href="dashboard.html#arch-dashboard">The dashboard</a>. A contradiction is an error
+      at startup, never a silent preference:
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>If you write</th><th>The error says</th></tr></thead>
+        <tbody>
+          <tr><td>Only one of <code>api_cert</code> and <code>api_key</code></td><td>they go together</td></tr>
+          <tr><td>A pair, or any TLS attribute, with no <code>api_addr</code></td><td>TLS with no <code>api_addr</code> to serve it on</td></tr>
+          <tr><td><code>provided</code> with no pair</td><td><code>provided</code> needs <code>api_cert</code> and <code>api_key</code></td></tr>
+          <tr><td><code>plaintext</code> beside a pair</td><td>plaintext beside a TLS pair drops the pair; remove one</td></tr>
+          <tr><td><code>acme</code> or <code>self-signed</code> beside a pair</td><td>it issues its own certificate; remove the pair</td></tr>
+          <tr><td><code>acme</code> with no <code>api_domain</code></td><td>an IP cannot hold an ACME certificate</td></tr>
+          <tr><td><code>self-signed</code> on <code>0.0.0.0</code> with no <code>api_domain</code></td><td>set <code>api_domain</code> so the certificate has a name</td></tr>
+          <tr><td>Any other <code>api_tls</code> value</td><td>use one of acme, self-signed, provided, plaintext</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-auth">auth: sign-in</h2>
+
+    <p>
+      Password accounts and tokens need nothing here. The two nested blocks add single
+      sign-on and directory login; the setup walkthroughs are in
+      <a href="auth.html">Sign-in and access</a>.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>insecure_cookies</code></td><td>bool</td><td><code>false</code></td><td>Drops the <code>Secure</code> attribute from the session cookie. Set it to <code>true</code> only when the dashboard is reached over plain HTTP.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-auth-oidc">auth.oidc</h3>
+
+    <p>Setup steps: <a href="auth.html#auth-oidc">OIDC</a>.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>issuer</code></td><td>string</td><td>none</td><td>The identity provider's base URL. Without it the node offers password login only.</td></tr>
+          <tr><td><code>client_id</code></td><td>string</td><td>none</td><td>The OAuth client id registered with the provider.</td></tr>
+          <tr><td><code>client_secret</code></td><td>string</td><td>none</td><td>A <code>secret:</code> reference holding the client secret. Omit it for a public PKCE client.</td></tr>
+          <tr><td><code>redirect_url</code></td><td>string</td><td>none</td><td>The exact redirect URI registered with the provider. It ends in <code>/v1/auth/oidc/callback</code>.</td></tr>
+          <tr><td><code>role_claim</code></td><td>string</td><td><code>"groups"</code></td><td>The claim kanead reads to decide a user's role.</td></tr>
+          <tr><td><code>scopes</code></td><td>list of strings</td><td><code>["profile", "email"]</code></td><td>Scopes requested beyond <code>openid</code>. An explicit <code>[]</code> requests none.</td></tr>
+          <tr><td><code>admin_claims</code></td><td>list of strings</td><td>empty</td><td>Values of <code>role_claim</code> that grant the admin role.</td></tr>
+          <tr><td><code>viewer_claims</code></td><td>list of strings</td><td>empty</td><td>Values of <code>role_claim</code> that grant the viewer role.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-auth-ldap">auth.ldap</h3>
+
+    <p>Setup steps: <a href="auth.html#auth-ldap">LDAP</a>.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>url</code></td><td>string</td><td>none</td><td>The directory URL: <code>ldaps://host</code>, or <code>ldap://host</code> with StartTLS forced. Without it there is no LDAP login.</td></tr>
+          <tr><td><code>bind_dn</code></td><td>string</td><td>none</td><td>The service account DN the user search runs as. Omit it for an anonymous search.</td></tr>
+          <tr><td><code>bind_password</code></td><td>string</td><td>none</td><td>A <code>secret:</code> reference holding that account's password.</td></tr>
+          <tr><td><code>user_base_dn</code></td><td>string</td><td>none</td><td>Where users are searched.</td></tr>
+          <tr><td><code>user_filter</code></td><td>string</td><td><code>"(uid=%s)"</code></td><td>The filter that finds one user. Its one <code>%s</code> receives the escaped username. Active Directory wants <code>(sAMAccountName=%s)</code>.</td></tr>
+          <tr><td><code>group_base_dn</code></td><td>string</td><td>none</td><td>Where groups are searched. Set it together with <code>group_filter</code>, or omit both to read the user entry's <code>memberOf</code>.</td></tr>
+          <tr><td><code>group_filter</code></td><td>string</td><td>none</td><td>The group search filter. Its one <code>%s</code> receives the escaped user DN, as in <code>(member=%s)</code>.</td></tr>
+          <tr><td><code>ca_file</code></td><td>string</td><td>none</td><td>A PEM file trusting a private CA for the directory's TLS.</td></tr>
+          <tr><td><code>admin_groups</code></td><td>list of strings</td><td>empty</td><td>Group DNs that grant the admin role, matched without regard to case.</td></tr>
+          <tr><td><code>viewer_groups</code></td><td>list of strings</td><td>empty</td><td>Group DNs that grant the viewer role.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-audit">audit</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>retention</code></td><td>duration</td><td><code>"2160h"</code> (90 days)</td><td>How long audit entries are kept. <code>"0"</code> keeps them forever.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-dashboard">dashboard</h2>
+
+    <p>The dashboard is served on the API listener, so its address is <a href="#nodeconfig-bind"><code>bind.api_addr</code></a>.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>enabled</code></td><td>bool</td><td><code>true</code></td><td>Serves the embedded dashboard on the API listener.</td></tr>
+          <tr><td><code>origins</code></td><td>list of strings</td><td>empty (same origin only)</td><td>Extra origins allowed to open the live-data websocket. They are also named in the dashboard's <code>connect-src</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-network">network</h2>
+
+    <p>
+      kanead hands out every address itself, so treat these ranges as fixed once the node
+      is installed. <code>kanea init</code> writes <code>node_cidr</code> and
+      <code>cluster_cidr</code> into the file for that reason.
+    </p>
+    <p>
+      There is no network mode to set. A Linux node runs the eBPF datapath, and eBPF
+      <a href="architecture.html#arch-network-linux">runs only on Linux</a>. On any other
+      system kanead falls back to bare network namespaces, for development only, and
+      these ranges go unused.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>node_cidr</code></td><td>string</td><td><code>"10.244.0.0/24"</code></td><td>The subnet alloc addresses come from. Its <code>.1</code> is the node's own address on that subnet.</td></tr>
+          <tr><td><code>cluster_cidr</code></td><td>string</td><td><code>"10.244.0.0/16"</code></td><td>The routed range, masqueraded on egress. It must contain <code>node_cidr</code>.</td></tr>
+          <tr><td><code>service_cidr</code></td><td>string</td><td><code>"10.201.0.0/16"</code></td><td>The pool service frontend addresses come from. It must not overlap the other two.</td></tr>
+          <tr><td><code>node_cidr6</code></td><td>string</td><td>none</td><td>The IPv6 alloc subnet. A ULA range is recommended.</td></tr>
+          <tr><td><code>cluster_cidr6</code></td><td>string</td><td>none</td><td>The routed IPv6 range. It must contain <code>node_cidr6</code>.</td></tr>
+          <tr><td><code>service_cidr6</code></td><td>string</td><td>none</td><td>The IPv6 pool for service frontends.</td></tr>
+          <tr><td><code>bpf_dir</code></td><td>string</td><td><code>/sys/fs/bpf/kanea</code></td><td>The bpffs directory where the eBPF maps, programs and links are pinned.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The three IPv6 attributes come together or not at all. Setting all three makes the
+      node dual-stack.
+    </p>
+
+    <h2 id="nodeconfig-dns">dns: the internal resolver</h2>
+
+    <p>
+      The internal resolver answers <code>&lt;service&gt;.&lt;project&gt;</code> names itself
+      and forwards everything else to <code>upstreams</code>. Pin the list on a node whose
+      <code>resolv.conf</code> DHCP rewrites.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>listen</code></td><td>string</td><td>the <code>.1</code> of <code>network.node_cidr</code>, port 53</td><td>The internal resolver's listen address. <code>"off"</code> disables the resolver.</td></tr>
+          <tr><td><code>upstreams</code></td><td>list of strings</td><td>the host's <code>/etc/resolv.conf</code></td><td>The resolvers external names are forwarded to. Each entry is an address or <code>host:port</code>; a bare address gets <code>:53</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      An empty <code>upstreams</code> list is refused, because it would turn every external
+      name into a failure. To follow the host's resolvers, leave the attribute out. An
+      <a href="concepts.html#term-alloc">alloc</a> never sees this list: its
+      <code>resolv.conf</code> names the internal resolver alone.
+    </p>
+
+    <h2 id="nodeconfig-storage">storage: volumes and the host-path allowlist</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>volume_dir</code></td><td>string</td><td><code>&lt;data_dir&gt;/volumes</code></td><td>The root directory for local volumes.</td></tr>
+          <tr><td><code>allowed_host_paths</code></td><td>list of strings</td><td>empty (no host volumes)</td><td>The parent directories a <code>host</code> volume may mount from.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      A <code>host</code> volume mounts a directory that already exists on the node, and the
+      node decides whether it may. A spec's path must sit inside one of
+      <code>allowed_host_paths</code>, checked after symlinks are resolved. A path outside
+      every entry fails the alloc.
+    </p>
+    <p>
+      kanead refuses to start when an entry is not absolute, does not exist, or is
+      <code>"/"</code>. An explicit empty list is legal and means no host volumes. The spec
+      side is in <a href="volumes.html#volumes-host">Volumes and host access</a>.
+    </p>
+
+    <h2 id="nodeconfig-images">images: pull policy and cleanup</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>pull_policy</code></td><td>string</td><td><code>"if-not-present"</code></td><td>Where images may come from for a service that does not say. The other value is <code>"never"</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Set <code>"never"</code> on a node that must not reach a registry: air-gapped, or with
+      images preloaded from an offline bundle. A service's own
+      <a href="spec.html#spec-pull-policy"><code>task.pull_policy</code></a> wins over this
+      default. <code>"always"</code> is refused here, because it means automatic updates for
+      every service on the node.
+    </p>
+
+    <h3 id="nodeconfig-imagegc">images.gc: image garbage collection</h3>
+
+    <p>
+      Every deploy and rollback leaves its previous image behind. The image garbage
+      collection deletes them, and this nested block tunes or disables it.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>enabled</code></td><td>bool</td><td><code>true</code></td><td>Runs the image garbage collection.</td></tr>
+          <tr><td><code>interval</code></td><td>duration</td><td><code>"12h"</code></td><td>How often a sweep runs. The floor is <code>10m</code>.</td></tr>
+          <tr><td><code>min_age</code></td><td>duration</td><td><code>"48h"</code></td><td>Images younger than this are never deleted. The floor is <code>1h</code>.</td></tr>
+          <tr><td><code>keep</code></td><td>number</td><td><code>2</code></td><td>The newest images kept per repository that something still uses, as rollback material.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>An image is deleted only when all three hold:</p>
+    <ul>
+      <li>Nothing references it: no service's image, pinned digest, rollback target or init step, and no running alloc.</li>
+      <li>It is older than <code>min_age</code>.</li>
+      <li>It is not among the newest <code>keep</code> of a repository something still uses.</li>
+    </ul>
+    <p>
+      A node whose <code>pull_policy</code> is <code>"never"</code> collects nothing, because
+      a preloaded image cannot be pulled again. <code>kanea images</code> lists what the node
+      holds and can run one sweep on demand; see <a href="cli.html#cli-images">the CLI reference</a>.
+    </p>
+
+    <h2 id="nodeconfig-containerd">containerd</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>socket</code></td><td>string</td><td><code>/run/kanea/containerd.sock</code></td><td>The containerd socket kanead drives.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-metrics">metrics</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>interval</code></td><td>duration</td><td><code>"5s"</code></td><td>How often containerd and the edge are scraped.</td></tr>
+          <tr><td><code>containerd_url</code></td><td>string</td><td><code>http://127.0.0.1:1338/v1/metrics</code></td><td>containerd's Prometheus endpoint. <code>"off"</code> disables cgroup metrics.</td></tr>
+          <tr><td><code>edge_url</code></td><td>string</td><td><code>http://127.0.0.1:8601/metrics</code></td><td>The edge's metrics endpoint. <code>"off"</code> disables the request-rate signal.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-scaling">scaling</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>enabled</code></td><td>bool</td><td><code>true</code></td><td>Acts on the scaling policies services declare. With <code>false</code>, replica counts stay where the spec put them.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-builds">builds</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>buildkit_addr</code></td><td>string</td><td><code>unix:///var/lib/kanea/buildkit/run/buildkitd.sock</code></td><td>The rootless buildkitd address. <code>"off"</code> disables GitOps and builds.</td></tr>
+          <tr><td><code>log_dir</code></td><td>string</td><td><code>&lt;data_dir&gt;/builds</code></td><td>Where build logs are written.</td></tr>
+          <tr><td><code>registry_addr</code></td><td>string</td><td><code>"127.0.0.1:5100"</code></td><td>The internal build registry's address, loopback only. <code>"off"</code> disables it, and so does <code>buildkit_addr = "off"</code>.</td></tr>
+          <tr><td><code>insecure_registry</code></td><td>bool</td><td><code>false</code></td><td>Allows pushing built images over plain HTTP. Meant for a registry on the node itself.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-gitops">gitops</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>sync_interval</code></td><td>duration</td><td><code>"2m"</code></td><td>How often projects with a git source are polled. A webhook makes a push land sooner.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-secrets">secrets and provider: external secret providers</h2>
+
+    <p>
+      <code>secrets</code> holds the sync schedule. Each <code>provider</code> block copies
+      values from one external provider into the node's store. The two stanzas are a pair:
+      a <code>provider</code> is a provider of secrets.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>sync_interval</code></td><td>duration</td><td><code>"5m"</code></td><td>How often external secret providers are polled. The floor is <code>30s</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-provider">provider "&lt;kind&gt;" "&lt;name&gt;"</h3>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Part</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>first label (kind)</td><td>string</td><td>required</td><td>The provider type: <code>doppler</code>, <code>vault</code>, <code>aws-sm</code>, <code>azure-kv</code> or <code>gcp-sm</code>.</td></tr>
+          <tr><td>second label (name)</td><td>string</td><td>required</td><td>Your name for this provider.</td></tr>
+          <tr><td><code>allow</code></td><td>list of strings</td><td>required</td><td>The scopes its mappings may write into: project names, or <code>shared</code>.</td></tr>
+          <tr><td><code>sync</code></td><td>block, repeated</td><td>none</td><td>One mapping. <code>to</code> names the destination in the store; the other attributes locate the value at the provider.</td></tr>
+          <tr><td>connection attributes</td><td>string</td><td>per kind</td><td>Address, project and credential file attributes differ per kind. They are listed in <a href="secrets.html#secrets-providers">Secrets</a>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Credentials are files on the node, named by attributes ending in <code>_file</code>,
+      never inline values. kanead picks up a rotated credential file without a restart.
+      A changed block needs one.
+    </p>
+
+    <h2 id="nodeconfig-tls">tls and certificate: service certificates</h2>
+
+    <p>
+      <code>tls</code> sets where an exposed service's certificate comes from when its spec
+      does not say. Each <code>certificate</code> block registers a certificate you put on
+      the node. Using them from a spec is covered in <a href="domains.html">Domains and HTTPS</a>.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>default_mode</code></td><td>string</td><td><code>"acme"</code></td><td>The certificate source for an exposed service whose spec declares none: <code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code>.</td></tr>
+          <tr><td><code>ca_name</code></td><td>string</td><td><code>base_domain</code>, else the hostname</td><td>The name the node's self-signed CA carries in a device's trust list.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-certificate">certificate "&lt;name&gt;"</h3>
+
+    <p>
+      A spec asks for a certificate by the block's label and never names a path. What the
+      certificate covers is read from its own SANs.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>cert</code></td><td>string</td><td>required</td><td>Path to the PEM certificate: the leaf followed by its intermediates.</td></tr>
+          <tr><td><code>key</code></td><td>string</td><td>required</td><td>Path to its private key.</td></tr>
+          <tr><td><code>allow</code></td><td>list of strings</td><td>required</td><td>The projects that may claim the certificate.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>cert</code> and <code>key</code> are file paths, although they lack the
+      <code>_file</code> suffix. kanead picks up a renewed pair without a restart. A changed
+      block needs one.
+    </p>
+
+    <h2 id="nodeconfig-acme">acme: certificates from a CA</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>email</code></td><td>string</td><td>none</td><td>The ACME account contact. Without it kanead requests no certificate from a CA.</td></tr>
+          <tr><td><code>directory</code></td><td>string</td><td><code>"production"</code></td><td>The ACME directory: <code>"production"</code>, <code>"staging"</code> or a directory URL.</td></tr>
+          <tr><td><code>ca_bundle_file</code></td><td>string</td><td>none</td><td>An extra CA to trust when talking to the directory, for a private or test CA.</td></tr>
+          <tr><td><code>verify_url</code></td><td>string</td><td><code>http://127.0.0.1:80</code></td><td>Where kanead reaches its own edge to confirm a challenge is being served.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-acme-dns01">acme.dns01</h3>
+
+    <p>
+      This nested block enables the DNS-01 challenge through RFC 2136 dynamic updates,
+      which is what wildcard certificates need. Leave it out to use HTTP-01 only.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>server</code></td><td>string</td><td>none</td><td>The authoritative nameserver for dynamic updates, as <code>host:port</code>. Setting it enables DNS-01 and wildcard certificates.</td></tr>
+          <tr><td><code>zone</code></td><td>string</td><td>the challenge name's parent</td><td>The zone the challenge records belong to.</td></tr>
+          <tr><td><code>tsig_key</code></td><td>string</td><td>none</td><td>The TSIG key name.</td></tr>
+          <tr><td><code>tsig_secret</code></td><td>string</td><td>none</td><td>A <code>secret:</code> reference holding the base64 TSIG secret.</td></tr>
+          <tr><td><code>tsig_algorithm</code></td><td>string</td><td><code>"hmac-sha256."</code></td><td>The TSIG algorithm, for example <code>hmac-sha512.</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-edge">edge: the ingress proxy</h2>
+
+    <p>
+      kanead publishes the route table and the certificate bundle as two files, and the edge
+      reads them. Both processes take the paths from this stanza, so they always agree. The
+      edge's public listen addresses are <a href="#nodeconfig-bind"><code>bind.edge_http</code>
+      and <code>bind.edge_https</code></a>.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>routes_file</code></td><td>string</td><td><code>/run/kanea-edge/routes.json</code></td><td>The route table. <code>"off"</code> stops kanead publishing routes.</td></tr>
+          <tr><td><code>certs_file</code></td><td>string</td><td><code>/run/kanea-edge/certs.json</code></td><td>The certificate bundle.</td></tr>
+          <tr><td><code>certs_group</code></td><td>string</td><td>none (owner only)</td><td>The group allowed to read the certificate bundle. <code>kanea init</code> writes <code>"kanea-edge"</code>.</td></tr>
+          <tr><td><code>status_addr</code></td><td>string</td><td><code>"127.0.0.1:8601"</code></td><td>The loopback health and metrics address. <code>"off"</code> disables it.</td></tr>
+          <tr><td><code>poll_interval</code></td><td>duration</td><td><code>"1s"</code></td><td>How often the edge re-reads the route table.</td></tr>
+          <tr><td><code>drain_timeout</code></td><td>duration</td><td><code>"15s"</code></td><td>How long in-flight requests get on shutdown.</td></tr>
+          <tr><td><code>body_timeout</code></td><td>duration</td><td><code>"5m"</code></td><td>The bound on reading a request body. <code>"0"</code> disables it.</td></tr>
+          <tr><td><code>upstream_timeout</code></td><td>duration</td><td><code>"1m"</code></td><td>The bound on an upstream starting to answer. It does not bound the response body.</td></tr>
+          <tr><td><code>functions_port</code></td><td>number</td><td><code>0</code> (disabled)</td><td>A node port that dispatches <code>/&lt;project&gt;/&lt;function&gt;/</code> to HTTP-triggered functions, for a node with no <code>base_domain</code>.</td></tr>
+          <tr><td><code>security_headers</code></td><td>bool</td><td><code>true</code></td><td>Adds the default security response headers.</td></tr>
+          <tr><td><code>rate_limit_buckets</code></td><td>number</td><td><code>65536</code></td><td>The most rate-limit buckets tracked before the least recently used is evicted.</td></tr>
+          <tr><td><code>memory_limit</code></td><td>string</td><td>none</td><td>A soft memory limit for the edge process (Go's <code>GOMEMLIMIT</code>), for example <code>"128MiB"</code>.</td></tr>
+          <tr><td><code>log_level</code></td><td>string</td><td><code>"info"</code></td><td>The edge's log level: <code>debug</code>, <code>info</code>, <code>warn</code> or <code>error</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-edge-publish">edge.publish</h3>
+
+    <p>This nested block governs the node ports a spec may publish directly.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>ports</code></td><td>string</td><td><code>"1024-65535"</code></td><td>The node ports a spec may publish, as ranges and single ports: <code>"8000-9000,25565"</code>. <code>"off"</code> disables publishing.</td></tr>
+          <tr><td><code>max_conns</code></td><td>number</td><td><code>1024</code></td><td>The ceiling on live connections across every published TCP port.</td></tr>
+          <tr><td><code>drain_timeout</code></td><td>duration</td><td>the value of <code>edge.drain_timeout</code></td><td>How long connections on published TCP ports get on shutdown.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-notifications">notifications</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>allow_private</code></td><td>bool</td><td><code>false</code></td><td>Allows notification targets on private or loopback addresses, for an internal chat server.</td></tr>
+          <tr><td><code>allow_http</code></td><td>bool</td><td><code>false</code></td><td>Allows plain-HTTP notification targets. HTTPS is required otherwise.</td></tr>
+          <tr><td><code>event_retention</code></td><td>number</td><td><code>500</code></td><td>How many notification events are kept.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-backup">backup: state replication</h2>
+
+    <p>
+      Name one destination: <code>dir</code>, or the <code>s3</code> block. A destination saved
+      in the dashboard wins over this stanza; see
+      <a href="backups.html#backups-precedence">which destination wins</a>. On a node with no
+      state, this stanza is the only source <code>restore_if_empty</code> can use.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>dir</code></td><td>string</td><td>none</td><td>A directory to replicate state to. Set this or the <code>s3</code> block.</td></tr>
+          <tr><td><code>snapshot_interval</code></td><td>duration</td><td><code>"6h"</code></td><td>How often a full state snapshot is taken.</td></tr>
+          <tr><td><code>segment_interval</code></td><td>duration</td><td><code>"1m"</code></td><td>How often change segments are shipped. This bounds how much recent change a restore can lose.</td></tr>
+          <tr><td><code>retention</code></td><td>number</td><td><code>7</code></td><td>How many snapshots are kept.</td></tr>
+          <tr><td><code>restore_if_empty</code></td><td>bool</td><td><code>false</code></td><td>Restores the newest archive when the node starts with no state at all.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="nodeconfig-backup-s3">backup.s3</h3>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>url</code></td><td>string</td><td>none</td><td>The destination, as <code>s3://bucket[/prefix]</code>.</td></tr>
+          <tr><td><code>endpoint</code></td><td>string</td><td>none</td><td>The S3 endpoint URL. An S3 destination needs one.</td></tr>
+          <tr><td><code>region</code></td><td>string</td><td>none</td><td>The S3 region.</td></tr>
+          <tr><td><code>access_key</code></td><td>string</td><td>none</td><td>The access key id.</td></tr>
+          <tr><td><code>secret_key</code></td><td>string</td><td>none</td><td>A <code>secret:</code> reference holding the secret key. A literal is refused.</td></tr>
+          <tr><td><code>path_style</code></td><td>bool</td><td><code>true</code></td><td>Addresses the bucket as <code>/bucket/key</code>. Set <code>false</code> to address it as a subdomain.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-upgrade">upgrade</h2>
+
+    <p>These apply to <code>kanea upgrade</code> and to upgrades started from the dashboard.</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>repo</code></td><td>string</td><td><code>"m18h/kanea"</code></td><td>The GitHub repository releases are fetched from.</td></tr>
+          <tr><td><code>require_signature</code></td><td>bool</td><td><code>false</code></td><td>Refuses a release whose cosign signature cannot be verified.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="nodeconfig-grants">device and socket: grants</h2>
+
+    <p>
+      A spec names a <a href="concepts.html#term-grant">grant</a>, never a path. The node
+      holds the mapping from a grant's name to a device or socket, and lists the projects
+      that may claim it. The spec side is in
+      <a href="volumes.html#volumes-devices">Volumes and host access</a>.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>On</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>the block label</td><td>both</td><td>string</td><td>required</td><td>The grant name a spec references. It must be a DNS label, and unique within its kind.</td></tr>
+          <tr><td><code>nodes</code></td><td><code>device</code></td><td>list of strings</td><td>required</td><td>Absolute device node paths such as <code>/dev/dri/renderD128</code>. "Node" here means a device node, not the machine.</td></tr>
+          <tr><td><code>mode</code></td><td><code>device</code></td><td>string</td><td><code>"rw"</code></td><td>The cgroup permissions: a combination of <code>r</code>, <code>w</code> and <code>m</code>. <code>m</code> (mknod) applies only if you write it.</td></tr>
+          <tr><td><code>path</code></td><td><code>socket</code></td><td>string</td><td>required</td><td>One absolute socket path, with no <code>..</code>, and not <code>/</code>.</td></tr>
+          <tr><td><code>allow</code></td><td>both</td><td>list of strings</td><td>required</td><td>The projects that may claim the grant. An empty list is refused.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Paths are resolved and type-checked for each alloc, not when the file loads. A grant
+      naming a device that is absent fails that alloc with a message naming the grant, and
+      kanead keeps running. A spec asking for a grant the node does not hold is refused
+      with a list of the grants it does hold.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">A socket grant is root on this node</b>
+      <p>
+        A container holding the runtime socket can start other containers without the
+        hardening defaults, and nothing contains that. The control is that the grant is
+        made on the machine, in a file no spec author can write, and names its projects.
+      </p>
+    </div>
+
+    <h2 id="nodeconfig-variables">variables: node-wide spec defaults</h2>
+
+    <p>
+      Each attribute in <code>variables</code> is a value every spec on this node can
+      reference as <code>${name}</code>. Use it for a node's domain or storage root, so
+      specs do not repeat it.
+    </p>
+    <ul>
+      <li>A spec's own <code>variables</code> block wins over the node's, and a value passed on the command line wins over both.</li>
+      <li>Values are strings, numbers or bools. Lists and objects are refused.</li>
+      <li>A value is a literal: it cannot reference another variable.</li>
+      <li>Five names are reserved: <code>GIT_SHA</code>, <code>GIT_SHA_SHORT</code>, <code>GIT_BRANCH</code>, <code>KANEA_PROJECT</code> and <code>service</code>.</li>
+    </ul>
+
+    <div class="callout warn">
+      <b class="label">Never put a secret here</b>
+      <p>
+        The API serves this stanza to any authenticated caller. Store secrets with
+        <code>kanea secret put</code> and reference them as <code>secret:</code>; see
+        <a href="secrets.html#overview-secrets">Secrets</a>.
+      </p>
+    </div>
+
+    <h2 id="nodeconfig-apply">Apply a change</h2>
+
+    <ol class="steps">
+      <li>
+        <h3>Edit the file</h3>
+        <pre class="plain">sudo $EDITOR /etc/kanea/kanea.hcl</pre>
+        <p>
+          Keep it owned by root and mode <code>0644</code>. On a node that must not refuse
+          a start, copy the file aside first.
+        </p>
+      </li>
+      <li>
+        <h3>Check it loads</h3>
+        <pre class="plain">sudo kanea doctor</pre>
+        <p>
+          <a href="cli.html#cli-doctor"><code>kanea doctor</code></a> reads the node config.
+          A file that does not load shows as a failed check with the error.
+        </p>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <pre class="plain">sudo systemctl restart kanead</pre>
+        <p>
+          After a change to <code>bind.edge_http</code>, <code>bind.edge_https</code> or the
+          <code>edge</code> stanza, also run <code>sudo systemctl restart kanea-edge</code>.
+        </p>
+      </li>
+      <li>
+        <h3>Confirm it came back</h3>
+        <pre class="plain">systemctl is-active kanead kanea-edge
+journalctl -u kanead -n 20</pre>
+        <p>
+          Both units report <code>active</code>. The log names the file it loaded, and
+          warns about any top-level stanza it did not recognise.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      If kanead does not come back, the log holds the error with the file and line. Fix the
+      file and restart again; see
+      <a href="troubleshooting.html#troubleshoot-config">kanead will not start after editing kanea.hcl</a>.
+    </p>
+
+    <h3 id="nodeconfig-apply-no-restart">What needs no restart</h3>
+
+    <p>The file is read once, but two kinds of file it points at are re-read when their content changes:</p>
+    <ul>
+      <li>a renewed certificate or key file named by a <code>certificate</code> block;</li>
+      <li>a rotated credential file named by a <code>provider</code> block.</li>
+    </ul>
+    <p>If a new version of such a file is unusable, kanead keeps the last good one. Changing the block itself needs a restart.</p>
+
+    <h3 id="nodeconfig-apply-cost">What a restart costs</h3>
+
+    <ul>
+      <li><b>Running workloads keep running.</b> Restarting kanead does not stop containers.</li>
+      <li><b>Ingress keeps serving.</b> The edge is a separate process and serves the last route table it read, whether or not kanead is up.</li>
+      <li><b>Change pauses</b> for the second or two kanead takes to return: deploys, scaling, certificate renewal, the API and the dashboard.</li>
+    </ul>
+    <p>
+      Restarting <code>kanea-edge</code> does interrupt ingress briefly, so restart it only
+      for the attributes it reads. The same split across every daemon is in
+      <a href="troubleshooting.html#troubleshoot-services">Check services</a>.
+    </p>
+
+    <h2 id="nodeconfig-example">A complete file</h2>
+
+    <p>
+      Every stanza and attribute in one file. A value shown is the default unless its comment
+      says otherwise, so a real file is usually a fraction of this.
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>/etc/kanea/kanea.hcl</span></div>
+<pre><span class="c"># /etc/kanea/kanea.hcl - the node's one configuration file.</span>
+<span class="c">#</span>
+<span class="c"># Every attribute is optional. A value shown here is the default unless its</span>
+<span class="c"># comment says otherwise; an attribute left out means that default. kanead</span>
+<span class="c"># and kanea-edge read the file once, at startup: edit it, then restart them.</span>
+
+<span class="k">data_dir</span>      = <span class="s">"/var/lib/kanea"</span>         <span class="c"># state, the master key, volumes</span>
+<span class="k">alloc_log_dir</span> = <span class="s">"/var/log/kanea/allocs"</span>  <span class="c"># per-alloc workload logs</span>
+<span class="k">log_level</span>     = <span class="s">"info"</span>                   <span class="c"># debug | info | warn | error</span>
+<span class="k">base_domain</span>   = <span class="s">"apps.example.com"</span>       <span class="c"># no default; gives &lt;service&gt;.&lt;project&gt;.apps.example.com</span>
+
+<span class="c"># Node-wide spec variables: defaults every spec on this node may reference as</span>
+<span class="c"># ${name}. A spec's own variables block wins. Primitives only, never secrets:</span>
+<span class="c"># the stanza is served to any authenticated caller.</span>
+<span class="k">variables</span> {
+  <span class="k">domain</span> = <span class="s">"home.lan"</span>
+}
+
+<span class="c"># Every listener the node opens.</span>
+<span class="k">bind</span> {
+  <span class="k">api_socket</span> = <span class="s">"/run/kanea/kanead.sock"</span>  <span class="c"># the CLI's unix socket</span>
+  <span class="k">api_addr</span>   = <span class="s">"192.168.1.10:8600"</span>       <span class="c"># no default; omit for socket-only</span>
+
+  <span class="c"># How the API/dashboard listener is secured:</span>
+  <span class="c">#   acme        a public certificate; requires api_domain</span>
+  <span class="c">#   self-signed the node CA; names api_domain, else api_addr's host</span>
+  <span class="c">#   provided    the api_cert/api_key pair, loaded once</span>
+  <span class="c">#   plaintext   explicit HTTP; beyond loopback it is logged loudly</span>
+  <span class="c"># Unset: a pair means provided, loopback means plaintext, anything else</span>
+  <span class="c"># is refused.</span>
+  <span class="k">api_tls</span>    = <span class="s">"acme"</span>
+  <span class="k">api_domain</span> = <span class="s">"kanea.example.com"</span>
+  <span class="c"># api_cert = "/etc/kanea/tls/api.crt"  # provided mode's pair</span>
+  <span class="c"># api_key  = "/etc/kanea/tls/api.key"</span>
+
+  <span class="k">edge_http</span>  = <span class="s">":80"</span>                     <span class="c"># the edge's public HTTP listener</span>
+  <span class="k">edge_https</span> = <span class="s">":443"</span>                    <span class="c"># "off" serves plaintext only</span>
+}
+
+<span class="k">auth</span> {
+  <span class="k">insecure_cookies</span> = false               <span class="c"># true only behind plain HTTP</span>
+
+  <span class="c"># Single sign-on. No default: without an issuer, password login only.</span>
+  <span class="k">oidc</span> {
+    <span class="k">issuer</span>        = <span class="s">"https://auth.example.com/realms/kanea"</span>
+    <span class="k">client_id</span>     = <span class="s">"kanea"</span>
+    <span class="k">client_secret</span> = <span class="s">"secret:shared/oidc"</span>  <span class="c"># omit for a public PKCE client</span>
+    <span class="k">redirect_url</span>  = <span class="s">"https://kanea.example.com/v1/auth/oidc/callback"</span>
+    <span class="k">scopes</span>        = [<span class="s">"profile"</span>, <span class="s">"email"</span>]  <span class="c"># beyond openid; [] requests none</span>
+    <span class="k">role_claim</span>    = <span class="s">"groups"</span>
+    <span class="k">admin_claims</span>  = [<span class="s">"kanea-admins"</span>]
+    <span class="k">viewer_claims</span> = [<span class="s">"kanea-viewers"</span>]
+  }
+
+  <span class="c"># Directory login. No default: without a url, no LDAP.</span>
+  <span class="k">ldap</span> {
+    <span class="k">url</span>            = <span class="s">"ldaps://ldap.example.com"</span>
+    <span class="k">bind_dn</span>        = <span class="s">"cn=kanea,ou=services,dc=example,dc=com"</span>
+    <span class="k">bind_password</span>  = <span class="s">"secret:shared/ldap-bind"</span>
+    <span class="k">user_base_dn</span>   = <span class="s">"ou=people,dc=example,dc=com"</span>
+    <span class="k">user_filter</span>    = <span class="s">"(uid=%s)"</span>
+    <span class="k">group_base_dn</span>  = <span class="s">"ou=groups,dc=example,dc=com"</span>
+    <span class="k">group_filter</span>   = <span class="s">"(member=%s)"</span>
+    <span class="k">admin_groups</span>   = [<span class="s">"cn=kanea-admins,ou=groups,dc=example,dc=com"</span>]
+    <span class="k">viewer_groups</span>  = [<span class="s">"cn=kanea-viewers,ou=groups,dc=example,dc=com"</span>]
+    <span class="k">ca_file</span>        = <span class="s">"/etc/kanea/tls/ldap-ca.pem"</span>
+  }
+}
+
+<span class="k">audit</span> {
+  <span class="k">retention</span> = <span class="s">"2160h"</span>                    <span class="c"># 90 days; "0" keeps entries forever</span>
+}
+
+<span class="k">dashboard</span> {
+  <span class="k">enabled</span> = true
+  <span class="k">origins</span> = []                           <span class="c"># extra Origins allowed to open the live websocket</span>
+}
+
+<span class="c"># kanead is the IPAM: these are fixed when the node is installed. node_cidr</span>
+<span class="c"># must sit inside cluster_cidr, and neither may overlap service_cidr.</span>
+<span class="k">network</span> {
+  <span class="k">node_cidr</span>    = <span class="s">"10.244.0.0/24"</span>         <span class="c"># alloc addresses</span>
+  <span class="k">cluster_cidr</span> = <span class="s">"10.244.0.0/16"</span>         <span class="c"># routed range, masqueraded on egress</span>
+  <span class="k">service_cidr</span> = <span class="s">"10.201.0.0/16"</span>         <span class="c"># service frontends</span>
+  <span class="c"># The IPv6 trio comes together or not at all. No defaults.</span>
+  <span class="k">node_cidr6</span>    = <span class="s">"fd00:10:244::/64"</span>
+  <span class="k">cluster_cidr6</span> = <span class="s">"fd00:10:244::/56"</span>
+  <span class="k">service_cidr6</span> = <span class="s">"fd00:10:201::/112"</span>
+  <span class="k">bpf_dir</span>       = <span class="s">"/sys/fs/bpf/kanea"</span>    <span class="c"># pinned maps, programs and links</span>
+}
+
+<span class="k">dns</span> {
+  <span class="k">listen</span>    = <span class="s">"10.244.0.1:53"</span>            <span class="c"># default: the node CIDR's .1; "off" disables</span>
+  <span class="k">upstreams</span> = [<span class="s">"1.1.1.1"</span>, <span class="s">"9.9.9.9:53"</span>]  <span class="c"># default: the host's resolv.conf</span>
+}
+
+<span class="k">storage</span> {
+  <span class="k">volume_dir</span> = <span class="s">"/var/lib/kanea/volumes"</span>  <span class="c"># default: &lt;data_dir&gt;/volumes</span>
+  <span class="c"># Empty by default: no spec can mount a host directory until a permitted</span>
+  <span class="c"># parent is named here.</span>
+  <span class="k">allowed_host_paths</span> = [<span class="s">"/srv/kanea"</span>]
+}
+
+<span class="k">images</span> {
+  <span class="k">pull_policy</span> = <span class="s">"if-not-present"</span>         <span class="c"># or "never"</span>
+
+  <span class="c"># Image garbage collection. An image is deleted only when nothing</span>
+  <span class="c"># references it, it is older than min_age, and it is outside the newest</span>
+  <span class="c"># `keep` of a repository something still uses.</span>
+  <span class="k">gc</span> {
+    <span class="k">enabled</span>  = true
+    <span class="k">interval</span> = <span class="s">"12h"</span>                     <span class="c"># floor 10m</span>
+    <span class="k">min_age</span>  = <span class="s">"48h"</span>                     <span class="c"># floor 1h</span>
+    <span class="k">keep</span>     = 2
+  }
+}
+
+<span class="k">containerd</span> {
+  <span class="k">socket</span> = <span class="s">"/run/kanea/containerd.sock"</span>
+}
+
+<span class="k">metrics</span> {
+  <span class="k">interval</span>       = <span class="s">"5s"</span>
+  <span class="k">containerd_url</span> = <span class="s">"http://127.0.0.1:1338/v1/metrics"</span>  <span class="c"># "off" disables cgroup metrics</span>
+  <span class="k">edge_url</span>       = <span class="s">"http://127.0.0.1:8601/metrics"</span>     <span class="c"># "off" disables the L7 signal</span>
+}
+
+<span class="k">scaling</span> {
+  <span class="k">enabled</span> = true                         <span class="c"># act on the scaling policies services declare</span>
+}
+
+<span class="k">builds</span> {
+  <span class="k">buildkit_addr</span>     = <span class="s">"unix:///var/lib/kanea/buildkit/run/buildkitd.sock"</span>  <span class="c"># "off" disables GitOps and builds</span>
+  <span class="k">log_dir</span>           = <span class="s">"/var/lib/kanea/builds"</span>                              <span class="c"># default: &lt;data_dir&gt;/builds</span>
+  <span class="k">registry_addr</span>     = <span class="s">"127.0.0.1:5100"</span>   <span class="c"># the internal build registry; "off" disables</span>
+  <span class="k">insecure_registry</span> = false              <span class="c"># push built images over plain HTTP</span>
+}
+
+<span class="k">gitops</span> {
+  <span class="k">sync_interval</span> = <span class="s">"2m"</span>                   <span class="c"># how often git sources are polled</span>
+}
+
+<span class="c"># External secret providers. `secrets` holds the schedule; each `provider`</span>
+<span class="c"># block maps values from one provider into this node's store. Credentials are</span>
+<span class="c"># 0600 files on the node, never inline. A rotated credential file is picked</span>
+<span class="c"># up without a restart; a changed block needs one.</span>
+<span class="k">secrets</span> {
+  <span class="k">sync_interval</span> = <span class="s">"5m"</span>                   <span class="c"># floor 30s</span>
+}
+
+<span class="k">provider</span> <span class="s">"doppler"</span> <span class="s">"ci"</span> {
+  <span class="k">token_file</span> = <span class="s">"/etc/kanea/secrets/doppler.token"</span>
+  <span class="k">project</span>    = <span class="s">"backend"</span>
+  <span class="k">config</span>     = <span class="s">"prd"</span>
+  <span class="k">allow</span>      = [<span class="s">"shop"</span>, <span class="s">"shared"</span>]        <span class="c"># the scopes its mappings may write into</span>
+  <span class="k">sync</span> {
+    <span class="k">name</span> = <span class="s">"DATABASE_URL"</span>
+    <span class="k">to</span>   = <span class="s">"shop/db-url"</span>
+  }
+}
+
+<span class="k">provider</span> <span class="s">"vault"</span> <span class="s">"infra"</span> {
+  <span class="k">address</span>    = <span class="s">"https://vault.internal:8200"</span>
+  <span class="k">token_file</span> = <span class="s">"/etc/kanea/secrets/vault.token"</span>
+  <span class="k">mount</span>      = <span class="s">"kv"</span>
+  <span class="k">allow</span>      = [<span class="s">"media"</span>]
+  <span class="k">sync</span> {
+    <span class="k">path</span>  = <span class="s">"apps/media"</span>
+    <span class="k">field</span> = <span class="s">"s3_secret_key"</span>
+    <span class="k">to</span>    = <span class="s">"media/s3-secret"</span>
+  }
+}
+
+<span class="k">tls</span> {
+  <span class="c"># Where an exposed service's certificate comes from when its spec does not</span>
+  <span class="c"># say: acme | self-signed | provided | plaintext.</span>
+  <span class="k">default_mode</span> = <span class="s">"acme"</span>
+  <span class="k">ca_name</span>      = <span class="s">"home.lan"</span>              <span class="c"># default: base_domain, else the hostname</span>
+}
+
+<span class="c"># Certificates the operator put on this node. A spec asks for one by name and</span>
+<span class="c"># never names a path. What a certificate covers is read from its own SANs. A</span>
+<span class="c"># renewed pair is picked up without a restart; a changed block needs one.</span>
+<span class="k">certificate</span> <span class="s">"shop"</span> {
+  <span class="k">cert</span>  = <span class="s">"/etc/kanea/tls/shop.crt"</span>      <span class="c"># leaf + intermediates, PEM</span>
+  <span class="k">key</span>   = <span class="s">"/etc/kanea/tls/shop.key"</span>
+  <span class="k">allow</span> = [<span class="s">"shop"</span>]                       <span class="c"># projects that may claim it</span>
+}
+
+<span class="k">acme</span> {
+  <span class="k">email</span>          = <span class="s">"ops@example.com"</span>     <span class="c"># no default; without it no certificate is requested from a CA</span>
+  <span class="k">directory</span>      = <span class="s">"production"</span>          <span class="c"># or "staging", or a directory URL</span>
+  <span class="k">ca_bundle_file</span> = <span class="s">"/etc/kanea/tls/acme-ca.pem"</span>  <span class="c"># no default; for a private CA</span>
+  <span class="k">verify_url</span>     = <span class="s">"http://127.0.0.1:80"</span> <span class="c"># where kanead reaches its own edge</span>
+
+  <span class="c"># RFC 2136 dynamic updates: enables DNS-01 and wildcards. No defaults.</span>
+  <span class="k">dns01</span> {
+    <span class="k">server</span>         = <span class="s">"ns1.example.com:53"</span>
+    <span class="k">zone</span>           = <span class="s">"example.com"</span>
+    <span class="k">tsig_key</span>       = <span class="s">"kanea-acme"</span>
+    <span class="k">tsig_secret</span>    = <span class="s">"secret:shared/tsig"</span>
+    <span class="k">tsig_algorithm</span> = <span class="s">"hmac-sha256."</span>
+  }
+}
+
+<span class="c"># The ingress proxy. kanead publishes the two files; kanea-edge reads them.</span>
+<span class="k">edge</span> {
+  <span class="k">routes_file</span>      = <span class="s">"/run/kanea-edge/routes.json"</span>  <span class="c"># "off" stops kanead publishing routes</span>
+  <span class="k">certs_file</span>       = <span class="s">"/run/kanea-edge/certs.json"</span>
+  <span class="k">certs_group</span>      = <span class="s">"kanea-edge"</span>        <span class="c"># default: owner only; `kanea init` writes this</span>
+  <span class="k">status_addr</span>      = <span class="s">"127.0.0.1:8601"</span>    <span class="c"># health and metrics; "off" disables</span>
+  <span class="k">poll_interval</span>    = <span class="s">"1s"</span>
+  <span class="k">drain_timeout</span>    = <span class="s">"15s"</span>
+  <span class="k">body_timeout</span>     = <span class="s">"5m"</span>                <span class="c"># "0" disables</span>
+  <span class="k">upstream_timeout</span> = <span class="s">"1m"</span>
+  <span class="k">functions_port</span>   = 0                   <span class="c"># 0 disables the path-routed functions listener</span>
+  <span class="k">security_headers</span> = true
+  <span class="k">rate_limit_buckets</span> = 65536
+  <span class="k">memory_limit</span>     = <span class="s">"128MiB"</span>            <span class="c"># no default; a soft GOMEMLIMIT</span>
+  <span class="k">log_level</span>        = <span class="s">"info"</span>
+
+  <span class="c"># Which node ports a spec may publish.</span>
+  <span class="k">publish</span> {
+    <span class="k">ports</span>         = <span class="s">"1024-65535"</span>         <span class="c"># "off" disables publishing</span>
+    <span class="k">max_conns</span>     = 1024                 <span class="c"># ceiling across every published tcp port</span>
+    <span class="k">drain_timeout</span> = <span class="s">"60s"</span>                <span class="c"># default: drain_timeout above</span>
+  }
+}
+
+<span class="k">notifications</span> {
+  <span class="k">allow_private</span>   = false                <span class="c"># targets on private or loopback addresses</span>
+  <span class="k">allow_http</span>      = false                <span class="c"># plain-http targets</span>
+  <span class="k">event_retention</span> = 500
+}
+
+<span class="c"># State replication. A destination saved from the dashboard wins over this</span>
+<span class="c"># stanza; this is the fallback, and the only source a blank node can restore</span>
+<span class="c"># from.</span>
+<span class="k">backup</span> {
+  <span class="c"># One destination, no default: a directory, or the s3 block below.</span>
+  <span class="c"># dir = "/mnt/backup/kanea"</span>
+  <span class="k">snapshot_interval</span> = <span class="s">"6h"</span>
+  <span class="k">segment_interval</span>  = <span class="s">"1m"</span>               <span class="c"># bounds the recovery point</span>
+  <span class="k">retention</span>         = 7                  <span class="c"># snapshots kept</span>
+  <span class="k">restore_if_empty</span>  = false              <span class="c"># restore the newest archive onto a node with no state</span>
+
+  <span class="k">s3</span> {
+    <span class="k">url</span>        = <span class="s">"s3://kanea-state/prod/node-a"</span>
+    <span class="k">endpoint</span>   = <span class="s">"https://s3.eu-central-1.amazonaws.com"</span>
+    <span class="k">region</span>     = <span class="s">"eu-central-1"</span>
+    <span class="k">access_key</span> = <span class="s">"AKIAEXAMPLE"</span>
+    <span class="k">secret_key</span> = <span class="s">"secret:shared/backup-s3"</span>
+    <span class="k">path_style</span> = true
+  }
+}
+
+<span class="k">upgrade</span> {
+  <span class="k">repo</span>              = <span class="s">"m18h/kanea"</span>       <span class="c"># where releases are fetched from</span>
+  <span class="k">require_signature</span> = false              <span class="c"># refuse a release whose cosign signature cannot be verified</span>
+}
+
+<span class="c"># Device and socket grants. A spec asks for a grant by name; the node resolves</span>
+<span class="c"># it. `allow` is required: a grant nobody is named for is a typo.</span>
+<span class="k">device</span> <span class="s">"gpu"</span> {
+  <span class="k">nodes</span> = [<span class="s">"/dev/dri/renderD128"</span>]        <span class="c"># device node paths, resolved per alloc</span>
+  <span class="k">allow</span> = [<span class="s">"media"</span>]                      <span class="c"># projects that may request it</span>
+  <span class="k">mode</span>  = <span class="s">"rw"</span>                           <span class="c"># cgroup permissions</span>
+}
+
+<span class="c"># A socket grant is root on the node for whoever holds it.</span>
+<span class="k">socket</span> <span class="s">"containerd"</span> {
+  <span class="k">path</span>  = <span class="s">"/run/kanea/containerd.sock"</span>
+  <span class="k">allow</span> = [<span class="s">"ops"</span>]
+}
+</pre>
+    </div>
+
+    <h2 id="nodeconfig-precedence">One source, no precedence</h2>
+
+    <p>
+      The file is the only source of node configuration, so no setting can be overridden
+      from elsewhere. A node installed with settings on its systemd units is converted
+      automatically on upgrade; see <a href="upgrade.html#upgrade-migrate">Migrating from flags</a>.
+    </p>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

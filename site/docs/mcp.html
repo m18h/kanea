@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI agents (MCP) - Kanea docs</title>
+<meta name="description" content="Connect Claude Code, opencode or Codex to a Kanea node over MCP, choose what the agent may do, and look up all 25 tools.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1 id="mcp">AI agents (MCP)</h1>
+    <p>
+      Connect an agent to a node over the Model Context Protocol, decide how much it may
+      do, and look up the tools it gets. The server is the <code>kanea</code> binary itself,
+      so there is nothing extra to install.
+    </p>
+
+    <div class="callout">
+      <b class="label">An agent has its credential's authority and nothing more</b>
+      <p>
+        Every tool works by sending a request to the node's own API with the caller's
+        credential. A tool cannot do anything that credential could not do at the REST API.
+        No tool reads a secret, at any tier.
+      </p>
+    </div>
+
+    <h2 id="mcp-choosing">Choose a transport</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>stdio</th><th>Streamable HTTP</th></tr></thead>
+        <tbody>
+          <tr><td><b>Command or endpoint</b></td><td><code>kanea mcp</code></td><td><code>https://&lt;node&gt;:8600/mcp</code></td></tr>
+          <tr><td><b>Agent runs</b></td><td>On the node</td><td>Anywhere</td></tr>
+          <tr><td><b>Authenticates by</b></td><td>Unix socket access</td><td>A bearer token</td></tr>
+          <tr><td><b>Needs</b></td><td>root, or membership of the <code>kanea</code> group</td><td>An API listener: <a href="node-config.html#nodeconfig-bind"><code>bind.api_addr</code></a> in the <a href="concepts.html#term-node-config">node config</a></td></tr>
+          <tr><td><b>Role</b></td><td>Always admin</td><td>The token's role</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Use stdio when your editor runs on the node. Use HTTP from a laptop, which includes
+      every Mac, because <a href="concepts.html#term-kanead">kanead</a> runs on Linux only.
+      Use HTTP also when the agent should be read-only: it is the transport where you
+      choose a role.
+    </p>
+
+    <h2 id="mcp-stdio">Connect over stdio, on the node</h2>
+
+    <p>
+      <a href="cli.html#cli-mcp"><code>kanea mcp</code></a> talks to kanead over the unix
+      socket and speaks MCP on stdin and stdout. <code>--verbose</code> logs protocol
+      activity to stderr.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Join the kanea group</h3>
+        <p>
+          Your editor runs as you, and the socket is root-owned. Run
+          <code>sudo usermod -aG kanea $USER</code>, then log out and back in.
+          <code>kanea ps</code> now works without <code>sudo</code>.
+        </p>
+        <p>
+          Membership is root-equivalent, like docker's group, so an agent on this transport
+          is always an admin. For less, use <a href="#mcp-http">HTTP with a viewer token</a>.
+        </p>
+      </li>
+      <li>
+        <h3>Register the server with your client</h3>
+        <p>
+          Use the entry for your client below. Each one runs <code>kanea mcp</code> as a
+          subprocess.
+        </p>
+      </li>
+      <li>
+        <h3>Check the tool list</h3>
+        <p>
+          Ask the client to list its tools. All 25 from <a href="#mcp-tools">the table
+          below</a> appear, because the socket carries the admin role.
+        </p>
+      </li>
+    </ol>
+
+    <h3 id="mcp-stdio-claude">Claude Code</h3>
+    <pre class="plain">claude mcp add kanea -- kanea mcp</pre>
+    <p>
+      Add <code>--scope project</code> to write the entry into the repository's
+      <code>.mcp.json</code>, so everyone on the project gets it. The file form:
+    </p>
+    <pre><code>{
+  <span class="s">"mcpServers"</span>: {
+    <span class="s">"kanea"</span>: {
+      <span class="s">"command"</span>: <span class="s">"kanea"</span>,
+      <span class="s">"args"</span>: [<span class="s">"mcp"</span>]
+    }
+  }
+}</code></pre>
+
+    <h3 id="mcp-stdio-opencode">opencode</h3>
+    <p>
+      In <code>opencode.json</code> at the project root, or in
+      <code>~/.config/opencode/opencode.json</code>:
+    </p>
+    <pre><code>{
+  <span class="s">"$schema"</span>: <span class="s">"https://opencode.ai/config.json"</span>,
+  <span class="s">"mcp"</span>: {
+    <span class="s">"kanea"</span>: {
+      <span class="s">"type"</span>: <span class="s">"local"</span>,
+      <span class="s">"command"</span>: [<span class="s">"kanea"</span>, <span class="s">"mcp"</span>],
+      <span class="s">"enabled"</span>: <span class="k">true</span>
+    }
+  }
+}</code></pre>
+
+    <h3 id="mcp-stdio-codex">Codex</h3>
+    <pre class="plain">codex mcp add kanea -- kanea mcp</pre>
+    <p>The command writes this to <code>~/.codex/config.toml</code>:</p>
+    <pre><code><span class="k">[mcp_servers.kanea]</span>
+<span class="k">command</span> = <span class="s">"kanea"</span>
+<span class="k">args</span>    = [<span class="s">"mcp"</span>]</code></pre>
+
+    <div class="callout">
+      <b class="label">A client that connects and then does nothing</b>
+      <p>
+        stdout is the protocol channel. A wrapper script that prints anything to it
+        corrupts the stream. Keep wrappers silent, and read <code>--verbose</code> output
+        from stderr.
+      </p>
+    </div>
+
+    <h2 id="mcp-http">Connect over HTTP, from anywhere</h2>
+
+    <p>
+      The same server answers at <code>/mcp</code> on the API listener. A socket-only node
+      has no HTTP transport: set <code>bind.api_addr</code> first, as in
+      <a href="dashboard.html#dashboard-listen">Change the listen address</a>.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Create a token for the agent</h3>
+        <p>On the node, pick the role and an expiry:</p>
+        <pre class="plain">sudo kanea token create --role viewer --expires-in 720h agent-readonly   # can look, cannot change
+sudo kanea token create --role admin  --expires-in 720h agent-deploy     # can deploy, scale and stop</pre>
+        <p>
+          The secret is printed once, on stdout. <a href="auth.html#auth-tokens">Sign-in and
+          access</a> covers listing and revoking tokens.
+        </p>
+      </li>
+      <li>
+        <h3>Make the agent's machine trust the node</h3>
+        <p>
+          A node serves a self-signed or node-CA certificate unless its listener uses
+          <code>acme</code>. Install the CA that <code>kanea ca show</code> prints on the
+          machine running the agent. Without it the TLS handshake fails before MCP starts.
+        </p>
+      </li>
+      <li>
+        <h3>Register the endpoint with your client</h3>
+        <p>
+          Use the entry for your client below, with the token in an
+          <code>Authorization: Bearer</code> header. A viewer token lists 13 tools and an
+          admin token lists 25.
+        </p>
+      </li>
+    </ol>
+
+    <h3 id="mcp-http-claude">Claude Code</h3>
+    <pre class="plain">claude mcp add --transport http kanea https://192.168.1.10:8600/mcp \
+  --header "Authorization: Bearer $KANEA_TOKEN"</pre>
+
+    <h3 id="mcp-http-opencode">opencode</h3>
+    <pre><code>{
+  <span class="s">"$schema"</span>: <span class="s">"https://opencode.ai/config.json"</span>,
+  <span class="s">"mcp"</span>: {
+    <span class="s">"kanea"</span>: {
+      <span class="s">"type"</span>: <span class="s">"remote"</span>,
+      <span class="s">"url"</span>: <span class="s">"https://192.168.1.10:8600/mcp"</span>,
+      <span class="s">"enabled"</span>: <span class="k">true</span>,
+      <span class="s">"headers"</span>: { <span class="s">"Authorization"</span>: <span class="s">"Bearer &lt;token&gt;"</span> }
+    }
+  }
+}</code></pre>
+
+    <h3 id="mcp-http-codex">Codex</h3>
+    <pre><code><span class="k">[mcp_servers.kanea]</span>
+<span class="k">url</span> = <span class="s">"https://192.168.1.10:8600/mcp"</span>
+<span class="k">bearer_token_env_var</span> = <span class="s">"KANEA_TOKEN"</span></code></pre>
+
+    <div class="callout warn">
+      <b class="label">A JSON entry with a url needs a type</b>
+      <p>
+        Claude Code reads an entry with a <code>url</code> and no <code>type</code> as stdio
+        and skips it with a message. opencode needs <code>"type": "remote"</code> for the
+        same reason. This usually happens when an <code>mcpServers</code> block is copied
+        from another client.
+      </p>
+    </div>
+
+    <p>
+      The endpoint is request and response only. Each POST carries one message and gets
+      its reply, and the server opens no server-to-client stream.
+    </p>
+
+    <h2 id="mcp-tools">The tools</h2>
+
+    <p>
+      The server registers 25 tools in three tiers: 13 read, 9 mutate and 3 destructive.
+      The caller's role decides which tiers it sees. A viewer token gets the read tier
+      only: the other tools are absent from <code>tools/list</code>, so the model cannot
+      propose calling one.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tool</th><th>Tier</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>list_projects</code></td><td>read</td><td>Lists projects with service and alloc counts, git source and notification channels.</td></tr>
+          <tr><td><code>get_project</code></td><td>read</td><td>Describes one project.</td></tr>
+          <tr><td><code>list_services</code></td><td>read</td><td>Lists declared services with image, replica count and resource limits.</td></tr>
+          <tr><td><code>get_service</code></td><td>read</td><td>Shows one service's declared state. Secrets appear as references, never values.</td></tr>
+          <tr><td><code>list_allocs</code></td><td>read</td><td>Lists <a href="concepts.html#term-alloc">allocs</a> with state, restarts and health.</td></tr>
+          <tr><td><code>get_logs</code></td><td>read</td><td>Returns the tail of a service's logs: 200 lines by default, 500 at most.</td></tr>
+          <tr><td><code>get_events</code></td><td>read</td><td>Reads the event feed, newest first.</td></tr>
+          <tr><td><code>get_node_stats</code></td><td>read</td><td>Summarises the node: version, what is declared, running and failing, CPU, memory and load.</td></tr>
+          <tr><td><code>get_service_stats</code></td><td>read</td><td>Current CPU, memory, request rate and p95 latency for a service and its allocs.</td></tr>
+          <tr><td><code>list_pipelines</code></td><td>read</td><td>Lists build and deploy runs with state, commit and duration.</td></tr>
+          <tr><td><code>list_storage</code></td><td>read</td><td>Lists the volumes services declare and which services mount them.</td></tr>
+          <tr><td><code>list_backups</code></td><td>read</td><td>Lists backup archives and reports whether replication is working.</td></tr>
+          <tr><td><code>get_audit</code></td><td>read</td><td>Reads the audit log. The API allows this to admins only.</td></tr>
+          <tr><td><code>plan_spec</code></td><td>mutate</td><td>Parses a <a href="concepts.html#term-spec">spec</a> and reports what applying it would change. Changes nothing.</td></tr>
+          <tr><td><code>apply_spec</code></td><td>mutate</td><td>Applies a spec. Services it does not name are left alone.</td></tr>
+          <tr><td><code>scale_service</code></td><td>mutate</td><td>Sets a service's replica count.</td></tr>
+          <tr><td><code>restart_service</code></td><td>mutate</td><td>Rolls a service's containers through its update policy.</td></tr>
+          <tr><td><code>stop_service</code></td><td>mutate</td><td>Scales a service to zero and keeps its declaration.</td></tr>
+          <tr><td><code>deploy_service</code></td><td>mutate</td><td>Points an existing service at a new image and leaves the rest as declared.</td></tr>
+          <tr><td><code>run_pipeline</code></td><td>mutate</td><td>Queues a build for a service that declares a <code>build</code> block.</td></tr>
+          <tr><td><code>create_backup</code></td><td>mutate</td><td>Takes a snapshot and ships it to the backup destination.</td></tr>
+          <tr><td><code>test_notification</code></td><td>mutate</td><td>Sends a test message through a project's notification channels.</td></tr>
+          <tr><td><code>restore_backup</code></td><td>destructive</td><td>Verifies an archive and stages a restore, which kanead applies at its next start.</td></tr>
+          <tr><td><code>delete_service</code></td><td>destructive</td><td>Deletes one service's declaration and stops its allocs. Volume data is kept.</td></tr>
+          <tr><td><code>delete_project</code></td><td>destructive</td><td>Deletes every service in a project, with its pipeline configuration and notification channels.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Tier</th><th>Tools</th><th>Needs</th></tr></thead>
+        <tbody>
+          <tr><td>Read</td><td>13</td><td>viewer or admin</td></tr>
+          <tr><td>Mutate</td><td>9</td><td>admin</td></tr>
+          <tr><td>Destructive</td><td>3</td><td>admin, and <code>confirm: true</code> on the call</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>get_audit</code> is the one read tool a viewer cannot use. It is listed, and
+      the call returns 403, because the API decides and the tiers only describe.
+    </p>
+    <p>
+      A destructive tool called without <code>confirm: true</code> returns a refusal as its
+      result. The refusal tells the model to call again only if the operator explicitly
+      asked, and that the action cannot be undone. The gate exists so a transcript shows
+      the action was deliberate.
+    </p>
+    <p>
+      Every call is recorded in the audit log under the token's id, like any other API
+      request. The dashboard's audit tab, <code>GET /v1/audit</code> and
+      <code>get_audit</code> all show it.
+    </p>
+
+    <h3 id="mcp-resources">Resources</h3>
+    <p>
+      The server also publishes read-only resources, for clients that attach context by
+      URI. They return what the matching read tools return.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>URI</th><th>Content</th></tr></thead>
+        <tbody>
+          <tr><td><code>kanea://projects</code></td><td>Every project on the node.</td></tr>
+          <tr><td><code>kanea://events</code></td><td>The event feed, newest first.</td></tr>
+          <tr><td><code>kanea://node/stats</code></td><td>The node summary.</td></tr>
+          <tr><td><code>kanea://projects/{project}/services</code></td><td>The services a project declares.</td></tr>
+          <tr><td><code>kanea://services/{project}/{service}/status</code></td><td>One service's declared state and its allocs.</td></tr>
+          <tr><td><code>kanea://services/{project}/{service}/logs</code></td><td>The tail of a service's logs.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="mcp-safety">Decide what to hand over</h2>
+
+    <ul>
+      <li>
+        <b>Start with a viewer token.</b> It covers diagnosis: what is deployed, what is
+        failing, the logs, the events and the stats. It cannot change anything.
+      </li>
+      <li>
+        <b>Give admin only when the agent should deploy.</b> <code>apply_spec</code>,
+        <code>scale_service</code> and <code>deploy_service</code> are real deploys, with
+        the same rolling-update rules and health gates as yours.
+      </li>
+      <li>
+        <b>Prefer HTTP with a token over stdio.</b> Socket access is root-equivalent, so
+        stdio has no read-only form.
+      </li>
+      <li>
+        <b>Set an expiry.</b> <code>kanea token create</code> warns when a token never
+        expires. <code>--expires-in 720h</code> limits how long a leaked editor config is
+        useful.
+      </li>
+      <li>
+        <b>Do not plan around secrets.</b> No tool reads one. A spec references
+        <code>secret:&lt;project&gt;/&lt;name&gt;</code> and the agent never sees the value.
+      </li>
+    </ul>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

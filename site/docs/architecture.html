@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture - Kanea docs</title>
+<meta name="description" content="Understand how Kanea is built: the two processes, the Store, the containerd and eBPF drivers, the edge, resource isolation, metrics and backups.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Internals</p>
+    <h1 id="arch">Architecture</h1>
+    <p>
+      This page explains how Kanea is put together and why. You do not need it to run a
+      node. Read it when you want to know what a component does under load, during a
+      restart, or under attack.
+    </p>
+    <p>
+      One binary produces two long-running processes and a CLI. The datapath that
+      networks your services is a set of eBPF programs compiled into the binary and
+      loaded into the kernel. containerd and buildkitd are separate software that Kanea
+      drives. <code>kanea init</code> installs each at a version pinned by SHA-256 in the
+      binary, under Kanea's own prefix and sockets, so nothing already on the
+      <a href="concepts.html#term-node">node</a> changes.
+    </p>
+
+    <h2 id="arch-shape">The shape</h2>
+
+<pre class="diagram">                    ┌──────────────── kanead (control plane) ────────────────┐
+                    │                                                        │
+Browser ──HTTPS──▶  │ ┌────────────┐ ┌───────────┐ ┌──────────┐ ┌─────────┐  │
+CLI ──────HTTPS──▶  │ │ API server │ │ Dashboard │ │Reconciler│ │Autoscale│  │
+Webhooks ────────▶  │ │ REST + WS  │ │ (embedded)│ │          │ │ (eBPF)  │  │
+                    │ └─────┬──────┘ └───────────┘ └────┬─────┘ └────┬────┘  │
+                    │       └─────────────┬─────────────┴────────────┘       │
+                    │            ┌────────┴─────────┐                        │
+                    │            │ Store  (bbolt)   │                        │
+                    │            └────────┬─────────┘                        │
+                    │   ┌─────────┬───────┼────────┬──────────┐              │
+                    │   │ Runtime │Network│ GitOps │ Notifier │              │
+                    │   │containerd│ eBPF │BuildKit│          │              │
+                    │   └────┬────┴───┬───┴────┬───┴──────────┘              │
+                    └────────┼────────┼────────┼───────────────┬─────────────┘
+                             │        │        │               ▼
+                             │        │        │      State replicator ──▶ S3
+                             ▼        ▼        ▼
+
+┌── kanea-edge (separate process; reads a projection, never the Store) ──┐
+│  L7 routing · TLS termination · middleware · request metrics           │ ◀── :80/:443
+└────────────────────────────────────────────────────────────────────────┘
+
+External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfilter, bpffs)</pre>
+
+    <h2 id="arch-processes">Two processes, one binary</h2>
+    <p>
+      <a href="concepts.html#term-kanead">kanead</a> is the control plane: API, dashboard,
+      reconciler, autoscaler, GitOps, notifications and backups.
+      <a href="concepts.html#term-edge">The edge</a> is the ingress proxy. It is a
+      <b>separate systemd unit running as a separate unprivileged user</b>.
+    </p>
+    <p>The split buys two things:</p>
+    <ul>
+      <li>Restarting, upgrading or crashing the control plane <b>does not interrupt public
+        traffic</b>. The edge unit deliberately has no <code>After=kanead.service</code>.</li>
+      <li>The process that terminates untrusted public traffic <b>cannot change the
+        platform</b>. It has no Store access and no write path.</li>
+    </ul>
+
+    <h3 id="arch-processes-projection">How the edge learns its routes</h3>
+    <p>
+      bbolt locks the whole database file, so a second process opening it would block
+      until kanead exits, even read-only. The edge therefore never opens it. kanead
+      <b>projects</b> what the edge needs into two files under
+      <code>/run/kanea-edge/</code>:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>File</th><th>Mode</th><th>Holds</th></tr></thead>
+        <tbody>
+          <tr><td><code>routes.json</code></td><td>0644</td><td>Host to service frontend. Nothing secret: the domains are in public DNS.</td></tr>
+          <tr><td><code>certs.json</code></td><td>0640</td><td>Certificates and their private keys.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Two files with two permission sets mean neither compromises for the other. The
+      paths are the defaults of <code>edge.routes_file</code> and
+      <code>edge.certs_file</code> in the
+      <a href="node-config.html#nodeconfig-edge">node config</a>.
+    </p>
+    <p>
+      kanead writes each file to a temporary name and renames it, so a half-written file
+      is never visible. The projection carries the Store index it was built from, which
+      lets the edge recognise a stale snapshot.
+    </p>
+    <p>
+      A missing or stale snapshot is not an outage. The edge keeps serving the last table
+      it loaded for as long as kanead is away, and it starts with an empty table if it
+      has none. A control plane that is down must never take the site down with it.
+    </p>
+
+    <h2 id="arch-store">The Store</h2>
+    <p>
+      One embedded bbolt database holds every mutation, behind a <code>Store</code>
+      interface with monotonic indexes. Its buckets are projects, services, allocs,
+      events, certs, secrets, pipelines, audit and kv.
+    </p>
+    <ul>
+      <li><b>Single writer.</b> All mutations serialise. Reads are bounded and paginated,
+        because a long read transaction blocks the writer.</li>
+      <li><b>Raft-shaped on purpose.</b> The interface and its index semantics are what a
+        Raft state machine needs, so a clustered implementation can replace it without
+        touching call sites.</li>
+      <li><b>Metrics and logs never touch it.</b> Time series live in a bounded in-memory
+        ring, and logs go to files through non-blocking drains. A metrics write that
+        contended with the reconciler's writer would make observability and convergence
+        fail together.</li>
+      <li><b>Migrations are explicit.</b> The Store does not migrate itself when opened.
+        A migration rewrites state in place, so kanead copies the database first, in the
+        one window where it is open and the migration has not started.</li>
+    </ul>
+
+    <h2 id="arch-runtime">Runtime driver: containerd</h2>
+    <p>
+      kanead drives containerd over its socket with the official Go client. Each project
+      gets <b>its own containerd namespace</b>, <code>kanea-&lt;project&gt;</code>, so
+      images and containers are isolated between projects by construction.
+    </p>
+    <p>
+      The driver pulls images, runs the task lifecycle, sets up each
+      <a href="concepts.html#term-alloc">alloc</a>'s network namespace, samples cgroup
+      metrics and captures stdout and stderr. Pull credentials come from the secrets
+      store, and a <a href="concepts.html#term-spec">spec</a> can pin an image by digest.
+    </p>
+
+    <h3 id="arch-runtime-hardening">Hardening is not opt-in</h3>
+    <p>Every alloc starts with:</p>
+    <ul>
+      <li>a baseline capability set: the uid-switching capabilities an image needs to
+        chown a volume and drop to its configured user, and nothing more;</li>
+      <li><code>no-new-privileges</code>;</li>
+      <li>the default seccomp profile;</li>
+      <li>its own PID and IPC namespaces.</li>
+    </ul>
+    <p>
+      <code>CAP_NET_RAW</code> is excluded from the baseline. Binding port 80 needs no
+      capability, because the alloc's network namespace has no privileged-port floor.
+    </p>
+    <p>
+      <code>capabilities = ["none"]</code> drops everything. A workload that needs a
+      capability beyond the baseline names it in the spec, and Kanea accepts it only
+      from a permitted set. Capabilities equivalent to full privilege are rejected when
+      the spec is parsed.
+    </p>
+    <p>
+      <b>No spec can lift any of this on its own</b>: there is no <code>privileged</code>
+      field. The one way past these defaults is a
+      <a href="concepts.html#term-grant">grant</a>, a host device or socket the operator
+      defines on the node. A spec requests a grant by name and can never define one.
+    </p>
+
+    <h3 id="arch-runtime-restricted">The restricted posture</h3>
+    <p>
+      <code>hardening = "restricted"</code> on a service requires a non-zero
+      <code>user</code>, runs the task with no capabilities and refuses any grant declared
+      beside it. A service that owns a volume chowns it in a root init step first.
+      <code>task.read_only_rootfs = true</code> mounts the image read-only on top of that.
+    </p>
+    <p>
+      Neither is the default, because the baseline exists so that stock images start.
+      <code>kanea plan</code> warns on the weak shapes they replace: an effective uid of
+      0, a writable root filesystem, and an image that follows a moving tag without
+      opting into auto-update.
+    </p>
+
+    <h3 id="arch-runtime-disk">Disk hygiene</h3>
+    <p>
+      One disk holds images, logs, state and volumes, so the driver keeps it in check. It
+      garbage-collects images, caps each service's logs, and caps the build cache across
+      both content stores: containerd's and the rootless buildkitd user's.
+      <a href="node-config.html#nodeconfig-imagegc">Image GC</a> is tunable in the node
+      config.
+    </p>
+
+    <h2 id="arch-network">Network driver: eBPF datapath</h2>
+    <p>
+      The datapath is Kanea's own: three small eBPF programs, a handful of pinned maps
+      and plain netlink plumbing. kanead loads and writes all of it from one object
+      compiled into the binary. There is no network agent, no key-value store and no CNI.
+    </p>
+    <p>
+      The loader is the standalone <code>github.com/cilium/ebpf</code> library. Importing
+      <code>github.com/cilium/cilium</code> would pull in the Kubernetes client graph,
+      which Kanea does not depend on.
+    </p>
+    <p>
+      The programs are compiled ahead of time and committed, so <code>go build</code>
+      needs no clang. They read only UAPI context types, so the node needs no BTF, and
+      there is no CO-RE and no <code>vmlinux.h</code>.
+    </p>
+
+    <h3 id="arch-network-linux">eBPF runs only on Linux</h3>
+    <p>
+      eBPF is a Linux kernel feature, so the datapath works only on Linux. kanead picks
+      the network mode from the system it runs on. No setting changes it.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>System</th><th>Mode</th><th>What an alloc gets</th></tr></thead>
+        <tbody>
+          <tr><td>Linux</td><td><code>ebpf</code></td><td>An address, service VIPs, load balancing, network policy and internal DNS.</td></tr>
+          <tr><td>Anything else</td><td><code>netns</code></td><td>A bare network namespace: no address, no policy, no load balancing and no internal DNS.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The <code>netns</code> mode lets kanead start on a development machine. It is not a
+      way to run services: allocs cannot reach each other by name or by address. A node
+      you <a href="install.html#install-requirements">install</a> is always Linux and
+      always runs <code>ebpf</code>. The dashboard shows the mode under Settings, in the
+      Node tab.
+    </p>
+
+    <h3 id="arch-network-identity">IP is identity</h3>
+    <p>
+      kanead allocates every alloc address from the node CIDR and every service
+      <a href="concepts.html#term-vip">VIP</a> from the service CIDR, durably in the
+      Store. The allocator that hands out an address also writes the kernel's identity
+      map, <code>alloc IP → {project, service}</code>. There is no identity-allocation
+      protocol, no label race and no settle window.
+    </p>
+    <p>
+      The numeric project and service ids behind the maps are allocated by the Store,
+      monotonic and <b>never reused</b>. That keeps a pinned map meaningful across a
+      kanead restart. The CIDRs are set in the
+      <a href="node-config.html#nodeconfig-network"><code>network</code> stanza</a>.
+    </p>
+
+    <h3 id="arch-network-attach">Attach is deny-closed by construction</h3>
+    <p>Per alloc, in order:</p>
+    <ol>
+      <li>create the network namespace;</li>
+      <li>write the identity map;</li>
+      <li>create the veth with the host side down;</li>
+      <li>attach the policy programs at tc;</li>
+      <li>add addresses and static neighbours;</li>
+      <li>bring the link up;</li>
+      <li>add the host <code>/32</code> route last.</li>
+    </ol>
+    <p>
+      At the first moment a packet can reach or leave the alloc, policy is already
+      enforcing and identity is already resolved. A skipped step fails closed, because an
+      identity miss is a drop. The deny-by-default guarantee is <b>structural, not
+      temporal</b>: there is no unlabelled window to hold shut with retries. Attach has
+      no wait loop and completes in milliseconds.
+    </p>
+
+    <h3 id="arch-network-lb">Load balancing is connect-time</h3>
+    <p>
+      One cgroup <code>connect4</code> program at the root cgroup, held by a pinned
+      <code>bpf_link</code>, rewrites <code>VIP:port → backend</code> at
+      <code>connect(2)</code>. It applies to host processes and containers alike, which
+      the edge depends on: it dials a VIP with a plain dialer.
+    </p>
+    <p>
+      There is no per-packet NAT and no conntrack entry per flow. <b>An established
+      connection never consults a map</b>, so kanead can restart, or recreate every map,
+      without touching live traffic.
+    </p>
+    <p>
+      Backends update by <b>generation flip</b>. kanead writes the new set under the next
+      generation and commits it with one atomic map update. A concurrent
+      <code>connect()</code> sees a complete old set or a complete new one, never a torn
+      one.
+    </p>
+    <p>
+      A VIP with no backends refuses at <code>connect()</code>, so a caller gets an error
+      at once and not a timeout. Service ports are <b>TCP only</b>, and
+      <code>kanea plan</code> refuses anything else.
+    </p>
+
+    <h3 id="arch-network-policy">Policy is SYN-gated map entries</h3>
+    <p>
+      The tc program on each alloc's host-side veth admits three kinds of source and
+      drops every other <i>cluster-internal</i> one:
+    </p>
+    <ul>
+      <li>a source carrying the host identity: the edge's upstream dials, and kanead's DNS
+        replies and probes;</li>
+      <li>a source in the same project;</li>
+      <li>a source named by an <code>allow_from</code> edge in the spec.</li>
+    </ul>
+    <p>
+      A source outside the cluster CIDR carries no identity. It is the internet answering
+      a connection the alloc opened, translated back by conntrack on the way in, and it
+      passes. Nothing unsolicited arrives that way: the pod CIDR is unroutable from off
+      the node, and published ports terminate at the edge.
+    </p>
+    <p>
+      The mirror rule guards the other direction. A packet <i>leaving</i> an alloc must
+      carry a cluster source, so a forged external address cannot use that pass.
+    </p>
+    <p>
+      There is no policy file, no selector language and no translation step that could
+      make a rule silently match nothing. Policy <i>is</i> map entries the datapath
+      enforces directly. Rules only ever union, so <code>allow_from</code> can never
+      weaken the project's default deny.
+    </p>
+    <div class="callout warn">
+      <b class="label">One deliberate weakening</b>
+      <p>
+        Enforcement is per connection attempt. TCP that is not a SYN passes, which lets
+        cross-project replies flow without a conntrack. That is weaker than stateful
+        tracking: an in-node ACK probe crosses the filter and is stopped only by the
+        receiving stack's RST. The
+        <a href="https://github.com/m18h/kanea/blob/main/docs/THREAT_MODEL.md">threat model</a>
+        states it. Moving to an LRU conntrack map would be an additive change.
+      </p>
+    </div>
+
+    <h3 id="arch-network-egress">Egress and the host firewall</h3>
+    <p>
+      A second, small egress program drops the cloud-metadata range
+      <code>169.254.0.0/16</code> in the kernel, with a drop counter per alloc. It also
+      drops any service-CIDR destination that escaped the connect-time rewrite, and it
+      counts traffic per endpoint.
+    </p>
+    <p>
+      Masquerade for routed pod traffic is one nftables rule in a table Kanea owns, named
+      <code>kanea</code>. kanead <b>re-asserts the rule and
+      <code>net.ipv4.ip_forward</code> every thirty seconds</b>, so a firewall reload that
+      flushes the ruleset costs seconds and needs no daemon restart.
+    </p>
+    <p>
+      A drop policy that another tool installs can still eat alloc traffic, on the
+      <b>forward</b> hook or the <b>input</b> hook. <code>kanea doctor</code> detects and
+      names both, and passes once the ruleset accepts the cluster CIDR.
+      <code>kanea firewall</code> prints the rules to add. A missing <code>kanea</code>
+      table and forwarding turned off are separate findings.
+    </p>
+
+    <h3 id="arch-network-dns">Internal DNS</h3>
+    <p>
+      Allocs resolve through kanead's own resolver, on <b>UDP and TCP</b>. It binds to
+      the datapath's host anchor, the node CIDR's <code>.1</code> address, and never to a
+      wildcard. It answers <code>&lt;service&gt;.&lt;project&gt;.kanea</code> names
+      authoritatively and forwards everything else upstream.
+    </p>
+    <p>
+      By default the upstreams are the host's own <code>/etc/resolv.conf</code>, read
+      once at startup and taken exactly as listed. That includes systemd-resolved's
+      <code>127.0.0.53</code> stub, the only nameserver a stock Debian or Ubuntu server
+      has. kanead forwards from the host's namespace, so the stub is reachable, and a
+      workload inherits the node's cache and DNSSEC posture.
+    </p>
+    <p>
+      An alloc is never handed the upstream addresses: its <code>resolv.conf</code>
+      names Kanea's resolver. To pin the upstreams or move the listener, set the
+      <a href="node-config.html#nodeconfig-dns"><code>dns</code> stanza</a>.
+    </p>
+    <div class="callout">
+      <b class="label">A host firewall is what usually breaks this</b>
+      <p>
+        An alloc's query to the resolver is a <b>new inbound connection to the host on a
+        veth</b>. It crosses the input hook like any other arrival, and a default-deny
+        ufw or firewalld drops it.
+      </p>
+      <p>
+        It does not look like a firewall problem. The host's own
+        <code>dig @10.244.0.1</code> keeps answering, because every firewall manager
+        accepts <code>lo</code> unconditionally, and the resolver's logs show a healthy
+        server. <code>kanea doctor</code> names the cause and <code>kanea firewall</code>
+        prints the rules.
+      </p>
+    </div>
+    <p>
+      TCP is served beside UDP because three things set the truncation bit, and each
+      tells a client to retry over TCP: an internal answer over 512 bytes, an upstream
+      reply that filled the read buffer, and an upstream reply that already carried TC.
+    </p>
+    <p>
+      The TCP half is bounded the way the UDP half is. It has a hard cap on concurrent
+      connections whose refusals are counted, and deadlines on every connection. A TCP
+      query is forwarded over TCP, so the retry can carry what the datagram could not.
+    </p>
+
+    <h3 id="arch-network-state">Datapath state is derived</h3>
+    <p>
+      Programs, maps and the cgroup link are pinned under <code>/sys/fs/bpf/kanea</code>
+      with a schema stamp. A kanead restart leaves the dataplane untouched. A stamp
+      mismatch recreates and repopulates the maps inside the first reconcile pass, which
+      is safe because established flows bypass them. Nothing under the pin root is backed
+      up.
+    </p>
+
+    <h2 id="arch-edge">The edge</h2>
+    <p>
+      The edge is a Go reverse proxy. It routes by host to service frontends, terminates
+      TLS, supports WebSocket and gRPC, redirects HTTP to HTTPS and adds security
+      headers. <a href="domains.html#dns-certificates">Domains and HTTPS</a> covers
+      where its certificates come from.
+    </p>
+    <p>The middleware chain runs in a fixed order, per service, from the spec's <code>expose</code> block:</p>
+    <pre class="plain">Host match → IP allow/deny → rate limit → header transforms → upstream proxy</pre>
+    <p>
+      <code>kanea plan</code> validates all of it, and it fails closed. An ingress control
+      that silently does nothing at runtime is worse than one that is absent.
+    </p>
+    <p>
+      Hardening is mandatory. The edge sets read, header and idle timeouts and header
+      size caps against slowloris, applies upstream timeouts per route, and bounds its
+      connection pools. It strips client-supplied <code>X-Forwarded-*</code> headers. It
+      answers an unknown <code>Host</code> with 404, which is also the DNS-rebinding
+      defence for the API on the same machine.
+    </p>
+    <p>
+      Because it already sits in the request path, the edge is the <b>primary source of
+      L7 metrics</b> for exposed services: requests per second and latency percentiles at
+      no extra data-plane cost. The datapath's map counters cover traffic between
+      services.
+    </p>
+    <p>
+      ACME runs in kanead, never in the edge. Obtaining a certificate means writing one,
+      and the edge does not write.
+    </p>
+
+    <h2 id="arch-isolation">Resource isolation</h2>
+    <p>
+      The control plane must survive anything a workload does. Enforcement is cgroups v2,
+      arranged as two sibling slices:
+    </p>
+
+<pre class="diagram">/sys/fs/cgroup
+├── kanea.slice                # kanead, kanea-edge (+ containerd and buildkitd, via their own units)
+│     memory.min      = system_reserve_memory     # kernel-protected floor (default 256 MiB; build nodes raise it)
+│     memory.swap.max = 0                         # the floor is RAM, not swap
+│     cpu.weight      = 10000
+│     OOMScoreAdjust  = -900                      # the global OOM killer picks workloads first
+└── kanea-workloads.slice      # every alloc lives under this one parent
+      memory.max      = total RAM − system_reserve_memory
+      memory.swap.max = 0
+      cpu.weight      = 100
+      └── per-alloc: memory.max · cpu.max · pids.max from the spec's resources block</pre>
+
+    <p>
+      The reserve is the <code>--reserve</code> flag of <code>kanea init</code>, which
+      writes it into <code>kanea.slice</code>.
+    </p>
+    <div class="callout">
+      <b class="label">"Memory lock" means guarantee, not mlock</b>
+      <p>
+        Kanea does not call <code>mlockall</code>. The Go GC grows the heap unpredictably,
+        and <code>RLIMIT_MEMLOCK</code> turns pin overflow into hard allocation failure,
+        so the lock itself could crash kanead.
+      </p>
+      <p>
+        The guarantee comes from <code>memory.min</code>, the OOM score and no swap in
+        the slice. Under pressure the kernel refuses to reclaim the floor.
+      </p>
+    </div>
+    <p>
+      Per-alloc limits are <b>enforced where declared</b>. Omit <code>resources</code>,
+      or a field of it, and the alloc is unbounded in that dimension. It is then capped
+      only by the workload slice's collective ceiling. That ceiling and the control-plane
+      floor are what protect the platform.
+    </p>
+    <p>
+      <code>pids.max</code> is the exception: the cap is always on. Omitting it means
+      256, and <code>resources { pids = 2048 }</code> declares a different value.
+    </p>
+    <p>
+      Declared resources are also the admission units. <code>kanea plan</code> renders
+      the workload budget, and apply refuses a total above it unless the operator has
+      enabled oversubscription.
+    </p>
+
+    <h2 id="arch-metrics">Metrics and autoscaling</h2>
+    <p>Three scrapers feed one bounded in-memory time series:</p>
+    <ul>
+      <li>containerd cgroup metrics: CPU and memory;</li>
+      <li>the edge: requests per second and latency percentiles for exposed services;</li>
+      <li>the datapath's per-CPU map counters: flows and drops between services.</li>
+    </ul>
+    <p>
+      The intervals and scrape addresses are in the
+      <a href="node-config.html#nodeconfig-metrics"><code>metrics</code> stanza</a>.
+    </p>
+    <div class="callout warn">
+      <b class="label">"No data" is never zero</b>
+      <p>
+        A missing metric and an idle service lead to opposite decisions. The time series,
+        the evaluator, the Prometheus exporter and the dashboard each keep the two apart,
+        and each has a test asserting it.
+      </p>
+    </div>
+    <p>
+      The evaluator applies the <code>scaling</code> block with guardrails and a circuit
+      breaker. The budget is <b>20 seconds from a sustained breach</b> to a decision: a
+      15-second averaging window, which is three samples at the 5-second scrape
+      resolution, plus one evaluation tick. A large spike decides sooner.
+    </p>
+    <p>
+      <b>The autoscaler is not a second scheduler.</b> It writes one number, the desired
+      count, and the reconciler converges. <code>kanea scale</code> uses the same route,
+      so manual and automatic scaling cannot disagree about mechanism.
+    </p>
+
+    <h2 id="arch-backup">State replication and restore</h2>
+    <p>
+      kanead replicates the Store to any S3-compatible bucket. This section explains the
+      design. To set it up, follow <a href="backups.html">Back up a node</a>.
+    </p>
+    <ul>
+      <li><b>Change data capture.</b> Store mutations produce change segments. kanead
+        ships snapshots and segments to the bucket. The S3 client is hand-written against
+        the REST API, with SigV4 and four verbs, and CI runs it against MinIO in
+        path-style and virtual-hosted addressing.</li>
+      <li><b>Archives are chunked AEAD.</b> Keys are derived from the master key with
+        HKDF. <b>The last chunk is sealed under different additional data</b>, so a
+        truncated snapshot fails to decrypt and cannot restore as half a platform.</li>
+      <li><b>Manifests are unencrypted and hashes cover the ciphertext.</b> Someone
+        holding the bucket and no key can still see what is there and whether it is
+        intact. That is the question to ask <i>before</i> fetching the escrowed key.</li>
+      <li><b>Restore is staged, never performed in place.</b> The API can stage one, and
+        kanead performs it at the next start, before anything opens the Store. The API
+        has no method that restores a running node.</li>
+      <li><b>The replication cursor is derived from the sink</b>, never stored. Writing
+        it to the Store would emit a change that needs shipping, which would write it
+        again.</li>
+      <li><b>The destination can change at runtime</b>, from the dashboard's Settings
+        page or <code>PUT /v1/settings/backup</code>. kanead <b>probes a new destination
+        with a real test write before it commits</b>, so a typo is refused and the old
+        replication continues. On a change, the old destination receives one final
+        segment and the new one an immediate full snapshot.
+        <a href="backups.html#backups-precedence">Which destination wins</a> explains how
+        this setting relates to the node config.</li>
+    </ul>
+    <p>
+      <code>kanea init</code> generates the master key, shows it once and asks you to
+      type it back. Without it, every archive is unreadable. Read the
+      <a href="https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md">DR runbook</a>
+      before you need it.
+    </p>
+
+    <h2 id="arch-mcp">API, dashboard and MCP</h2>
+    <p>
+      The API is REST plus one multiplexed WebSocket, and <b>every route is
+      deny-by-default</b>, including the WebSocket and every MCP route. The exceptions
+      are <code>/login</code>, the ACME challenge path and <code>/healthz</code>.
+    </p>
+    <p>
+      <code>/healthz</code> keeps its unauthenticated answer short: the status and the
+      OIDC issuer, which a login screen needs before it holds a credential. Version, PID,
+      Store index, listen address and uptime need an identified caller. A bad token still
+      gets the short 200, so a load balancer that forwards a stale
+      <code>Authorization</code> header cannot flap a health check.
+    </p>
+    <p>
+      One route authenticates differently: the git webhook. It checks a per-project HMAC
+      over the raw body, rejects replays and is audited. It never deploys from the
+      request. It marks the project, and the sync loop re-reads the source with Kanea's
+      own credential.
+    </p>
+    <p>
+      The dashboard is a React single-page app embedded in the binary with
+      <code>go:embed</code> and served by kanead on the API listener.
+      <a href="dashboard.html#arch-dashboard">The dashboard</a> covers how to reach it,
+      and the listener is set in the
+      <a href="node-config.html#nodeconfig-bind"><code>bind</code> stanza</a>.
+    </p>
+    <p>
+      The MCP server exposes its tools in three tiers (read, mutate, destructive) over
+      stdio and streamable HTTP. <a href="mcp.html#mcp-tools">AI agents (MCP)</a> lists
+      them.
+    </p>
+    <div class="callout">
+      <b class="label">Why MCP tools have no privileges of their own</b>
+      <p>
+        Every tool reaches the platform by making an HTTP request against the API's own
+        handler. A tool's only verb is "send this request", so it can never be more
+        privileged than the credential its caller presented. Nothing in the MCP package
+        may hold a Store, a secrets store or an auth store.
+      </p>
+      <p>
+        There are also <b>no secret tools at any tier</b>. The requirement is that no
+        tool returns a secret value. The implementation gives an agent no secrets verb
+        at all, and a test fails if one appears.
+      </p>
+    </div>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

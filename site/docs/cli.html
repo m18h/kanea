@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI reference - Kanea docs</title>
+<meta name="description" content="Look up any kanea command: what it does, its usage line, its flags and their defaults.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Reference</p>
+    <h1 id="cli">CLI reference</h1>
+    <p>
+      Every <code>kanea</code> command, with its usage line, flags and defaults. Kanea is one
+      binary: the same file is the CLI, <a href="concepts.html#term-kanead">kanead</a> and
+      <a href="concepts.html#term-edge">the edge</a>.
+    </p>
+    <p>
+      Services are addressed as <code>project/service</code>, or as a bare service name with
+      <code>--project</code>. Two commands have a second spelling: <code>kanea apply</code> is
+      <code>kanea run</code>, and <code>kanea rm</code> is <code>kanea remove</code>.
+      Run <code>kanea</code> with no arguments to list every command.
+    </p>
+
+    <h2 id="cli-endpoint">Where a command talks</h2>
+    <p>
+      A client command talks to kanead over the local unix socket unless you name a remote
+      endpoint. Every command marked "client" on this page takes these four flags; they are
+      not repeated in the tables below.
+    </p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Environment</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--socket</code></td><td>-</td><td><code>/run/kanea/kanead.sock</code></td><td>The kanead control socket.</td></tr>
+        <tr><td><code>--url</code></td><td><code>KANEA_URL</code></td><td>-</td><td>Base URL of a remote control API, for example <code>https://node:8600</code>.</td></tr>
+        <tr><td><code>--token</code></td><td><code>KANEA_TOKEN</code></td><td>-</td><td>Bearer token for the remote endpoint.</td></tr>
+        <tr><td><code>--ca-cert</code></td><td><code>KANEA_CA_CERT</code></td><td>-</td><td>The remote endpoint's CA: a PEM file, or the PEM text itself.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      A flag you pass beats its environment variable, and an empty variable counts as unset.
+      Passing <code>--socket</code> makes the call local and ignores <code>KANEA_URL</code>.
+      Combining <code>--socket</code> with <code>--url</code>, <code>--token</code> or
+      <code>--ca-cert</code> is refused.
+    </p>
+    <p>
+      The socket is root-owned, so local client commands run under <code>sudo</code>.
+      To drop the <code>sudo</code>, join the <code>kanea</code> group that
+      <code>kanea init</code> creates and log in again:
+      <code>sudo usermod -aG kanea &lt;user&gt;</code>. Membership is root-equivalent, like
+      docker's group.
+    </p>
+    <p>
+      <a href="remote.html#remote">Remote nodes and CI</a> covers the token, the CA and
+      pipeline examples.
+    </p>
+
+    <h2 id="cli-setup">Setup</h2>
+
+    <h3 id="cli-init"><code>kanea init</code></h3>
+    <p>
+      Sets up a node: preflight checks, host components, the master-key ceremony, the
+      <a href="concepts.html#term-node-config">node config</a>, the systemd units and the
+      first admin account. Run it once, as root.
+    </p>
+    <pre class="plain">sudo kanea init [flags]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--data-dir</code></td><td><code>/var/lib/kanea</code></td><td>State directory.</td></tr>
+        <tr><td><code>--log-dir</code></td><td><code>/var/log/kanea/allocs</code></td><td>Workload log directory.</td></tr>
+        <tr><td><code>--unit-dir</code></td><td><code>/etc/systemd/system</code></td><td>Where the systemd units are written.</td></tr>
+        <tr><td><code>--prefix</code></td><td><code>/usr/local/lib/kanea</code></td><td>Where component binaries are installed.</td></tr>
+        <tr><td><code>--node-cidr</code></td><td><code>10.244.0.0/24</code></td><td>This node's container subnet. Its <code>.1</code> is the internal DNS address.</td></tr>
+        <tr><td><code>--cluster-cidr</code></td><td><code>10.244.0.0/16</code></td><td>The range treated as internal. It must contain <code>--node-cidr</code>.</td></tr>
+        <tr><td><code>--node-cidr6</code></td><td>-</td><td>This node's IPv6 container subnet. Opt-in; needs the other two <code>*6</code> flags.</td></tr>
+        <tr><td><code>--cluster-cidr6</code></td><td>-</td><td>The routed IPv6 range. It must contain <code>--node-cidr6</code>.</td></tr>
+        <tr><td><code>--service-cidr6</code></td><td>-</td><td>IPv6 pool for service addresses.</td></tr>
+        <tr><td><code>--containerd</code></td><td><code>/run/kanea/containerd.sock</code></td><td>containerd socket. <code>external</code> adopts the containerd already on the host.</td></tr>
+        <tr><td><code>--buildkit</code></td><td><code>unix:///var/lib/kanea/buildkit/run/buildkitd.sock</code></td><td>Rootless buildkitd address. <code>off</code> skips the build daemon.</td></tr>
+        <tr><td><code>--listen</code></td><td><code>127.0.0.1:8600</code></td><td>API/dashboard network address written to <code>/etc/kanea/kanea.hcl</code>. <code>none</code> keeps it socket-only.</td></tr>
+        <tr><td><code>--listen-cert</code></td><td>-</td><td>TLS certificate for <code>--listen</code>.</td></tr>
+        <tr><td><code>--listen-key</code></td><td>-</td><td>TLS private key for <code>--listen</code>.</td></tr>
+        <tr><td><code>--reserve</code></td><td><code>256M</code></td><td>Memory reserved for the control plane.</td></tr>
+        <tr><td><code>--admin-user</code></td><td>prompt</td><td>The first admin's username. With a piped password, init runs unattended.</td></tr>
+        <tr><td><code>--timeout</code></td><td><code>2m</code></td><td>How long to wait for kanead to come up.</td></tr>
+        <tr><td><code>--bundle</code></td><td>-</td><td>Install the host components from an offline bundle.</td></tr>
+        <tr><td><code>--no-install</code></td><td>off</td><td>Skip the host components and assume they are present.</td></tr>
+        <tr><td><code>--no-start</code></td><td>off</td><td>Write the files, but do not start kanead or create the first account.</td></tr>
+        <tr><td><code>--skip-checks</code></td><td>off</td><td>Run the ceremony without the preflight checks.</td></tr>
+        <tr><td><code>--skip-units</code></td><td>off</td><td>Do not write systemd units.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      Init writes its directory, network and listener choices to
+      <code>/etc/kanea/kanea.hcl</code>. A value already in the file is kept unless you pass
+      the matching flag. When the file has a
+      <a href="node-config.html#nodeconfig-bind"><code>bind</code> stanza</a> and you do not
+      pass <code>--listen</code>, init skips the listen question and leaves the stanza alone.
+    </p>
+    <p>
+      A <code>--listen</code> address beyond loopback is served over TLS. Without a
+      <code>--listen-cert</code>/<code>--listen-key</code> pair, init creates a self-signed
+      pair at <code>/etc/kanea/api.crt</code> and <code>api.key</code>. An address with no host,
+      such as <code>0.0.0.0:8600</code> or <code>:8600</code>, is refused.
+    </p>
+    <p>
+      Re-running init is safe: an existing master key and an existing account are left alone.
+      <a href="install.html#install-init">Install a node</a> has the annotated walk-through.
+    </p>
+    <div class="callout warn">
+      <b class="label">The key is shown once</b>
+      <p>
+        The ceremony prints the master key and makes you type it back. Without that key every
+        backup this node makes is unreadable, so have somewhere to record it before you start.
+      </p>
+    </div>
+
+    <h3 id="cli-install"><code>kanea install</code></h3>
+    <p>
+      Places the pinned host components: containerd, <code>runc</code>, rootless
+      <code>buildkitd</code> and the wasmtime shim. <code>kanea init</code> runs it for you,
+      so use it directly to inspect the pins or repair one component.
+    </p>
+    <pre class="plain">sudo kanea install [flags]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--list</code></td><td>off</td><td>Print the pinned component versions and exit.</td></tr>
+        <tr><td><code>--dry-run</code></td><td>off</td><td>Resolve and verify every artefact, write nothing.</td></tr>
+        <tr><td><code>--only</code></td><td>all</td><td>Comma-separated components to install.</td></tr>
+        <tr><td><code>--force</code></td><td>off</td><td>Reinstall components already at the pinned version.</td></tr>
+        <tr><td><code>--bundle</code></td><td>-</td><td>Install from an offline bundle instead of upstream.</td></tr>
+        <tr><td><code>--containerd</code></td><td>-</td><td><code>external</code>, or a socket path, adopts an existing containerd instead of installing one.</td></tr>
+        <tr><td><code>--arch</code></td><td>host architecture</td><td><code>amd64</code> or <code>arm64</code>.</td></tr>
+        <tr><td><code>--prefix</code></td><td><code>/usr/local/lib/kanea</code></td><td>Where component binaries are installed.</td></tr>
+        <tr><td><code>--conf-dir</code></td><td><code>/etc/kanea</code></td><td>Component configuration directory.</td></tr>
+        <tr><td><code>--data-dir</code></td><td><code>/var/lib/kanea</code></td><td>Component state directory.</td></tr>
+        <tr><td><code>--run-dir</code></td><td><code>/run/kanea</code></td><td>Component socket directory.</td></tr>
+        <tr><td><code>--unit-dir</code></td><td><code>/etc/systemd/system</code></td><td>Where the systemd units are written.</td></tr>
+        <tr><td><code>--skip-units</code></td><td>off</td><td>Install binaries without writing systemd units.</td></tr>
+        <tr><td><code>--node-cidr</code></td><td><code>10.244.0.0/24</code></td><td>This node's container subnet.</td></tr>
+        <tr><td><code>--cluster-cidr</code></td><td><code>10.244.0.0/16</code></td><td>The routed range. It must contain <code>--node-cidr</code>.</td></tr>
+        <tr><td><code>--node-cidr6</code></td><td>-</td><td>This node's IPv6 container subnet. Needs <code>--cluster-cidr6</code>.</td></tr>
+        <tr><td><code>--cluster-cidr6</code></td><td>-</td><td>The routed IPv6 range. It must contain <code>--node-cidr6</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      Versions and SHA-256 hashes are compiled into the binary and never fetched.
+      <a href="install.html#install-components">Host components</a> has the details.
+    </p>
+
+    <h3 id="cli-bundle"><code>kanea bundle</code></h3>
+    <p>
+      Builds an offline bundle of the host components on a machine with a network, for a node
+      without one. Its only subcommand is <code>create</code>.
+    </p>
+    <pre class="plain">kanea bundle create [flags]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--arch</code></td><td>host architecture</td><td>Target architecture: <code>amd64</code> or <code>arm64</code>.</td></tr>
+        <tr><td><code>-o</code></td><td><code>kanea_&lt;version&gt;_linux_&lt;arch&gt;_bundle.tar.gz</code></td><td>Output path.</td></tr>
+        <tr><td><code>--dir</code></td><td>off</td><td>Write a directory instead of a tarball.</td></tr>
+        <tr><td><code>--no-images</code></td><td>off</td><td>Omit buildkit. For a node that runs no builds, with <code>builds.buildkit_addr = "off"</code>.</td></tr>
+        <tr><td><code>--containerd</code></td><td><code>/run/kanea/containerd.sock</code></td><td>containerd socket used to export the image components.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      The bundle carries no hashes of its own: the installing node's binary verifies it. See
+      <a href="install.html#install-airgapped">Air-gapped nodes</a>.
+    </p>
+
+    <h3 id="cli-doctor"><code>kanea doctor</code></h3>
+    <p>
+      Verifies the node and exits non-zero when a check fails. It reads the settings it checks
+      against from the node config. Safe to run at any time.
+    </p>
+    <pre class="plain">kanea doctor [--prefix=/usr/local/lib/kanea] [--offline]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--prefix</code></td><td><code>/usr/local/lib/kanea</code></td><td>Component install prefix.</td></tr>
+        <tr><td><code>--offline</code></td><td>off</td><td>Skip the upstream reachability probe. Use it on air-gapped nodes.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      It checks component versions against the pins, the containerd and build sockets, bpffs,
+      cgroups v2 and slice placement, the kernel, the memory floor, subnet overlap, the state
+      database's permissions, disk headroom and clock synchronisation. It also names a host
+      firewall that drops alloc traffic.
+    </p>
+    <p>
+      A <code>/etc/kanea/kanea.hcl</code> that does not load is a failed check, and the other
+      checks still run. A check that needs root is reported <code>SKIP</code>, and the run
+      ends by saying how many were skipped. Warnings do not change the exit code.
+    </p>
+
+    <h3 id="cli-firewall"><code>kanea firewall</code></h3>
+    <p>
+      Prints the host-firewall rules this node's workloads need. It prints and never applies
+      them.
+    </p>
+    <pre class="plain">kanea firewall [--manager=ufw|firewalld|nft|iptables] [--all] [--prefix=/usr/local/lib/kanea]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--manager</code></td><td>detected</td><td>Print rules for one manager: <code>ufw</code>, <code>firewalld</code>, <code>nft</code> or <code>iptables</code>.</td></tr>
+        <tr><td><code>--all</code></td><td>off</td><td>Print every manager's rules.</td></tr>
+        <tr><td><code>--prefix</code></td><td><code>/usr/local/lib/kanea</code></td><td>Component install prefix.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      The rules come from this node's own
+      <a href="node-config.html#nodeconfig-network"><code>network</code> stanza</a>. There
+      are two: <b>forward</b>, for alloc traffic leaving the node, and <b>input</b>, for
+      allocs reaching the internal resolver.
+    </p>
+    <p>
+      Kanea writes only its own <code>kanea</code> nftables table. A rule it placed in a
+      manager's ruleset would be flushed on that manager's next reload, so you add the rules
+      yourself. A published port needs its own inbound allow, which this command does not
+      print.
+    </p>
+
+    <h3 id="cli-config"><code>kanea config</code></h3>
+    <p>
+      Converts an older unit's command-line flags into <code>/etc/kanea/kanea.hcl</code>. Its
+      only subcommand is <code>migrate</code>.
+    </p>
+    <pre class="plain">sudo kanea config migrate [--unit-dir=/etc/systemd/system] [--dry-run]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--unit-dir</code></td><td><code>/etc/systemd/system</code></td><td>Where <code>kanead.service</code> and <code>kanea-edge.service</code> live.</td></tr>
+        <tr><td><code>--dry-run</code></td><td>off</td><td>Print the resulting file and the two new <code>ExecStart</code> lines, write nothing.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      <code>sudo kanea upgrade</code> runs this conversion for you.
+      <a href="upgrade.html#upgrade-migrate">Migrating from flags</a> explains what it reads
+      and what it rewrites.
+    </p>
+
+    <h3 id="cli-ca"><code>kanea ca</code></h3>
+    <p>
+      Shows the node's own CA certificate, which devices install to trust
+      <code>self-signed</code> services and the dashboard. Client command.
+    </p>
+    <pre class="plain">kanea ca show [--out=FILE] [--quiet]
+kanea ca info</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Subcommand</th><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>show</code></td><td></td><td></td><td>Prints the certificate in PEM on stdout and installation hints on stderr.</td></tr>
+        <tr><td></td><td><code>--out</code></td><td>stdout</td><td>Write the PEM to this file.</td></tr>
+        <tr><td></td><td><code>--quiet</code></td><td>off</td><td>Omit the installation hints.</td></tr>
+        <tr><td><code>info</code></td><td></td><td></td><td>Prints the certificate's subject, fingerprint and validity.</td></tr>
+      </tbody>
+    </table></div>
+    <pre class="plain">kanea ca show &gt; kanea-ca.crt</pre>
+    <p>
+      There is no <code>kanea ca rotate</code> and no command that returns the CA key.
+      Rotating means re-trusting every device.
+    </p>
+
+    <h3 id="cli-upgrade"><code>kanea upgrade</code></h3>
+    <p>
+      Fetches and verifies a release, installs it over the running binary, takes a backup,
+      then restarts <code>kanea-edge</code> and <code>kanead</code> and waits for health. It
+      acts on this machine only and refuses a remote endpoint.
+    </p>
+    <pre class="plain">sudo kanea upgrade [flags]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--check</code></td><td>off</td><td>Report the running, installed and latest versions and stop.</td></tr>
+        <tr><td><code>--version</code></td><td>latest</td><td>Upgrade to this release, written <code>vX.Y.Z</code>.</td></tr>
+        <tr><td><code>--allow-downgrade</code></td><td>off</td><td>Permit a target older than the running daemon. The Store's schema may not support it.</td></tr>
+        <tr><td><code>--no-fetch</code></td><td>off</td><td>Download nothing and restart onto the binary already installed.</td></tr>
+        <tr><td><code>--require-signature</code></td><td>off</td><td>Refuse the release unless its cosign signature verifies. Also on when <code>upgrade.require_signature = true</code>.</td></tr>
+        <tr><td><code>--skip-backup</code></td><td>off</td><td>Do not take the pre-upgrade backup.</td></tr>
+        <tr><td><code>--dry-run</code></td><td>off</td><td>Print what would run and stop.</td></tr>
+        <tr><td><code>--timeout</code></td><td><code>2m</code></td><td>How long to wait for each service.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      The release's sha256 is always checked against its <code>checksums.txt</code>. The
+      cosign signature over that file is checked when cosign is installed. Without
+      <code>--require-signature</code>, a missing cosign binary or an unsigned release is a
+      printed note.
+    </p>
+    <p>
+      The release repository comes from <code>upgrade.repo</code> in the
+      <a href="node-config.html#nodeconfig-upgrade"><code>upgrade</code> stanza</a>. When the
+      installed binary is already the target version, nothing is downloaded. When no backup
+      destination is configured, the upgrade says so and continues.
+    </p>
+    <p>
+      <a href="upgrade.html#install-upgrade">Upgrade and uninstall</a> has the procedure,
+      including nodes whose binary a package manager owns.
+    </p>
+
+    <h2 id="cli-deploy">Deploying</h2>
+
+    <h3 id="cli-plan"><code>kanea plan</code></h3>
+    <p>
+      Shows what applying a <a href="concepts.html#term-spec">spec</a> would change, and
+      changes nothing. Client command.
+    </p>
+    <pre class="plain">kanea plan app.hcl [more.hcl …] [selector …] [--remove-orphans]
+kanea plan --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--remove-orphans</code></td><td>off</td><td>Also show what <code>kanea run --remove-orphans</code> would delete.</td></tr>
+        <tr><td><code>--image</code></td><td>-</td><td>Plan a single image without a spec file.</td></tr>
+        <tr><td><code>--name</code></td><td>-</td><td>Service name, with <code>--image</code>.</td></tr>
+        <tr><td><code>--project</code></td><td>-</td><td>Project name, with <code>--image</code>.</td></tr>
+        <tr><td><code>--count</code></td><td><code>1</code></td><td>Alloc count, with <code>--image</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <pre class="plain">$ kanea plan app.hcl
+~ update shop/web
+    image             web:v1 -&gt; web:v2  (rolls allocs)
+    env               + DB_URL, ~ LOG_LEVEL  (rolls allocs)
+    volumes           + cache  s3:backups /var/cache rw 10 GiB budget  (rolls allocs)
+                      ~ data  local /data rw -&gt; local /srv/data rw
+    expose            + api.example.com  (tls acme, port 8080)
+    publish           - 8443/tcp  port http
+    scaling           min 1, max 5, rps 100 -&gt; min 1, max 10, rps 100
+
++ create shop/worker (count 2, image worker:v3)
+    volumes           + queue  local /queue
+    files             + /etc/app.conf  (412 B, content 3f2a1b9c, mode 0644)
+    check             http /healthz on port 8080 every 10s, timeout 2s, 3 failure(s)
+
+Plan: 2 change(s) - 1 create, 1 update; 1 replace running allocs.
+Run `kanea run` to apply.</pre>
+    <p>
+      The output has one block per service and one row per resource added, changed or
+      removed. Rows marked <code>(rolls allocs)</code> replace running containers. The other
+      rows are applied to the service as it runs, or republished to the edge.
+    </p>
+    <p>
+      Several files are parsed as one set, so their order does not matter. The spec is parsed
+      and validated with file-and-line diagnostics before anything dials kanead. Validation
+      errors fail the plan. Weak defaults only warn: an effective uid of 0, a writable root
+      filesystem, or a moving image tag without auto-update.
+    </p>
+    <p>
+      A plan never prints an environment value or a config file's content, because either may
+      carry a secret. You get the keys, the paths and a short digest of the content.
+    </p>
+
+    <h4 id="cli-selectors">Selectors</h4>
+    <p>
+      A selector scopes <code>plan</code> and <code>run</code> to part of the file:
+      <code>shop/web</code> is one service and <code>shop</code> is a whole project. Several
+      selectors union. An argument that exists on disk is a spec file, and any other argument
+      is a selector.
+    </p>
+    <p>
+      The whole file is still parsed and validated, and every selector must match at least
+      one service in it.
+    </p>
+
+    <h3 id="cli-run"><code>kanea run</code></h3>
+    <p>
+      Applies a spec. <code>kanea apply</code> is the same command. Client command.
+    </p>
+    <pre class="plain">kanea run app.hcl [more.hcl …] [selector …] [--wait=60s] [--remove-orphans] [--yes]
+kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--wait</code></td><td><code>60s</code></td><td>How long to wait for allocs to run. <code>0</code> returns immediately.</td></tr>
+        <tr><td><code>--remove-orphans</code></td><td>off</td><td>Delete services in this spec's projects that the spec does not declare.</td></tr>
+        <tr><td><code>--yes</code>, <code>-y</code></td><td>off</td><td>Apply without asking. Implied when stdin is not a terminal.</td></tr>
+        <tr><td><code>--image</code></td><td>-</td><td>Run a single image without a spec file.</td></tr>
+        <tr><td><code>--name</code></td><td>-</td><td>Service name, with <code>--image</code>.</td></tr>
+        <tr><td><code>--project</code></td><td>-</td><td>Project name, with <code>--image</code>.</td></tr>
+        <tr><td><code>--count</code></td><td><code>1</code></td><td>Alloc count, with <code>--image</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      On a terminal, <code>run</code> prints the plan and asks <code>Apply? [Y/n]</code>.
+      Enter applies; any answer other than <code>y</code> or <code>yes</code> aborts and
+      sends nothing. With a piped or redirected stdin it applies without asking, so CI jobs
+      do not need <code>--yes</code>.
+    </p>
+    <p>
+      Running it twice with an unchanged spec does nothing. An apply is additive: a service
+      the spec does not declare keeps running, and a scoped run cannot delete anything.
+    </p>
+    <p>
+      <code>--remove-orphans</code> deletes what the spec does not declare, in each project
+      the spec has a <code>project</code> block for. The deletes and the applies go in one
+      atomic batch. It is refused with a selector and with <code>--image</code>, because
+      neither sends a whole project. Read
+      <a href="spec.html#spec-prune">what a prune destroys</a> first.
+    </p>
+    <p>
+      <code>--image</code> creates a bare service from project, name, count and image. It
+      refuses to overwrite a service that declares more than that, and names what would be
+      lost. To change the image of an existing service, use
+      <a href="#cli-deploy-cmd"><code>kanea deploy</code></a>.
+    </p>
+
+    <h3 id="cli-deploy-cmd"><code>kanea deploy</code></h3>
+    <p>
+      Points an existing service at a new image and leaves the rest of its spec alone. This
+      is the command for a CI pipeline's last step. Client command.
+    </p>
+    <pre class="plain">kanea deploy [--project=P] &lt;[project/]service&gt; &lt;image&gt; [--wait=60s] [--no-wait]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--project</code></td><td>-</td><td>Project name, for a bare service name.</td></tr>
+        <tr><td><code>--wait</code></td><td><code>60s</code></td><td>How long to wait for the new image to be running.</td></tr>
+        <tr><td><code>--no-wait</code></td><td>off</td><td>Return once the change is accepted.</td></tr>
+      </tbody>
+    </table></div>
+    <pre class="plain">kanea deploy shop/web registry.example.com/shop/web:v2</pre>
+    <p>
+      An <a href="spec.html#spec-init">init step</a> that declared the previous image moves
+      to the new one, and the output names the steps that followed. A step on any other image
+      is untouched. <a href="remote.html#remote-deploy">Deploying a new image</a> has the
+      pipeline examples.
+    </p>
+
+    <h3 id="cli-stop"><code>kanea stop</code></h3>
+    <p>Scales a service to zero. Client command.</p>
+    <pre class="plain">kanea stop [--project=P] [--rm] [--yes] &lt;[project/]service&gt;</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--project</code></td><td>-</td><td>Project name, for a bare service name.</td></tr>
+        <tr><td><code>--rm</code></td><td>off</td><td>Also delete the service declaration. Asks first on a terminal, as <code>kanea remove</code> does.</td></tr>
+        <tr><td><code>--yes</code>, <code>-y</code></td><td>off</td><td>Remove without asking. Implied when stdin is not a terminal.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="cli-remove"><code>kanea remove</code></h3>
+    <p>
+      Deletes one service declaration. <code>kanea rm</code> is the same command. Client
+      command.
+    </p>
+    <pre class="plain">kanea remove [--project=P] [--yes] &lt;[project/]service&gt;</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--project</code></td><td>-</td><td>Project name, for a bare service name.</td></tr>
+        <tr><td><code>--yes</code>, <code>-y</code></td><td>off</td><td>Remove without asking. Implied when stdin is not a terminal.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      It asks <code>[y/N]</code> on a terminal. The containers, alloc records, VIP, routes
+      and mounts go. Volume data is kept, so re-applying the spec brings the service back
+      with its data.
+    </p>
+
+    <h3 id="cli-start"><code>kanea start</code></h3>
+    <p>Scales a stopped service back up. Client command.</p>
+    <pre class="plain">kanea start [--project=P] &lt;[project/]service&gt; [count]</pre>
+    <p>
+      Its one flag is <code>--project</code>. A stopped service does not remember its earlier
+      count, so <code>start</code> brings up one replica unless you give a count. An
+      autoscaled service starts at its declared minimum. A service that is already running is
+      left as it is.
+    </p>
+
+    <h3 id="cli-restart"><code>kanea restart</code></h3>
+    <p>
+      Rolls a service's <a href="concepts.html#term-alloc">allocs</a> through its update
+      policy. Client command.
+    </p>
+    <pre class="plain">kanea restart [--project=P] &lt;[project/]service&gt;</pre>
+    <p>
+      Its one flag is <code>--project</code>. A restart also clears an exhausted
+      crash-restart budget, because the budget belongs to the generation that spent it.
+    </p>
+
+    <h2 id="cli-inspect">Inspecting</h2>
+
+    <h3 id="cli-ps"><code>kanea ps</code></h3>
+    <p>
+      Lists allocs: id, service, state, health, restarts, age and address. Client command.
+    </p>
+    <pre class="plain">kanea ps [--project=P] [--service=S] [-a]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--project</code></td><td>-</td><td>Filter by project.</td></tr>
+        <tr><td><code>--service</code></td><td>-</td><td>Filter by service.</td></tr>
+        <tr><td><code>-a</code>, <code>--all</code></td><td>off</td><td>Also show what is declared but not running.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      A removed alloc leaves no record, so a stopped service does not appear by default.
+      <code>-a</code> adds services scaled to zero as <code>stopped</code>, and slots not yet
+      created as <code>pending</code>.
+    </p>
+
+    <h3 id="cli-describe"><code>kanea describe</code></h3>
+    <p>
+      Shows one service in full: the declared spec beside what is true on the node. Client
+      command.
+    </p>
+    <pre class="plain">kanea describe [--project=P] &lt;[project/]service&gt;</pre>
+    <p>
+      Its one flag is <code>--project</code>. The output covers the image and its pinned
+      digest, routes, volumes and grants, the alloc table with health verdicts, a stats
+      snapshot and recent events. A missing metric prints as <code>-</code>, never as zero.
+    </p>
+    <p>
+      The alloc table's <code>REASON</code> column says why each alloc last stopped, or why
+      it never ran:
+    </p>
+    <div class="tablewrap"><table class="prose-first">
+      <thead><tr><th>Reason</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>OOMKilled</code></td><td>Killed for memory. Read from the alloc's cgroup, not guessed from exit code 137.</td></tr>
+        <tr><td><code>Signalled</code></td><td>Stopped by a signal, which includes a forced stop.</td></tr>
+        <tr><td><code>Error</code>, <code>Completed</code></td><td>Exited non-zero, or exited zero.</td></tr>
+        <tr><td><code>ImageFailed</code>, <code>VolumeFailed</code>, <code>GrantFailed</code>, <code>NetworkFailed</code>, <code>CreateFailed</code>, <code>StartFailed</code></td><td>Never ran, and the step that failed.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      The reason is about the last stop. A <code>running</code> row that carries
+      <code>OOMKilled</code> is up now and was killed for memory the time before.
+    </p>
+
+    <h3 id="cli-status"><code>kanea status</code></h3>
+    <p>
+      Shows health, recent events, current and desired counts and the scaling picture, for
+      the platform or for one service. Client command.
+    </p>
+    <pre class="plain">kanea status [--project=P] [--traffic] [--json] [[project/]service]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--project</code></td><td>-</td><td>Filter by project.</td></tr>
+        <tr><td><code>--traffic</code></td><td>off</td><td>Show the edge's status-code and byte breakdown per service.</td></tr>
+        <tr><td><code>--json</code></td><td>off</td><td>Emit the status as JSON.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="cli-logs"><code>kanea logs</code></h3>
+    <p>
+      Prints a service's logs, merged across its allocs. Client command.
+    </p>
+    <pre class="plain">kanea logs [-f] [--tail=N] [-c NAME] [--previous] [--project=P | --alloc=ID] [[project/]service]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>-f</code></td><td>off</td><td>Follow the stream.</td></tr>
+        <tr><td><code>--tail</code></td><td><code>0</code> (everything)</td><td>Show only the last N lines before following.</td></tr>
+        <tr><td><code>--alloc</code></td><td>-</td><td>Read a single alloc, by id.</td></tr>
+        <tr><td><code>-c</code></td><td>-</td><td>Read an <a href="spec.html#spec-init">init container</a>'s log instead of the task's, by its block name.</td></tr>
+        <tr><td><code>--previous</code></td><td>off</td><td>Read the log files a stopped or removed service left on disk.</td></tr>
+        <tr><td><code>--project</code></td><td>-</td><td>Filter by project.</td></tr>
+      </tbody>
+    </table></div>
+    <pre class="plain">kanea logs -f --tail=100 shop/web</pre>
+    <p>
+      A removed alloc keeps no record, but its log file stays on disk. <code>--previous</code>
+      is how you read the last output before a stop, a crash loop's end or a removal.
+    </p>
+
+    <h3 id="cli-exec"><code>kanea exec</code></h3>
+    <p>
+      Runs a command inside an alloc. Admin-only, and audited whether or not the session
+      starts. Client command.
+    </p>
+    <pre class="plain">kanea exec [--project=P] [--alloc=ID] [--user=UID] [-it] &lt;[project/]service&gt; -- &lt;command&gt; [args…]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--project</code></td><td>-</td><td>Project name, for a bare service name.</td></tr>
+        <tr><td><code>--alloc</code></td><td>first running alloc</td><td>Alloc id.</td></tr>
+        <tr><td><code>--user</code></td><td>the workload's own</td><td>Numeric uid to run as. Names are not resolved.</td></tr>
+        <tr><td><code>-it</code></td><td>off</td><td>Allocate a terminal and forward stdin. A shell needs it.</td></tr>
+      </tbody>
+    </table></div>
+    <pre class="plain">kanea exec -it shop/web -- sh</pre>
+    <p>
+      The <code>--</code> is required. The command crosses the wire as separate arguments and
+      is never re-split from one string.
+    </p>
+
+    <h3 id="cli-functions"><code>kanea functions</code></h3>
+    <p>
+      Lists the node's wasm functions with their triggers, invocation rate and status. Its
+      only subcommand is <code>list</code>. Client command.
+    </p>
+    <pre class="plain">kanea functions list [--json]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--json</code></td><td>off</td><td>Machine-readable output.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="cli-ui"><code>kanea ui</code></h3>
+    <p>Prints the dashboard URL. Client command.</p>
+    <pre class="plain">kanea ui [--addr=…] [--open]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--addr</code></td><td>ask kanead</td><td>Dashboard address.</td></tr>
+        <tr><td><code>--open</code></td><td>off</td><td>Open the URL in a browser.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      When kanead has no network listener there is no URL to print, and the command says so.
+      <a href="dashboard.html#arch-dashboard">Reach the dashboard</a> covers the listener.
+    </p>
+
+    <h2 id="cli-scale">Scaling and builds</h2>
+
+    <h3 id="cli-scale-cmd"><code>kanea scale</code></h3>
+    <p>Sets a service's desired count and returns. Client command.</p>
+    <pre class="plain">kanea scale [--project=P] &lt;[project/]service&gt; &lt;count&gt;</pre>
+    <p>
+      Its one flag is <code>--project</code>. kanead converges on the new count afterwards.
+      A count outside an autoscaled service's declared bounds is refused.
+    </p>
+
+    <h3 id="cli-build"><code>kanea build</code></h3>
+    <p>Triggers a service's build pipeline. Client command.</p>
+    <pre class="plain">kanea build [--project=P] [--deploy=true] [--follow=true] &lt;[project/]service&gt;</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--project</code></td><td>-</td><td>Project name, for a bare service name.</td></tr>
+        <tr><td><code>--deploy</code></td><td><code>true</code></td><td>Deploy the built digest when the build succeeds.</td></tr>
+        <tr><td><code>--follow</code></td><td><code>true</code></td><td>Stream the build log until it finishes.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      Builds run one at a time. A second build is <code>queued</code>, and refused when the
+      queue is full.
+    </p>
+
+    <h3 id="cli-project"><code>kanea project</code></h3>
+    <p>Project-wide operations. Client command.</p>
+    <pre class="plain">kanea project sync &lt;project&gt;
+kanea project builds &lt;project&gt; [--service=S] [--limit=N]
+kanea project remove [--yes] &lt;project&gt;</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Subcommand</th><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>sync</code></td><td></td><td></td><td>Re-reads the project's git source now.</td></tr>
+        <tr><td><code>builds</code></td><td></td><td></td><td>Lists the project's build runs. <code>runs</code> is the same subcommand.</td></tr>
+        <tr><td></td><td><code>--service</code></td><td>all</td><td>Only this service.</td></tr>
+        <tr><td></td><td><code>--limit</code></td><td><code>50</code></td><td>How many runs to list.</td></tr>
+        <tr><td><code>remove</code></td><td></td><td></td><td>Deletes every service declaration in the project, with its pipeline and notification settings. <code>rm</code> is the same subcommand.</td></tr>
+        <tr><td></td><td><code>--yes</code>, <code>-y</code></td><td>off</td><td>Remove without asking. Implied when stdin is not a terminal.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      <code>project remove</code> keeps volume data, secrets and log files.
+    </p>
+
+    <h3 id="cli-images"><code>kanea images</code></h3>
+    <p>
+      Lists the node's containerd images per project: size, age and whether anything still
+      references each one. Client command.
+    </p>
+    <pre class="plain">kanea images [--clean] [--json]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--clean</code></td><td>off</td><td>Remove unused images now, in one GC sweep. Admin-only and audited.</td></tr>
+        <tr><td><code>--json</code></td><td>off</td><td>Machine-readable output.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      <code>--clean</code> reports what it removed and how much it reclaimed. The rules it
+      deletes under are in the <a href="node-config.html#nodeconfig-imagegc">image GC
+      reference</a>. On a node whose <code>pull_policy</code> is <code>"never"</code> the
+      sweep is refused, because preloaded images cannot be pulled again.
+    </p>
+
+    <h3 id="cli-volume"><code>kanea volume</code></h3>
+    <p>
+      Lists every storage resource with the mounts that use it: driver, location, measured
+      usage, declared budget and mount state. Its only subcommand is <code>list</code>.
+      Client command.
+    </p>
+    <pre class="plain">kanea volume list [--json]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--json</code></td><td>off</td><td>Machine-readable output.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      Usage is sampled in the background. A volume reads <code>-</code> until it has been
+      measured, and <code>s3</code> volumes are never measured. A local volume appears once
+      per alloc, each with its own contents and its own budget.
+    </p>
+    <p>
+      Volumes are created and deleted by the spec that declares them, so there is no
+      subcommand for either.
+    </p>
+
+    <h2 id="cli-secrets">Secrets and accounts</h2>
+
+    <h3 id="cli-secret"><code>kanea secret</code></h3>
+    <p>
+      Writes, lists and deletes secrets. There is no <code>get</code>: a value goes in and is
+      only ever resolved into a running alloc. Client command.
+    </p>
+    <pre class="plain">kanea secret put [--from-file=PATH] &lt;project&gt;/&lt;name&gt;
+kanea secret ls [&lt;prefix&gt;]
+kanea secret rm &lt;project&gt;/&lt;name&gt;
+kanea secret providers</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Subcommand</th><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>put</code></td><td></td><td></td><td>Writes a secret. The value is read from stdin, never from an argument. <code>set</code> is the same subcommand.</td></tr>
+        <tr><td></td><td><code>--from-file</code></td><td>stdin</td><td>Read the value from a file.</td></tr>
+        <tr><td><code>ls</code></td><td></td><td></td><td>Lists secret paths with their created and updated ages and their source provider. Values are never listed. <code>list</code> is the same subcommand.</td></tr>
+        <tr><td><code>rm</code></td><td></td><td></td><td>Deletes a secret. <code>delete</code> is the same subcommand.</td></tr>
+        <tr><td><code>providers</code></td><td></td><td></td><td>Prints each external provider's sync status, and names every mapping that is failing.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      <a href="secrets.html#secrets-put">Secrets</a> has the walk-through, and
+      <a href="secrets.html#secrets-providers">its providers section</a> covers external
+      sources.
+    </p>
+
+    <h3 id="cli-user"><code>kanea user</code></h3>
+    <p>Manages local accounts. Client command.</p>
+    <pre class="plain">kanea user add [--role=admin|viewer] &lt;name&gt;
+kanea user ls
+kanea user rm &lt;name&gt;
+kanea user revoke-sessions &lt;name&gt;</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Subcommand</th><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>add</code></td><td></td><td></td><td>Creates an account.</td></tr>
+        <tr><td></td><td><code>--role</code></td><td><code>admin</code></td><td><code>admin</code> or <code>viewer</code>.</td></tr>
+        <tr><td><code>ls</code></td><td></td><td></td><td>Lists local accounts. OIDC and LDAP identities are sessions only and do not appear.</td></tr>
+        <tr><td><code>rm</code></td><td></td><td></td><td>Deletes the account and revokes its sessions.</td></tr>
+        <tr><td><code>revoke-sessions</code></td><td></td><td></td><td>Revokes the account's sessions and keeps the account.</td></tr>
+      </tbody>
+    </table></div>
+    <p><a href="auth.html#auth-accounts">Sign-in and access</a> explains accounts and roles.</p>
+
+    <h3 id="cli-token"><code>kanea token</code></h3>
+    <p>Manages API tokens. Client command.</p>
+    <pre class="plain">kanea token create [--role=admin|viewer] [--expires-in=720h] &lt;name&gt;
+kanea token ls
+kanea token rm &lt;id&gt;</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Subcommand</th><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>create</code></td><td></td><td></td><td>Creates a token.</td></tr>
+        <tr><td></td><td><code>--role</code></td><td><code>viewer</code></td><td><code>admin</code> or <code>viewer</code>.</td></tr>
+        <tr><td></td><td><code>--expires-in</code></td><td>never expires</td><td>Lifetime as a Go duration, for example <code>720h</code>.</td></tr>
+        <tr><td><code>ls</code></td><td></td><td></td><td>Lists tokens.</td></tr>
+        <tr><td><code>rm</code></td><td></td><td></td><td>Deletes a token, by id.</td></tr>
+      </tbody>
+    </table></div>
+    <p><a href="auth.html#auth-tokens">Sign-in and access</a> explains tokens.</p>
+
+    <h2 id="cli-backup">Backup and restore</h2>
+
+    <h3 id="cli-backup-cmd"><code>kanea backup</code></h3>
+    <p>
+      Creates, lists and verifies backup archives through the running kanead. Client command.
+    </p>
+    <pre class="plain">kanea backup create [--reason="on-demand"]
+kanea backup list
+kanea backup verify &lt;archive-id&gt;</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Subcommand</th><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>create</code></td><td></td><td></td><td>Takes a backup now. <code>now</code> is the same subcommand.</td></tr>
+        <tr><td></td><td><code>--reason</code></td><td><code>on-demand</code></td><td>Recorded in the archive manifest.</td></tr>
+        <tr><td><code>list</code></td><td></td><td></td><td>Lists the archives at the destination. <code>ls</code> is the same subcommand.</td></tr>
+        <tr><td><code>verify</code></td><td></td><td></td><td>Reads one archive and checks every part against its manifest hash. Restores nothing. <code>check</code> is the same subcommand.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      <a href="backups.html#backups-destination">Back up a node</a> covers the destination,
+      and <a href="backups.html#backups-verify">its verify section</a> says when to run
+      <code>verify</code>.
+    </p>
+
+    <h3 id="cli-restore"><code>kanea restore</code></h3>
+    <p>
+      Restores the node's state from a backup. It has two forms. Without <code>--from</code>
+      it is a client command that asks the running kanead to stage a restore. With
+      <code>--from</code> it works offline and needs no kanead.
+    </p>
+    <pre class="plain">kanea restore [--snapshot=ID] [--skip-replay]
+kanea restore --from=DIR|s3://bucket/prefix [--snapshot=ID] [--skip-replay] [--target=PATH]
+              [--master-key=PATH] [--data-dir=/var/lib/kanea]
+              [--s3-endpoint=…] [--s3-region=…] [--s3-access-key=…]
+              [--s3-secret-key-file=PATH] [--s3-path-style=true]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--snapshot</code></td><td>the newest</td><td>Archive id to restore.</td></tr>
+        <tr><td><code>--skip-replay</code></td><td>off</td><td>Restore the snapshot without its change segments. Everything after the snapshot is lost.</td></tr>
+        <tr><td><code>--from</code></td><td>-</td><td>Restore offline from a destination: a directory, or <code>s3://bucket/prefix</code>.</td></tr>
+        <tr><td><code>--target</code></td><td><code>&lt;data-dir&gt;/state.db</code></td><td>Where to write the restored state.</td></tr>
+        <tr><td><code>--master-key</code></td><td><code>&lt;data-dir&gt;/master.key</code></td><td>Master key file.</td></tr>
+        <tr><td><code>--data-dir</code></td><td><code>/var/lib/kanea</code></td><td>Node data directory.</td></tr>
+        <tr><td><code>--s3-endpoint</code></td><td>-</td><td>S3 endpoint URL.</td></tr>
+        <tr><td><code>--s3-region</code></td><td>-</td><td>S3 region.</td></tr>
+        <tr><td><code>--s3-access-key</code></td><td>-</td><td>S3 access key id.</td></tr>
+        <tr><td><code>--s3-secret-key-file</code></td><td>-</td><td>File holding the S3 secret key. The key is never an argument.</td></tr>
+        <tr><td><code>--s3-path-style</code></td><td><code>true</code></td><td>Address the bucket as <code>/bucket/key</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      The flags from <code>--target</code> down apply only with <code>--from</code>. A staged
+      restore changes nothing until you restart kanead, which applies it at startup before it
+      opens the Store. The offline form writes a state file for a node that has lost its disk.
+    </p>
+    <p>
+      <a href="backups.html#backups-restore">Back up a node</a> points to the full recovery
+      procedure. The API and the dashboard have no restore action.
+    </p>
+
+    <h2 id="cli-daemons">Daemons</h2>
+    <p>
+      systemd runs these two commands; you do not run them by hand. Both read
+      <code>/etc/kanea/kanea.hcl</code> once at startup. The
+      <a href="node-config.html#nodeconfig">node config reference</a> lists every attribute.
+    </p>
+
+    <h3 id="cli-agent"><code>kanea agent</code></h3>
+    <p>
+      Runs kanead, the control-plane daemon. <code>kanead.service</code> starts it.
+    </p>
+    <pre class="plain">kanea agent</pre>
+    <p>
+      It takes no flags and no arguments. Any argument is refused with this message:
+    </p>
+    <pre class="plain">kanea agent takes no arguments: node configuration lives in /etc/kanea/kanea.hcl. To convert an older unit's flags: sudo kanea config migrate</pre>
+    <p>
+      To change a setting, edit the file and run <code>sudo systemctl restart kanead</code>.
+      <a href="node-config.html#nodeconfig-apply">Applying a change</a> has the steps.
+    </p>
+
+    <h3 id="cli-edge"><code>kanea edge</code></h3>
+    <p>
+      Runs the edge, the ingress proxy. It is its own process, started by
+      <code>kanea-edge.service</code>, so north-south traffic survives a kanead restart.
+    </p>
+    <pre class="plain">kanea edge</pre>
+    <p>
+      It takes no flags and no arguments, and refuses any argument the way
+      <code>kanea agent</code> does. Its settings are the
+      <a href="node-config.html#nodeconfig-edge"><code>edge</code> stanza</a> and the
+      <code>edge_*</code> attributes of
+      <a href="node-config.html#nodeconfig-bind"><code>bind</code></a>. Restart
+      <code>kanea-edge</code> after changing them.
+    </p>
+
+    <h2 id="cli-agents">MCP and version</h2>
+
+    <h3 id="cli-mcp"><code>kanea mcp</code></h3>
+    <p>
+      Runs a stdio MCP server for an AI agent on the node. It uses the local socket only and
+      refuses a remote endpoint.
+    </p>
+    <pre class="plain">kanea mcp [--socket=/run/kanea/kanead.sock] [--verbose]</pre>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--verbose</code></td><td>off</td><td>Log protocol activity to stderr.</td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      An agent running elsewhere uses the node's <code>/mcp</code> endpoint with a token.
+      <a href="mcp.html#mcp">AI agents (MCP)</a> has the tools, the tiers and the client
+      configuration for both transports.
+    </p>
+
+    <h3 id="cli-version"><code>kanea version</code></h3>
+    <p>
+      Prints the version stamped into the binary at build time. It takes no flags.
+    </p>
+    <pre class="plain">kanea version</pre>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

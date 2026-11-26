@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deploy your first service - Kanea docs</title>
+<meta name="description" content="Write a small spec, preview it with kanea plan, apply it with kanea run, then check the running service with kanea ps and kanea logs.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Get started</p>
+    <h1 id="overview-first">Deploy your first service</h1>
+    <p>
+      Write a ten-line <a href="concepts.html#term-spec">spec</a>, preview it, apply it,
+      and read the logs of the container it starts. You need a node that has been through
+      <a href="install.html#install-init"><code>kanea init</code></a>.
+    </p>
+
+    <h2 id="first-deploy">Deploy from a spec</h2>
+
+    <ol class="steps">
+      <li>
+        <h3>Write the spec</h3>
+        <p>Save this as <code>web.hcl</code>:</p>
+        <pre class="plain"># web.hcl
+spec_version = 1
+
+project "demo" {}
+
+service "web" {
+  project = "demo"
+
+  task "app" {
+    image = "nginx:1.27-alpine"
+  }
+}</pre>
+        <p>
+          A service needs a project and an image. Every other block in the
+          <a href="spec.html#spec">spec reference</a> is optional.
+        </p>
+      </li>
+      <li>
+        <h3>Preview it</h3>
+        <pre class="plain">kanea plan web.hcl</pre>
+        <p>
+          <code>kanea plan</code> validates the spec and prints what an apply would create,
+          change or destroy. It changes nothing on the node.
+        </p>
+        <pre class="plain">+ create demo/web (count 1, image nginx:1.27-alpine)
+
+Plan: 1 change(s) - 1 create.
+Run `kanea run` to apply.</pre>
+        <p>
+          A mistake in the spec is reported here with its file and line, and nothing else
+          is printed.
+        </p>
+      </li>
+      <li>
+        <h3>Apply it</h3>
+        <pre class="plain">kanea run web.hcl</pre>
+        <p>
+          <code>kanea run</code> prints the same preview and asks
+          <code>Apply? [Y/n]</code>. Press Enter. It then waits up to 60 seconds for the
+          container to start.
+        </p>
+        <pre class="plain">applied demo/web
+demo-web-0 running (1/1)
+1/1 allocs running</pre>
+      </li>
+      <li>
+        <h3>Check that it is running</h3>
+        <pre class="plain">kanea ps --project demo</pre>
+        <p>
+          You get one row per <a href="concepts.html#term-alloc">alloc</a>, which is one
+          running copy of the service:
+        </p>
+        <pre class="plain">ALLOC       PROJECT  SERVICE  STATE    RESTARTS  IMAGE              AGE
+demo-web-0  demo     web      running  0         nginx:1.27-alpine  12s</pre>
+      </li>
+      <li>
+        <h3>Read its logs</h3>
+        <pre class="plain">kanea logs -f demo/web</pre>
+        <p>
+          The container's output streams to your terminal, starting with nginx's startup
+          lines. Press Ctrl-C to stop following. Without <code>-f</code> the command
+          prints what is there and exits.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      The service is running but not reachable from outside the node, because the spec
+      declares no <code>expose</code> block. <a href="domains.html#dns">Domains and
+      HTTPS</a> adds one.
+    </p>
+
+    <h2 id="first-image">Deploy without a file</h2>
+    <p>
+      For a quick try, name the image on the command line. This creates the same service
+      as the spec above:
+    </p>
+    <pre class="plain">kanea run --image nginx:1.27-alpine --name web --project demo</pre>
+    <p>
+      Move to a spec file when the service needs anything beyond an image and a count.
+    </p>
+
+    <h2 id="first-plan">Read a plan</h2>
+    <p>
+      Run <code>kanea plan</code> before every apply. It prints one block per service and
+      one row per resource that would be added, changed or removed. Rows marked
+      <code>(rolls allocs)</code> replace running containers. The others take effect
+      without a restart.
+    </p>
+    <pre class="plain">$ kanea plan app.hcl
+~ update shop/web
+    image             web:v1 -&gt; web:v2  (rolls allocs)
+    env               + DB_URL, ~ LOG_LEVEL  (rolls allocs)
+    volumes           + cache  s3:backups /var/cache rw 10 GiB budget  (rolls allocs)
+    expose            + api.example.com  (tls acme, port 8080)
+
++ create shop/worker (count 2, image worker:v3)
+    volumes           + queue  local /queue
+    files             + /etc/app.conf  (412 B, content 3f2a1b9c, mode 0644)
+
+Plan: 2 change(s) - 1 create, 1 update; 1 replace running allocs.
+Run `kanea run` to apply.</pre>
+    <p>
+      <code>kanea run</code> renders its preview with the same code, so what you confirm
+      is what the plan showed. <code>--yes</code> or <code>-y</code> skips the question.
+      When stdin is not a terminal, as in a script or a CI job, the question is never
+      asked.
+    </p>
+    <p>
+      A plan never prints an env value or the content of a config file, since either can
+      carry a secret. It shows env keys, file paths and a short content digest, which is
+      enough to see that something changed.
+    </p>
+
+    <h2 id="first-remove">Remove a service</h2>
+    <p>To remove one service:</p>
+    <pre class="plain">kanea remove demo/web        # alias: rm; asks [y/N] on a terminal, --yes/-y skips</pre>
+    <p>
+      <code>kanea stop demo/web --rm</code> does the same, behind the same confirmation.
+    </p>
+    <p>
+      Deleting a <code>service</code> block from a spec and applying again does not
+      remove the service. An apply only adds and changes, so applying
+      <code>web.hcl</code> cannot delete what another file declares. To make the spec
+      authoritative for its projects, add <code>--remove-orphans</code>:
+    </p>
+    <pre class="plain">kanea plan --remove-orphans app.hcl   # `- destroy` lines for what would go
+kanea run  --remove-orphans app.hcl</pre>
+    <p>
+      This removes every service in the file's projects that the file does not declare. Projects without
+      a <code>project</code> block in the file are left alone. The flag is refused
+      together with a selector or <code>--image</code>, because neither sends a whole
+      project.
+    </p>
+    <p>
+      Removing a service deletes its containers, alloc records, VIP, routes and mounts.
+      Volume data is never deleted, so a service removed by mistake comes back with its
+      data when you apply it again. Its log files stay on disk too:
+      <code>kanea logs --previous demo/web</code> reads what it last wrote.
+    </p>
+
+    <h2 id="first-next">Next</h2>
+    <ul>
+      <li><a href="domains.html#dns">Domains and HTTPS</a> - give the service a hostname and a certificate.</li>
+      <li><a href="secrets.html#overview-secrets">Secrets</a> - pass a password to it without writing it in the spec.</li>
+      <li><a href="spec.html#spec">Spec reference</a> - every block and attribute a spec can hold.</li>
+    </ul>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

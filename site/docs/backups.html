@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Back up a node - Kanea docs</title>
+<meta name="description" content="Set a backup destination for a Kanea node, see which setting wins, verify an archive, and find the restore procedure.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1>Back up a node</h1>
+    <p>
+      Point the node at a directory or an S3 bucket and it replicates its state there
+      continuously. This page sets that up and shows how to check an archive.
+    </p>
+
+    <p>
+      A backup holds <a href="concepts.html#term-store">the Store</a>: projects,
+      services, secrets, certificates and accounts. It does not hold volume data or
+      images. <a href="concepts.html#term-kanead">kanead</a> writes a full snapshot
+      every six hours and ships the changes since the last one every minute.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">Keep the master key somewhere else</b>
+      <p>
+        Archives are encrypted with keys derived from the node's master key, which
+        <code>kanea init</code> shows once. The key is not in the backup. Without it
+        every archive is unreadable.
+      </p>
+    </div>
+
+    <h2 id="backups-destination">Set a destination</h2>
+
+    <p>
+      There are two places to set one: the <code>backup</code> stanza of the
+      <a href="concepts.html#term-node-config">node config</a>, or the dashboard. Use
+      the stanza for a node you manage from files. Use the dashboard to change the
+      destination without a restart.
+    </p>
+
+    <h3 id="backups-stanza">In the node config</h3>
+
+    <ol class="steps">
+      <li>
+        <h3>Store the S3 secret key</h3>
+        <p>
+          The node config holds a reference to the key and never the key. Skip this
+          step for a directory destination.
+        </p>
+        <pre class="plain">kanea secret put shared/backup-s3 &lt; s3-secret-key.txt</pre>
+      </li>
+      <li>
+        <h3>Add the <code>backup</code> stanza</h3>
+        <p>
+          Name one destination: <code>dir</code> or the <code>s3</code> block. An S3
+          destination needs an explicit <code>endpoint</code>, because Kanea does not
+          guess one from the region.
+        </p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">backup</span> {
+  <span class="k">s3</span> {
+    <span class="k">url</span>        = <span class="s">"s3://kanea-state/home"</span>
+    <span class="k">endpoint</span>   = <span class="s">"https://s3.eu-central-1.amazonaws.com"</span>
+    <span class="k">region</span>     = <span class="s">"eu-central-1"</span>
+    <span class="k">access_key</span> = <span class="s">"AKIAEXAMPLE"</span>
+    <span class="k">secret_key</span> = <span class="s">"secret:shared/backup-s3"</span>
+  }
+}</code></pre>
+        <p>For a directory, such as a mounted disk, the stanza is one line:</p>
+        <pre><code><span class="k">backup</span> {
+  <span class="k">dir</span> = <span class="s">"/mnt/backup/kanea"</span>
+}</code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead and check replication</h3>
+        <pre class="plain">sudo systemctl restart kanead
+kanea backup list</pre>
+        <p>
+          The first line names the destination. kanead takes a snapshot at every start,
+          so an archive with the reason <code>startup</code> appears shortly after.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      A destination in the stanza that cannot be built stops kanead from starting, so
+      a typo is found at once. Intervals and retention are in the
+      <a href="node-config.html#nodeconfig-backup">backup reference</a>.
+    </p>
+
+    <h3 id="backups-dashboard">In the dashboard</h3>
+
+    <ol class="steps">
+      <li>
+        <h3>Open Settings and choose the Backup tab</h3>
+        <p>You need an admin account. The page shows the current destination and where it came from.</p>
+      </li>
+      <li>
+        <h3>Enter a directory or an S3 bucket</h3>
+        <p>
+          The S3 secret key field takes a reference such as
+          <code>secret:shared/backup-s3</code>. A pasted key is refused.
+        </p>
+      </li>
+      <li>
+        <h3>Save</h3>
+        <p>
+          kanead writes a test object to the new destination before it changes anything.
+          If the test fails, the save is refused and the old replication keeps running.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      On a successful save the old destination receives one last segment, and the new
+      one gets a full snapshot straight away. No restart is involved.
+    </p>
+
+    <h2 id="backups-precedence">Which setting wins</h2>
+
+    <p>
+      A destination saved in the dashboard wins. The <code>backup</code> stanza is the
+      fallback.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Saved in the dashboard</th><th><code>backup</code> stanza</th><th>The node replicates to</th></tr></thead>
+        <tbody>
+          <tr><td>Yes</td><td>Any</td><td>The saved destination. The stanza's intervals and retention are ignored too.</td></tr>
+          <tr><td>No</td><td>Names a destination</td><td>The stanza's destination.</td></tr>
+          <tr><td>No</td><td>No destination</td><td>Nowhere. Backups are off.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <ul>
+      <li><b>Revert to kanea.hcl</b> in the dashboard deletes the saved destination. The node returns to the stanza, or to no backups if the stanza names none.</li>
+      <li>If the saved destination cannot be read or built at startup, kanead logs an error and uses the stanza.</li>
+      <li>The Backup tab labels the active destination <code>from settings</code> or <code>from kanea.hcl</code>.</li>
+    </ul>
+
+    <p>
+      The saved destination lives in the Store. A blank node has no Store yet, so
+      <code>backup.restore_if_empty</code> can only use the stanza. If you rely on that
+      setting, keep the stanza pointing at the same place as the dashboard.
+    </p>
+
+    <h2 id="backups-verify">Create, list and verify archives</h2>
+
+    <pre class="plain">kanea backup create [--reason="before upgrade"]
+kanea backup list
+kanea backup verify &lt;archive-id&gt;</pre>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>create</code></td><td>Takes a snapshot now and prints the archive id. Retention applies as it does to a scheduled snapshot.</td></tr>
+          <tr><td><code>list</code></td><td>Shows the destination, the last snapshot and segment, any failures, and one row per archive.</td></tr>
+          <tr><td><code>verify</code></td><td>Reads the archive's snapshot from the destination and compares its size and SHA-256 hash with the manifest.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>verify</code> also checks the manifest's own authentication code. On success
+      it prints that the archive is intact. A damaged archive is an error that names the
+      object.
+    </p>
+    <p>
+      It does not decrypt the snapshot and does not replay change segments. It proves
+      the bytes are intact, not that a restore works. For that, restore to a scratch
+      path as the runbook's drill describes.
+    </p>
+    <p>
+      All three commands go through the running kanead. The Backups page of the
+      dashboard lists the same archives, checks them, and stages a restore.
+    </p>
+
+    <h2 id="backups-restore">Restore</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Situation</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr><td>The node lost its disk</td><td>Put the master key back, run <code>kanea restore --from &lt;directory or s3://bucket/prefix&gt;</code> with kanead stopped, then start kanead.</td></tr>
+          <tr><td>The node is up but wrong</td><td>Run <code>kanea restore --snapshot &lt;archive-id&gt;</code>. It verifies the archive and stages the restore, and kanead applies it at its next start.</td></tr>
+          <tr><td>A blank node should restore itself</td><td>Set <code>backup.restore_if_empty = true</code> in the stanza. A node with no state then restores the newest archive at its first start.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Nothing restores in place. A staged restore moves the current state aside as
+      <code>state.db.before-restore-&lt;timestamp&gt;</code> and never deletes it.
+    </p>
+    <p>
+      The two restores that run at kanead's start read the destination from the
+      <code>backup</code> stanza, before the Store is open. They cannot resolve a
+      <code>secret:</code> reference, so they work with <code>backup.dir</code>. For an
+      S3 destination, use <code>kanea restore --from s3://…</code>.
+    </p>
+    <p>
+      The full procedure, with the flags and a drill, is in the
+      <a href="https://github.com/m18h/kanea/blob/main/docs/DR_RUNBOOK.md">disaster
+      recovery runbook</a>. Read it before you need it.
+    </p>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

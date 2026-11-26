@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Volumes and host access - Kanea docs</title>
+<meta name="description" content="Give a service persistent storage, a host directory, an NFS, SMB or S3 mount, or a device, and allow each of them on the node.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1>Volumes and host access</h1>
+    <p>
+      Give a service storage that outlives its containers, or access to something on the
+      host. Each section shows what to allow on the node and what to write in the spec.
+    </p>
+
+    <p>
+      Storage takes two blocks in a <a href="concepts.html#term-spec">spec</a>. A
+      top-level <code>storage</code> block names a backend. A service's
+      <code>volume</code> block mounts one of them by name.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Storage type</th><th>What it mounts</th><th>Node setup</th></tr></thead>
+        <tbody>
+          <tr><td><a href="#volumes-local"><code>local</code></a></td><td>A directory Kanea creates and manages</td><td>None</td></tr>
+          <tr><td><a href="#volumes-host"><code>host</code></a></td><td>A directory you already own on the node</td><td>An allowlist entry in the node config</td></tr>
+          <tr><td><a href="#volumes-network"><code>nfs</code>, <code>smb</code>, <code>s3</code></a></td><td>An export, a share or a bucket</td><td>The mount helper installed on the host</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Devices and unix sockets are not storage. They use
+      <a href="#volumes-devices">grants</a>, which the node defines and a spec asks for
+      by name.
+    </p>
+
+    <h2 id="volumes-local">Local volumes</h2>
+
+    <p>Declare a <code>local</code> storage and mount it. The node needs no setup.</p>
+    <pre><code><span class="k">storage</span> <span class="s">"data"</span> {
+  <span class="k">type</span> = <span class="s">"local"</span>
+}
+
+<span class="k">service</span> <span class="s">"db"</span> {
+  <span class="k">project</span> = <span class="s">"shop"</span>
+  <span class="c"># task, network …</span>
+
+  <span class="k">volume</span> <span class="s">"pgdata"</span> {
+    <span class="k">storage</span>    = <span class="s">"data"</span>
+    <span class="k">mount_path</span> = <span class="s">"/var/lib/postgresql/data"</span>
+  }
+}</code></pre>
+
+    <p>
+      Kanea creates the directory under the node's volume directory, at
+      <code>&lt;volume_dir&gt;/&lt;project&gt;/&lt;service&gt;/&lt;index&gt;/&lt;volume&gt;</code>.
+      The volume directory is <code>/var/lib/kanea/volumes</code> unless
+      <a href="node-config.html#nodeconfig-storage"><code>storage.volume_dir</code></a>
+      says otherwise.
+    </p>
+    <ul>
+      <li>Each <a href="concepts.html#term-alloc">alloc</a> gets its own directory. Two replicas of a service never share one.</li>
+      <li>The alloc index is stable, so an alloc finds its data again after a restart or a replacement.</li>
+      <li>Removing a service keeps its volume data on disk.</li>
+    </ul>
+    <p>
+      A volume inherits its owner from the task's <code>user</code> block. The
+      <a href="spec.html#spec-volume">volume reference</a> lists every field.
+    </p>
+
+    <h2 id="volumes-host">Host directories</h2>
+
+    <p>
+      A <code>host</code> volume mounts a directory that already exists on the node.
+      Whether it may be mounted is the node's decision, and the allowlist is empty by
+      default.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Allow a parent directory on the node</h3>
+        <p>
+          Add the <code>storage</code> stanza to <code>/etc/kanea/kanea.hcl</code>, the
+          <a href="concepts.html#term-node-config">node config</a>. Each entry permits
+          itself and everything beneath it. The file must pass the node config's
+          <a href="node-config.html#nodeconfig-rules">trust check</a>.
+        </p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">storage</span> {
+  <span class="k">allowed_host_paths</span> = [<span class="s">"/srv/kanea"</span>, <span class="s">"/mnt/media"</span>]
+}</code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <p>
+          Run <code>sudo systemctl restart kanead</code>.
+          <a href="concepts.html#term-kanead">kanead</a> refuses to start if an entry is
+          not absolute, does not exist, or is <code>"/"</code>.
+        </p>
+      </li>
+      <li>
+        <h3>Declare the storage and mount it</h3>
+        <pre><code><span class="k">storage</span> <span class="s">"library"</span> {
+  <span class="k">type</span> = <span class="s">"host"</span>
+  <span class="k">path</span> = <span class="s">"/mnt/media/library"</span>
+}
+
+<span class="k">service</span> <span class="s">"jellyfin"</span> {
+  <span class="k">project</span> = <span class="s">"media"</span>
+  <span class="c"># task, network …</span>
+
+  <span class="k">volume</span> <span class="s">"library"</span> {
+    <span class="k">storage</span>    = <span class="s">"library"</span>
+    <span class="k">mount_path</span> = <span class="s">"/media"</span>
+    <span class="k">read_only</span>  = true
+  }
+}</code></pre>
+      </li>
+      <li>
+        <h3>Deploy and check the mount</h3>
+        <pre class="plain">kanea run media.hcl
+kanea volume list</pre>
+        <p>
+          The storage <code>media/library</code> appears with its path and one mount
+          under it.
+        </p>
+      </li>
+    </ol>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Situation</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>The path is outside every allowed parent</td><td>The alloc fails. The check runs on the path after symlinks are resolved.</td></tr>
+          <tr><td>The path does not exist</td><td>The alloc fails, so a typo cannot become an empty volume.</td></tr>
+          <tr><td>The path does not exist and the storage sets <code>create = true</code></td><td>Kanea creates it with mode <code>0750</code>, and only inside an allowed parent.</td></tr>
+          <tr><td>The path is a file or a socket</td><td>The alloc fails. Only directories are mounted.</td></tr>
+          <tr><td>The path is relative, contains <code>..</code>, or is <code>/</code></td><td><code>kanea plan</code> reports an error.</td></tr>
+          <tr><td>The volume declares <code>uid</code> or <code>gid</code></td><td><code>kanea plan</code> reports an error. Kanea never changes who owns a host directory.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The allowlist applies to every project on the node. To limit something to named
+      projects, use a <a href="#volumes-devices">grant</a>.
+    </p>
+
+    <h2 id="volumes-network">Network shares and buckets</h2>
+
+    <p>
+      NFS, SMB and S3 use the same two blocks. The node config needs no entry, but the
+      host needs the matching mount helper: an NFS client, <code>mount.cifs</code>,
+      <code>mount-s3</code>, or <code>s3fs</code> for a read-write bucket.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Store the credential as a secret</h3>
+        <p>
+          The value is <code>&lt;username&gt;:&lt;password&gt;</code> for SMB and
+          <code>&lt;access-key&gt;:&lt;secret-key&gt;</code> for S3. Skip this step for an
+          open share, a public bucket or NFS.
+        </p>
+        <pre class="plain">kanea secret put media/nas          # username:password on stdin
+kanea secret put media/archive      # access-key:secret-key</pre>
+      </li>
+      <li>
+        <h3>Declare the storage</h3>
+        <pre><code><span class="k">storage</span> <span class="s">"films"</span> {
+  <span class="k">type</span>   = <span class="s">"nfs"</span>
+  <span class="k">server</span> = <span class="s">"192.168.1.20"</span>
+  <span class="k">export</span> = <span class="s">"/volume1/films"</span>
+}
+
+<span class="k">storage</span> <span class="s">"photos"</span> {
+  <span class="k">type</span>     = <span class="s">"smb"</span>
+  <span class="k">server</span>   = <span class="s">"192.168.1.20"</span>
+  <span class="k">share</span>    = <span class="s">"photos"</span>
+  <span class="k">auth_ref</span> = <span class="s">"secret:media/nas"</span>
+}
+
+<span class="k">storage</span> <span class="s">"archive"</span> {
+  <span class="k">type</span>     = <span class="s">"s3"</span>
+  <span class="k">bucket</span>   = <span class="s">"media-archive"</span>
+  <span class="k">endpoint</span> = <span class="s">"https://s3.eu-central-1.amazonaws.com"</span>
+  <span class="k">auth_ref</span> = <span class="s">"secret:media/archive"</span>
+}</code></pre>
+      </li>
+      <li>
+        <h3>Mount it in a service</h3>
+        <pre><code><span class="k">volume</span> <span class="s">"films"</span> {
+  <span class="k">storage</span>    = <span class="s">"films"</span>
+  <span class="k">mount_path</span> = <span class="s">"/srv/films"</span>
+}</code></pre>
+      </li>
+      <li>
+        <h3>Deploy and check the mount state</h3>
+        <p>
+          Run <code>kanea run</code> on the spec, then <code>kanea volume list</code>.
+          The state column shows whether each mount is established.
+        </p>
+      </li>
+    </ol>
+
+    <ul>
+      <li>A network volume is mounted once per service and shared by all of its allocs.</li>
+      <li>A mount that cannot be established fails the alloc. The service never starts beside an empty directory.</li>
+      <li>A mount that stops answering is retried. Kanea emits <code>volume.mount_failed</code>, and <code>volume.mount_recovered</code> when it is back.</li>
+      <li>The credential is written to a <code>0600</code> file at mount time. It never appears on a command line.</li>
+      <li>An S3 <code>endpoint</code> must be <code>https://</code>, because the credential is sent to it on every request.</li>
+      <li>An S3 bucket is read-only unless the storage sets <code>mode = "rw"</code>.</li>
+    </ul>
+
+    <p>
+      The <a href="spec.html#spec-storage">storage reference</a> lists the fields of
+      each type and explains why an S3 bucket suits bulk, read-mostly data only. A
+      complete example is in <a href="stacks.html#stacks-storage">Sample stacks</a>.
+    </p>
+
+    <h2 id="volumes-devices">Devices and sockets</h2>
+
+    <p>
+      A GPU, a USB device or a unix socket reaches a container through a
+      <a href="concepts.html#term-grant">grant</a>. The node config maps a grant name to
+      paths and lists the projects that may use it. A spec names the grant and has no
+      field for a path.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Define the grant on the node</h3>
+        <p>
+          The label is the grant's name. <code>nodes</code> lists the device node paths,
+          and <code>allow</code> lists the projects. Both are required.
+        </p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">device</span> <span class="s">"gpu"</span> {
+  <span class="k">nodes</span> = [<span class="s">"/dev/dri/card0"</span>, <span class="s">"/dev/dri/renderD128"</span>]
+  <span class="k">allow</span> = [<span class="s">"media"</span>]
+}</code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <p>
+          Run <code>sudo systemctl restart kanead</code>. Grants are read once, at
+          startup.
+        </p>
+      </li>
+      <li>
+        <h3>Ask for the grant in the spec</h3>
+        <pre><code><span class="k">service</span> <span class="s">"jellyfin"</span> {
+  <span class="k">project</span> = <span class="s">"media"</span>
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"jellyfin/jellyfin:10.9.11"</span>
+
+    <span class="k">device</span> <span class="s">"dri"</span> {
+      <span class="k">grant</span> = <span class="s">"gpu"</span>
+    }
+  }
+}</code></pre>
+      </li>
+      <li>
+        <h3>Deploy and check the alloc</h3>
+        <p>
+          Run <code>kanea run</code> on the spec, then <code>kanea ps</code>. The alloc
+          reaches running, and the devices appear inside the container at their host
+          paths.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      A device grant gives read and write access. Add <code>mode = "rwm"</code> to the
+      grant to also permit <code>mknod</code>.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Situation</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>The node has no grant of that name</td><td>The alloc fails. The message lists the grants the node does have.</td></tr>
+          <tr><td>The grant does not allow the service's project</td><td>The alloc fails.</td></tr>
+          <tr><td>A device path is missing, or is not a device</td><td>That alloc fails with a message naming the grant. kanead keeps running, because paths are checked per alloc.</td></tr>
+          <tr><td>A grant lists no projects in <code>allow</code></td><td>kanead refuses to start.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="volumes-sockets">Grant a unix socket</h3>
+
+    <p>
+      A <code>socket</code> grant takes one <code>path</code>. The spec says where the
+      socket appears inside the container.
+    </p>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">socket</span> <span class="s">"containerd"</span> {
+  <span class="k">path</span>  = <span class="s">"/run/kanea/containerd.sock"</span>
+  <span class="k">allow</span> = [<span class="s">"ops"</span>]
+}</code></pre>
+    <pre><code><span class="k">task</span> <span class="s">"app"</span> {
+  <span class="k">image</span> = <span class="s">"ghcr.io/example/image-updater:1.4"</span>
+
+  <span class="k">socket</span> <span class="s">"runtime"</span> {
+    <span class="k">grant</span>      = <span class="s">"containerd"</span>
+    <span class="k">mount_path</span> = <span class="s">"/run/containerd/containerd.sock"</span>
+  }
+}</code></pre>
+
+    <div class="callout warn">
+      <b class="label">A socket grant is root on the node</b>
+      <p>
+        A container that holds the runtime socket can start other containers without
+        Kanea's hardening defaults. <code>read_only</code> restricts the filesystem
+        entry and not the protocol spoken over it.
+      </p>
+      <p>
+        The control is where the grant lives: in a file on the node that no spec author
+        can write, naming the projects it trusts.
+      </p>
+    </div>
+
+    <p>
+      The attribute tables are in the node config reference under
+      <a href="node-config.html#nodeconfig-grants">device and socket</a>, and in the
+      spec reference under <a href="spec.html#spec-passthrough">device and socket</a>.
+    </p>
+
+    <h2 id="volumes-usage">Check usage and budgets</h2>
+
+    <p>
+      <code>kanea volume list</code> shows every storage resource with the mounts that
+      use it, their measured usage, their size and their mount state.
+    </p>
+    <p>
+      A <code>volume</code> block may declare <code>size = "10GiB"</code>. That is a
+      budget and not a quota: Kanea measures the volume against it and nothing enforces
+      it.
+    </p>
+    <ul>
+      <li>Crossing the budget emits <code>volume.over_budget</code>. Dropping back under it emits <code>volume.under_budget</code>.</li>
+      <li>An <code>s3</code> volume is never measured, and declaring a <code>size</code> on one is a plan error.</li>
+    </ul>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

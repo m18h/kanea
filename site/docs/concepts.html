@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Concepts - Kanea docs</title>
+<meta name="description" content="Learn Kanea's terms - node, project, service, task, alloc - how they map to Nomad, Kubernetes and ECS, and what makes the node deploy.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Get started</p>
+    <h1 id="overview">Concepts</h1>
+    <p>
+      Kanea asks you to learn about seven terms. This page defines them, maps them to the
+      systems you may already know, and explains what makes the node start, replace or
+      leave alone a container. The <a href="#concepts-glossary">glossary</a> at the end is
+      the short version.
+    </p>
+
+    <h2 id="overview-concepts">The terms</h2>
+    <p>
+      Kanea borrows from Nomad and Kubernetes and keeps the smallest set of concepts that
+      covers the work. If you know either system, the middle columns show what maps to
+      what. If you come from a managed cloud service, use the
+      <a href="#overview-ecs">ECS and Container Apps table</a> instead.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Kanea</th><th>Nomad</th><th>Kubernetes</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td><b>Node</b></td><td>Client + server agent</td><td>Node + control plane</td><td>The machine that runs <a href="#term-kanead">kanead</a>. There is exactly one.</td></tr>
+          <tr><td><b>Project</b></td><td>Namespace</td><td>Namespace</td><td>A named group of services, and the isolation boundary. Network policy, secrets, the containerd namespace and DNS all key off it.</td></tr>
+          <tr><td><b>Service</b></td><td>Job + group</td><td>Deployment + Service</td><td>A declarative long-running workload with <code>count</code> replicas.</td></tr>
+          <tr><td><b>Task</b></td><td>Task</td><td>Container</td><td>The container inside a service. A service has exactly one.</td></tr>
+          <tr><td><b>Alloc</b></td><td>Allocation</td><td>Pod</td><td>One running instance of a service. <code>count = 3</code> means three allocs.</td></tr>
+          <tr><td><b>Storage</b></td><td>CSI volume</td><td>PV / PVC</td><td>A named volume backend (<code>local</code>, <code>host</code>, <code>nfs</code>, <code>smb</code> or <code>s3</code>) that services mount by name.</td></tr>
+          <tr><td><b>Pipeline</b></td><td>-</td><td>Tekton / CI job</td><td>A build run that produces an image, from a <code>build</code> block or a git push.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The one that surprises people is <b>project</b>. It is a boundary that four
+      subsystems enforce independently, where a label would only describe. A service in
+      project <code>shop</code>, on a node that also runs project <code>analytics</code>:
+    </p>
+    <ul>
+      <li>cannot reach a service in <code>analytics</code> unless a spec says so;</li>
+      <li>cannot read <code>analytics</code>' secrets, even by naming them;</li>
+      <li>runs its containers in a separate containerd namespace;</li>
+      <li>has its DNS names under a separate suffix.</li>
+    </ul>
+
+    <h2 id="overview-ecs">Coming from ECS or Container Apps</h2>
+    <p>
+      The two managed services closest to Kanea in shape are <b>Amazon ECS</b> and
+      <b>Azure Container Apps</b>. On Azure, Container Apps is the right comparison: AKS
+      is the Kubernetes column above, and Container Instances has no orchestration around
+      the container. Read the ECS column carefully, because one of its terms means the
+      opposite of what it means here.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Kanea</th><th>Amazon ECS</th><th>Azure Container Apps</th></tr></thead>
+        <tbody>
+          <tr><td><b>Node</b></td><td>Cluster, plus its container instances</td><td>Environment</td></tr>
+          <tr><td><b>Project</b></td><td>- (a cluster is the nearest thing)</td><td>Environment, again</td></tr>
+          <tr><td><b>Service</b></td><td>Service</td><td>Container app</td></tr>
+          <tr><td><b>Task</b></td><td>Container definition</td><td>Container</td></tr>
+          <tr><td><b>Alloc</b></td><td><b>Task</b></td><td>Replica</td></tr>
+          <tr><td>Spec</td><td>Task definition</td><td>App YAML / ARM template</td></tr>
+          <tr><td>Deploy (spec-hash change)</td><td>New task definition revision</td><td>New revision</td></tr>
+          <tr><td><b>Storage</b></td><td>Volume: bind mount, EFS, FSx</td><td>Volume mount: Azure Files, ephemeral</td></tr>
+          <tr><td>Internal DNS</td><td>Service Connect / Cloud Map</td><td>Built-in environment DNS</td></tr>
+          <tr><td><code>expose</code> + the edge</td><td>ALB target group + listener rule</td><td>Ingress</td></tr>
+          <tr><td><code>scaling</code></td><td>Application Auto Scaling</td><td>KEDA scale rules</td></tr>
+          <tr><td><b>Pipeline</b></td><td>CodePipeline + CodeBuild</td><td>ACR Tasks / GitHub Actions</td></tr>
+          <tr><td>Secrets</td><td>Secrets Manager / SSM, by ARN</td><td>Container app secrets / Key Vault</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <b class="label">"Task" means the opposite thing in ECS</b>
+      <p>
+        In ECS a <b>task</b> is a <i>running instance</i>: the unit a service keeps
+        <code>desiredCount</code> of, and the equivalent of a Kubernetes pod. In Kanea
+        that is an <b>alloc</b>. A Kanea <b>task</b> is the <i>container</i> inside a
+        service, which ECS calls a container definition.
+      </p>
+      <p>
+        So "three tasks" means three replicas on ECS. In Kanea a service has exactly one
+        task and, at <code>count = 3</code>, three allocs.
+      </p>
+    </div>
+
+    <h3 id="overview-ecs-differences">Where the mapping breaks down</h3>
+    <ul>
+      <li>
+        <b>Project has no ECS equivalent.</b> ECS groups by cluster and otherwise relies
+        on IAM and tags. Nothing there carries network policy, secret scope and DNS at
+        once. On Container Apps the environment is both the hosting boundary and the
+        network boundary, so it appears twice in the table. Kanea splits those into the
+        node and the project.
+      </li>
+      <li>
+        <b>One node, not a region.</b> Both services schedule across availability zones
+        and survive a machine dying. Kanea is a single machine, and if it stops,
+        everything on it stops. What it offers in place of failover is
+        <a href="architecture.html#arch-backup">state replication and restore</a>: an
+        encrypted snapshot and change log in S3, restored onto a new machine.
+      </li>
+      <li>
+        <b>There is no control plane to rent.</b> kanead is a process on your machine
+        inside a 256 MiB memory reservation. Patching, capacity and the node's uptime
+        are yours.
+      </li>
+      <li>
+        <b>Load balancing is in the datapath.</b> A service gets a
+        <a href="#term-vip">VIP</a> the moment it exists, and eBPF rewrites traffic
+        between services at <code>connect()</code> without a proxy. On ECS the equivalent
+        is a load balancer, a target group and listener rules that you declare and pay
+        for. Traffic from outside goes through <a href="#term-edge">the edge</a>, a
+        process on the same machine.
+      </li>
+      <li>
+        <b>The spec is one file for the whole project.</b> An ECS deployment is typically
+        a task definition, a service definition, target groups and listener rules,
+        assembled by Terraform or CDK. A Kanea project is one HCL file covering
+        containers, routing, TLS, volumes, scaling and builds, and
+        <code>kanea plan</code> validates it offline.
+      </li>
+    </ul>
+
+    <h2 id="overview-naming">Naming</h2>
+    <p>
+      Project and service names <b>must be DNS-1123 labels</b>: lowercase letters, digits
+      and <code>-</code>, starting and ending with a letter or digit, at most 63
+      characters. Kanea checks this when it parses the spec.
+    </p>
+    <p>
+      The rule lets names compose into DNS without an escaping step. A service
+      <code>web</code> in project <code>shop</code> is <code>web.shop.kanea</code>
+      internally and <code>web.shop.&lt;base_domain&gt;</code> publicly.
+      <a href="domains.html#dns-internal">Domains and HTTPS</a> covers both forms.
+    </p>
+    <div class="callout">
+      <b class="label">Where the prose goes</b>
+      <p>
+        Every project and service takes a <code>description</code>: free text, up to 512
+        characters, shown in the dashboard. Put the human-readable detail there and keep
+        the name a label.
+      </p>
+    </div>
+
+    <h2 id="overview-lifecycle">Lifecycle</h2>
+    <p>
+      Nothing is applied directly to the runtime. A <a href="#term-spec">spec</a> becomes
+      desired state in the <a href="#term-store">Store</a>, and a reconciler keeps
+      converging the node toward it.
+    </p>
+
+<pre class="diagram">Spec (HCL) ──────parse/validate──▶ Desired state (Store)
+                                        │
+                                   Reconciler loop
+                                        │
+                        ┌───────────────┼────────────────┐
+                        ▼               ▼                ▼
+                    containerd      eBPF datapath    Edge proxy
+                   (tasks/images) (policy/LB)       (routes/TLS)
+                        │               │                │
+                        └───────────────┴────────────────┘
+                                        ▼
+                            Actual state / events / metrics</pre>
+
+    <p>What follows from that:</p>
+    <ul>
+      <li><b>Drift is repaired.</b> Delete a container by hand and it comes back. The
+        reconciler compares desired state with the node; it keeps no memory of what it
+        did.</li>
+      <li><b>Restart policies</b> are <code>always</code> (the default),
+        <code>on-failure</code> with backoff, and <code>never</code>.</li>
+      <li><b>Updates are rolling</b> by default, gated on health and bounded by
+        <code>max_parallel</code>.</li>
+      <li><b>Dependencies start first.</b> A <code>depends_on</code> edge means the
+        dependent waits until its dependency is healthy. Any
+        <code>${service.…}</code> reference creates the same edge implicitly. If the
+        dependency degrades later, dependents keep running and Kanea emits events.</li>
+      <li><b>Storms are capped.</b> Each service has a restart rate limit. A node-wide
+        circuit breaker pauses rollouts and scale actions when failure rates spike, and
+        a trip emits an event and a notification.</li>
+    </ul>
+
+    <h2 id="overview-deploy">What counts as a deploy</h2>
+    <p>
+      A deploy is a <b>spec-hash mismatch</b>. The reconciler hashes the parts of a
+      service that are fixed into a container when it is created. If an
+      <a href="#term-alloc">alloc</a>'s recorded hash differs from the current one, the
+      update policy replaces that alloc. If it matches, nothing happens, however many
+      times you run <code>kanea run</code>.
+    </p>
+    <p>
+      <code>kanea restart</code> uses the same path. It bumps a generation counter that
+      is part of the hash, and the ordinary rolling update does the rest.
+    </p>
+    <div class="callout warn">
+      <b class="label">Two things about rolling updates</b>
+      <p>
+        <code>max_parallel</code> bounds <b>allocs that are down</b>, not replacements in
+        flight. Anything already unavailable spends the budget first, so a deploy that
+        starts going wrong stops before it walks through every replica.
+      </p>
+      <p>
+        <code>min_healthy</code> applies only to allocs the current deploy has already
+        replaced, and healthy means a probe said so. A service with no
+        <code>health_check</code> block never reports healthy, and the update proceeds
+        without waiting for it.
+      </p>
+    </div>
+
+    <h2 id="concepts-glossary">Glossary</h2>
+    <p>
+      The rest of the documentation uses these words in exactly these senses.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr id="term-node"><td><b>node</b></td><td>The one Linux machine Kanea runs on. It hosts kanead, the edge and every alloc.</td></tr>
+          <tr id="term-kanead"><td><b>kanead</b></td><td>The control-plane daemon: API, dashboard, reconciler, autoscaler, GitOps, notifications and backups. It is the <code>kanead</code> systemd unit, started by <code>kanea agent</code>.</td></tr>
+          <tr id="term-edge"><td><b>the edge</b></td><td>The ingress proxy, <code>kanea-edge</code>. It terminates TLS on ports 80 and 443 and routes each request by host to a service. It is a separate systemd unit under an unprivileged user, started by <code>kanea edge</code>.</td></tr>
+          <tr id="term-project"><td><b>project</b></td><td>A named group of services and the isolation boundary for network policy, secrets, containers and DNS.</td></tr>
+          <tr id="term-service"><td><b>service</b></td><td>A long-running workload inside a project: one task (the container) kept at <code>count</code> replicas.</td></tr>
+          <tr id="term-alloc"><td><b>alloc</b></td><td>One running instance of a service, with its own network namespace, address and resource limits.</td></tr>
+          <tr id="term-spec"><td><b>spec</b></td><td>The HCL file that describes one project: its services, storage, routing, scaling and builds. <code>kanea plan</code> validates it and <code>kanea run</code> applies it. See the <a href="spec.html">spec reference</a>.</td></tr>
+          <tr id="term-node-config"><td><b>node config</b></td><td>The file <code>/etc/kanea/kanea.hcl</code>. It holds every setting of the node itself, and both daemons read it once at startup. See the <a href="node-config.html">node config reference</a>.</td></tr>
+          <tr id="term-grant"><td><b>grant</b></td><td>A host device or unix socket the operator names in the node config, with the projects allowed to use it. A spec asks for a grant by name and never names a host path. See <a href="volumes.html#volumes-devices">device and socket grants</a>.</td></tr>
+          <tr id="term-store"><td><b>Store</b></td><td>The embedded database inside kanead that holds desired state, allocs, events, certificates, secrets and the audit log. See <a href="architecture.html#arch-store">the Store</a>.</td></tr>
+          <tr id="term-vip"><td><b>VIP</b></td><td>The virtual IP each service gets from the service CIDR. A connection to it is rewritten to one of the service's allocs when it is opened.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

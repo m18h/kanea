@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remote nodes and CI - Kanea docs</title>
+<meta name="description" content="Point the kanea CLI at a node over HTTPS with a token, deploy a new image, and run the deploy from a GitLab or GitHub pipeline.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1 id="remote">Remote nodes and CI</h1>
+    <p>
+      Run the <code>kanea</code> CLI from a laptop or a CI runner against a node's HTTPS
+      listener, and deploy a new image from a pipeline.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>Local</th><th>Remote</th></tr></thead>
+        <tbody>
+          <tr><td><b>Reaches <a href="concepts.html#term-kanead">kanead</a> by</b></td><td>the unix socket</td><td><code>https://&lt;node&gt;:8600</code></td></tr>
+          <tr><td><b>Credential</b></td><td><code>kanea</code> group membership</td><td>a bearer token</td></tr>
+          <tr><td><b>Set up with</b></td><td><code>usermod -aG kanea $USER</code></td><td><code>KANEA_URL</code>, <code>KANEA_TOKEN</code>, <code>KANEA_CA_CERT</code></td></tr>
+          <tr><td><b>Authorised as</b></td><td>admin, always</td><td>the token's role</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      A remote CLI presents the same token the REST API and the
+      <a href="mcp.html#mcp-http">MCP endpoint</a> accept. The role decides what it may do:
+      a viewer token reads everything and changes nothing.
+    </p>
+
+    <h2 id="remote-setup">Set up a remote CLI</h2>
+
+    <p>
+      The node needs a network listener first. If <code>kanea ui</code> on the node prints
+      a loopback address or an error, follow
+      <a href="dashboard.html#dashboard-listen">Change the listen address</a>.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Install the CLI on your machine</h3>
+        <p>
+          Use <a href="install.html#install-manual">Homebrew or a release archive</a>. The
+          CLI is one static binary and needs no node beside it.
+          <code>kanea version</code> prints the version.
+        </p>
+      </li>
+      <li>
+        <h3>Create a token, on the node</h3>
+        <pre class="plain">sudo kanea token create --role admin --expires-in 720h ci &gt; token.txt</pre>
+        <p>
+          The secret goes to stdout once and <code>token.txt</code> now holds it. Deploying
+          needs <code>--role admin</code>. For a job that only inspects, create a viewer
+          token. <a href="auth.html#auth-tokens">Sign-in and access</a> covers listing and
+          revoking.
+        </p>
+      </li>
+      <li>
+        <h3>Export the node's CA, on the node</h3>
+        <pre class="plain">sudo kanea ca show &gt; kanea-ca.crt</pre>
+        <p>
+          Copy <code>kanea-ca.crt</code> to your machine. Skip this step when the node's
+          listener uses <code>api_tls = "acme"</code>: public roots already trust that
+          certificate.
+        </p>
+      </li>
+      <li>
+        <h3>Point the CLI at the node</h3>
+        <pre class="plain">export KANEA_URL=https://kanea.apps.example.com:8600
+export KANEA_TOKEN=$(cat token.txt)
+export KANEA_CA_CERT=/path/to/kanea-ca.crt
+
+kanea ps</pre>
+        <p><code>kanea ps</code> lists the node's allocs. The CLI is now remote.</p>
+      </li>
+    </ol>
+
+    <h3 id="remote-env">Flags and environment</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Variable</th><th>Flag</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td><code>KANEA_URL</code></td><td><code>--url</code></td><td>The node's API address: scheme, host and port, with no path.</td></tr>
+          <tr><td><code>KANEA_TOKEN</code></td><td><code>--token</code></td><td>The bearer token. An empty value counts as unset.</td></tr>
+          <tr><td><code>KANEA_CA_CERT</code></td><td><code>--ca-cert</code></td><td>A PEM file path, or the PEM text itself.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A flag you pass beats the environment. An explicit <code>--socket</code> keeps one
+      command local even with <code>KANEA_URL</code> exported.
+    </p>
+    <p>
+      <code>KANEA_CA_CERT</code> accepts the PEM itself because CI systems hand secrets to
+      a job as values:
+    </p>
+    <pre class="plain">KANEA_CA_CERT="$(cat kanea-ca.crt)"     # or a CI variable holding the PEM</pre>
+    <p>
+      There is no flag to skip certificate verification. The CLI also refuses an
+      <code>http://</code> endpoint beyond loopback, because the token would cross the
+      network in clear text.
+    </p>
+
+    <h2 id="remote-deploy">Deploy a new image</h2>
+
+    <pre class="plain">kanea deploy [--project P] &lt;[project/]service&gt; &lt;image&gt; [--wait 60s] [--no-wait]</pre>
+    <p>
+      <code>kanea deploy</code> points an existing service at a new image and leaves the
+      rest of its <a href="concepts.html#term-spec">spec</a> as declared:
+    </p>
+    <pre class="plain">kanea deploy shop/web ghcr.io/acme/web@sha256:9f2a…</pre>
+    <p>
+      It waits for the new image to be running and exits non-zero if it is not, so a failed
+      deploy fails the pipeline. <code>--no-wait</code> returns once the change is accepted.
+    </p>
+    <p>
+      Prefer a digest to a tag. A tag can move between two
+      <a href="concepts.html#term-alloc">allocs</a> being replaced, and then they run
+      different code.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Situation</th><th>What deploy does</th></tr></thead>
+        <tbody>
+          <tr><td>An <code>init</code> step declares exactly the task's previous image</td><td>Moves that step to the new image too, so a migration runs the same build as the app. The command names the steps that followed.</td></tr>
+          <tr><td>An <code>init</code> step uses any other image</td><td>Leaves it alone.</td></tr>
+          <tr><td>The service already declares this image and its allocs are healthy</td><td>Reports it and does nothing. Re-running a pipeline on an unchanged commit succeeds.</td></tr>
+          <tr><td>The service already declares this image and its allocs have failed</td><td>Restarts the service.</td></tr>
+          <tr><td>Old allocs had failed before the deploy</td><td>Shows them as <code>replacing</code> and does not count them. Only a failure on the new image fails the command.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <b class="label">Use deploy, not <code>kanea run --image</code>, on an existing service</b>
+      <p>
+        <code>kanea run --image</code> builds a bare service from a name, a count and an
+        image. Over an existing service it would delete ports, <code>expose</code>, env,
+        volumes, health checks and scaling, so it refuses and names what would be lost.
+      </p>
+    </div>
+
+    <h2 id="remote-ci">Deploy from a pipeline</h2>
+
+    <p>
+      Store the token and the CA as CI secrets, set <code>KANEA_URL</code>, and run
+      <code>kanea deploy</code> after the image is pushed.
+    </p>
+
+    <h3 id="remote-image">The container image</h3>
+    <p>
+      The CLI ships as <code>ghcr.io/m18h/kanea</code>, tagged <code>vX.Y.Z</code> and
+      <code>latest</code>. Pin the version in a pipeline. Its entrypoint is
+      <code>kanea</code>, so a runner that passes a shell script as the command needs the
+      entrypoint cleared, as the GitLab job below does.
+    </p>
+    <p>
+      <a href="install.html#install-image">The container image</a> lists what is in it and
+      how to verify its signature.
+    </p>
+
+    <h3 id="remote-gitlab">GitLab</h3>
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>.gitlab-ci.yml</span></div>
+<pre class="plain">deploy:
+  stage: deploy
+  image:
+    name: ghcr.io/m18h/kanea:vX.Y.Z           # pin the version
+    entrypoint: [""]                          # GitLab runs the job script as the container command
+  variables:
+    KANEA_URL: https://kanea.apps.example.com:8600
+  script:
+    - kanea deploy shop/web "$CI_REGISTRY_IMAGE@$IMAGE_DIGEST"
+  # KANEA_TOKEN: masked project variable
+  # KANEA_CA_CERT: a file variable, or the PEM as a masked variable</pre>
+    </div>
+
+    <h3 id="remote-github">GitHub Actions</h3>
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>.github/workflows/deploy.yml</span></div>
+<pre class="plain">- name: Deploy
+  # or run the image directly: docker run --rm -e KANEA_URL -e KANEA_TOKEN \
+  #   ghcr.io/m18h/kanea:vX.Y.Z deploy shop/web "$IMAGE"
+  env:
+    KANEA_URL: https://kanea.apps.example.com:8600
+    KANEA_TOKEN: ${{ secrets.KANEA_TOKEN }}
+    KANEA_CA_CERT: ${{ secrets.KANEA_CA_PEM }}
+  run: kanea deploy shop/web "ghcr.io/acme/web@${{ steps.build.outputs.digest }}"</pre>
+    </div>
+
+    <h3 id="remote-ci-errors">If the job fails before it deploys</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>The error contains</th><th>Cause</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td><code>unknown command "sh"</code></td><td>The runner passed the job script to the image's <code>kanea</code> entrypoint.</td><td>Use the map form of <code>image</code> with <code>entrypoint: [""]</code>.</td></tr>
+          <tr><td><code>a token needs an endpoint</code></td><td><code>KANEA_TOKEN</code> is set and <code>KANEA_URL</code> is not.</td><td>Set <code>KANEA_URL</code>.</td></tr>
+          <tr><td><code>has no credential without a token</code></td><td>The secret was not exported to the job and arrived empty.</td><td>Expose the variable to this job or branch.</td></tr>
+          <tr><td><code>a certificate from an unknown authority</code></td><td>The runner does not trust the node's CA.</td><td>Set <code>KANEA_CA_CERT</code>.</td></tr>
+          <tr><td><code>refusing to send a token … over plain HTTP</code></td><td>The endpoint is <code>http://</code> and not loopback.</td><td>Use the node's <code>https://</code> address.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="remote-limits">Commands that stay on the node</h2>
+
+    <p>Two commands refuse a remote endpoint:</p>
+    <ul>
+      <li>
+        <b><code>kanea upgrade</code></b> restarts this host's units and installs a binary
+        over this host's. Run it on the node or over ssh.
+      </li>
+      <li>
+        <b><code>kanea mcp</code></b> serves MCP over stdio with the local socket as its
+        credential. A remote agent uses the node's
+        <a href="mcp.html#mcp-http"><code>/mcp</code> endpoint</a> with a token.
+      </li>
+    </ul>
+    <p>
+      <code>kanea init</code>, <code>install</code>, <code>bundle</code>,
+      <code>doctor</code>, <code>firewall</code> and <code>config migrate</code> take no
+      endpoint: they act on the host they run on. Everything else works remotely,
+      including <code>kanea exec</code> and <code>kanea logs -f</code>.
+    </p>
+
+    <h2 id="remote-gitops">Let the node pull instead</h2>
+
+    <p>
+      A token in CI is one way. The other is to have the node watch a git repository, with
+      CI committing the new digest instead of calling the node.
+    </p>
+    <ol>
+      <li>The pipeline builds and pushes the image, then commits the new digest into the
+        spec repository the project's <code>git</code> block names.</li>
+      <li>The push fires the webhook, <code>POST /v1/webhooks/git/&lt;project&gt;</code>.
+        The node checks GitLab's <code>X-Gitlab-Token</code> or GitHub's
+        <code>X-Hub-Signature-256</code> against the project's
+        <code>webhook_secret_ref</code>.</li>
+      <li>The node re-reads the repository with its own credential and applies what it
+        finds. Nothing is deployed from the request, so a forged delivery cannot choose an
+        image.</li>
+    </ol>
+    <p>
+      This needs no token in CI and leaves a git history of every deploy. It costs a spec
+      repository and a commit per release. <code>kanea project sync &lt;project&gt;</code>
+      forces the read without waiting for the poll.
+      The <a href="spec.html#spec-project"><code>git</code> block</a> is part of the
+      project in the spec reference.
+    </p>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Domains and HTTPS - Kanea docs</title>
+<meta name="description" content="Give services public names and certificates: set a base domain, create the DNS records, and choose ACME, your own certificates or the node's CA.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1 id="dns">Domains and HTTPS</h1>
+    <p>
+      Give a service a public name and a certificate. Names between services on the
+      node work without any setup, so most of this page is about the public side.
+    </p>
+
+    <p>
+      Kanea has two separate name spaces. One is internal and automatic. The other is
+      public, and it is the only one where you create DNS records.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>Internal</th><th>Public</th></tr></thead>
+        <tbody>
+          <tr><td><b>Looks like</b></td><td><code>web.shop.kanea</code></td><td><code>web.shop.apps.example.com</code></td></tr>
+          <tr><td><b>Resolved by</b></td><td>Kanea's own resolver</td><td>Your DNS provider</td></tr>
+          <tr><td><b>Answers with</b></td><td>The service's <a href="concepts.html#term-vip">VIP</a></td><td>The node's public address</td></tr>
+          <tr><td><b>Reaches</b></td><td>The <a href="concepts.html#term-alloc">allocs</a> directly</td><td><a href="concepts.html#term-edge">The edge</a> on :443, then the allocs</td></tr>
+          <tr><td><b>Records you create</b></td><td>None</td><td>One wildcard, usually</td></tr>
+          <tr><td><b>Who can use it</b></td><td>Allocs on this node</td><td>Anything that can reach the node</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="dns-internal">Internal names between services</h2>
+
+    <p>
+      Use the short name. Every alloc gets a generated <code>/etc/resolv.conf</code> that
+      points at Kanea's resolver, with a search path that completes short names:
+    </p>
+    <pre class="plain">nameserver 10.244.0.1
+search shop.kanea kanea
+options ndots:1 timeout:2 attempts:2</pre>
+    <p>From a service inside project <code>shop</code>:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>You write</th><th>It resolves</th><th>When to use it</th></tr></thead>
+        <tbody>
+          <tr><td><code>db</code></td><td><code>db.shop.kanea</code></td><td>A service in the same project.</td></tr>
+          <tr><td><code>cache.data</code></td><td><code>cache.data.kanea</code></td><td>A service in another project.</td></tr>
+          <tr><td><code>db.shop.kanea</code></td><td>itself</td><td>When you would rather be explicit.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The answer is the service's VIP. The datapath balances each connection across the
+      service's healthy allocs at <code>connect()</code>, with no proxy in the path.
+    </p>
+    <p>
+      The resolver listens on the first address of the node CIDR, <code>10.244.0.1</code>
+      by default. <a href="node-config.html#nodeconfig-dns"><code>dns.listen</code></a>
+      moves it or turns it off.
+    </p>
+
+    <div class="callout warn">
+      <b class="label">Resolving is not reaching</b>
+      <p>
+        A cross-project name resolves for anyone, but the datapath denies traffic between
+        projects by default. The connection is dropped unless the service being called
+        lists the caller in <code>allow_from</code>.
+      </p>
+      <p>
+        The symptom is a name that resolves and a connection that times out. Check
+        <a href="spec.html#spec-network"><code>allow_from</code></a> on the called
+        service before you look at DNS.
+      </p>
+    </div>
+
+    <h2 id="dns-base-domain">Set the base domain</h2>
+
+    <p>
+      An exposed service's public name is
+      <code>&lt;service&gt;.&lt;project&gt;.&lt;base_domain&gt;</code>. Without a base
+      domain a service has no generated name, so it is reachable by name only through
+      the <code>domains</code> its <a href="concepts.html#term-spec">spec</a> lists.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Add <code>base_domain</code> to the node config</h3>
+        <p>
+          Edit <code>/etc/kanea/kanea.hcl</code>, the
+          <a href="concepts.html#term-node-config">node config</a>. The attribute sits at
+          the top level, outside any stanza.
+        </p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">base_domain</span> = <span class="s">"apps.example.com"</span></code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <p>
+          <a href="concepts.html#term-kanead">kanead</a> reads the file once, at startup.
+          Running workloads keep running through the restart.
+        </p>
+        <pre class="plain">sudo systemctl restart kanead
+kanea describe shop/web</pre>
+        <p>
+          The routes of <code>shop/web</code> now include
+          <code>web.shop.apps.example.com</code>.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      A spec can name its own domains with
+      <a href="spec.html#spec-expose"><code>expose { domains = […] }</code></a>. Those
+      work with or without a base domain.
+    </p>
+
+    <h2 id="dns-records">Create the DNS records</h2>
+
+    <p>One wildcard record covers every generated name, present and future:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Record</th><th>Type</th><th>Points at</th><th>Covers</th></tr></thead>
+        <tbody>
+          <tr><td><code>*.apps.example.com</code></td><td>A</td><td>The node's public IPv4</td><td>Every generated service name</td></tr>
+          <tr><td><code>*.apps.example.com</code></td><td>AAAA</td><td>The node's public IPv6</td><td>The same, for v6 clients</td></tr>
+          <tr><td><code>kanea.example.com</code></td><td>A</td><td>The node's address</td><td>The dashboard, if you gave it a name</td></tr>
+          <tr><td><code>shop.example.com</code></td><td>A</td><td>The node's public IPv4</td><td>One custom <code>domains</code> entry</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The AAAA record concerns the node's own public address. The edge binds
+      <code>:443</code> on whatever addresses the host has, so a node with public IPv6
+      serves v6 clients whether or not allocs have v6 addresses.
+    </p>
+    <p>
+      The dashboard is not a service and the wildcard does not cover it. Give it a name
+      with <a href="node-config.html#nodeconfig-bind"><code>bind.api_domain</code></a>
+      and point a record at the node. <a href="dashboard.html#arch-dashboard">Reaching
+      the dashboard</a> covers its port and certificate.
+    </p>
+    <p>
+      The records are static once created. The edge routes on the <code>Host</code>
+      header, so scaling or redeploying a service changes nothing in DNS.
+    </p>
+
+    <h2 id="dns-certificates">Choose where certificates come from</h2>
+
+    <p>
+      Set <code>tls.default_mode</code> in the node config. It decides the certificate
+      source for every exposed service whose spec does not name one.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Mode</th><th>Certificate comes from</th><th>Needs</th></tr></thead>
+        <tbody>
+          <tr><td><code>acme</code></td><td>An ACME CA, Let's Encrypt unless you say otherwise. The default.</td><td><code>acme.email</code>, and a way to pass the challenge</td></tr>
+          <tr><td><code>self-signed</code></td><td>A CA this node generates on first use</td><td>The CA installed on each device, once</td></tr>
+          <tr><td><code>provided</code></td><td>A certificate you put on the node</td><td>A <code>certificate</code> block that allows the project</td></tr>
+          <tr><td><code>plaintext</code></td><td>Nowhere: the service is served over plain HTTP</td><td>Nothing</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      A spec overrides the node for one service with
+      <a href="spec.html#spec-expose"><code>expose { tls { mode = "…" } }</code></a>. A
+      mode names a source and never a file path. The attribute tables are in the node
+      config reference, under <a href="node-config.html#nodeconfig-tls">tls</a> and
+      <a href="node-config.html#nodeconfig-acme">acme</a>.
+    </p>
+
+    <h3 id="dns-acme">Get certificates from Let's Encrypt</h3>
+
+    <ol class="steps">
+      <li>
+        <h3>Create the DNS record first</h3>
+        <p>
+          The name must already resolve to the node, and port 80 must be reachable from
+          the internet. The CA checks both during issuance.
+        </p>
+      </li>
+      <li>
+        <h3>Add the <code>acme</code> stanza</h3>
+        <p>
+          An email address is the only required attribute. Without one kanead requests
+          no certificate from a CA, and services in <code>acme</code> mode are served over
+          plain HTTP.
+        </p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">base_domain</span> = <span class="s">"apps.example.com"</span>
+
+<span class="k">acme</span> {
+  <span class="k">email</span> = <span class="s">"ops@example.com"</span>
+}</code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead and check a service</h3>
+        <pre class="plain">sudo systemctl restart kanead
+curl -I https://web.shop.apps.example.com</pre>
+        <p>
+          kanead emits a <code>cert.issued</code> event when the certificate arrives.
+          After that the response comes over HTTPS with a publicly trusted certificate.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      While you are still getting DNS right, add <code>directory = "staging"</code> to
+      the stanza. The staging CA has much looser rate limits, and its certificates are
+      not trusted by browsers.
+    </p>
+
+    <h3 id="dns-challenges">HTTP-01 or DNS-01</h3>
+
+    <p>The ACME challenge Kanea can use decides what you have to arrange:</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>HTTP-01 (default)</th><th>DNS-01</th></tr></thead>
+        <tbody>
+          <tr><td><b>Needs</b></td><td>Port 80 reachable from the internet, and the name already resolving to the node</td><td>An RFC 2136 nameserver that accepts TSIG-signed updates</td></tr>
+          <tr><td><b>Configure</b></td><td>Nothing beyond <code>acme.email</code></td><td>The <code>acme.dns01</code> block</td></tr>
+          <tr><td><b>Wildcard certificates</b></td><td>No</td><td>Yes</td></tr>
+          <tr><td><b>Works on a private node</b></td><td>No</td><td>Yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      For HTTP-01 the edge serves the challenge path on <code>:80</code>. kanead first
+      requests the challenge from its own edge, at <code>acme.verify_url</code>, and
+      asks the CA to validate only once that succeeds.
+    </p>
+
+    <p>For DNS-01, store the TSIG secret, then add the block and restart kanead:</p>
+    <pre class="plain">kanea secret put shared/tsig &lt; tsig.key</pre>
+    <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">acme</span> {
+  <span class="k">email</span> = <span class="s">"ops@example.com"</span>
+
+  <span class="k">dns01</span> {
+    <span class="k">server</span>      = <span class="s">"ns1.example.com:53"</span>
+    <span class="k">zone</span>        = <span class="s">"example.com"</span>          <span class="c"># default: the challenge name's parent</span>
+    <span class="k">tsig_key</span>    = <span class="s">"kanea-acme"</span>
+    <span class="k">tsig_secret</span> = <span class="s">"secret:shared/tsig"</span>   <span class="c"># a reference, never the literal</span>
+  }
+}</code></pre>
+    <p>
+      <code>tsig_secret</code> is required whenever <code>server</code> is set, and it
+      must be a <code>secret:</code> reference. kanead refuses to start otherwise,
+      because unsigned updates would let anyone on the network answer a challenge.
+    </p>
+    <p>
+      RFC 2136 is the only DNS-01 method. It suits BIND, Knot and PowerDNS. A provider
+      that offers only its own API needs a zone you run yourself, or a CNAME that
+      delegates <code>_acme-challenge</code> into one.
+    </p>
+
+    <div class="callout">
+      <b class="label">When Kanea switches to wildcards</b>
+      <p>
+        Certificates are per service until a node needs more than 20 of them. Past that,
+        and only with DNS-01 configured, generated names collapse into one wildcard per
+        project: <code>*.shop.apps.example.com</code>.
+      </p>
+      <p>
+        The threshold comes from Let's Encrypt's limit of 50 certificates per registered
+        domain per week. Custom <code>domains</code> are never collapsed, because they
+        belong to zones Kanea has no claim on.
+      </p>
+    </div>
+
+    <h3 id="dns-provided">Use your own certificates</h3>
+
+    <p>
+      Add one <code>certificate</code> block per certificate. A spec asks for a
+      certificate by name and never names a path, so only someone who can edit the node
+      config decides which private keys the node serves.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Put the pair on the node</h3>
+        <p>
+          The certificate file holds the leaf and its intermediates in PEM. Both paths
+          must be absolute. kanead warns about a key that group or others can read.
+        </p>
+      </li>
+      <li>
+        <h3>Add a <code>certificate</code> block</h3>
+        <p>
+          The label is the name specs use. <code>allow</code> lists the projects that
+          may claim the certificate and must not be empty.
+        </p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">certificate</span> <span class="s">"shop"</span> {
+  <span class="k">cert</span>  = <span class="s">"/etc/kanea/tls/shop.crt"</span>
+  <span class="k">key</span>   = <span class="s">"/etc/kanea/tls/shop.key"</span>
+  <span class="k">allow</span> = [<span class="s">"shop"</span>]
+}</code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <p>
+          Run <code>sudo systemctl restart kanead</code>. A new or changed block needs a
+          restart, and a malformed block stops kanead from starting.
+        </p>
+      </li>
+      <li>
+        <h3>Ask for it in the spec</h3>
+        <pre><code><span class="k">expose</span> {
+  <span class="k">domains</span> = [<span class="s">"shop.example.com"</span>]
+  <span class="k">tls</span> {
+    <span class="k">mode</span> = <span class="s">"provided"</span>
+    <span class="k">name</span> = <span class="s">"shop"</span>
+  }
+}</code></pre>
+        <p>
+          Leave <code>name</code> out and Kanea picks any certificate the project is
+          allowed that covers every domain of the route.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      What a certificate covers is read from its own subject alternative names. There
+      is no domain list to keep in step with the file.
+    </p>
+    <p>
+      A renewed pair is picked up without a restart. kanead checks the files every
+      minute and compares their content, so a renewal tool that writes and renames
+      works as it is.
+    </p>
+    <p>
+      A provided certificate that cannot be resolved leaves the service on plain HTTP.
+      Kanea never substitutes a certificate from another source.
+    </p>
+
+    <h2 id="dns-private">Private networks and homelabs</h2>
+
+    <p>
+      A node with no public name and no port 80 from the internet can still serve HTTPS.
+      There are two routes. They differ in whether each device has to be told to trust
+      a CA.
+    </p>
+
+    <h3 id="dns-private-ca">Use the node's own CA</h3>
+
+    <ol class="steps">
+      <li>
+        <h3>Point a wildcard at the node on your local resolver</h3>
+        <p>
+          Create <code>*.home.lan</code> on a Pi-hole, a router or an internal BIND, and
+          point it at the node's LAN address.
+        </p>
+      </li>
+      <li>
+        <h3>Set the base domain and the default mode</h3>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">base_domain</span> = <span class="s">"home.lan"</span>
+
+<span class="k">tls</span> {
+  <span class="k">default_mode</span> = <span class="s">"self-signed"</span>
+}</code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead and export the CA</h3>
+        <pre class="plain">sudo systemctl restart kanead
+kanea ca show &gt; kanea-ca.crt</pre>
+        <p>
+          The certificate goes to the file. Installation commands for each operating
+          system are printed to the terminal, with the fingerprint to compare.
+        </p>
+      </li>
+      <li>
+        <h3>Install the CA on each device</h3>
+        <p>
+          Every service then answers at <code>&lt;service&gt;.&lt;project&gt;.home.lan</code>
+          over HTTPS. This works offline and spends no rate limit.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      The CA is named after <code>tls.ca_name</code>. Unset, it takes the base domain,
+      and failing that the node's hostname. That name is what a device shows in its
+      list of trusted authorities.
+    </p>
+
+    <h3 id="dns-private-dns01">Use public certificates over DNS-01</h3>
+
+    <p>
+      If you own a public domain and can run RFC 2136 updates against it, configure
+      <a href="#dns-challenges">DNS-01</a>. The node then gets publicly trusted
+      certificates for names that resolve only on your LAN, and devices need no setup.
+    </p>
+    <p>
+      Nothing has to be reachable from the internet, because the challenge is answered
+      in DNS. The record still points at the node's LAN address.
+    </p>
+
+    <h3 id="dns-private-port">Skip names altogether</h3>
+
+    <p>
+      <a href="spec.html#spec-network">Publish a port</a> and reach the service at
+      <code>http://&lt;node&gt;:8096</code>. That path needs no DNS and no certificate,
+      and <code>ip_restriction</code> bounds who may use it. Which node ports a spec may
+      publish is set by
+      <a href="node-config.html#nodeconfig-edge"><code>edge.publish.ports</code></a>.
+    </p>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>
