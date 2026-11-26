@@ -77,7 +77,6 @@ const (
 alloc_log_dir = "/var/log/kanea/allocs"
 
 network {
-  driver       = "ebpf"
   node_cidr    = "10.244.0.0/24"
   cluster_cidr = "10.244.0.0/16"
 }
@@ -582,6 +581,14 @@ func TestMigrateNodeRefusesAndWritesNothing(t *testing.T) {
 			wantInErr: []string{"/run/a/certs.json", "/run/kanea-edge/certs.json"},
 		},
 		{
+			name: "the removed netns mode",
+			files: map[string]string{
+				"units/" + kaneadUnit: kaneadUnitWith(
+					strings.Replace(legacyKaneadExec, "--network ebpf", "--network netns", 1)),
+			},
+			wantInErr: []string{"--network netns", "eBPF datapath", kaneadUnit},
+		},
+		{
 			name: "unknown agent flag",
 			files: map[string]string{
 				"units/" + kaneadUnit: kaneadUnitWith(legacyKaneadExec + " --no-such-flag 1"),
@@ -801,6 +808,7 @@ func TestLegacyFlagTables(t *testing.T) {
 	special := []string{
 		"config", "allowed-host-paths", "passthrough-config", "secrets-providers-config",
 		"tls-certs-config", "listen", "listen-cert", "listen-key", "image-gc",
+		"network", // no attribute: the eBPF datapath is the only network
 	}
 	tables := []struct {
 		name        string

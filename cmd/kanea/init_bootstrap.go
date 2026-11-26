@@ -264,7 +264,6 @@ type bootstrapOptions struct {
 	listen                                string // the effective listen address; "" is socket-only
 	adminUser                             string // --admin-user; empty means prompt
 	timeout                               time.Duration
-	network                               string // kanead's network mode; netns has no internal DNS
 	nodeCIDR                              string
 	clusterCIDR, serviceCIDR              string
 	nodeCIDR6, clusterCIDR6, serviceCIDR6 string
@@ -370,7 +369,7 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 		dashboard:       dashboardFor(health),
 		admin:           adminName,
 		accountsExisted: !created,
-		dnsAddr:         dnsAddrFor(opts.network, opts.nodeCIDR),
+		dnsAddr:         dnsAddrFor(opts.nodeCIDR),
 		nodeCIDR:        opts.nodeCIDR, clusterCIDR: opts.clusterCIDR, serviceCIDR: opts.serviceCIDR,
 		nodeCIDR6: opts.nodeCIDR6, clusterCIDR6: opts.clusterCIDR6, serviceCIDR6: opts.serviceCIDR6,
 	})
@@ -388,12 +387,8 @@ func dashboardFor(health api.Health) string {
 }
 
 // dnsAddrFor is the internal resolver's address: the node CIDR's .1, exactly
-// as kanead's buildDNS derives it. Empty under netns, which has no datapath
-// and no service frontends for a resolver to answer for.
-func dnsAddrFor(networkMode, nodeCIDR string) string {
-	if networkMode == networkNetns {
-		return ""
-	}
+// as kanead's buildDNS derives it. Empty for a CIDR that does not parse.
+func dnsAddrFor(nodeCIDR string) string {
 	prefix, err := netip.ParsePrefix(nodeCIDR)
 	if err != nil {
 		return ""
@@ -433,8 +428,6 @@ func initSummary(o *out, s summaryInfo) {
 	}
 	if s.dnsAddr != "" {
 		o.printf("  Internal DNS   %s   (allocs resolve <service>.<project> here)\n", s.dnsAddr)
-	} else {
-		o.println("  Internal DNS   off (netns mode has no service frontends)")
 	}
 	o.println()
 	o.println("  Addressing")

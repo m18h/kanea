@@ -83,7 +83,6 @@ type DashboardConfig struct {
 
 // NetworkConfig is the network stanza.
 type NetworkConfig struct {
-	Driver       string `hcl:"driver,optional"`
 	NodeCIDR     string `hcl:"node_cidr,optional"`
 	ClusterCIDR  string `hcl:"cluster_cidr,optional"`
 	ServiceCIDR  string `hcl:"service_cidr,optional"`

@@ -15,7 +15,7 @@ func initWrite(path string, source []byte) nodeConfigWrite {
 	return nodeConfigWrite{
 		path: path, source: source, explicit: map[string]bool{},
 		dataDir: "/var/lib/kanea", logDir: "/var/log/kanea/allocs",
-		network: "ebpf", nodeCIDR: "10.244.0.0/24", clusterCIDR: "10.244.0.0/16",
+		nodeCIDR: "10.244.0.0/24", clusterCIDR: "10.244.0.0/16",
 		listener: &listenDecision{addr: "127.0.0.1:8600"},
 	}
 }
@@ -41,7 +41,6 @@ func TestWriteNodeConfigOnAFreshNode(t *testing.T) {
 alloc_log_dir = "/var/log/kanea/allocs"
 
 network {
-  driver       = "ebpf"
   node_cidr    = "10.244.0.0/24"
   cluster_cidr = "10.244.0.0/16"
 }
@@ -111,7 +110,6 @@ data_dir      = "/srv/kanea"
 alloc_log_dir = "/srv/kanea/logs"
 
 network {
-  driver       = "ebpf"
   node_cidr    = "10.50.0.0/24" # was the lab range
   cluster_cidr = "10.50.0.0/16"
 }
@@ -140,7 +138,7 @@ base_domain = "home.arpa"
 		path: path, source: []byte(existing),
 		explicit: map[string]bool{"node-cidr": true},
 		dataDir:  "/srv/kanea", logDir: "/srv/kanea/logs",
-		network: "ebpf", nodeCIDR: "10.50.9.0/24", clusterCIDR: "10.50.0.0/16",
+		nodeCIDR: "10.50.9.0/24", clusterCIDR: "10.50.0.0/16",
 		// The file owns the listener: no --listen was typed.
 		listener: nil,
 	}

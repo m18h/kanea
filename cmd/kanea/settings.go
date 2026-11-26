@@ -44,7 +44,6 @@ type agentSettings struct {
 	socket           string
 	containerdSocket string
 
-	networkMode  string
 	bpfDir       string
 	nodeCIDR     string
 	clusterCIDR  string
@@ -169,7 +168,6 @@ func resolveAgentSettings(cfg *nodeconfig.Config) agentSettings {
 		socket:           or(bind.APISocket, api.DefaultSocket),
 		containerdSocket: or(cfg.Containerd.Socket, runtime.DefaultSocket),
 
-		networkMode:  or(cfg.Network.Driver, networkEBPF),
 		bpfDir:       or(cfg.Network.BPFDir, dpmap.PinRoot),
 		nodeCIDR:     or(cfg.Network.NodeCIDR, provision.DefaultNodeCIDR),
 		clusterCIDR:  or(cfg.Network.ClusterCIDR, provision.DefaultClusterCIDR),

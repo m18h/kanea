@@ -204,7 +204,7 @@ export const functionViewSchema = z.object({
   healthy: z.number(),
   restarts: z.number(),
   // Absent means "not measured", never zero; the datapath is not scraped
-  // under network.driver "netns", and a dash is the honest render.
+  // until kanead's first interval, and a dash is the honest render.
   invocations_per_minute: z.number().optional(),
   invoker: invokerStatsSchema.nullish(),
 })
@@ -1192,7 +1192,6 @@ export const nodeConfigSchema = z.object({
   listen: z.string().optional(),
   tls: z.boolean(),
   base_domain: z.string().optional(),
-  network_mode: z.string(),
   node_cidr: z.string(),
   cluster_cidr: z.string(),
   service_cidr: z.string(),

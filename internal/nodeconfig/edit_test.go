@@ -47,7 +47,7 @@ func TestEditorSetCreatesNestedBlocks(t *testing.T) {
 func TestEditorEditsInPlaceAndKeepsComments(t *testing.T) {
 	const src = `# The node's subnets. Do not renumber.
 network {
-  driver    = "ebpf" # the product mode
+  bpf_dir   = "/sys/fs/bpf/kanea" # the pin root
   node_cidr = "10.244.0.0/24"
 }
 
@@ -65,7 +65,7 @@ bind {
 	got := string(e.Bytes())
 	for _, want := range []string{
 		"# The node's subnets. Do not renumber.",
-		`driver    = "ebpf" # the product mode`,
+		`bpf_dir   = "/sys/fs/bpf/kanea" # the pin root`,
 		`node_cidr = "10.9.0.0/24"`,
 		"# why this address: the LAN side",
 	} {
@@ -88,12 +88,12 @@ func TestEditorLeavesACanonicalDocumentAlone(t *testing.T) {
 	const src = `data_dir = "/var/lib/kanea"
 
 network {
-  driver = "ebpf"
+  bpf_dir = "/sys/fs/bpf/kanea"
 }
 `
 	e := mustEditor(t, src)
 	e.Set(cty.StringVal("/var/lib/kanea"), "data_dir")
-	e.Set(cty.StringVal("ebpf"), "network", "driver")
+	e.Set(cty.StringVal("/sys/fs/bpf/kanea"), "network", "bpf_dir")
 	if got := string(e.Bytes()); got != src {
 		t.Fatalf("got:\n%q\nwant:\n%q", got, src)
 	}

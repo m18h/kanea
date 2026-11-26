@@ -17,7 +17,7 @@
 // /netlink, cilium/ebpf map and link work, google/nftables) are behind
 // //go:build linux.
 //
-// Unlike runtime's bare-netns mode, this driver satisfies
+// Unlike a bare network namespace, this driver satisfies
 // reconciler.NetworkInspector safely: every interface it creates is marked
 // twice (the "kn" name prefix and the "kanea/<alloc>/<ip>" ifalias), and
 // Attachments reports only links carrying both marks. That property is

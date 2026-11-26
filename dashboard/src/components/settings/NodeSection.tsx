@@ -68,9 +68,6 @@ export function NodeSection({ node }: { node: NodeConfig }) {
             <CardTitle>Network</CardTitle>
           </CardHeader>
           <CardContent>
-            <KeyValue label="Mode" mono>
-              {node.network_mode}
-            </KeyValue>
             <KeyValue label="Node CIDR" mono>
               {node.node_cidr}
             </KeyValue>

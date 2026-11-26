@@ -84,20 +84,13 @@ func runAgent(args []string) error {
 	}
 	s := resolveAgentSettings(nodeCfg)
 
-	if err := validNetworkMode(s.networkMode, configLabel); err != nil {
-		return err
-	}
-	// kanead is the IPAM now (PRD v1.36): nothing downstream re-validates the
+	// kanead is the IPAM (PRD v1.36): nothing downstream re-validates the
 	// subnets, so a typo has to be refused here rather than presenting as a
 	// datapath that hands out unroutable addresses.
-	var cidrs agentCIDRs
-	if s.networkMode == networkEBPF {
-		parsed, err := parseAgentCIDRs(s.nodeCIDR, s.clusterCIDR, s.serviceCIDR,
-			s.nodeCIDR6, s.clusterCIDR6, s.serviceCIDR6, configLabel)
-		if err != nil {
-			return err
-		}
-		cidrs = parsed
+	cidrs, err := parseAgentCIDRs(s.nodeCIDR, s.clusterCIDR, s.serviceCIDR,
+		s.nodeCIDR6, s.clusterCIDR6, s.serviceCIDR6, configLabel)
+	if err != nil {
+		return err
 	}
 
 	logger, closer, err := logging.New(logging.Config{Level: s.logLevel, Format: "text"})
@@ -190,7 +183,7 @@ func runAgent(args []string) error {
 
 	// The internal resolver: the dns stanza's upstreams, or the host's
 	// resolv.conf when it names none (v1.66).
-	dns, err := buildDNS(s.networkMode, s.dnsListen, s.dnsUpstream, cidrs.node, logger)
+	dns, err := buildDNS(s.dnsListen, s.dnsUpstream, cidrs.node, logger)
 	if err != nil {
 		return err
 	}
@@ -278,7 +271,7 @@ func runAgent(args []string) error {
 
 	buildUID := buildEgressUID(logger)
 	subStart, subCount := buildSubUIDRange(buildUID, logger)
-	net, err := buildNetwork(ctx, s.networkMode, datapath.Config{
+	net, err := buildNetwork(ctx, datapath.Config{
 		NodeCIDR:     cidrs.node,
 		ClusterCIDR:  cidrs.cluster,
 		ServiceCIDR:  cidrs.service,
@@ -298,18 +291,16 @@ func runAgent(args []string) error {
 		BuildSubUIDStart: subStart,
 		BuildSubUIDCount: subCount,
 		Logger:           logger,
-	}, logger)
+	})
 	if err != nil {
 		return err
 	}
 
-	// The east-west metrics view, when the driver has one. Only the real
-	// datapath does: netns mode has no counters, and says so in startMetrics.
+	// The east-west metrics view. Nil where the platform seams carry no
+	// counters (every non-linux build); startMetrics says so.
 	var flows scaling.FlowSource
-	if dp, ok := net.(*datapath.Datapath); ok {
-		if source := dp.CounterSource(); source != nil {
-			flows = datapathFlows{source: source, datapath: dp}
-		}
+	if source := net.CounterSource(); source != nil {
+		flows = datapathFlows{source: source, datapath: net}
 	}
 
 	// The API wakes the reconciler after every apply, so a deploy converges
@@ -537,8 +528,8 @@ func runAgent(args []string) error {
 		resolver: secretStore, wake: routesNotify, log: logger,
 		node: api.NodeConfigView{
 			Listen: apiL.addr, TLS: apiL.tlsEnabled(),
-			BaseDomain: s.baseDomain, NetworkMode: s.networkMode,
-			NodeCIDR: s.nodeCIDR, ClusterCIDR: s.clusterCIDR, ServiceCIDR: s.serviceCIDR,
+			BaseDomain: s.baseDomain,
+			NodeCIDR:   s.nodeCIDR, ClusterCIDR: s.clusterCIDR, ServiceCIDR: s.serviceCIDR,
 			NodeCIDR6: s.nodeCIDR6, ClusterCIDR6: s.clusterCIDR6, ServiceCIDR6: s.serviceCIDR6,
 			DNSListen: s.dnsListen, DataDir: s.dataDir, LogDir: s.logDir,
 			PublishPorts: s.publishPorts, TLSDefault: s.tlsDefault,
@@ -755,7 +746,7 @@ func runAgent(args []string) error {
 
 	logger.Info("kanead starting",
 		"version", version, "state", statePath, "socket", s.socket,
-		"log_dir", s.logDir, "volume_dir", volumes, "network", s.networkMode)
+		"log_dir", s.logDir, "volume_dir", volumes)
 
 	tasks := 2
 	if dns != nil {
@@ -919,49 +910,22 @@ func sweepAuthState(ctx context.Context, users *auth.Store, trail *audit.Log,
 	}
 }
 
-// Network driver names for network.driver.
-const (
-	// networkEBPF is the product: Kanea's own eBPF datapath; connect-time
-	// service LB, per-project policy, per-CPU counters (PRD v1.36, §5.2.5).
-	networkEBPF = "ebpf"
-	// networkNetns gives each alloc a bare namespace and nothing else. It exists
-	// so kanead can run on a host without the datapath; a laptop, a CI job;
-	// and is not a supported deployment: no policy is enforced and no service is
-	// load balanced, so allocs are unreachable by name.
-	networkNetns = "netns"
-)
-
 // A setting has two spellings: the node config attribute kanead reads, and the
-// flag `kanea init` and `kanea firewall` take for the same thing. The checks
-// below serve both, so each caller says which spelling its operator typed:
-// an error naming a flag kanead does not have is one nobody can act on.
+// flag `kanea init` takes for the same thing. The checks below serve both, so
+// each caller says which spelling its operator typed: an error naming a flag
+// kanead does not have is one nobody can act on.
 
 // configLabel names a node config attribute as the file spells it.
 func configLabel(attr string) string { return attr }
 
 // flagLabel names the command-line flag for a node config attribute:
-// network.node_cidr6 is --node-cidr6. network.driver is the one that does
-// not follow the pattern; the flag has always been --network.
+// network.node_cidr6 is --node-cidr6.
 func flagLabel(attr string) string {
-	if attr == "network.driver" {
-		return "--network"
-	}
 	_, name, found := strings.Cut(attr, ".")
 	if !found {
 		name = attr
 	}
 	return "--" + strings.ReplaceAll(name, "_", "-")
-}
-
-// validNetworkMode refuses anything but the two modes, up front. Before v1.36
-// any value other than one recognised name silently selected the product mode,
-// so a typo configured a node by accident.
-func validNetworkMode(mode string, label func(string) string) error {
-	if mode != networkEBPF && mode != networkNetns {
-		return fmt.Errorf("unknown %s %q: want %s or %s",
-			label("network.driver"), mode, networkEBPF, networkNetns)
-	}
-	return nil
 }
 
 // agentCIDRs is the parsed subnet trio the ebpf mode runs on: six with
@@ -1067,34 +1031,23 @@ func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string,
 	return out, nil
 }
 
-// buildNetwork selects the network driver.
+// buildNetwork loads the datapath, the only network a node has (PRD v1.115).
 //
-// An Init failure in ebpf mode is a hard startup error, deliberately unlike
-// the warn-and-continue the old external agent got: there is no separate
-// process that might come up later. Loading the programs *is* the datapath:
-// if that fails, nothing will ever pass traffic, there is nothing to retry
-// against, and a control plane that started anyway would converge every alloc
-// onto a network that silently drops everything.
-func buildNetwork(ctx context.Context, mode string, cfg datapath.Config, logger *slog.Logger) (reconciler.Network, error) {
-	switch mode {
-	case networkNetns:
-		logger.Warn("network policy and service load balancing are disabled",
-			"network", networkNetns, "detail", "development mode: allocs get a bare namespace")
-		return reconciler.NetnsNetwork{}, nil
-
-	case networkEBPF:
-		dp, err := datapath.New(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("network: %w", err)
-		}
-		if err := dp.Init(ctx); err != nil {
-			return nil, fmt.Errorf("network: %w", err)
-		}
-		return dp, nil
-
-	default:
-		return nil, fmt.Errorf("unknown network.driver %q: want %s or %s", mode, networkEBPF, networkNetns)
+// An Init failure is a hard startup error, deliberately unlike the
+// warn-and-continue the old external agent got: there is no separate process
+// that might come up later. Loading the programs *is* the datapath: if that
+// fails, nothing will ever pass traffic, there is nothing to retry against,
+// and a control plane that started anyway would converge every alloc onto a
+// network that silently drops everything.
+func buildNetwork(ctx context.Context, cfg datapath.Config) (*datapath.Datapath, error) {
+	dp, err := datapath.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("network: %w", err)
 	}
+	if err := dp.Init(ctx); err != nil {
+		return nil, fmt.Errorf("network: %w", err)
+	}
+	return dp, nil
 }
 
 // buildEgressUID resolves the build daemon's account to the uid the
@@ -1161,16 +1114,9 @@ const (
 // determines the address either way. The socket itself is bound in Serve,
 // which runAgent starts only after buildNetwork's Init has created the
 // interface, so the address is bindable by then.
-func buildDNS(mode, listen string, upstreams []string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
+func buildDNS(listen string, upstreams []string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
 	if listen == dnsOff {
 		logger.Warn("internal DNS is disabled; services are reachable only by address")
-		return nil, nil
-	}
-	if mode == networkNetns {
-		// Without the datapath there are no service frontends to answer with,
-		// so a resolver would serve an empty zone.
-		logger.Info("internal DNS is disabled in netns mode",
-			"detail", "no service frontends exist without the datapath")
 		return nil, nil
 	}
 

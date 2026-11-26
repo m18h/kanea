@@ -82,9 +82,6 @@ func deniedByPermission(err error) bool {
 type preflightOptions struct {
 	dataDir          string
 	containerdSocket string
-	// networkMode is "ebpf" or "netns"; the BPF checks are skipped for the
-	// latter, which is the development configuration.
-	networkMode string
 	// buildkitSocket is the rootless build daemon's address; "off" skips it.
 	buildkitSocket string
 	// layout locates the components `kanea install` placed.
@@ -137,10 +134,8 @@ func componentChecks(opts preflightOptions) []checkResult {
 	if opts.layout.NodeCIDR6 != "" || opts.serviceCIDR6 != "" {
 		results = append(results, checkSubnets6(opts.layout, opts.serviceCIDR6), checkKernelIPv6())
 	}
-	if opts.networkMode != networkNetns {
-		results = append(results, checkBPF())
-		results = append(results, networkEgressChecks(opts)...)
-	}
+	results = append(results, checkBPF())
+	results = append(results, networkEgressChecks(opts)...)
 	if opts.buildkitSocket != "off" {
 		results = append(results, checkBuildkit(opts.buildkitSocket, opts.layout))
 	}
@@ -766,14 +761,9 @@ func checkNodeConfig(cfg *nodeconfig.Config, s agentSettings, loadErr error) che
 	if loadErr != nil {
 		return checkResult{Name: name, Detail: loadErr.Error(), Fix: fix}
 	}
-	if err := validNetworkMode(s.networkMode, configLabel); err != nil {
+	if _, err := parseAgentCIDRs(s.nodeCIDR, s.clusterCIDR, s.serviceCIDR,
+		s.nodeCIDR6, s.clusterCIDR6, s.serviceCIDR6, configLabel); err != nil {
 		return checkResult{Name: name, Detail: err.Error(), Fix: fix}
-	}
-	if s.networkMode == networkEBPF {
-		if _, err := parseAgentCIDRs(s.nodeCIDR, s.clusterCIDR, s.serviceCIDR,
-			s.nodeCIDR6, s.clusterCIDR6, s.serviceCIDR6, configLabel); err != nil {
-			return checkResult{Name: name, Detail: err.Error(), Fix: fix}
-		}
 	}
 	switch {
 	case cfg.Path == "":

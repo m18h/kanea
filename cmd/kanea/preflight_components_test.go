@@ -56,7 +56,6 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 		dataDir: t.TempDir(), layout: layout,
 		containerdSocket: filepath.Join(layout.RunDir, "containerd.sock"),
 		buildkitSocket:   provision.BuildkitSocket(layout),
-		networkMode:      networkEBPF,
 		offline:          true,
 	})
 
@@ -79,24 +78,10 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 	}
 }
 
-// network.driver = "netns" is the development configuration, and it means no datapath
-// and therefore nothing for the BPF check to gate on.
-func TestNetworkNetnsSkipsTheBPFCheck(t *testing.T) {
-	results := componentChecks(preflightOptions{
-		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: networkNetns, buildkitSocket: "off", offline: true,
-	})
-	for _, r := range results {
-		if r.Name == "bpf" {
-			t.Errorf("network.driver = \"netns\" still runs the %q check", r.Name)
-		}
-	}
-}
-
 func TestBuildkitOffSkipsTheBuildCheck(t *testing.T) {
 	results := componentChecks(preflightOptions{
 		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: networkNetns, buildkitSocket: "off", offline: true,
+		buildkitSocket: "off", offline: true,
 	})
 	for _, r := range results {
 		if r.Name == "buildkit" {
@@ -109,7 +94,7 @@ func TestBuildkitOffSkipsTheBuildCheck(t *testing.T) {
 func TestOfflineSkipsTheOnlyNetworkCheck(t *testing.T) {
 	opts := preflightOptions{
 		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: networkNetns, buildkitSocket: "off", offline: true,
+		buildkitSocket: "off", offline: true,
 	}
 	for _, r := range componentChecks(opts) {
 		if r.Name == "upstream" {

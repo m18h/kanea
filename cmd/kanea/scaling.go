@@ -376,8 +376,8 @@ type metricsSettings struct {
 	exposition    *scaling.EdgeExposition
 	containerdURL string
 	edgeURL       string
-	// flows is the datapath's east-west counter view; nil in netns mode,
-	// which has no counters.
+	// flows is the datapath's east-west counter view; nil where the platform
+	// carries no counters, which is every non-linux build.
 	flows scaling.FlowSource
 	// node is the shared procfs reader: the same instance the API serves
 	// point-in-time stats from, because CPU percent is a delta and two readers
@@ -450,7 +450,7 @@ func startMetrics(ctx context.Context, cfg metricsSettings, logger *slog.Logger)
 		}
 	} else {
 		logger.Info("east-west metrics are disabled",
-			"detail", "the netns network mode has no datapath counters; "+
+			"detail", "the datapath has no counters on this platform; "+
 				"flows_per_second and drops_per_second rules will never fire")
 	}
 
