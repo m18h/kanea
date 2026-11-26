@@ -533,7 +533,7 @@ func runAgent(args []string) error {
 		node: api.NodeConfigView{
 			Listen: apiL.addr, TLS: apiL.tlsEnabled(),
 			BaseDomain: s.baseDomain, NetworkMode: mode,
-			NodeCIDR:   s.nodeCIDR, ClusterCIDR: s.clusterCIDR, ServiceCIDR: s.serviceCIDR,
+			NodeCIDR: s.nodeCIDR, ClusterCIDR: s.clusterCIDR, ServiceCIDR: s.serviceCIDR,
 			NodeCIDR6: s.nodeCIDR6, ClusterCIDR6: s.clusterCIDR6, ServiceCIDR6: s.serviceCIDR6,
 			DNSListen: s.dnsListen, DataDir: s.dataDir, LogDir: s.logDir,
 			PublishPorts: s.publishPorts, TLSDefault: s.tlsDefault,
