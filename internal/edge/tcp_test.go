@@ -119,7 +119,7 @@ func TestRelayRefusesWhenFull(t *testing.T) {
 	}
 
 	// A zero maximum is unlimited rather than closed: it is what an unset
-	// --max-published-conns means, and refusing everything there would take the
+	// edge.publish.max_conns means, and refusing everything there would take the
 	// feature down by default.
 	unlimited := newConnLimiter(0)
 	for range 100 {

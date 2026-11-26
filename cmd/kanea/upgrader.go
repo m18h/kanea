@@ -20,9 +20,9 @@ type daemonUpgrader struct {
 	// version is the running daemon's own stamp: what "running" means in a
 	// check, and what a downgrade is measured against.
 	version string
-	// requireSig mirrors install.sh's KANEA_REQUIRE_SIGNATURE=1 (v1.105): a
-	// missing cosign, or a release without its signature pair, becomes a
-	// refusal instead of a note.
+	// requireSig is upgrade.require_signature (v1.105; install.sh spells it
+	// KANEA_REQUIRE_SIGNATURE=1): a missing cosign, or a release without its
+	// signature pair, becomes a refusal instead of a note.
 	requireSig bool
 	// underSystemd is whether an exit comes back: Restart=always is the whole
 	// safety of the restart half, so without a supervisor CanRestart says no
@@ -41,16 +41,18 @@ type daemonUpgrader struct {
 // own default.
 const edgeRestartTimeout = 2 * time.Minute
 
-func newDaemonUpgrader(log *slog.Logger, stop func()) *daemonUpgrader {
+// newDaemonUpgrader takes the upgrade stanza's two values: the repository
+// releases come from, and whether a verified signature is required.
+func newDaemonUpgrader(log *slog.Logger, stop func(), repo string, requireSig bool) *daemonUpgrader {
 	return &daemonUpgrader{
 		log: log, version: version,
-		requireSig:   os.Getenv("KANEA_REQUIRE_SIGNATURE") == "1",
+		requireSig:   requireSig,
 		underSystemd: os.Getenv("INVOCATION_ID") != "",
 		stop:         stop,
 		restartEdge: func(ctx context.Context) error {
 			return systemctl(ctx, edgeRestartTimeout, "restart", "kanea-edge")
 		},
-		source: newReleaseSource,
+		source: func() *releaseSource { return newReleaseSource(repo) },
 	}
 }
 

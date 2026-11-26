@@ -10,7 +10,7 @@ import (
 	"github.com/m18h/kanea/internal/secrets"
 )
 
-// dnsUpdateSettings is the DNS-01 solver as the flags express it.
+// dnsUpdateSettings is the DNS-01 solver as acme.dns01 in kanea.hcl expresses it.
 type dnsUpdateSettings struct {
 	server    string
 	zone      string
@@ -29,7 +29,7 @@ func buildDNSSolver(ctx context.Context, cfg dnsUpdateSettings, store *secrets.S
 	logger *slog.Logger) (acme.DNSSolver, error) {
 	if cfg.server == "" {
 		if cfg.key != "" || cfg.secretRef != "" {
-			logger.Warn("DNS update credentials are set but --acme-dns-server is not; " +
+			logger.Warn("DNS update credentials are set but acme.dns01.server is not; " +
 				"DNS-01 is off and wildcards cannot be issued")
 		}
 		return nil, nil
@@ -59,15 +59,15 @@ func buildDNSSolver(ctx context.Context, cfg dnsUpdateSettings, store *secrets.S
 //
 // A `secret:` reference for the same reason the OIDC client secret is one
 // (§6.2 R3): a TSIG key that can write to a zone can pass an ACME challenge for
-// every name in it, and argv is world-readable through /proc.
+// every name in it, and a literal in a config file is readable by whoever reads the file.
 func resolveTSIGSecret(ctx context.Context, ref string, store *secrets.Store) (string, error) {
 	if ref == "" {
-		return "", fmt.Errorf("--acme-dns-tsig-secret is required with --acme-dns-server: "+
+		return "", fmt.Errorf("acme.dns01.tsig_secret is required with acme.dns01.server: "+
 			"unsigned dynamic updates would let anyone on the network answer a challenge "+
 			"(use a %s reference)", secrets.Prefix)
 	}
 	if !strings.HasPrefix(ref, secrets.Prefix) {
-		return "", fmt.Errorf("--acme-dns-tsig-secret must be a %s reference, e.g. %sshared/tsig-key",
+		return "", fmt.Errorf("acme.dns01.tsig_secret must be a %s reference, e.g. %sshared/tsig-key",
 			secrets.Prefix, secrets.Prefix)
 	}
 	if store == nil {

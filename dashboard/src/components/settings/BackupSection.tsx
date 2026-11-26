@@ -25,7 +25,7 @@ import {
  *
  * The daemon probes a new destination before committing anything, so a Save
  * that fails leaves the old replication untouched: the 400's own message says
- * so and is shown verbatim. Revert deletes the record and the unit flags win
+ * so and is shown verbatim. Revert deletes the record and kanea.hcl wins
  * again, which is destructive enough to earn the two-click confirm the
  * Backups page uses for staging a restore.
  */
@@ -120,9 +120,9 @@ export function BackupSection({
         </Card>
       ) : (
         <p className="rounded-md border border-status-warn/40 bg-status-warn/10 px-3 py-2 text-sm">
-          Replication is not running. Configure a destination below, or set{' '}
-          <code className="font-mono text-xs">--backup-dir</code> /{' '}
-          <code className="font-mono text-xs">--backup-s3</code> on the unit.
+          Replication is not running. Configure a destination below, or add a{' '}
+          <code className="font-mono text-xs">backup</code> stanza to{' '}
+          <code className="font-mono text-xs">/etc/kanea/kanea.hcl</code>.
         </p>
       )}
 
@@ -292,7 +292,7 @@ export function BackupSection({
                     revert.mutate()
                   }}
                 >
-                  {confirmRevert ? 'Confirm revert?' : 'Revert to unit flags'}
+                  {confirmRevert ? 'Confirm revert?' : 'Revert to kanea.hcl'}
                 </Button>
               ) : null}
             </div>

@@ -396,7 +396,7 @@ type Expose struct {
 	// or "" for "whatever this node defaults to".
 	//
 	// Resolved on the node by TLSMode, not here and not in the CLI: toDesired
-	// runs wherever the spec was written, so baking a node's --tls-default into
+	// runs wherever the spec was written, so baking a node's tls.default_mode into
 	// a stored record would make one spec mean different things on two machines.
 	TLSMode string
 	// TLSName selects one of the certificates the operator configured on this

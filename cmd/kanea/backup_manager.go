@@ -17,10 +17,11 @@ import (
 	"github.com/m18h/kanea/internal/backup"
 )
 
-// Effective sources for the settings view.
+// Effective sources for the settings view. sourceFile is the backup stanza
+// of kanea.hcl: the seed a Store record wins over.
 const (
 	sourceStore = "store"
-	sourceFlags = "flags"
+	sourceFile  = "file"
 	sourceNone  = "none"
 )
 

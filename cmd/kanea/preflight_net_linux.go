@@ -77,7 +77,7 @@ func checkHostFirewall(opts preflightOptions) checkResult {
 	// Networking() resolves the compiled defaults, so the finding names the
 	// CIDR this node actually uses rather than an empty flag.
 	node, cluster := opts.layout.Networking()
-	resolver := dnsAddrFor(opts.networkMode, node)
+	resolver := dnsAddrFor(node)
 	if resolver == "" {
 		resolver = "the node CIDR's .1 on port 53"
 	}

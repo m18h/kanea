@@ -15,7 +15,7 @@ import (
 // DefaultMaxSessions bounds live sessions on one udp listener when the spec
 // does not say. The same figure as DefaultMaxConns, for the same reason: a
 // per-listener bound whose job is to make a surprise finite, under the shared
-// --max-published-conns process ceiling.
+// edge.publish.max_conns process ceiling.
 const DefaultMaxSessions = 256
 
 // udpIdleTimeout ends a session that has moved nothing in either direction.

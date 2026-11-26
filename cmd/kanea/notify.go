@@ -154,7 +154,7 @@ func buildNotifier(
 		// and an operator who did not mean to should find out from the startup
 		// log rather than from an incident.
 		logger.Warn("notification egress may reach private addresses",
-			"reason", "--notify-allow-private is set")
+			"reason", "notifications.allow_private is set")
 	}
 
 	// Projects' channels plus the node-level defaults (v1.46): the same

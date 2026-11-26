@@ -89,7 +89,7 @@ type S3Destination struct {
 	// replicates in cleartext metadata terms, and Validate refuses by shape
 	// anything that looks like a pasted key.
 	SecretKeyRef string `json:"secret_key_ref,omitempty"`
-	// PathStyle defaults to true when absent, matching --backup-s3-path-style.
+	// PathStyle defaults to true when absent, matching backup.s3.path_style.
 	PathStyle *bool `json:"path_style,omitempty"`
 }
 

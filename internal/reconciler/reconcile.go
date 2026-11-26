@@ -41,9 +41,9 @@ type Driver interface {
 	Remove(ctx context.Context, project, id string) error
 }
 
-// Network wires an alloc's namespace up and tears it down. The netns mode uses
-// the plain netns implementation; the ebpf mode swaps in the datapath's
-// attach/detach behind the same seam (internal/datapath).
+// Network wires an alloc's namespace up and tears it down. On Linux that is
+// the eBPF datapath (internal/datapath); anywhere else it is NetnsNetwork,
+// behind the same seam.
 type Network interface {
 	Attach(ctx context.Context, spec runtime.AllocSpec) error
 	Detach(ctx context.Context, spec runtime.AllocSpec) error
@@ -136,7 +136,7 @@ type VolumeUsage interface {
 // Passthrough is the slice of the node's device and socket grants this package
 // needs (R17, R18).
 //
-// It is the same seam Mounter's ResolveHost is: a grant is server configuration,
+// It is the same seam Mounter's ResolveHost is: a grant is node configuration,
 // so only the agent can answer what one means, and a spec that could answer for
 // itself would not be a grant. A nil Passthrough permits nothing: a service
 // that asked for one fails, rather than starting without what it asked for.
@@ -698,7 +698,7 @@ func (r *Reconciler) resolvConfFor(project string) (string, error) {
 }
 
 // errNoInternalDNS marks a node with no embedded resolver configured: the
-// netns development mode, or an operator who turned DNS off.
+// netns mode a non-Linux node runs, or an operator who turned DNS off.
 var errNoInternalDNS = errors.New("no internal resolver is configured")
 
 // syncPolicies makes network policy match the set of projects in desired state.
@@ -1428,8 +1428,8 @@ func (r *Reconciler) ensurePassthrough(d Desired) error {
 	}
 	if r.passthrough == nil {
 		return fmt.Errorf("service asks for device or socket passthrough but no grants " +
-			"are configured on this node (add device/socket blocks to /etc/kanea/kanea.hcl, " +
-			"or set --passthrough-config)")
+			"are configured on this node (this node's /etc/kanea/kanea.hcl " +
+			"defines no device or socket blocks)")
 	}
 
 	for i := range d.Devices {
@@ -1697,9 +1697,10 @@ func sortedRecords(m map[string]AllocRecord) []AllocRecord {
 	return out
 }
 
-// NetnsNetwork is the dev/CI network: a persistent netns per alloc, no IPs, no
-// policy, no LB. The ebpf mode replaces it with the datapath behind the same
-// interface (internal/datapath): the seam is why netns can stand in at all.
+// NetnsNetwork is the network off Linux, where the eBPF datapath cannot load:
+// a persistent netns per alloc, no IPs, no policy, no LB. It lets kanead start
+// on a development machine and is never a deployment; cmd/kanea selects it by
+// platform, and no setting does (PRD v1.115).
 type NetnsNetwork struct{}
 
 // Attach creates the alloc's network namespace.

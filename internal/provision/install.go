@@ -47,8 +47,8 @@ type Layout struct {
 	ClusterCIDR string
 	// NodeCIDR6 and ClusterCIDR6 are the opt-in dual-stack halves
 	// (PRD v1.41). Empty means v4-only: deliberately no defaults, and they
-	// come together or not at all. The kanead flag trio also needs
-	// --service-cidr6, which is validated on kanead's own argv.
+	// come together or not at all. kanead's trio also needs
+	// network.service_cidr6, which kanead validates when it starts.
 	NodeCIDR6    string
 	ClusterCIDR6 string
 }
@@ -95,7 +95,7 @@ func (l Layout) ValidateNetworking() error {
 	}
 
 	// The dual-stack pair (v1.41): both or neither, and the same containment
-	// rule. kanead's own argv re-checks with --service-cidr6 in the picture:
+	// rule. kanead re-checks at startup with network.service_cidr6 in the picture:
 	// this is the installer's earlier, friendlier refusal.
 	if (l.NodeCIDR6 == "") != (l.ClusterCIDR6 == "") {
 		return fmt.Errorf("--node-cidr6 and --cluster-cidr6 come together: set both or neither")

@@ -275,7 +275,7 @@ func (s *Service) Trigger(
 // (§5.2.14, §10.2): the one funnel both a manual Trigger and the sync loop
 // pass through, and it runs only on the node - the stored BuildSpec stays
 // empty, because a node address baked into the record client-side would make
-// one spec mean different things on two machines (the R33 / --tls-default
+// one spec mean different things on two machines (the R33 / tls.default_mode
 // rule). Refusals happen here too, in front of the operator rather than
 // mid-build.
 func (s *Service) request(cfg Config, service string) (Request, error) {

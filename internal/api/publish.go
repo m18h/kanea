@@ -43,7 +43,7 @@ type PortPolicy struct {
 
 type portRange struct{ lo, hi int }
 
-// ParsePortPolicy reads a --publish-ports value: "1024-65535", "8000-9000,25565",
+// ParsePortPolicy reads an edge.publish.ports value: "1024-65535", "8000-9000,25565",
 // or "off".
 func ParsePortPolicy(spec string) (PortPolicy, error) {
 	spec = strings.TrimSpace(spec)
@@ -62,12 +62,12 @@ func ParsePortPolicy(spec string) (PortPolicy, error) {
 		}
 		lo, hi, err := parseRange(part)
 		if err != nil {
-			return PortPolicy{}, fmt.Errorf("--publish-ports %q: %w", part, err)
+			return PortPolicy{}, fmt.Errorf("edge.publish.ports %q: %w", part, err)
 		}
 		out.ranges = append(out.ranges, portRange{lo: lo, hi: hi})
 	}
 	if len(out.ranges) == 0 {
-		return PortPolicy{}, fmt.Errorf("--publish-ports %q names no port; write %q to disable publishing",
+		return PortPolicy{}, fmt.Errorf("edge.publish.ports %q names no port; write %q to disable publishing",
 			spec, PublishOff)
 	}
 	sort.Slice(out.ranges, func(i, j int) bool { return out.ranges[i].lo < out.ranges[j].lo })
@@ -127,7 +127,7 @@ func (p PortPolicy) Check(d reconciler.Desired) error {
 	name := d.Project + "/" + d.Service
 	if !p.Enabled() {
 		return fmt.Errorf("%s publishes %d node port(s), and this node has published ports "+
-			"turned off (--publish-ports %s)", name, len(d.Publish), PublishOff)
+			"turned off (edge.publish.ports = %q)", name, len(d.Publish), PublishOff)
 	}
 	for _, published := range d.Publish {
 		if reason, reserved := jobspec.ReservedPorts[published.Host]; reserved {
@@ -136,7 +136,7 @@ func (p PortPolicy) Check(d reconciler.Desired) error {
 		}
 		if !p.Allows(published.Host) {
 			return fmt.Errorf("%s publishes node port %d, which this node does not allow "+
-				"(--publish-ports %s). A spec that could claim 22, 25 or 53 on this node's "+
+				"(edge.publish.ports = %q). A spec that could claim 22, 25 or 53 on this node's "+
 				"address would be deciding something that belongs to whoever owns the machine",
 				name, published.Host, p.String())
 		}

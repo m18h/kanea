@@ -76,9 +76,9 @@ type listenDecision struct {
 	cert, key string
 	// provisionPair means the address is public and no explicit pair was
 	// given: init provisions the default 10-year self-signed pair (PRD v1.80)
-	// and the unit points --listen-cert/--listen-key at it. The override
-	// chain is unchanged: kanea.hcl's bind stanza owns the listener when
-	// present (no listen flags are rendered at all), and explicit flags win.
+	// and writes it into the bind stanza as api_cert/api_key. A bind.api_addr
+	// already in kanea.hcl owns the listener instead, and this decision is
+	// never made.
 	provisionPair bool
 }
 
@@ -168,8 +168,8 @@ func unspecifiedListenHost(host string) bool {
 }
 
 // ensureAPIPair provisions the default listener certificate (PRD v1.80): a
-// static, ten-year self-signed pair minted once, which the unit points
-// --listen-cert/--listen-key at. Existing files are left alone: re-minting
+// static, ten-year self-signed pair minted once, which init writes into the
+// bind stanza as api_cert/api_key. Existing files are left alone: re-minting
 // would flip the fingerprint operators have already accepted, which is the
 // master key's "never regenerated" rule at a smaller stake. Half a pair is an
 // error, never a guess: something edited these files by hand, and init does
@@ -215,19 +215,18 @@ func ensureAPIPair(o *out, addr, certPath, keyPath string) error {
 	}
 	o.printf("Provisioned a 10-year self-signed listener certificate for %s:\n", host)
 	o.printf("  %s\n", certPath)
-	o.println("  Override it any time: /etc/kanea/kanea.hcl's bind stanza (acme,")
-	o.println("  self-signed, provided, plaintext) or --listen-cert/--listen-key.")
+	o.println("  Override it any time in the bind stanza of /etc/kanea/kanea.hcl")
+	o.println("  (bind.api_tls: acme, self-signed, provided or plaintext).")
 	return o.Err()
 }
 
-// listenFromServerConfig decides whether kanea.hcl owns the API listener for
-// this init run (PRD §15.1, v1.61): a bind.api_addr with no explicit --listen.
-// When it does, init skips the prompt and renders no listen flags into the
-// unit: a unit that repeated the file's answer would turn the file off. The
-// beyond-loopback refusal is resolveListen's, made at the file's coordinates:
-// a unit that fails on its first boot is a refusal in a journal nobody is
-// watching yet.
-func listenFromServerConfig(cfg *nodeconfig.Config, explicitListen bool) (addr string, owned bool, err error) {
+// listenFromNodeConfig decides whether kanea.hcl already owns the API
+// listener for this init run (PRD §15.1, v1.61): a bind.api_addr with no
+// explicit --listen. When it does, init skips the prompt and leaves the
+// stanza exactly as written. The beyond-loopback refusal is resolveListen's,
+// made at the file's coordinates: a daemon that fails on its first boot is a
+// refusal in a journal nobody is watching yet.
+func listenFromNodeConfig(cfg *nodeconfig.Config, explicitListen bool) (addr string, owned bool, err error) {
 	if explicitListen || cfg.Bind == nil || cfg.Bind.APIAddr == "" {
 		return "", false, nil
 	}
@@ -237,8 +236,7 @@ func listenFromServerConfig(cfg *nodeconfig.Config, explicitListen bool) (addr s
 	}
 	// A declared api_tls mode is a TLS story (or, for plaintext, a typed
 	// decision); parse already refused its contradictions. Only the unset
-	// mode with no pair meets the beyond-loopback refusal, exactly as the
-	// bare flags would.
+	// mode with no pair meets the beyond-loopback refusal.
 	if public && cfg.Bind.APITLS == "" && cfg.Bind.APICert == "" {
 		return "", false, fmt.Errorf("%s: bind.api_addr %s is beyond loopback and would carry "+
 			"credentials in clear text; set bind.api_tls (acme, self-signed, provided or "+
@@ -266,7 +264,6 @@ type bootstrapOptions struct {
 	listen                                string // the effective listen address; "" is socket-only
 	adminUser                             string // --admin-user; empty means prompt
 	timeout                               time.Duration
-	network                               string // kanead's network mode; netns has no internal DNS
 	nodeCIDR                              string
 	clusterCIDR, serviceCIDR              string
 	nodeCIDR6, clusterCIDR6, serviceCIDR6 string
@@ -372,7 +369,7 @@ func bootstrapDaemon(o *out, reader *bufio.Reader, opts bootstrapOptions) error 
 		dashboard:       dashboardFor(health),
 		admin:           adminName,
 		accountsExisted: !created,
-		dnsAddr:         dnsAddrFor(opts.network, opts.nodeCIDR),
+		dnsAddr:         dnsAddrFor(opts.nodeCIDR),
 		nodeCIDR:        opts.nodeCIDR, clusterCIDR: opts.clusterCIDR, serviceCIDR: opts.serviceCIDR,
 		nodeCIDR6: opts.nodeCIDR6, clusterCIDR6: opts.clusterCIDR6, serviceCIDR6: opts.serviceCIDR6,
 	})
@@ -390,12 +387,8 @@ func dashboardFor(health api.Health) string {
 }
 
 // dnsAddrFor is the internal resolver's address: the node CIDR's .1, exactly
-// as kanead's buildDNS derives it. Empty under netns, which has no datapath
-// and no service frontends for a resolver to answer for.
-func dnsAddrFor(networkMode, nodeCIDR string) string {
-	if networkMode == networkNetns {
-		return ""
-	}
+// as kanead's buildDNS derives it. Empty for a CIDR that does not parse.
+func dnsAddrFor(nodeCIDR string) string {
 	prefix, err := netip.ParsePrefix(nodeCIDR)
 	if err != nil {
 		return ""
@@ -431,12 +424,10 @@ func initSummary(o *out, s summaryInfo) {
 		o.printf("  Dashboard      %s\n", s.dashboard)
 	default:
 		o.printf("  Dashboard      not exposed; the API answers only on %s\n", api.DefaultSocket)
-		o.println("                 (re-run kanead with --listen to serve it)")
+		o.println("                 (set bind.api_addr in /etc/kanea/kanea.hcl to serve it)")
 	}
 	if s.dnsAddr != "" {
 		o.printf("  Internal DNS   %s   (allocs resolve <service>.<project> here)\n", s.dnsAddr)
-	} else {
-		o.println("  Internal DNS   off (netns mode has no service frontends)")
 	}
 	o.println()
 	o.println("  Addressing")

@@ -243,13 +243,13 @@ describe('Settings', () => {
     expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeDefined()
   })
 
-  it('renders the node facts, flag-decided and read-only', async () => {
+  it('renders the node facts, file-decided and read-only', async () => {
     renderSettings(admin)
     expect(await screen.findByText('10.100.1.0/24')).toBeDefined()
     expect(screen.getByText('fd00:64::/64')).toBeDefined()
     expect(screen.getByText('/var/lib/kanea')).toBeDefined()
     expect(await screen.findByText('22, 53, 8600')).toBeDefined()
-    expect(screen.getAllByText(/unit flags/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/kanea\.hcl/).length).toBeGreaterThan(0)
   })
 
   it('shows the backup source and seeds the form from the stored record', async () => {
@@ -261,8 +261,8 @@ describe('Settings', () => {
       'secret:shared/backup-s3',
     )
     expect(screen.getByLabelText('Retention (archives)')).toHaveProperty('value', '10')
-    // The record is set, so reverting to the unit flags is offered.
-    expect(screen.getByText('Revert to unit flags')).toBeDefined()
+    // The record is set, so reverting to kanea.hcl is offered.
+    expect(screen.getByText('Revert to kanea.hcl')).toBeDefined()
   })
 
   it('refuses an empty directory destination before any round trip', async () => {

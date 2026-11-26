@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/m18h/kanea/internal/api"
@@ -18,7 +19,6 @@ import (
 	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/nodeconfig"
 	"github.com/m18h/kanea/internal/provision"
-	"github.com/m18h/kanea/internal/reconciler"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/secrets"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -31,7 +31,6 @@ func runInit(args []string) error {
 	dataDir := fs.String("data-dir", defaultDataDir, "state directory")
 	logDir := fs.String("log-dir", defaultLogDir, "workload log directory")
 	unitDir := fs.String("unit-dir", defaultUnitDir, "where to write systemd units")
-	networkMode := fs.String("network", networkEBPF, "network mode: ebpf or netns")
 	containerdSocket := fs.String("containerd", runtime.DefaultSocket, "containerd socket")
 	reserve := fs.String("reserve", defaultReserve,
 		"memory reserved for the control plane")
@@ -54,7 +53,7 @@ func runInit(args []string) error {
 	buildkitSocket := fs.String("buildkit", gitops.DefaultBuildkitSocket,
 		"rootless buildkitd address (\"off\" skips the build daemon)")
 	listenFlag := fs.String("listen", api.DefaultListenAddr,
-		"API/dashboard network address written into the kanead unit (\"none\" keeps it socket-only)")
+		"API/dashboard network address written to "+nodeconfig.DefaultPath+" (\"none\" keeps it socket-only)")
 	listenCert := fs.String("listen-cert", "", "TLS certificate for --listen (required beyond loopback)")
 	listenKey := fs.String("listen-key", "", "TLS private key for --listen")
 	adminUser := fs.String("admin-user", "", "first admin's username (default: prompt)")
@@ -64,24 +63,52 @@ func runInit(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	// Prompted only when not passed; detected here, so a script that sets the
-	// flag (to anything, including the default) never consumes a stdin line.
-	explicitListen := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "listen" {
-			explicitListen = true
-		}
-	})
-	// Refused, not defaulted: before v1.36 any unknown value here silently
-	// meant the product mode, so a typo configured a node by accident.
-	if err := validNetworkMode(*networkMode); err != nil {
+	// What was typed, as distinct from what was defaulted: a flag that was
+	// passed (to anything, including its default) is this run's decision,
+	// and one that was not is the node config's. The listener prompt uses the
+	// same test, so a script that sets --listen never consumes a stdin line.
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+
+	// The node config (PRD §15.1) is read before anything is checked: a
+	// re-run with no flags must check, install and start the node as it is
+	// configured, not as it would be defaulted. From here on each of these
+	// flag variables holds the effective value.
+	nodeCfg, err := nodeconfig.Probe(nodeconfig.DefaultPath)
+	if err != nil {
 		return err
 	}
-	// The full six-flag validation kanead itself performs at startup, run
+	current := resolveAgentSettings(nodeCfg)
+	for _, setting := range []struct {
+		flag  string
+		value *string
+		file  string
+	}{
+		{"data-dir", dataDir, current.dataDir},
+		{"log-dir", logDir, current.logDir},
+		{"node-cidr", nodeCIDR, current.nodeCIDR},
+		{"cluster-cidr", clusterCIDR, current.clusterCIDR},
+		{"node-cidr6", nodeCIDR6, current.nodeCIDR6},
+		{"cluster-cidr6", clusterCIDR6, current.clusterCIDR6},
+		{"service-cidr6", serviceCIDR6, current.serviceCIDR6},
+	} {
+		if !explicit[setting.flag] {
+			*setting.value = setting.file
+		}
+	}
+	// A refusal names the spelling the operator can act on: the flag when
+	// they typed it, the file's attribute when the value came from there.
+	label := func(attr string) string {
+		if name := flagLabel(attr); explicit[strings.TrimPrefix(name, "--")] {
+			return name
+		}
+		return configLabel(attr)
+	}
+	// The full six-subnet validation kanead itself performs at startup, run
 	// here first so the refusal lands in front of whoever typed the flags
-	// rather than in the journal after the unit is written.
-	if _, err := parseAgentCIDRs(*nodeCIDR, *clusterCIDR, reconciler.DefaultServiceCIDR,
-		*nodeCIDR6, *clusterCIDR6, *serviceCIDR6); err != nil {
+	// rather than in the journal after the file is written.
+	if _, err := parseAgentCIDRs(*nodeCIDR, *clusterCIDR, current.serviceCIDR,
+		*nodeCIDR6, *clusterCIDR6, *serviceCIDR6, label); err != nil {
 		return err
 	}
 
@@ -96,34 +123,28 @@ func runInit(args []string) error {
 	// Settled first, before any check or install runs: a refused address
 	// should cost the operator nothing but the retype.
 	//
-	// The §15.1 server config is consulted before the prompt (v1.61): a
-	// bind.api_addr in kanea.hcl with no explicit --listen means the file owns
-	// the listener; the question is not asked and no listen flags are
-	// rendered into the unit, because a unit that repeated the file's answer
-	// would turn the file off. An explicit --listen wins, as everywhere.
-	nodeCfg, err := nodeconfig.Probe(nodeconfig.DefaultPath)
+	// A bind.api_addr already in kanea.hcl with no explicit --listen means
+	// the file owns the listener (v1.61): the question is not asked and the
+	// stanza is left exactly as written. An explicit --listen replaces the
+	// stanza's API settings.
+	fileAddr, fileOwned, err := listenFromNodeConfig(nodeCfg, explicit["listen"])
 	if err != nil {
 		return err
 	}
-	fileAddr, fileOwned, err := listenFromServerConfig(nodeCfg, explicitListen)
-	if err != nil {
-		return err
-	}
-	var listenAddr, unitListen, unitListenCert, unitListenKey string
+	var listenAddr string
+	var listener *listenDecision // nil while the file owns the listener
 	if fileOwned {
 		listenAddr = fileAddr
 		o.printf("API/dashboard listener: %s (from %s)\n\n", listenAddr, nodeCfg.Path)
 	} else {
-		if nodeCfg.Bind != nil && explicitListen {
-			o.printf("Note: --listen wins; %s's bind stanza is not consulted.\n\n", nodeCfg.Path)
+		if nodeCfg.Bind != nil && nodeCfg.Bind.APIAddr != "" {
+			o.printf("Note: --listen replaces the bind stanza's API settings in %s.\n\n", nodeCfg.Path)
 		}
-		decision, err := resolveListen(o, reader, explicitListen, *listenFlag, *listenCert, *listenKey)
+		decision, err := resolveListen(o, reader, explicit["listen"], *listenFlag, *listenCert, *listenKey)
 		if err != nil {
 			return err
 		}
 		listenAddr = decision.addr
-		unitListen = listenAddr
-		unitListenCert, unitListenKey = decision.cert, decision.key
 		if decision.provisionPair {
 			// The default 10-year pair (v1.80): minted once and left alone on
 			// re-runs. Provisioned here, before the checks and the install,
@@ -131,9 +152,10 @@ func runInit(args []string) error {
 			if err := ensureAPIPair(o, decision.addr, provisionedAPICertPath, provisionedAPIKeyPath); err != nil {
 				return err
 			}
-			unitListenCert, unitListenKey = provisionedAPICertPath, provisionedAPIKeyPath
+			decision.cert, decision.key = provisionedAPICertPath, provisionedAPIKeyPath
 			o.println()
 		}
+		listener = &decision
 	}
 
 	// `--containerd external` adopts the daemon already on the node instead of
@@ -149,10 +171,9 @@ func runInit(args []string) error {
 	layout.NodeCIDR6, layout.ClusterCIDR6 = *nodeCIDR6, *clusterCIDR6
 	opts := preflightOptions{
 		dataDir: *dataDir, containerdSocket: effectiveSocket,
-		networkMode:    *networkMode,
 		buildkitSocket: *buildkitSocket,
 		layout:         layout,
-		serviceCIDR:    reconciler.DefaultServiceCIDR,
+		serviceCIDR:    current.serviceCIDR,
 		serviceCIDR6:   *serviceCIDR6,
 	}
 
@@ -200,6 +221,18 @@ func runInit(args []string) error {
 	if err := createLayout(o, *dataDir, *logDir, provision.DefaultConfDir); err != nil {
 		return err
 	}
+	// The node config, before anything that reads it exists. It is written
+	// whether or not the units are: a node whose units a package manager
+	// owns is still configured by this file.
+	if err := writeNodeConfig(o, nodeConfigWrite{
+		path: nodeconfig.DefaultPath, source: nodeCfg.Source, explicit: explicit,
+		dataDir: *dataDir, logDir: *logDir,
+		nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
+		nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
+		listener: listener,
+	}); err != nil {
+		return err
+	}
 	// The CLI socket group (PRD v1.48, §13.1), created empty: membership is
 	// root-equivalent and granted only by an operator's own usermod, so an
 	// empty group changes nothing. kanead applies it to the socket at startup,
@@ -221,11 +254,7 @@ func runInit(args []string) error {
 	}
 	if !*skipUnits {
 		if err := writeUnits(o, unitOptions{
-			dir: *unitDir, dataDir: *dataDir, logDir: *logDir,
-			reserve: *reserve, binary: executablePath(), prefix: *prefix,
-			network: *networkMode, nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
-			nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
-			listen: unitListen, listenCert: unitListenCert, listenKey: unitListenKey,
+			dir: *unitDir, reserve: *reserve, binary: executablePath(), prefix: *prefix,
 		}); err != nil {
 			return err
 		}
@@ -240,10 +269,9 @@ func runInit(args []string) error {
 	}
 	if err := bootstrapDaemon(o, reader, bootstrapOptions{
 		listen: listenAddr, adminUser: *adminUser, timeout: *timeout,
-		network:  *networkMode,
-		nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR, serviceCIDR: reconciler.DefaultServiceCIDR,
+		nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR, serviceCIDR: current.serviceCIDR,
 		nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
-		client: api.NewClient(api.DefaultSocket),
+		client: api.NewClient(current.socket),
 		run: func(ctx context.Context, args ...string) error {
 			return systemctl(ctx, *timeout, args...)
 		},
@@ -266,8 +294,8 @@ func createLayout(o *out, dataDir, logDir, confDir string) error {
 	// 0750 on the data directory: it holds the master key, the secrets bucket
 	// and every certificate. 0750 on logs: workload output can carry anything a
 	// workload printed. 0755 on the config directory: kanea.hcl is policy, not
-	// a secret, and no example file is written; the default is that the
-	// server config does not exist (PRD §15.1).
+	// a secret, and the edge's unprivileged user has to read it (PRD §15.1);
+	// writeNodeConfig puts the file there right after this.
 	for _, dir := range []struct {
 		path string
 		mode os.FileMode
@@ -418,13 +446,10 @@ func componentLayout(prefix string, cidrs ...string) provision.Layout {
 	return layout
 }
 
-// runDoctor is `kanea doctor`: the preflight checks on their own.
+// runDoctor is `kanea doctor`: the preflight checks on their own, against
+// the node as /etc/kanea/kanea.hcl configures it.
 func runDoctor(args []string) error {
 	fset := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	dataDir := fset.String("data-dir", defaultDataDir, "state directory")
-	networkMode := fset.String("network", networkEBPF, "network mode: ebpf or netns")
-	containerdSocket := fset.String("containerd", runtime.DefaultSocket, "containerd socket")
-	buildkitSocket := fset.String("buildkit", gitops.DefaultBuildkitSocket, "buildkitd address")
 	prefix := fset.String("prefix", provision.DefaultPrefix, "component install prefix")
 	// Exactly one check reaches the network; whether component artefacts are
 	// fetchable, which is what tells an operator if an upgrade needs a bundle
@@ -432,30 +457,41 @@ func runDoctor(args []string) error {
 	// just a five-second wait, and a `doctor` that pauses on every run is a
 	// `doctor` that stops being run.
 	offline := fset.Bool("offline", false, "skip the upstream reachability probe (air-gapped nodes)")
-	// The two halves of the overlap check. They live on different commands in
-	// real life (one at install, one on kanead) so doctor has to be told
-	// both to notice a collision neither side can see alone.
-	docNodeCIDR := fset.String("node-cidr", provision.DefaultNodeCIDR, "this node's container subnet")
-	docClusterCIDR := fset.String("cluster-cidr", provision.DefaultClusterCIDR, "the native routing CIDR")
-	docServiceCIDR := fset.String("service-cidr", reconciler.DefaultServiceCIDR,
-		"kanead's service frontend pool, checked for overlap with the container subnet")
 	if err := fset.Parse(args); err != nil {
-		return err
-	}
-	if err := validNetworkMode(*networkMode); err != nil {
 		return err
 	}
 
 	o := newOut()
 	o.printf("kanea doctor: %s\n\n", version)
-	ok, skipped := renderCheckResults(o, preflight(preflightOptions{
-		dataDir: *dataDir, containerdSocket: *containerdSocket,
-		networkMode:    *networkMode,
-		buildkitSocket: *buildkitSocket,
-		layout:         componentLayout(*prefix, *docNodeCIDR, *docClusterCIDR),
-		serviceCIDR:    *docServiceCIDR,
+
+	// The node config is the first check, not a precondition: a file that
+	// does not load is the reason kanead is down, and a doctor that stopped
+	// there would say nothing about the rest of the node. The remaining
+	// checks then run against the defaults, and the line says so.
+	nodeCfg, cfgErr := nodeconfig.Probe(nodeconfig.DefaultPath)
+	if cfgErr != nil {
+		nodeCfg = &nodeconfig.Config{}
+	}
+	s := resolveAgentSettings(nodeCfg)
+	configCheck := checkNodeConfig(nodeCfg, s, cfgErr)
+	if !configCheck.OK {
+		// Settings that failed their own validation cannot steer the checks
+		// below either: a subnet that does not parse fails every check
+		// that reads it, and hides the one finding that matters.
+		s = resolveAgentSettings(&nodeconfig.Config{})
+	}
+
+	layout := componentLayout(*prefix, s.nodeCIDR, s.clusterCIDR)
+	layout.NodeCIDR6, layout.ClusterCIDR6 = s.nodeCIDR6, s.clusterCIDR6
+	results := append([]checkResult{configCheck}, preflight(preflightOptions{
+		dataDir: s.dataDir, containerdSocket: s.containerdSocket,
+		buildkitSocket: s.buildkit,
+		layout:         layout,
+		serviceCIDR:    s.serviceCIDR,
+		serviceCIDR6:   s.serviceCIDR6,
 		offline:        *offline,
-	}))
+	})...)
+	ok, skipped := renderCheckResults(o, results)
 	if skipped > 0 {
 		// A count, at the end. Each skipped line already says how to resolve
 		// it; what this adds is the thing a reader scanning a long list needs

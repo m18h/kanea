@@ -237,25 +237,26 @@ func TestParseRefusesAnUnknownAttributeInsideBind(t *testing.T) {
 	}
 }
 
-// The sketch halves of a read stanza: edge_http/edge_https are §15.1's own
-// example, so they load, and land in Ignored by their dotted names, because
-// accepted-but-unread without a warning is exactly the silently-swallowed trap.
-func TestParseNamesTheBindSketchHalvesAsIgnored(t *testing.T) {
+// The edge half of bind is read (v1.115): kanea-edge's two public listeners
+// live beside kanead's, and neither is reported as ignored.
+func TestParseReadsTheEdgeHalfOfBind(t *testing.T) {
 	cfg, err := Parse("kanea.hcl", []byte(`
 bind {
+  api_socket = "/run/kanea/alt.sock"
   api_addr   = "127.0.0.1:8600"
-  edge_http  = ":80"
-  edge_https = ":443"
+  edge_http  = ":8080"
+  edge_https = "off"
 }`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"bind.edge_http", "bind.edge_https"}
-	if len(cfg.Ignored) != len(want) || cfg.Ignored[0] != want[0] || cfg.Ignored[1] != want[1] {
-		t.Fatalf("Ignored = %v, want %v", cfg.Ignored, want)
+	if len(cfg.Ignored) != 0 {
+		t.Fatalf("Ignored = %v, want none", cfg.Ignored)
 	}
-	if cfg.Bind == nil || cfg.Bind.APIAddr != "127.0.0.1:8600" {
-		t.Fatalf("the read half must still load: %+v", cfg.Bind)
+	b := cfg.Bind
+	if b == nil || b.APIAddr != "127.0.0.1:8600" || b.APISocket != "/run/kanea/alt.sock" ||
+		b.EdgeHTTP != ":8080" || b.EdgeHTTPS != "off" {
+		t.Fatalf("bind = %+v", b)
 	}
 }
 
@@ -270,16 +271,17 @@ func TestParseAnEmptyFileIsAnEmptyConfig(t *testing.T) {
 }
 
 // TestParseWarnsUnreadStanzasByName pins the middle road between the two
-// failure modes: PRD §15.1's own sketch must load (an operator writing ahead
-// of the implementation is not typoing), and what is not read must be named
-// (a stanza that vanishes silently is the jobspec-root trap).
+// failure modes: a top-level stanza or attribute nothing reads must load (an
+// operator writing for a newer version is not typoing), and what is not read
+// must be named (a stanza that vanishes silently is the jobspec-root trap).
 func TestParseWarnsUnreadStanzasByName(t *testing.T) {
 	src := `
 cluster_id  = ""
-tls_default = "acme"
+base_domain = "apps.example.com"
 
 bind { api_addr = "127.0.0.1:8600" }
 acme { email = "ops@example.com" }
+resources { oversubscribe = false }
 
 storage { allowed_host_paths = ["/srv/kanea"] }
 
@@ -297,9 +299,9 @@ socket "containerd" {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// bind left this list in v1.61: its api half is read now, so the sample's
-	// api_addr-only block is consumed rather than warned.
-	want := []string{"acme", "cluster_id", "tls_default"}
+	// Only what no decoder reads: the top-level attributes this version
+	// reads (base_domain) and every stanza of §15.1 are consumed.
+	want := []string{"cluster_id", "resources"}
 	if len(cfg.Ignored) != len(want) {
 		t.Fatalf("Ignored = %v, want %v", cfg.Ignored, want)
 	}
@@ -480,11 +482,22 @@ func TestParseRefusesAnEmptyDNSUpstreamList(t *testing.T) {
 	for _, src := range []string{
 		`dns { upstreams = [] }`,
 		`dns { upstreams = ["", "  "] }`,
-		`dns { }`,
 	} {
 		if _, err := Parse("kanea.hcl", []byte(src)); err == nil {
 			t.Fatalf("%s: an upstreams list that names nothing must be refused", src)
 		}
+	}
+}
+
+// The stanza carries the listen address too (v1.115), so one without an
+// upstreams attribute is a complete thought: the host's resolvers.
+func TestParseReadsDNSListenWithoutUpstreams(t *testing.T) {
+	cfg, err := Parse("kanea.hcl", []byte(`dns { listen = "off" }`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DNSListen != "off" || cfg.DNSUpstreams != nil {
+		t.Fatalf("listen = %q, upstreams = %v", cfg.DNSListen, cfg.DNSUpstreams)
 	}
 }
 

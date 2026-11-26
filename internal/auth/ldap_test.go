@@ -115,7 +115,7 @@ func TestNewLDAPRefusesWhatItCannotRun(t *testing.T) {
 			mutate: func(c *LDAPConfig) {
 				c.CAFile = filepath.Join("/nonexistent", "ca.pem")
 			},
-			wantErr: "read --ldap-ca",
+			wantErr: "read auth.ldap.ca_file",
 		},
 		{
 			// A CA file that parses to nothing would silently fall back to the

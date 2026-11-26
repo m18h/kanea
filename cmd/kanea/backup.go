@@ -18,10 +18,11 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// Backup wiring (PRD §15.3): turning flags into a sink, and the running daemon
+// Backup wiring (PRD §15.3): turning settings into a sink, and the running daemon
 // into the small interface the API asks for.
 
-// sinkOptions is a destination as the flags describe it.
+// sinkOptions is a destination as the backup stanza of kanea.hcl (or
+// `kanea restore`'s flags) describes it.
 type sinkOptions struct {
 	// dir is a filesystem destination.
 	dir string
@@ -58,7 +59,7 @@ func sinkFromFlags(opts sinkOptions, log *slog.Logger) (backup.Sink, error) {
 		if opts.endpoint == "" {
 			// No region-to-endpoint table, deliberately: guessing an endpoint
 			// is how backups end up in a jurisdiction nobody chose.
-			return nil, errors.New("an S3 destination also needs --backup-s3-endpoint")
+			return nil, errors.New("an S3 destination also needs an endpoint (backup.s3.endpoint, or --s3-endpoint for kanea restore)")
 		}
 		return backup.NewS3Sink(backup.S3Config{
 			Endpoint: opts.endpoint, Bucket: bucket, Prefix: prefix, Region: opts.region,
@@ -203,7 +204,8 @@ func countKind(ctx context.Context, st store.Store, kind store.Kind) (int, error
 	}
 }
 
-// replicationSettings is what the agent's flags say about replication.
+// replicationSettings is what the backup stanza of kanea.hcl says about
+// replication.
 type replicationSettings struct {
 	sink         sinkOptions
 	secretKeyRef string
@@ -282,8 +284,8 @@ func assembleReplication(
 }
 
 // settingsToReplication converts a settings record into the same shape the
-// flags produce. The record wins wholesale: a zero interval means the
-// replicator's default, never the flag value it superseded.
+// backup stanza of kanea.hcl produces. The record wins wholesale: a zero
+// interval means the replicator's default, never the file value it superseded.
 func settingsToReplication(rec settings.BackupSettings, base replicationSettings) replicationSettings {
 	out := base
 	out.sink = sinkOptions{}
@@ -306,9 +308,10 @@ func settingsToReplication(rec settings.BackupSettings, base replicationSettings
 }
 
 // buildBackups settles the startup precedence (v1.46): a Store record wins; a
-// corrupt or unbuildable record falls back to the flags loudly, because "the
-// node silently stopped replicating" is the failure the whole subsystem exists
-// to prevent; no record means the flags, and no flags means unconfigured.
+// corrupt or unbuildable record falls back to the backup stanza of kanea.hcl
+// loudly, because "the node silently stopped replicating" is the failure the
+// whole subsystem exists to prevent; no record means the file, and no backup
+// stanza means unconfigured.
 func buildBackups(
 	ctx context.Context, cfg replicationSettings, resolver secretResolver, log *slog.Logger,
 ) (*backupManager, error) {
@@ -316,13 +319,13 @@ func buildBackups(
 
 	rec, found, err := settings.LoadBackup(ctx, cfg.store)
 	if err != nil {
-		log.Error("the backup settings record is unreadable; falling back to the unit's flags",
+		log.Error("the backup settings record is unreadable; falling back to the backup stanza of kanea.hcl",
 			"error", err)
 		found = false
 	}
 	if found {
 		if verr := rec.Validate(); verr != nil {
-			log.Error("the backup settings record is invalid; falling back to the unit's flags",
+			log.Error("the backup settings record is invalid; falling back to the backup stanza of kanea.hcl",
 				"error", verr)
 			found = false
 		}
@@ -331,7 +334,7 @@ func buildBackups(
 		svc, err := assembleReplication(ctx, settingsToReplication(rec, cfg), resolver, log)
 		if err != nil {
 			log.Error("cannot build replication from the settings record; "+
-				"falling back to the unit's flags", "error", err)
+				"falling back to the backup stanza of kanea.hcl", "error", err)
 		} else {
 			m.adopt(svc, sourceStore)
 			return m, nil
@@ -339,14 +342,14 @@ func buildBackups(
 	}
 
 	if cfg.sink.configured() {
-		// A misconfigured *flag* destination stays a startup error, exactly as
-		// before: the operator wrote it into the unit, and the journal is
-		// where that refusal has always landed.
+		// A misconfigured *file* destination stays a startup error: the
+		// operator wrote it into kanea.hcl, and the journal is where that
+		// refusal lands.
 		svc, err := assembleReplication(ctx, cfg, resolver, log)
 		if err != nil {
 			return nil, err
 		}
-		m.adopt(svc, sourceFlags)
+		m.adopt(svc, sourceFile)
 	}
 	return m, nil
 }

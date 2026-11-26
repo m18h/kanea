@@ -202,7 +202,7 @@ type BundleOptions struct {
 	// KaneaVersion is stamped into the metadata.
 	KaneaVersion string
 	// Images exports the image components. Nil omits them, which is only
-	// useful for a bundle destined for a `--network none` node.
+	// useful for a bundle destined for a node that runs no builds.
 	Images ImageExporter
 }
 

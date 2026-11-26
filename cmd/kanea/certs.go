@@ -203,7 +203,7 @@ func certificateAuthority(c *certificates) api.CertificateAuthority {
 	return c
 }
 
-// modeNames lists the certificate sources a flag or a spec may name.
+// modeNames lists the certificate sources tls.default_mode or a spec may name.
 func modeNames() []string {
 	out := make([]string, 0, len(certsource.Modes()))
 	for _, mode := range certsource.Modes() {
@@ -253,7 +253,7 @@ func (a *acmeSource) Ensure(ctx context.Context, reqs []certsource.Request) (cer
 		// the fix (a wildcard) needs a DNS-01 solver nobody has configured.
 		a.log.Warn("more per-service certificates than Let's Encrypt rate limits are comfortable with",
 			"certificates", plan.PerService, "threshold", acme.DefaultWildcardThreshold,
-			"detail", "configure --acme-dns-server to switch to per-project wildcards")
+			"detail", "set acme.dns01.server in /etc/kanea/kanea.hcl to switch to per-project wildcards")
 	}
 	if plan.Wildcard > 0 {
 		a.log.Info("issuing per-project wildcards",
@@ -340,14 +340,14 @@ func certRequests(ctx context.Context, st store.Store, baseDomain, nodeDefault s
 				// obtain, and the edge learns of it from the route table.
 				//
 				// R28's one warning: a grpc route that *resolved* here (an
-				// undeclared mode on a --tls-default plaintext node) can never
+				// undeclared mode on a tls.default_mode plaintext node) can never
 				// serve a real gRPC client; the plaintext path is HTTP/1.1. The
 				// declared combination is a plan error; this half is a warning
 				// because R20 resolves node-side, where plan cannot see.
 				if e.Protocol == "grpc" {
 					logger.Warn("grpc route resolved to plaintext",
 						"service", d.Project+"/"+d.Service,
-						"detail", "gRPC clients need TLS+HTTP/2 on :443; declare tls { mode } or change --tls-default")
+						"detail", "gRPC clients need TLS+HTTP/2 on :443; declare tls { mode } or change tls.default_mode in /etc/kanea/kanea.hcl")
 				}
 				continue
 			}
@@ -367,7 +367,7 @@ func certRequests(ctx context.Context, st store.Store, baseDomain, nodeDefault s
 				}
 				logger.Warn("service asks for a certificate but has no domain",
 					"service", d.Project+"/"+d.Service, "mode", mode,
-					"detail", "declare expose.domains, or set --base-domain")
+					"detail", "declare expose.domains, or set base_domain in /etc/kanea/kanea.hcl")
 				continue
 			}
 			out[mode] = append(out[mode], certsource.Request{
@@ -481,10 +481,10 @@ func readCABundle(path string) ([]byte, error) {
 
 // The ACME directory aliases an operator writes.
 //
-// v1.32 defaulted --acme-directory to Let's Encrypt *staging*, so a node that
+// v1.32 defaulted acme.directory to Let's Encrypt *staging*, so a node that
 // was configured entirely correctly served certificates every browser rejects.
 // Staging existed to absorb a first-attempt misconfiguration, and
-// `--tls-default self-signed` absorbs it better: a certificate that actually
+// tls.default_mode = "self-signed" absorbs it better: a certificate that actually
 // works once the CA is installed, rather than one that never will.
 const (
 	DirectoryProduction = "production"
@@ -516,7 +516,7 @@ type certificates struct {
 	// the only source whose material can change while kanead is not looking,
 	// so the loop has to be able to ask it whether anything moved.
 	provided *certsource.Provided
-	// hasACME reports whether an ACME source was built (--acme-email). The
+	// hasACME reports whether an ACME source was built (acme.email). The
 	// bind.api_tls "acme" refusal reads it at startup (PRD v1.61).
 	hasACME bool
 	// listener is the API listener's certificate need, when bind.api_tls
@@ -596,17 +596,19 @@ type certConfig struct {
 	// being served.
 	VerifyURL string
 	// BaseDomain is what auto-FQDNs are generated under, and what names the CA
-	// when --tls-ca-name is empty.
+	// when tls.ca_name is empty.
 	BaseDomain string
 	// Default is the mode an exposed service gets when its spec declares none
 	// (R20). It decides which sources are worth building.
 	Default string
 	// CAName identifies the self-signed CA in a device's trust list.
 	CAName string
-	// CertsConfig is the grant file for operator-provided certificates
-	// (--tls-certs-config). Empty means the feature does not exist, which is
-	// the default.
-	CertsConfig string
+	// ConfigPath and ConfigSource are the node config, already read: its
+	// certificate blocks are the grants for operator-provided certificates.
+	// A file with none means the feature does not exist, which is the
+	// default.
+	ConfigPath   string
+	ConfigSource []byte
 
 	DNSSolver acme.DNSSolver
 	Store     store.Store
@@ -625,7 +627,7 @@ func buildCertificates(cfg certConfig) (*certificates, error) {
 	// otherwise apply to every service that declares no tls block, and the
 	// symptom (plain HTTP everywhere) looks like a DNS problem.
 	if !certsource.Mode(cfg.Default).Valid() {
-		return nil, fmt.Errorf("--tls-default %q: use one of %s",
+		return nil, fmt.Errorf("tls.default_mode %q: use one of %s",
 			cfg.Default, strings.Join(modeNames(), ", "))
 	}
 
@@ -639,14 +641,14 @@ func buildCertificates(cfg certConfig) (*certificates, error) {
 	if !wantACME {
 		detail := "exposed services are reachable over HTTP only"
 		if cfg.Default == string(certsource.ModeSelfSigned) {
-			detail = "services default to self-signed certificates (--tls-default)"
+			detail = "services default to self-signed certificates (tls.default_mode)"
 		}
-		cfg.Logger.Warn("no --acme-email: no certificates will be obtained from a CA", "detail", detail)
+		cfg.Logger.Warn("acme.email is not set: no certificates will be obtained from a CA", "detail", detail)
 	}
 	if cfg.Default == string(certsource.ModeACME) && !wantACME {
 		// The commonest misconfiguration: the default asks for ACME and no
 		// account exists, so every exposed service silently serves plaintext.
-		cfg.Logger.Warn("--tls-default is acme but no --acme-email is set",
+		cfg.Logger.Warn("tls.default_mode is acme but acme.email is not set",
 			"detail", "every exposed service that does not declare expose.tls will serve plain HTTP")
 	}
 
@@ -655,7 +657,7 @@ func buildCertificates(cfg certConfig) (*certificates, error) {
 		return nil, err
 	}
 	if gid == 0 {
-		cfg.Logger.Warn("no --edge-group: the certificate bundle is readable only by this user",
+		cfg.Logger.Warn("edge.certs_group is not set: the certificate bundle is readable only by this user",
 			"detail", "an edge running as another user will not be able to serve TLS")
 	}
 
@@ -680,7 +682,7 @@ func buildCertificates(cfg certConfig) (*certificates, error) {
 		if directory == acme.LetsEncryptStaging {
 			cfg.Logger.Warn("using the Let's Encrypt staging CA",
 				"detail", "its certificates are not publicly trusted; "+
-					"for a certificate that works without a public name, use --tls-default self-signed")
+					"for a certificate that works without a public name, set tls.default_mode = \"self-signed\"")
 		}
 		manager, err := acme.New(acme.Config{
 			Directory:    directory,
@@ -701,17 +703,20 @@ func buildCertificates(cfg certConfig) (*certificates, error) {
 			"bundle", cfg.BundlePath, "dns01", cfg.DNSSolver != nil)
 	}
 
-	provided := certsource.NewProvided(cfg.CertsConfig, cfg.Logger)
+	provided, err := certsource.NewProvided(cfg.ConfigPath, cfg.ConfigSource, cfg.Logger)
+	if err != nil {
+		return nil, err
+	}
 	out.provided = provided
 	out.sources = append(out.sources, provided)
 	switch {
 	case provided.Configured():
-		cfg.Logger.Info("operator-provided certificates enabled", "config", cfg.CertsConfig)
+		cfg.Logger.Info("operator-provided certificates enabled", "config", cfg.ConfigPath)
 	case cfg.Default == string(certsource.ModeProvided):
-		// The same shape of warning as --tls-default acme with no email: the
+		// The same shape of warning as an acme default with no email: the
 		// default asks for a source that cannot produce anything, and the
 		// symptom is plain HTTP on every service that declares no tls block.
-		cfg.Logger.Warn("--tls-default is provided but no --tls-certs-config is set",
+		cfg.Logger.Warn("tls.default_mode is provided but the node config has no certificate block",
 			"detail", "every exposed service that does not declare expose.tls will serve plain HTTP")
 	}
 

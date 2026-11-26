@@ -26,7 +26,7 @@ func resolveRegistryDir(dataDir string) string {
 
 // buildRegistry assembles the internal registry, or nothing.
 //
-// Nil is a supported configuration (`--registry off`), and `--buildkit off`
+// Nil is a supported configuration (builds.registry_addr = "off"), and builds.buildkit_addr = "off"
 // implies it: the registry exists for builds, and a node that cannot build
 // has no reason to hold a listener open. The second return is the seam the
 // pipeline stack consumes; zero when the registry is off, which is what makes

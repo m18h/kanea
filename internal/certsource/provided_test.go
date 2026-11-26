@@ -44,12 +44,14 @@ func writeFixture(t *testing.T, path, body string) {
 	}
 }
 
-// providedWith writes a config file and returns a source over it.
-func providedWith(t *testing.T, dir, config string) *Provided {
+// providedWith returns a source over an in-memory node config document.
+func providedWith(t *testing.T, config string) *Provided {
 	t.Helper()
-	path := filepath.Join(dir, "certs.hcl")
-	writeFixture(t, path, config)
-	return NewProvided(path, slog.New(slog.DiscardHandler))
+	p, err := NewProvided("kanea.hcl", []byte(config), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("NewProvided: %v", err)
+	}
+	return p
 }
 
 // cfgBlock renders one certificate block. A single-line HCL block holds at
@@ -88,7 +90,7 @@ func ensureOne(t *testing.T, p *Provided, req Request) (Certificate, error) {
 func TestProvidedReadsDomainsFromTheCertificate(t *testing.T) {
 	dir := t.TempDir()
 	cert, key := providedFixture(t, dir, "wild", "*.apps.home.lan")
-	p := providedWith(t, dir, grantBlock("wild", cert, key, "shop"))
+	p := providedWith(t, grantBlock("wild", cert, key, "shop"))
 
 	tests := []struct {
 		name    string
@@ -128,7 +130,7 @@ func TestProvidedReadsDomainsFromTheCertificate(t *testing.T) {
 func TestProvidedRefusesAProjectNotInAllow(t *testing.T) {
 	dir := t.TempDir()
 	cert, key := providedFixture(t, dir, "shop", "shop.example.com")
-	p := providedWith(t, dir, grantBlock("shop", cert, key, "shop"))
+	p := providedWith(t, grantBlock("shop", cert, key, "shop"))
 
 	_, err := ensureOne(t, p, Request{
 		Domains: []string{"shop.example.com"}, Project: "blog", Service: "blog/www",
@@ -162,7 +164,7 @@ func TestProvidedNarrowsToTheNamedGrant(t *testing.T) {
 	dir := t.TempDir()
 	aCert, aKey := providedFixture(t, dir, "a", "shop.example.com")
 	bCert, bKey := providedFixture(t, dir, "b", "shop.example.com")
-	p := providedWith(t, dir,
+	p := providedWith(t,
 		grantBlock("a", aCert, aKey, "shop")+grantBlock("b", bCert, bKey, "shop"))
 
 	named, err := ensureOne(t, p, Request{
@@ -197,7 +199,7 @@ func TestProvidedNamesAMismatchedPair(t *testing.T) {
 	dir := t.TempDir()
 	cert, _ := providedFixture(t, dir, "a", "shop.example.com")
 	_, otherKey := providedFixture(t, dir, "b", "shop.example.com")
-	p := providedWith(t, dir, grantBlock("mixed", cert, otherKey, "shop"))
+	p := providedWith(t, grantBlock("mixed", cert, otherKey, "shop"))
 
 	_, err := ensureOne(t, p, Request{
 		Domains: []string{"shop.example.com"}, Project: "shop", Service: "shop/web",
@@ -217,7 +219,7 @@ func TestProvidedServesAnExpiredCertificate(t *testing.T) {
 	dir := t.TempDir()
 	longAgo := func() time.Time { return time.Now().Add(-2 * LeafValidity) }
 	cert, key := providedFixtureAt(t, dir, "stale", longAgo, "shop.example.com")
-	p := providedWith(t, dir, grantBlock("stale", cert, key, "shop"))
+	p := providedWith(t, grantBlock("stale", cert, key, "shop"))
 
 	got, err := ensureOne(t, p, Request{
 		Domains: []string{"shop.example.com"}, Project: "shop", Service: "shop/web",
@@ -233,37 +235,89 @@ func TestProvidedServesAnExpiredCertificate(t *testing.T) {
 // Nothing here ever produces a certificate from somewhere else. A request the
 // config cannot satisfy is a Failure, and the caller leaves the service on
 // plaintext rather than quietly serving something untrusted.
+//
+// A document with no certificate block is the feature turned off, whatever
+// else the document holds.
 func TestProvidedNeverFallsBack(t *testing.T) {
-	p := NewProvided("", slog.New(slog.DiscardHandler))
-	res, err := p.Ensure(context.Background(), []Request{
-		{Domains: []string{"shop.example.com"}, Project: "shop", Service: "shop/web"},
-	})
-	if err != nil {
-		t.Fatalf("Ensure on an unconfigured node returned an error: %v", err)
+	tests := []struct {
+		name, filename, src, wantFile string
+	}{
+		{"nil src", "", "", "/etc/kanea/kanea.hcl"},
+		{"only unrelated stanzas", "/tmp/kanea.hcl",
+			"data_dir = \"/x\"\n\nbind {\n  api_addr = \"127.0.0.1:8600\"\n}\n", "/tmp/kanea.hcl"},
 	}
-	if len(res.Certificates) != 0 {
-		t.Fatal("an unconfigured node produced a certificate")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var src []byte
+			if tc.src != "" {
+				src = []byte(tc.src)
+			}
+			p, err := NewProvided(tc.filename, src, slog.New(slog.DiscardHandler))
+			if err != nil {
+				t.Fatalf("NewProvided: %v", err)
+			}
+			if p.Configured() {
+				t.Error("a node with no certificate block reports configured")
+			}
+			if p.Changed() {
+				t.Error("a node with no certificate block reports changes")
+			}
+			res, err := p.Ensure(context.Background(), []Request{
+				{Domains: []string{"shop.example.com"}, Project: "shop", Service: "shop/web"},
+			})
+			if err != nil {
+				t.Fatalf("Ensure on an unconfigured node returned an error: %v", err)
+			}
+			if len(res.Certificates) != 0 {
+				t.Fatal("an unconfigured node produced a certificate")
+			}
+			if len(res.Failures) != 1 || !errors.Is(res.Failures[0].Err, ErrNoCertificate) {
+				t.Fatalf("failures = %+v, want one ErrNoCertificate", res.Failures)
+			}
+			want := "this node's " + tc.wantFile + " defines no certificate blocks"
+			if got := res.Failures[0].Err.Error(); !strings.Contains(got, want) {
+				t.Errorf("error = %q, want it to contain %q", got, want)
+			}
+		})
 	}
-	if len(res.Failures) != 1 || !errors.Is(res.Failures[0].Err, ErrNoCertificate) {
-		t.Errorf("failures = %+v, want one ErrNoCertificate", res.Failures)
+}
+
+// The certificate blocks sit in the node config beside every other stanza,
+// and those are none of this package's business.
+func TestProvidedIgnoresUnrelatedStanzas(t *testing.T) {
+	dir := t.TempDir()
+	cert, key := providedFixture(t, dir, "shop", "shop.example.com")
+	p := providedWith(t, "data_dir = \"/x\"\n\nbind {\n  api_addr = \"127.0.0.1:8600\"\n}\n\n"+
+		grantBlock("shop", cert, key, "shop"))
+
+	if !p.Configured() {
+		t.Fatal("a document with a certificate block reports unconfigured")
+	}
+	if _, err := ensureOne(t, p, Request{
+		Domains: []string{"shop.example.com"}, Project: "shop", Service: "shop/web",
+	}); err != nil {
+		t.Fatalf("resolve: %v", err)
 	}
 }
 
 // Renewal happens behind Kanea's back (certbot writes and renames) so the
-// poll has to notice new bytes at the same path, and has to stay quiet when
-// nothing moved.
-func TestProvidedChangedTracksTheFiles(t *testing.T) {
+// poll has to notice new bytes at the same path, has to stay quiet when
+// nothing moved, and the next pass has to serve the new pair.
+func TestProvidedPicksUpARenewedCertificate(t *testing.T) {
 	dir := t.TempDir()
 	cert, key := providedFixture(t, dir, "shop", "shop.example.com")
-	configPath := filepath.Join(dir, "certs.hcl")
-	writeFixture(t, configPath, grantBlock("shop", cert, key, "shop"))
-	p := NewProvided(configPath, slog.New(slog.DiscardHandler))
+	p := providedWith(t, grantBlock("shop", cert, key, "shop"))
+	req := Request{Domains: []string{"shop.example.com"}, Project: "shop", Service: "shop/web"}
 
 	if !p.Changed() {
 		t.Fatal("the first poll saw no change")
 	}
 	if p.Changed() {
-		t.Error("an unchanged config reported a change; every poll would rebuild the bundle")
+		t.Error("unchanged files reported a change; every poll would rebuild the bundle")
+	}
+	before, err := ensureOne(t, p, req)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
 	}
 
 	// A renewal: same path, same grant, new bytes.
@@ -279,31 +333,42 @@ func TestProvidedChangedTracksTheFiles(t *testing.T) {
 	if p.Changed() {
 		t.Error("the renewal was reported twice")
 	}
+	after, err := ensureOne(t, p, req)
+	if err != nil {
+		t.Fatalf("resolve after renewal: %v", err)
+	}
+	if after.CertPEM != string(newCertPEM) || after.CertPEM == before.CertPEM {
+		t.Error("Ensure did not serve the renewed certificate")
+	}
 
-	// And an edit to the config itself.
-	writeFixture(t, configPath, grantBlock("shop", cert, key, "shop", "blog"))
+	// A certificate that disappears is a change too.
+	if err := os.Remove(cert); err != nil {
+		t.Fatal(err)
+	}
 	if !p.Changed() {
-		t.Error("an edited config was not noticed")
+		t.Error("a removed certificate file was not noticed")
 	}
 }
 
-// A half-saved config must not take working sites down: the last one that
-// parsed keeps serving, which is edge.Watcher's discipline.
-func TestProvidedKeepsTheLastGoodConfig(t *testing.T) {
-	dir := t.TempDir()
-	cert, key := providedFixture(t, dir, "shop", "shop.example.com")
-	configPath := filepath.Join(dir, "certs.hcl")
-	writeFixture(t, configPath, grantBlock("shop", cert, key, "shop"))
-	p := NewProvided(configPath, slog.New(slog.DiscardHandler))
-
-	req := Request{Domains: []string{"shop.example.com"}, Project: "shop", Service: "shop/web"}
-	if _, err := ensureOne(t, p, req); err != nil {
-		t.Fatalf("resolve: %v", err)
+// The blocks are read once, so a malformed one is the constructor's error.
+func TestNewProvidedRefusesAMalformedBlock(t *testing.T) {
+	tests := []struct {
+		name, src, want string
+	}{
+		{"syntax error", `certificate "shop" { cert = `, "certsource:"},
+		{"missing attribute", "certificate \"shop\" {\n  cert = \"/a.crt\"\n  allow = [\"shop\"]\n}\n", "key"},
+		{"empty allow", cfgBlock("shop", "/a.crt", "/a.key", ""), "not a permissive default"},
 	}
-
-	writeFixture(t, configPath, `certificate "shop" { cert = `)
-	if _, err := ensureOne(t, p, req); err != nil {
-		t.Errorf("a broken config stopped serving a certificate that still resolves: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := NewProvided("kanea.hcl", []byte(tc.src), slog.New(slog.DiscardHandler))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.want)
+			}
+			if p != nil {
+				t.Error("a failed constructor returned a source")
+			}
+		})
 	}
 }
 

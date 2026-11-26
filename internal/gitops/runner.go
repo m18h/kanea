@@ -327,7 +327,7 @@ func (r *Runner) build(
 		// The output's allowance and the cache's are separate on purpose: an
 		// internal target is loopback plain HTTP by design, but the cache
 		// repository is wherever the spec pointed it, and only the node's
-		// explicit --insecure-registry posture may weaken that push.
+		// explicit builds.insecure_registry posture may weaken that push.
 		Insecure:      req.Insecure || req.InternalTarget,
 		InsecureCache: req.Insecure,
 	}, logs)

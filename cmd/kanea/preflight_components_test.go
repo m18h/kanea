@@ -56,7 +56,6 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 		dataDir: t.TempDir(), layout: layout,
 		containerdSocket: filepath.Join(layout.RunDir, "containerd.sock"),
 		buildkitSocket:   provision.BuildkitSocket(layout),
-		networkMode:      networkEBPF,
 		offline:          true,
 	})
 
@@ -69,7 +68,7 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 		"bpf",              // §5.2.5: bpffs, cgroup2, and the pin directory
 		"buildkit",         // §5.2.11: "that the build socket answers"
 		"version matrix",   // §15.4, §22 R1
-		"container subnet", // --node-cidr/--cluster-cidr against --service-cidr
+		"container subnet", // network.node_cidr/cluster_cidr against network.service_cidr
 		"fuse",             // §8
 		"wasm shim",        // §6.2 R25 (v1.39): functions need the wasmtime shim
 	} {
@@ -79,28 +78,14 @@ func TestComponentChecksCoverWhatThePRDPromises(t *testing.T) {
 	}
 }
 
-// --network netns is the development configuration, and it means no datapath
-// and therefore nothing for the BPF check to gate on.
-func TestNetworkNetnsSkipsTheBPFCheck(t *testing.T) {
-	results := componentChecks(preflightOptions{
-		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: networkNetns, buildkitSocket: "off", offline: true,
-	})
-	for _, r := range results {
-		if r.Name == "bpf" {
-			t.Errorf("--network netns still runs the %q check", r.Name)
-		}
-	}
-}
-
 func TestBuildkitOffSkipsTheBuildCheck(t *testing.T) {
 	results := componentChecks(preflightOptions{
 		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: networkNetns, buildkitSocket: "off", offline: true,
+		buildkitSocket: "off", offline: true,
 	})
 	for _, r := range results {
 		if r.Name == "buildkit" {
-			t.Error("--buildkit off still runs the build daemon check")
+			t.Error("builds.buildkit_addr = \"off\" still runs the build daemon check")
 		}
 	}
 }
@@ -109,7 +94,7 @@ func TestBuildkitOffSkipsTheBuildCheck(t *testing.T) {
 func TestOfflineSkipsTheOnlyNetworkCheck(t *testing.T) {
 	opts := preflightOptions{
 		dataDir: t.TempDir(), layout: scratchLayout(t),
-		networkMode: networkNetns, buildkitSocket: "off", offline: true,
+		buildkitSocket: "off", offline: true,
 	}
 	for _, r := range componentChecks(opts) {
 		if r.Name == "upstream" {

@@ -2,7 +2,7 @@ package main
 
 // The settings service (PRD v1.46): the daemon's implementation of the API's
 // SettingsService. It lives here because this is where records become running
-// machinery: sinks are assembled beside the flags they supersede, channels
+// machinery: sinks are assembled beside the kanea.hcl settings they supersede, channels
 // are built by the same RoutesFor every other path uses, and the API's job
 // stays deciding who may ask.
 
@@ -25,9 +25,10 @@ type settingsService struct {
 	// notifyCfg carries the store and secrets resolver channel building needs.
 	notifyCfg notifySettings
 	manager   *backupManager
-	// flagRepl is the flag-derived replication template: the seed the v1.46
-	// precedence rule falls back to, and the base a record is assembled over.
-	flagRepl replicationSettings
+	// fileRepl is the replication template from the backup stanza of
+	// kanea.hcl: the seed the v1.46 precedence rule falls back to when no
+	// Store record wins, and the base a record is assembled over.
+	fileRepl replicationSettings
 	resolver secretResolver
 	node     api.NodeConfigView
 	// wake pulses the notification reloader after a mutation, so a change
@@ -36,7 +37,7 @@ type settingsService struct {
 	log  *slog.Logger
 }
 
-// Node reports the flag-decided facts.
+// Node reports the facts kanea.hcl decided.
 func (s *settingsService) Node() api.NodeConfigView { return s.node }
 
 // Backup reports the effective configuration and where it came from.
@@ -51,8 +52,8 @@ func (s *settingsService) Backup(ctx context.Context) (api.BackupSettingsView, e
 		if found {
 			view.Settings = &rec
 		}
-	case sourceFlags:
-		rec := s.flagsBackupRecord()
+	case sourceFile:
+		rec := s.fileBackupRecord()
 		view.Settings = &rec
 	}
 	if view.Source != sourceNone {
@@ -62,22 +63,22 @@ func (s *settingsService) Backup(ctx context.Context) (api.BackupSettingsView, e
 	return view, nil
 }
 
-// flagsBackupRecord renders the unit's flags in the record shape, so the
-// dashboard shows one form whatever the source. The secret key travels as the
-// reference it already is.
-func (s *settingsService) flagsBackupRecord() settings.BackupSettings {
+// fileBackupRecord renders the backup stanza of kanea.hcl in the record
+// shape, so the dashboard shows one form whatever the source. The secret key
+// travels as the reference it already is.
+func (s *settingsService) fileBackupRecord() settings.BackupSettings {
 	rec := settings.BackupSettings{
-		Dir:              s.flagRepl.sink.dir,
-		SnapshotInterval: settings.Duration(s.flagRepl.snapshotInterval),
-		SegmentInterval:  settings.Duration(s.flagRepl.segmentInterval),
-		Retention:        s.flagRepl.retention,
+		Dir:              s.fileRepl.sink.dir,
+		SnapshotInterval: settings.Duration(s.fileRepl.snapshotInterval),
+		SegmentInterval:  settings.Duration(s.fileRepl.segmentInterval),
+		Retention:        s.fileRepl.retention,
 	}
-	if s.flagRepl.sink.s3URL != "" {
-		pathStyle := s.flagRepl.sink.pathStyle
+	if s.fileRepl.sink.s3URL != "" {
+		pathStyle := s.fileRepl.sink.pathStyle
 		rec.S3 = &settings.S3Destination{
-			URL: s.flagRepl.sink.s3URL, Endpoint: s.flagRepl.sink.endpoint,
-			Region: s.flagRepl.sink.region, AccessKey: s.flagRepl.sink.accessKey,
-			SecretKeyRef: s.flagRepl.secretKeyRef, PathStyle: &pathStyle,
+			URL: s.fileRepl.sink.s3URL, Endpoint: s.fileRepl.sink.endpoint,
+			Region: s.fileRepl.sink.region, AccessKey: s.fileRepl.sink.accessKey,
+			SecretKeyRef: s.fileRepl.secretKeyRef, PathStyle: &pathStyle,
 		}
 	}
 	return rec
@@ -91,7 +92,7 @@ func (s *settingsService) PutBackup(
 	if err := rec.Validate(); err != nil {
 		return api.BackupSettingsView{}, fmt.Errorf("%w: %w", api.ErrInvalidSettings, err)
 	}
-	svc, err := assembleReplication(ctx, settingsToReplication(rec, s.flagRepl), s.resolver, s.log)
+	svc, err := assembleReplication(ctx, settingsToReplication(rec, s.fileRepl), s.resolver, s.log)
 	if err != nil {
 		// An unresolvable secret ref, a bad URL: the caller's to fix.
 		return api.BackupSettingsView{}, fmt.Errorf("%w: %w", api.ErrInvalidSettings, err)
@@ -104,18 +105,18 @@ func (s *settingsService) PutBackup(
 	return s.Backup(ctx)
 }
 
-// ResetBackup deletes the record and reverts to the flags, or to
-// unconfigured, when the unit never named a destination.
+// ResetBackup deletes the record and reverts to the backup stanza of
+// kanea.hcl, or to unconfigured, when the file never named a destination.
 func (s *settingsService) ResetBackup(ctx context.Context) (api.BackupSettingsView, error) {
 	var svc *backupService
 	source := sourceNone
-	if s.flagRepl.sink.configured() {
-		built, err := assembleReplication(ctx, s.flagRepl, s.resolver, s.log)
+	if s.fileRepl.sink.configured() {
+		built, err := assembleReplication(ctx, s.fileRepl, s.resolver, s.log)
 		if err != nil {
 			return api.BackupSettingsView{}, fmt.Errorf(
-				"%w: the unit's flag destination no longer builds: %w", api.ErrInvalidSettings, err)
+				"%w: the backup destination in kanea.hcl no longer builds: %w", api.ErrInvalidSettings, err)
 		}
-		svc, source = built, sourceFlags
+		svc, source = built, sourceFile
 	}
 	if err := s.manager.swap(ctx, svc, source, func() error {
 		return settings.DeleteBackup(ctx, s.st)

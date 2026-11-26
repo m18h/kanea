@@ -12,7 +12,7 @@ import (
 	"github.com/m18h/kanea/internal/secrets"
 )
 
-// ldapSettings is what the agent's flags say about the directory.
+// ldapSettings is what auth.ldap in kanea.hcl says about the directory.
 type ldapSettings struct {
 	url          string
 	bindDN       string
@@ -26,7 +26,7 @@ type ldapSettings struct {
 	caFile       string
 }
 
-// configured reports whether any LDAP flag was set.
+// configured reports whether any auth.ldap attribute was set.
 func (c ldapSettings) configured() bool {
 	return c.url != "" || c.bindDN != "" || c.bindRef != "" ||
 		c.userBaseDN != "" || c.userFilter != "" ||
@@ -46,14 +46,14 @@ func buildLDAP(
 	if cfg.url == "" {
 		if cfg.configured() {
 			// Half a configuration is worth a line: the operator set LDAP
-			// flags and is not getting LDAP.
-			logger.Warn("LDAP settings are present but --ldap-url is not; " +
+			// attributes and is not getting LDAP.
+			logger.Warn("LDAP settings are present but auth.ldap.url is not; " +
 				"password login is local-only")
 		}
 		return nil, nil
 	}
 
-	bindPassword, err := resolveSecretRef(ctx, "--ldap-bind-password", cfg.bindRef, store)
+	bindPassword, err := resolveSecretRef(ctx, "auth.ldap.bind_password", cfg.bindRef, store)
 	if err != nil {
 		return nil, err
 	}

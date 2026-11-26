@@ -116,7 +116,7 @@ type SecretProvidersResponse struct {
 func (s *Server) handleSecretProviders(w http.ResponseWriter, _ *http.Request) {
 	if s.secretSync == nil {
 		writeError(w, http.StatusNotFound, errors.New(
-			"api: no external secret providers are configured on this node (--secrets-providers-config)"))
+			"api: no external secret providers are configured on this node (add provider blocks to /etc/kanea/kanea.hcl)"))
 		return
 	}
 	status := s.secretSync.Status()

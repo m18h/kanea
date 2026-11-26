@@ -18,12 +18,12 @@ import (
 	"github.com/m18h/kanea/internal/secrets"
 )
 
-// The node config file (PRD §5.2.13, §15.1), named by
-// --secrets-providers-config. Its semantics are certsource.Provided's, not
-// passthrough's load-once: re-read via a content fingerprint over the config
-// and every credential file it names, parse failure keeps the last good set
-// and warns once, and a fingerprint change rebuilds the providers, which is
-// also what drops Azure's and GCP's cached tokens when a credential rotates.
+// The provider blocks of the node config, /etc/kanea/kanea.hcl (PRD §5.2.13,
+// §15.1). The blocks are read once, at startup, and a malformed one is fatal
+// there. Only the credential files a block names are watched: a content
+// fingerprint over them moves when a credential rotates, and a move rebuilds
+// the providers (which is also what drops Azure's and GCP's cached tokens). A
+// rebuild that fails keeps the last good set and warns once.
 
 // dns1123Label is the shape an allow entry must have. Held here rather than
 // imported, the reason passthrough and certsource each hold their own copy: a
@@ -122,16 +122,19 @@ func (c providerConfig) credentialFiles() []string {
 	return out
 }
 
-// Providers loads the config file and hands out the current provider set.
+// Providers holds the provider blocks parsed at startup and hands out the
+// current provider set, rebuilt when a credential file moves.
 type Providers struct {
-	path   string
-	client *http.Client
-	log    *slog.Logger
+	// filename is where the blocks came from, for diagnostics only.
+	filename string
+	// configs is fixed for the life of the process: a block never reloads.
+	configs []providerConfig
+	client  *http.Client
+	log     *slog.Logger
 
 	mu sync.Mutex
-	// providers is the last set that built. A parse failure keeps it, the way
-	// certsource.Provided keeps its last good policy: a half-saved file must
-	// not stop a working sync.
+	// providers is the last set that built. A build failure keeps it: a
+	// half-written CA file must not stop a working sync.
 	providers []Provider
 	built     bool
 	builtHash [sha256.Size]byte
@@ -142,31 +145,38 @@ type Providers struct {
 	pollHash [sha256.Size]byte
 }
 
-// NewProviders builds the loader. An empty path turns the feature off.
-func NewProviders(path string, client *http.Client, logger *slog.Logger) *Providers {
+// NewProviders parses the provider blocks in src, once. A malformed block is
+// returned as an error, which the caller treats as fatal at startup. Empty
+// src, or a document with no provider block, turns the feature off. filename
+// only labels diagnostics.
+func NewProviders(filename string, src []byte, client *http.Client, logger *slog.Logger) (*Providers, error) {
 	if client == nil {
 		client = DefaultHTTPClient()
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Providers{path: strings.TrimSpace(path), client: client, log: logger}
+	configs, err := parseConfig(filename, src)
+	if err != nil {
+		return nil, err
+	}
+	return &Providers{filename: filename, configs: configs, client: client, log: logger}, nil
 }
 
-// Configured reports whether an operator pointed this node at a config file.
-func (p *Providers) Configured() bool { return p.path != "" }
+// Configured reports whether the node config defines at least one provider.
+func (p *Providers) Configured() bool { return len(p.configs) > 0 }
 
-// Path is the config file, for logs.
-func (p *Providers) Path() string { return p.path }
+// Path is the file the provider blocks were read from, for logs.
+func (p *Providers) Path() string { return p.filename }
 
-// Changed reports whether the config or any credential file it names has
-// moved since the last call, so the loop can wake an immediate pass.
+// Changed reports whether any credential file a provider names has moved
+// since the last call, so the loop can wake an immediate pass.
 //
 // Content-hashed, never stat-ed, and a poll rather than fsnotify; the
 // certsource.Provided reasoning verbatim: rotation tools write then rename,
 // which lies to mtime and replaces the inode a watch would be registered on.
 func (p *Providers) Changed() bool {
-	if p.path == "" {
+	if len(p.configs) == 0 {
 		return false
 	}
 	sum := p.fingerprint()
@@ -185,7 +195,7 @@ func (p *Providers) Changed() bool {
 // and GCP hold their cached tokens between passes: rebuilding every pass
 // would re-authenticate against two identity providers per poll for nothing.
 func (p *Providers) Current() []Provider {
-	if p.path == "" {
+	if len(p.configs) == 0 {
 		return nil
 	}
 	sum := p.fingerprint()
@@ -195,34 +205,28 @@ func (p *Providers) Current() []Provider {
 		return p.providers
 	}
 
-	src, err := os.ReadFile(p.path) // #nosec G304: operator-supplied config path
-	if err == nil {
-		var configs []providerConfig
-		if configs, err = parseConfig(p.path, src); err == nil {
-			built := make([]Provider, 0, len(configs))
-			for _, cfg := range configs {
-				prov, buildErr := p.build(cfg)
-				if buildErr != nil {
-					// A provider that cannot be built (unloadable CA file) is
-					// a config problem; treat the whole file as unusable so
-					// the operator meets one coherent complaint.
-					err = buildErr
-					break
-				}
-				built = append(built, prov)
-			}
-			if err == nil {
-				p.providers, p.built, p.builtHash, p.warned = built, true, sum, false
-				return p.providers
-			}
+	built := make([]Provider, 0, len(p.configs))
+	var err error
+	for _, cfg := range p.configs {
+		var prov Provider
+		if prov, err = p.build(cfg); err != nil {
+			// A provider that cannot be built (unloadable CA file) leaves the
+			// whole set as it was, so the operator meets one coherent
+			// complaint rather than a partial sync.
+			break
 		}
+		built = append(built, prov)
 	}
-	// Logged once per bad state (certsource's rule): a config nobody fixes
-	// for a week must not be a log line every minute.
+	if err == nil {
+		p.providers, p.built, p.builtHash, p.warned = built, true, sum, false
+		return p.providers
+	}
+	// Logged once per bad state (certsource's rule): a file nobody fixes for
+	// a week must not be a log line every minute.
 	if !p.warned {
 		p.warned = true
-		p.log.Error("secret provider config unusable; keeping the last one that built",
-			"path", p.path, "error", err, "providers", len(p.providers))
+		p.log.Error("secret providers could not be built; keeping the last set that did",
+			"path", p.filename, "error", err, "providers", len(p.providers))
 	}
 	// The hash is recorded even on failure so a *fix* is what rebuilds, not
 	// every pass retrying a file that has not moved.
@@ -265,9 +269,10 @@ func (p *Providers) build(cfg providerConfig) (Provider, error) {
 	}
 }
 
-// fingerprint hashes the config and every credential file it names. An
-// unreadable file contributes its error text, so a token that disappears and
-// comes back is two changes rather than none.
+// fingerprint hashes every credential file the provider blocks name, and
+// nothing else: the blocks themselves cannot change. An unreadable file
+// contributes its error text, so a token that disappears and comes back is
+// two changes rather than none.
 func (p *Providers) fingerprint() [sha256.Size]byte {
 	h := sha256.New()
 	// hash.Hash.Write never returns an error, so nothing in here can fail.
@@ -275,19 +280,7 @@ func (p *Providers) fingerprint() [sha256.Size]byte {
 		line := fmt.Sprintf(format, args...)
 		h.Write([]byte(line))
 	}
-
-	src, err := os.ReadFile(p.path) // #nosec G304: operator-supplied config path
-	if err != nil {
-		write("config-error:%v\n", err)
-		return sum256(h)
-	}
-	h.Write(src)
-
-	configs, perr := parseConfig(p.path, src)
-	if perr != nil {
-		return sum256(h)
-	}
-	for _, cfg := range configs {
+	for _, cfg := range p.configs {
 		for _, f := range cfg.credentialFiles() {
 			body, err := os.ReadFile(f) // #nosec G304: operator-supplied path
 			if err != nil {

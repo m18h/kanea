@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,24 +22,18 @@ import (
 	"github.com/m18h/kanea/internal/audit"
 	"github.com/m18h/kanea/internal/auth"
 	"github.com/m18h/kanea/internal/autoupdate"
-	"github.com/m18h/kanea/internal/backup"
 	"github.com/m18h/kanea/internal/certsource"
 	"github.com/m18h/kanea/internal/datapath"
-	"github.com/m18h/kanea/internal/datapath/dpmap"
-	"github.com/m18h/kanea/internal/edge"
 	"github.com/m18h/kanea/internal/functions"
-	"github.com/m18h/kanea/internal/gitops"
 	"github.com/m18h/kanea/internal/imagegc"
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/logging"
 	"github.com/m18h/kanea/internal/mcp"
 	"github.com/m18h/kanea/internal/network"
 	"github.com/m18h/kanea/internal/nodeconfig"
-	"github.com/m18h/kanea/internal/notify"
 	"github.com/m18h/kanea/internal/passthrough"
 	"github.com/m18h/kanea/internal/provision"
 	"github.com/m18h/kanea/internal/reconciler"
-	"github.com/m18h/kanea/internal/registry"
 	"github.com/m18h/kanea/internal/runtime"
 	"github.com/m18h/kanea/internal/scaling"
 	"github.com/m18h/kanea/internal/secrets"
@@ -49,8 +42,8 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// Default filesystem layout. PRD §15.1 makes these configurable; the daemon
-// takes the defaults and the flags below.
+// Default filesystem layout: what the node config's data_dir and
+// alloc_log_dir default to (PRD §15.1).
 const (
 	defaultDataDir = "/var/lib/kanea"
 	// stateFile is the bbolt database's name under the data directory. Named
@@ -75,198 +68,34 @@ const (
 // runAgent is kanead: the control plane. It owns the state file (bbolt is
 // single-writer, so nothing else may open it) and therefore also serves the
 // API that the CLI uses to reach that state.
+//
+// It takes no arguments (PRD §15.1, v1.115): everything it is configured
+// with is /etc/kanea/kanea.hcl, read once, here, before anything else runs.
 func runAgent(args []string) error {
-	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
-	dataDir := fs.String("data-dir", defaultDataDir, "state directory")
-	backupDir := fs.String("backup-dir", "",
-		"replicate state to this directory")
-	backupS3 := fs.String("backup-s3", "",
-		"replicate state to s3://bucket[/prefix]")
-	backupS3Endpoint := fs.String("backup-s3-endpoint", "", "S3 endpoint URL")
-	backupS3Region := fs.String("backup-s3-region", "", "S3 region")
-	backupS3AccessKey := fs.String("backup-s3-access-key", "", "S3 access key id")
-	backupS3Secret := fs.String("backup-s3-secret-key", "",
-		"`secret:` reference to the S3 secret key (never a literal)")
-	backupS3PathStyle := fs.Bool("backup-s3-path-style", true,
-		"address the bucket as /bucket/key rather than as a subdomain")
-	backupInterval := fs.Duration("backup-interval", backup.DefaultSnapshotInterval,
-		"how often to take a full state snapshot")
-	backupSegmentInterval := fs.Duration("backup-segment-interval", backup.DefaultSegmentInterval,
-		"how often to ship change segments (bounds the RPO)")
-	backupRetention := fs.Int("backup-retention", backup.DefaultRetention,
-		"how many snapshots to keep")
-	autoRestore := fs.Bool("restore-if-empty", false,
-		"restore the newest archive when this node has no state at all (first-boot)")
-	logDir := fs.String("log-dir", defaultLogDir, "per-alloc log directory")
-	volumeDir := fs.String("volume-dir", "", "local volume root (default <data-dir>/volumes)")
-	socket := fs.String("socket", api.DefaultSocket, "control API unix socket")
-	containerdSocket := fs.String("containerd", runtime.DefaultSocket, "containerd socket")
-	networkMode := fs.String("network", networkEBPF,
-		"network driver: ebpf, or netns for development (no policy, no service LB)")
-	bpfDir := fs.String("bpf-dir", dpmap.PinRoot,
-		"bpffs directory the datapath pins its maps, programs and links under")
-	nodeCIDR := fs.String("node-cidr", provision.DefaultNodeCIDR,
-		"this node's container subnet; its .1 is the datapath host address")
-	clusterCIDR := fs.String("cluster-cidr", provision.DefaultClusterCIDR,
-		"what the masquerade rule treats as internal; must contain --node-cidr")
-	nodeCIDR6 := fs.String("node-cidr6", "",
-		"this node's IPv6 container subnet; requires --cluster-cidr6 and --service-cidr6, ULA recommended")
-	clusterCIDR6 := fs.String("cluster-cidr6", "",
-		"the routed IPv6 range; must contain --node-cidr6")
-	serviceCIDR6 := fs.String("service-cidr6", "",
-		"IPv6 pool for service frontend twins; enables dual-stack with the other two *6 flags")
-	serverConfig := fs.String("config", "",
-		"server config file (default: "+nodeconfig.DefaultPath+
-			" when it exists; \"off\" disables the file)")
-	hostPaths := fs.String("allowed-host-paths", "",
-		"comma-separated directories that `host` volumes may mount from "+
-			"(default: storage.allowed_host_paths in the server config; \"off\" disables)")
-	passthroughConfig := fs.String("passthrough-config", "",
-		"HCL file granting host devices and sockets to named projects "+
-			"(default: device/socket blocks in the server config; \"off\" disables)")
-	secretsProvidersConfig := fs.String("secrets-providers-config", "",
-		"HCL file mapping external provider secrets (Doppler, AWS SM, Vault, Azure KV, GCP SM) "+
-			"into this node's store (default: no providers)")
-	secretsSyncInterval := fs.Duration("secrets-sync-interval", secretSyncDefaultInterval,
-		"how often external secret providers are polled (floor "+
-			secretSyncMinInterval.String()+")")
-	serviceCIDR := fs.String("service-cidr", reconciler.DefaultServiceCIDR, "pool for service frontend addresses")
-	dnsListen := fs.String("dns-listen", "",
-		"internal DNS listen address (default: the node CIDR's .1, the "+
-			datapath.HostInterface+" address; \"off\" disables)")
-	dnsUpstream := fs.String("dns-upstream", "",
-		"comma-separated upstream resolvers for external names (default: the host's)")
-	imagePullPolicy := fs.String("image-pull-policy", "",
-		"node default for where images may come from: if-not-present (default) or never "+
-			"(a service's own task.pull_policy wins)")
-	imageGCMode := fs.String("image-gc", "",
-		"image garbage collection: on (default) or off; "+
-			"tune interval/min_age/keep in kanea.hcl's images { gc {} } block")
-	baseDomain := fs.String("base-domain", "",
-		"domain exposed services get an FQDN under, e.g. apps.example.com")
-	edgeRoutes := fs.String("edge-routes", edge.DefaultSnapshotPath,
-		"where to publish the route table for kanea-edge (\"off\" disables)")
-	edgeCerts := fs.String("edge-certs", edge.DefaultBundlePath,
-		"where to publish certificates for kanea-edge")
-	edgeGroup := fs.String("edge-group", "",
-		"group allowed to read the certificate bundle; the kanea-edge user's (default: owner only)")
-	tlsDefault := fs.String("tls-default", string(certsource.ModeACME),
-		"certificate source for an exposed service whose spec declares no tls block: "+
-			"acme, self-signed, provided, or plaintext")
-	tlsCAName := fs.String("tls-ca-name", "",
-		"how this node's self-signed CA is named in a device's trust list (default: --base-domain, else the hostname)")
-	tlsCertsConfig := fs.String("tls-certs-config", "",
-		"HCL file granting operator-provided certificates to named projects (default: no grants)")
-	publishPorts := fs.String("publish-ports", api.DefaultPublishRange,
-		"node ports a spec may publish, e.g. \"1024-65535\" or \"8000-9000,25565\" (\"off\" disables)")
-	acmeEmail := fs.String("acme-email", "",
-		"ACME account contact; without it no certificates are obtained from a CA")
-	acmeDirectory := fs.String("acme-directory", DirectoryProduction,
-		"ACME directory: \"production\", \"staging\", or a URL")
-	acmeCA := fs.String("acme-ca-bundle", "",
-		"extra CA to trust when talking to the ACME directory (for a private or test CA)")
-	acmeVerifyURL := fs.String("acme-verify-url", certsource.DefaultVerifyURL,
-		"where kanead reaches its own edge to confirm a challenge is being served")
-	acmeDNSServer := fs.String("acme-dns-server", "",
-		"authoritative nameserver for RFC 2136 dynamic updates, host:port (enables DNS-01 and wildcards)")
-	acmeDNSZone := fs.String("acme-dns-zone", "",
-		"zone the challenge records belong to (default: the challenge name's parent)")
-	acmeDNSKey := fs.String("acme-dns-tsig-key", "", "TSIG key name for dynamic updates")
-	acmeDNSSecret := fs.String("acme-dns-tsig-secret", "",
-		"a secret: reference holding the base64 TSIG secret, e.g. secret:shared/tsig")
-	acmeDNSAlgorithm := fs.String("acme-dns-tsig-algorithm", "hmac-sha256.",
-		"TSIG algorithm: hmac-sha256, hmac-sha512, ...")
-	serveDashboard := fs.Bool("dashboard", true, "serve the embedded dashboard on the API listener")
-	wsOrigins := fs.String("dashboard-origins", "",
-		"comma-separated Origins allowed to open the live-data websocket, and named in the "+
-			"dashboard's connect-src (default: same-origin only)")
-	listen := fs.String("listen", "",
-		"network address for the control API, e.g. "+api.DefaultListenAddr+
-			" (default: the server config's bind.api_addr, else unix socket only; \"none\" forces socket-only)")
-	listenCert := fs.String("listen-cert", "", "TLS certificate for --listen (required beyond loopback)")
-	listenKey := fs.String("listen-key", "", "TLS private key for --listen")
-	insecureCookies := fs.Bool("insecure-cookies", false,
-		"drop the Secure attribute from the session cookie (only for a daemon reached over plain HTTP)")
-	auditRetention := fs.Duration("audit-retention", defaultAuditRetention,
-		"how long audit entries are kept; 0 keeps them forever")
-	oidcIssuer := fs.String("oidc-issuer", "",
-		"identity provider base URL, e.g. https://accounts.google.com (default: password login only)")
-	oidcClientID := fs.String("oidc-client-id", "", "OAuth client id registered with the provider")
-	oidcClientSecret := fs.String("oidc-client-secret", "",
-		"a secret: reference holding the client secret, e.g. secret:shared/oidc (omit for a public PKCE client)")
-	oidcRedirect := fs.String("oidc-redirect-url", "",
-		"the exact redirect URI registered with the provider, e.g. https://kanea.example.com"+api.PathOIDCCallback)
-	oidcScopes := fs.String("oidc-scopes", "profile,email", "comma-separated scopes beyond openid")
-	oidcRoleClaim := fs.String("oidc-role-claim", auth.DefaultRoleClaim,
-		"claim consulted for authorization")
-	oidcAdmins := fs.String("oidc-admin-claims", "",
-		"comma-separated claim values granted the admin role")
-	oidcViewers := fs.String("oidc-viewer-claims", "",
-		"comma-separated claim values granted the viewer role")
-	ldapURL := fs.String("ldap-url", "",
-		"directory URL, ldaps://host or ldap://host with StartTLS forced (default: no LDAP)")
-	ldapBindDN := fs.String("ldap-bind-dn", "",
-		"service account DN the user search runs as (omit for an anonymous search)")
-	ldapBindPassword := fs.String("ldap-bind-password", "",
-		"a secret: reference holding the service bind password, e.g. secret:shared/ldap-bind")
-	ldapUserBaseDN := fs.String("ldap-user-base-dn", "", "where users are searched, e.g. ou=people,dc=example,dc=com")
-	ldapUserFilter := fs.String("ldap-user-filter", "(uid=%s)",
-		"filter locating one user; %s receives the escaped username ((sAMAccountName=%s) for AD)")
-	ldapGroupBaseDN := fs.String("ldap-group-base-dn", "",
-		"where groups are searched (omit to read the user entry's memberOf)")
-	ldapGroupFilter := fs.String("ldap-group-filter", "",
-		"group filter; %s receives the escaped user DN, e.g. (member=%s)")
-	ldapAdmins := fs.String("ldap-admin-groups", "",
-		"comma-separated group DNs granted the admin role (matched case-insensitively)")
-	ldapViewers := fs.String("ldap-viewer-groups", "",
-		"comma-separated group DNs granted the viewer role")
-	ldapCA := fs.String("ldap-ca", "", "PEM file trusting a private CA for the directory's TLS")
-	metricsInterval := fs.Duration("metrics-interval", scaling.RawInterval,
-		"how often containerd and the edge are scraped for metrics")
-	containerdMetrics := fs.String("containerd-metrics", scaling.DefaultContainerdMetricsURL,
-		"containerd's Prometheus endpoint (\"off\" disables cgroup metrics)")
-	edgeMetrics := fs.String("edge-metrics", scaling.DefaultEdgeMetricsURL,
-		"kanea-edge's metrics endpoint (\"off\" disables the L7 signal)")
-	autoscale := fs.Bool("autoscale", true, "act on the scaling policies services declare")
-	buildkit := fs.String("buildkit", gitops.DefaultBuildkitSocket,
-		"rootless buildkitd address (\"off\" disables GitOps and builds)")
-	buildLogDir := fs.String("build-log-dir", "",
-		"where build logs are written (default <data-dir>/builds)")
-	syncInterval := fs.Duration("sync-interval", DefaultSyncInterval,
-		"how often projects with a git source are polled; a webhook makes a push land sooner")
-	notifyAllowPrivate := fs.Bool("notify-allow-private", false,
-		"allow notification targets on private/loopback addresses: for an internal chat server")
-	notifyAllowHTTP := fs.Bool("notify-allow-http", false,
-		"allow plain-http notification targets; https is required by default")
-	eventRetention := fs.Int("event-retention", notify.DefaultRetention,
-		"how many notification events are kept in the store")
-	insecureRegistry := fs.Bool("insecure-registry", false,
-		"allow pushing built images over plain HTTP; for a node-local registry only")
-	registryAddr := fs.String("registry", registry.DefaultAddr,
-		"internal build registry address, loopback only (\"off\" disables it; "+
-			"implied off when --buildkit is off)")
-	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
-	if err := fs.Parse(args); err != nil {
+	if len(args) > 0 {
+		return daemonArgs("agent", args)
+	}
+	// First, before even the logger: the log level is one of its attributes.
+	// A file that does not load is fatal and said on stderr, which is the
+	// journal under systemd.
+	nodeCfg, err := nodeconfig.Probe(nodeconfig.DefaultPath)
+	if err != nil {
 		return err
 	}
+	s := resolveAgentSettings(nodeCfg)
+	// The network mode is the platform's, not the file's (PRD v1.115).
+	mode := nodeNetworkMode()
 
-	if err := validNetworkMode(*networkMode); err != nil {
-		return err
-	}
-	// kanead is the IPAM now (PRD v1.36): nothing downstream re-validates the
+	// kanead is the IPAM (PRD v1.36): nothing downstream re-validates the
 	// subnets, so a typo has to be refused here rather than presenting as a
 	// datapath that hands out unroutable addresses.
-	var cidrs agentCIDRs
-	if *networkMode == networkEBPF {
-		parsed, err := parseAgentCIDRs(*nodeCIDR, *clusterCIDR, *serviceCIDR,
-			*nodeCIDR6, *clusterCIDR6, *serviceCIDR6)
-		if err != nil {
-			return err
-		}
-		cidrs = parsed
+	cidrs, err := parseAgentCIDRs(s.nodeCIDR, s.clusterCIDR, s.serviceCIDR,
+		s.nodeCIDR6, s.clusterCIDR6, s.serviceCIDR6, configLabel)
+	if err != nil {
+		return err
 	}
 
-	logger, closer, err := logging.New(logging.Config{Level: *logLevel, Format: "text"})
+	logger, closer, err := logging.New(logging.Config{Level: s.logLevel, Format: "text"})
 	if err != nil {
 		return fmt.Errorf("logging: %w", err)
 	}
@@ -280,21 +109,21 @@ func runAgent(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	statePath := filepath.Join(*dataDir, stateFile)
+	statePath := filepath.Join(s.dataDir, stateFile)
 	backupTarget := sinkOptions{
-		dir: *backupDir, s3URL: *backupS3, endpoint: *backupS3Endpoint,
-		region: *backupS3Region, accessKey: *backupS3AccessKey,
-		pathStyle: *backupS3PathStyle,
+		dir: s.backupDir, s3URL: s.backupS3, endpoint: s.backupS3Endpoint,
+		region: s.backupS3Region, accessKey: s.backupS3AccessKey,
+		pathStyle: s.backupS3PathStyle,
 	}
-	if err := os.MkdirAll(*dataDir, 0o750); err != nil {
+	if err := os.MkdirAll(s.dataDir, 0o750); err != nil {
 		return fmt.Errorf("data dir: %w", err)
 	}
 	// Before the Store is opened, which is the only moment inside the daemon's
 	// own lifetime when §15.3's "on a stopped node" is true of this process.
 	if err := restoreAtStart(ctx, bootRestoreOptions{
-		dataDir: *dataDir, statePath: statePath,
-		keyPath: filepath.Join(*dataDir, secrets.KeyFileName),
-		sink:    backupTarget, autoRestore: *autoRestore, log: logger,
+		dataDir: s.dataDir, statePath: statePath,
+		keyPath: filepath.Join(s.dataDir, secrets.KeyFileName),
+		sink:    backupTarget, autoRestore: s.autoRestore, log: logger,
 	}); err != nil {
 		return err
 	}
@@ -313,11 +142,11 @@ func runAgent(args []string) error {
 
 	// Before anything reads or writes through the Store, and after it is open:
 	// the one window where a copy can be taken and a migration has not started.
-	if err := migrateAtStart(ctx, st, *dataDir, logger); err != nil {
+	if err := migrateAtStart(ctx, st, s.dataDir, logger); err != nil {
 		return err
 	}
 
-	driver, err := runtime.New(runtime.Config{Socket: *containerdSocket, Logger: logger})
+	driver, err := runtime.New(runtime.Config{Socket: s.containerdSocket, Logger: logger})
 	if err != nil {
 		return fmt.Errorf("containerd: %w", err)
 	}
@@ -327,71 +156,47 @@ func runAgent(args []string) error {
 		}
 	}()
 
-	if err := os.MkdirAll(*logDir, 0o750); err != nil {
+	if err := os.MkdirAll(s.logDir, 0o750); err != nil {
 		return fmt.Errorf("log dir: %w", err)
 	}
-	volumes := *volumeDir
+	volumes := s.volumeDir
 	if volumes == "" {
-		volumes = filepath.Join(*dataDir, volumeSubdir)
+		volumes = filepath.Join(s.dataDir, volumeSubdir)
 	}
 	if err := os.MkdirAll(volumes, 0o750); err != nil {
 		return fmt.Errorf("volume dir: %w", err)
 	}
 
-	// The §15.1 server config (PRD v1.51): probed once at its well-known path,
-	// explicit with --config, "off" to refuse a stray file. Everything it can
-	// grant is an operator input and empty by default: no file, no flags, no
-	// host volumes and no passthrough.
-	nodeCfg, err := serverConfigForRun(*serverConfig, nodeconfig.DefaultPath)
-	if err != nil {
-		return err
-	}
 	if nodeCfg.Path != "" {
-		logger.Info("server config loaded", "config", nodeCfg.Path)
+		logger.Info("node config loaded", "config", nodeCfg.Path)
+	} else {
+		logger.Info("no node config; every setting is its default", "config", nodeconfig.DefaultPath)
 	}
 	if len(nodeCfg.Ignored) > 0 {
-		logger.Warn("server config carries stanzas this version does not read",
+		logger.Warn("node config carries stanzas this version does not read",
 			"config", nodeCfg.Path, "ignored", nodeCfg.Ignored)
 	}
 
-	// The node's default pull policy (R33, v1.84). Precedence is v1.51's,
-	// verbatim: the flag wins and says so, the images stanza otherwise, and
-	// if-not-present when neither, which is what every node did before v1.84.
-	// A service's own task.pull_policy wins over all of it; this is the answer
-	// for a record that declares none.
-	pullPolicy, err := resolveNodePullPolicy(*imagePullPolicy, nodeCfg.ImagePullPolicy, nodeCfg.Path, logger)
+	// The node's default pull policy (R33, v1.84): if-not-present unless the
+	// images stanza says otherwise, already checked at load. A service's own
+	// task.pull_policy wins over it; this is the answer for a record that
+	// declares none.
+	pullPolicy := or(nodeCfg.ImagePullPolicy, runtime.PullIfNotPresent)
+
+	// The internal resolver: the dns stanza's upstreams, or the host's
+	// resolv.conf when it names none (v1.66).
+	dns, err := buildDNS(mode, s.dnsListen, s.dnsUpstream, cidrs.node, logger)
 	if err != nil {
 		return err
 	}
 
-	// The internal resolver, after the server config so the dns stanza can
-	// supply the upstreams (v1.66). Precedence is v1.51's: --dns-upstream
-	// wins, the stanza otherwise, the host's resolv.conf when neither.
-	if *dnsUpstream != "" && len(nodeCfg.DNSUpstreams) > 0 {
-		logger.Info("server config dns stanza is not consulted (--dns-upstream wins)",
-			"config", nodeCfg.Path)
-	} else if *dnsUpstream == "" && len(nodeCfg.DNSUpstreams) > 0 {
-		logger.Info("dns upstreams from server config",
-			"config", nodeCfg.Path, "upstreams", nodeCfg.DNSUpstreams)
+	// The API/dashboard listener (§15.1 bind, v1.61). The stanza is atomic:
+	// the address and its TLS story are one declaration.
+	apiL := apiListenFromConfig(nodeCfg)
+	if apiL.addr != "" {
+		logger.Info("api/dashboard listener", "listen", apiL.addr, "tls", apiL.mode)
 	}
-	dns, err := buildDNS(*networkMode, *dnsListen, *dnsUpstream, nodeCfg.DNSUpstreams, cidrs.node, logger)
-	if err != nil {
-		return err
-	}
-
-	// The API/dashboard listener (§15.1 bind, v1.61): --listen wins, "none" is
-	// the explicit socket-only, the file fills in otherwise. The half is
-	// atomic: the source that supplies the address supplies its TLS story.
-	apiL := resolveAPIListen(*listen, *listenCert, *listenKey, nodeCfg)
-	if apiL.source == "--listen" && nodeCfg.Bind != nil {
-		logger.Info("server config bind stanza is not consulted (--listen wins)",
-			"config", nodeCfg.Path)
-	}
-	if apiL.source != "" && apiL.source != "--listen" && apiL.source != listenNone {
-		logger.Info("api/dashboard listener from server config",
-			"config", apiL.source, "listen", apiL.addr, "tls", apiL.mode)
-	}
-	apiInsecureCookies := *insecureCookies
+	apiInsecureCookies := s.insecureCookies
 	if apiL.mode == nodeconfig.TLSPlaintext {
 		if public, err := api.IsPublicAddr(apiL.addr); err == nil && public {
 			// Typed, so allowed, and said loudly, once, where the decision
@@ -407,39 +212,26 @@ func runAgent(args []string) error {
 	// The host-volume allowlist is deliberately an operator input and empty by
 	// default: until someone who owns this node names a directory, no job spec
 	// can mount one (PRD §6.2 R15).
-	hostPathList, hostSource := resolveHostPaths(*hostPaths, nodeCfg)
-	if hostSource == "--allowed-host-paths" && nodeCfg.AllowedHostPaths != nil {
-		logger.Info("server config storage stanza is not consulted (--allowed-host-paths wins)",
-			"config", nodeCfg.Path)
-	}
-	hostPolicy, err := storage.NewHostPathPolicy(hostPathList)
+	hostPolicy, err := storage.NewHostPathPolicy(nodeCfg.AllowedHostPaths)
 	if err != nil {
 		return err
 	}
 	if hostPolicy.Enabled() {
-		logger.Info("host volumes enabled",
-			"allowed_paths", hostPolicy.Allowed(), "source", hostSource)
+		logger.Info("host volumes enabled", "allowed_paths", hostPolicy.Allowed())
 	}
 
 	// Device and socket grants are the same kind of operator input and the same
-	// empty default (PRD §6.2 R17-R18). A configured socket grant is logged at
-	// warn: it is node-level control for whoever holds it, and the one place
-	// that is unambiguously recorded should be the node's own log.
-	passthroughPath, passthroughSource, err := resolvePassthroughPath(*passthroughConfig, nodeCfg)
-	if err != nil {
-		return err
-	}
-	if passthroughSource == "--passthrough-config" && nodeCfg.HasGrants {
-		logger.Info("server config grant blocks are not consulted (--passthrough-config wins)",
-			"config", nodeCfg.Path)
-	}
-	grants, err := passthrough.Load(passthroughPath)
+	// empty default (PRD §6.2 R17-R18), decoded from the bytes already read:
+	// one read of the file, one trust check. A configured socket grant is
+	// logged at warn: it is node-level control for whoever holds it, and the
+	// one place that is unambiguously recorded should be the node's own log.
+	grants, err := passthrough.Parse(nodeCfg.Path, nodeCfg.Source)
 	if err != nil {
 		return err
 	}
 	if grants.Enabled() {
 		logger.Warn("device and socket passthrough is configured",
-			"config", passthroughPath, "source", passthroughSource,
+			"config", nodeCfg.Path,
 			"note", "a granted runtime socket is equivalent to root on this node")
 	}
 
@@ -447,7 +239,7 @@ func runAgent(args []string) error {
 	// mount: until now an `auth_ref` refused with ErrCredentialsUnavailable.
 	secretStore, err := secrets.Open(secrets.Config{
 		Store:   st,
-		KeyPath: filepath.Join(*dataDir, secrets.KeyFileName),
+		KeyPath: filepath.Join(s.dataDir, secrets.KeyFileName),
 		Logger:  logger,
 	})
 	if err != nil {
@@ -459,30 +251,36 @@ func runAgent(args []string) error {
 	// consumer wired in this function) reads them with no idea where they
 	// came from. The reconciler never waits for a pass; the store serves
 	// whatever the last one wrote.
-	if *secretsSyncInterval < secretSyncMinInterval {
-		return fmt.Errorf("--secrets-sync-interval %s is below the %s floor: "+
+	if s.secretsSyncInterval < secretSyncMinInterval {
+		return fmt.Errorf("%s %s is below the %s floor: "+
 			"a poll is a request against a provider's rate limit",
-			*secretsSyncInterval, secretSyncMinInterval)
+			configLabel("secrets.sync_interval"), s.secretsSyncInterval, secretSyncMinInterval)
 	}
-	secretProviders := secretsource.NewProviders(*secretsProvidersConfig,
+	// The provider blocks, from the same bytes: a malformed block is fatal
+	// here like any other part of the file (the load-once family), while the
+	// credential files they point at stay in the reload family.
+	secretProviders, err := secretsource.NewProviders(nodeCfg.Path, nodeCfg.Source,
 		secretsource.DefaultHTTPClient(), logger)
+	if err != nil {
+		return err
+	}
 	secretSyncer := secretsource.NewSyncer(secretsource.SyncerConfig{
 		Providers: secretProviders, Target: secretStore, Logger: logger,
 	})
 	if secretProviders.Configured() {
-		logger.Info("external secret providers configured", "config", *secretsProvidersConfig)
+		logger.Info("external secret providers configured", "config", nodeCfg.Path)
 	}
 
 	buildUID := buildEgressUID(logger)
 	subStart, subCount := buildSubUIDRange(buildUID, logger)
-	net, err := buildNetwork(ctx, *networkMode, datapath.Config{
+	net, err := buildNetwork(ctx, mode, datapath.Config{
 		NodeCIDR:     cidrs.node,
 		ClusterCIDR:  cidrs.cluster,
 		ServiceCIDR:  cidrs.service,
 		NodeCIDR6:    cidrs.node6,
 		ClusterCIDR6: cidrs.cluster6,
 		ServiceCIDR6: cidrs.service6,
-		BPFDir:       *bpfDir,
+		BPFDir:       s.bpfDir,
 		Store:        st,
 		DNS:          dns,
 		// The build-egress drop (v1.75) keys on the build daemon's uid. A
@@ -500,8 +298,8 @@ func runAgent(args []string) error {
 		return err
 	}
 
-	// The east-west metrics view, when the driver has one. Only the real
-	// datapath does: netns mode has no counters, and says so in startMetrics.
+	// The east-west metrics view, when the network has one. Only the datapath
+	// does: netns mode has no counters, and startMetrics says so.
 	var flows scaling.FlowSource
 	if dp, ok := net.(*datapath.Datapath); ok {
 		if source := dp.CounterSource(); source != nil {
@@ -519,13 +317,13 @@ func runAgent(args []string) error {
 	// The route table is published for a process that may not be running yet,
 	// or ever. That is deliberate: kanead does not supervise the edge and does
 	// not depend on it (PRD §5.2.6).
-	routesPath := *edgeRoutes
+	routesPath := s.edgeRoutes
 	if routesPath == edgeRoutesOff {
 		routesPath = ""
 		logger.Info("edge route publishing is disabled")
 	}
-	if routesPath != "" && *baseDomain == "" {
-		logger.Warn("no --base-domain: exposed services get no automatic FQDN",
+	if routesPath != "" && s.baseDomain == "" {
+		logger.Warn("no base_domain: exposed services get no automatic FQDN",
 			"detail", "only services with an explicit expose.domains will be routable")
 	}
 
@@ -546,9 +344,9 @@ func runAgent(args []string) error {
 	notifyCfg := notifySettings{
 		store:        st,
 		secrets:      secretStore,
-		allowPrivate: *notifyAllowPrivate,
-		allowHTTP:    *notifyAllowHTTP,
-		retention:    *eventRetention,
+		allowPrivate: s.notifyAllowPrivate,
+		allowHTTP:    s.notifyAllowHTTP,
+		retention:    s.eventRetention,
 	}
 	notifier, feed, tee, err := buildNotifier(ctx, notifyCfg, logger)
 	if err != nil {
@@ -560,7 +358,7 @@ func runAgent(args []string) error {
 	// are both things an operator should hear about (v1.69), and before that
 	// existed the entire story lived in the daemon log.
 	mounts := storage.New(storage.Config{
-		CredentialDir: filepath.Join(*dataDir, credentialSubdir),
+		CredentialDir: filepath.Join(s.dataDir, credentialSubdir),
 		HostPaths:     hostPolicy,
 		Secrets:       secretStore,
 		Logger:        logger,
@@ -608,12 +406,12 @@ func runAgent(args []string) error {
 		Driver:        driver,
 		Network:       net,
 		Logger:        logger,
-		LogDir:        *logDir,
+		LogDir:        s.logDir,
 		VolumeDir:     volumes,
-		ServiceCIDR:   *serviceCIDR,
-		ServiceCIDR6:  *serviceCIDR6,
-		ResolvConfDir: filepath.Join(*dataDir, resolvSubdir),
-		PlainFilesDir: filepath.Join(*dataDir, filesSubdir),
+		ServiceCIDR:   s.serviceCIDR,
+		ServiceCIDR6:  s.serviceCIDR6,
+		ResolvConfDir: filepath.Join(s.dataDir, resolvSubdir),
+		PlainFilesDir: filepath.Join(s.dataDir, filesSubdir),
 		Nameserver:    nameserverOf(dns),
 		Prober:        reconciler.NewProber(driver),
 		Breaker:       breaker,
@@ -628,7 +426,7 @@ func runAgent(args []string) error {
 		// the daemon never supplying one.
 		Secrets:      secretStore,
 		EdgeSnapshot: routesPath,
-		BaseDomain:   *baseDomain,
+		BaseDomain:   s.baseDomain,
 		// R33's node default. Without it every record that declares no policy
 		// would fall to the driver's zero value, which happens to be the same
 		// behaviour today - so a missing wire here is invisible until someone
@@ -644,11 +442,11 @@ func runAgent(args []string) error {
 	// config at startup, in front of the operator; only *reachability* is a
 	// warning (§3.20: an unreachable directory is weather).
 	directory, err := buildLDAP(ctx, ldapSettings{
-		url: *ldapURL, bindDN: *ldapBindDN, bindRef: *ldapBindPassword,
-		userBaseDN: *ldapUserBaseDN, userFilter: *ldapUserFilter,
-		groupBaseDN: *ldapGroupBaseDN, groupFilter: *ldapGroupFilter,
-		adminGroups: splitList(*ldapAdmins), viewerGroups: splitList(*ldapViewers),
-		caFile: *ldapCA,
+		url: s.ldapURL, bindDN: s.ldapBindDN, bindRef: s.ldapBindPassword,
+		userBaseDN: s.ldapUserBaseDN, userFilter: s.ldapUserFilter,
+		groupBaseDN: s.ldapGroupBaseDN, groupFilter: s.ldapGroupFilter,
+		adminGroups: s.ldapAdmins, viewerGroups: s.ldapViewers,
+		caFile: s.ldapCA,
 	}, secretStore, logger)
 	if err != nil {
 		return err
@@ -688,9 +486,9 @@ func runAgent(args []string) error {
 	// discovery document or a missing role mapping fails at startup, in front
 	// of the operator, rather than at the first login in front of a user.
 	provider, err := buildOIDC(ctx, oidcSettings{
-		issuer: *oidcIssuer, clientID: *oidcClientID, secretRef: *oidcClientSecret,
-		redirect: *oidcRedirect, scopes: splitList(*oidcScopes), roleClaim: *oidcRoleClaim,
-		admins: splitList(*oidcAdmins), viewers: splitList(*oidcViewers),
+		issuer: s.oidcIssuer, clientID: s.oidcClientID, secretRef: s.oidcClientSecret,
+		redirect: s.oidcRedirect, scopes: s.oidcScopes, roleClaim: s.oidcRoleClaim,
+		admins: s.oidcAdmins, viewers: s.oidcViewers,
 	}, secretStore, logger)
 	if err != nil {
 		return err
@@ -698,19 +496,19 @@ func runAgent(args []string) error {
 
 	// State replication (§15.3). Built after the secrets store, because the S3
 	// secret key is a `secret:` reference like every other credential (R3) and
-	// there is nothing to resolve it with until now. The flags are the seed;
-	// a settings/backup record in the Store, once written, wins (v1.46).
-	flagRepl := replicationSettings{
+	// there is nothing to resolve it with until now. The backup stanza is the
+	// seed; a settings/backup record in the Store, once written, wins (v1.46).
+	fileRepl := replicationSettings{
 		sink:             backupTarget,
-		secretKeyRef:     *backupS3Secret,
-		dataDir:          *dataDir,
-		snapshotInterval: *backupInterval,
-		segmentInterval:  *backupSegmentInterval,
-		retention:        *backupRetention,
+		secretKeyRef:     s.backupS3Secret,
+		dataDir:          s.dataDir,
+		snapshotInterval: s.backupInterval,
+		segmentInterval:  s.backupSegmentInterval,
+		retention:        s.backupRetention,
 		store:            st,
 		emit:             notifier.Publish,
 	}
-	backups, err := buildBackups(ctx, flagRepl, secretStore, logger)
+	backups, err := buildBackups(ctx, fileRepl, secretStore, logger)
 	if err != nil {
 		return err
 	}
@@ -720,7 +518,8 @@ func runAgent(args []string) error {
 		// decided that rather than defaulted into it.
 		logger.Warn("state replication is not configured",
 			"detail", "this node's state exists only on its own disk; "+
-				"set --backup-dir or --backup-s3, or PUT /v1/settings/backup")
+				"set backup.dir or backup.s3 in "+nodeconfig.DefaultPath+
+				", or use the dashboard's Settings page")
 	}
 
 	// The settings service (v1.46): the API's window onto what this block just
@@ -729,15 +528,15 @@ func runAgent(args []string) error {
 	// settings mutations.
 	routesNotify := make(chan struct{}, 1)
 	settingsSvc := &settingsService{
-		st: st, notifyCfg: notifyCfg, manager: backups, flagRepl: flagRepl,
+		st: st, notifyCfg: notifyCfg, manager: backups, fileRepl: fileRepl,
 		resolver: secretStore, wake: routesNotify, log: logger,
 		node: api.NodeConfigView{
 			Listen: apiL.addr, TLS: apiL.tlsEnabled(),
-			BaseDomain: *baseDomain, NetworkMode: *networkMode,
-			NodeCIDR: *nodeCIDR, ClusterCIDR: *clusterCIDR, ServiceCIDR: *serviceCIDR,
-			NodeCIDR6: *nodeCIDR6, ClusterCIDR6: *clusterCIDR6, ServiceCIDR6: *serviceCIDR6,
-			DNSListen: *dnsListen, DataDir: *dataDir, LogDir: *logDir,
-			PublishPorts: *publishPorts, TLSDefault: *tlsDefault,
+			BaseDomain: s.baseDomain, NetworkMode: mode,
+			NodeCIDR: s.nodeCIDR, ClusterCIDR: s.clusterCIDR, ServiceCIDR: s.serviceCIDR,
+			NodeCIDR6: s.nodeCIDR6, ClusterCIDR6: s.clusterCIDR6, ServiceCIDR6: s.serviceCIDR6,
+			DNSListen: s.dnsListen, DataDir: s.dataDir, LogDir: s.logDir,
+			PublishPorts: s.publishPorts, TLSDefault: s.tlsDefault,
 		},
 	}
 
@@ -759,10 +558,13 @@ func runAgent(args []string) error {
 	// The image GC (§5.2.4, v1.111): the disk-hygiene half of the watcher
 	// above. Always constructed, because the images API's read half works on
 	// any node; whether the sweep may run is the collector's own refusal,
-	// which the loop below and POST /v1/images/gc both consult.
-	gcDisabled, err := resolveImageGC(*imageGCMode, nodeCfg.ImageGC, nodeCfg.Path, logger)
-	if err != nil {
-		return err
+	// which the loop below and POST /v1/images/gc both consult. On unless
+	// the gc block says otherwise: the one default in this family whose
+	// absence is not off, because a disk that fills silently is exactly the
+	// surprise §5.2.4 forbids.
+	gcDisabled := nodeCfg.ImageGC != nil && nodeCfg.ImageGC.Disabled
+	if gcDisabled {
+		logger.Info("image gc disabled by node config", "config", nodeCfg.Path)
 	}
 	imageGC, err := imagegc.New(imagegc.Config{
 		Store:          st,
@@ -781,18 +583,18 @@ func runAgent(args []string) error {
 	// The internal registry precedes the pipeline stack because the stack
 	// needs its bound address: the defaulted build target names the port that
 	// answers (§5.2.14).
-	reg, pipelineRegistry, err := buildRegistry(*registryAddr, *buildkit, *dataDir, st, logger)
+	reg, pipelineRegistry, err := buildRegistry(s.registryAddr, s.buildkit, s.dataDir, st, logger)
 	if err != nil {
 		return err
 	}
 
 	pipelines, buildQueue, err := buildPipelines(pipelineSettings{
-		buildkit:   *buildkit,
-		logDir:     resolveBuildLogDir(*buildLogDir, *dataDir),
-		interval:   *syncInterval,
-		baseDomain: *baseDomain,
+		buildkit:   s.buildkit,
+		logDir:     resolveBuildLogDir(s.buildLogDir, s.dataDir),
+		interval:   s.syncInterval,
+		baseDomain: s.baseDomain,
 		nodeVars:   nodeCfg.Variables,
-		insecure:   *insecureRegistry,
+		insecure:   s.insecureRegistry,
 		registry:   pipelineRegistry,
 		store:      st,
 		secrets:    secretStore,
@@ -826,8 +628,8 @@ func runAgent(args []string) error {
 	}
 
 	dnsSolver, err := buildDNSSolver(ctx, dnsUpdateSettings{
-		server: *acmeDNSServer, zone: *acmeDNSZone, key: *acmeDNSKey,
-		secretRef: *acmeDNSSecret, algorithm: *acmeDNSAlgorithm,
+		server: s.acmeDNSServer, zone: s.acmeDNSZone, key: s.acmeDNSKey,
+		secretRef: s.acmeDNSSecret, algorithm: s.acmeDNSAlgorithm,
 	}, secretStore, logger)
 	if err != nil {
 		return err
@@ -835,27 +637,28 @@ func runAgent(args []string) error {
 	// Parsed before the server is built, so a typo in the range is a refusal at
 	// startup rather than a service that publishes nothing and says why once
 	// per apply.
-	portPolicy, err := api.ParsePortPolicy(*publishPorts)
+	portPolicy, err := api.ParsePortPolicy(s.publishPorts)
 	if err != nil {
 		return err
 	}
 	if !portPolicy.Enabled() {
-		logger.Info("published ports are disabled on this node", "detail", "--publish-ports off")
+		logger.Info("published ports are disabled on this node", "detail", "edge.publish.ports = \"off\"")
 	}
 	certs, err := buildCertificates(certConfig{
-		Email:       *acmeEmail,
-		Directory:   *acmeDirectory,
-		CAPath:      *acmeCA,
-		BundlePath:  *edgeCerts,
-		Group:       *edgeGroup,
-		VerifyURL:   *acmeVerifyURL,
-		BaseDomain:  *baseDomain,
-		Default:     *tlsDefault,
-		CAName:      *tlsCAName,
-		CertsConfig: *tlsCertsConfig,
-		DNSSolver:   dnsSolver,
-		Store:       st,
-		Logger:      logger,
+		Email:        s.acmeEmail,
+		Directory:    s.acmeDirectory,
+		CAPath:       s.acmeCA,
+		BundlePath:   s.edgeCerts,
+		Group:        s.edgeGroup,
+		VerifyURL:    s.acmeVerifyURL,
+		BaseDomain:   s.baseDomain,
+		Default:      s.tlsDefault,
+		CAName:       s.tlsCAName,
+		ConfigPath:   nodeCfg.Path,
+		ConfigSource: nodeCfg.Source,
+		DNSSolver:    dnsSolver,
+		Store:        st,
+		Logger:       logger,
 	})
 	if err != nil {
 		return err
@@ -874,7 +677,8 @@ func runAgent(args []string) error {
 	switch apiL.mode {
 	case nodeconfig.TLSAcme:
 		if !certs.hasACME {
-			return fmt.Errorf("bind.api_tls %q needs an ACME account: set --acme-email", apiL.mode)
+			return fmt.Errorf("bind.api_tls %q needs an ACME account: set acme.email in %s",
+				apiL.mode, nodeconfig.DefaultPath)
 		}
 		certs.listener = &listenerCertificate{
 			mode: certsource.ModeACME, domains: []string{apiL.domain},
@@ -893,18 +697,18 @@ func runAgent(args []string) error {
 	nodeReader := scaling.NewNodeReader("")
 
 	server, err := api.NewServer(api.ServerConfig{
-		Store: st, Logger: logger, Socket: *socket,
-		Version: version, LogDir: *logDir, Notify: notify,
-		WSOrigins: splitList(*wsOrigins), ServeDashboard: *serveDashboard,
+		Store: st, Logger: logger, Socket: s.socket,
+		Version: version, LogDir: s.logDir, Notify: notify,
+		WSOrigins: s.wsOrigins, ServeDashboard: s.serveDashboard,
 		Secrets: secretStore, SecretSync: secretSyncStatus(secretSyncer, secretProviders),
 		Pipelines: pipelines, Auth: users, Accounts: users, Audit: trail,
 		Events: feed, NotifyStats: notifier.Stats, Publish: notifier.Publish,
-		Notifier: notifier, MCP: mcpServer.HTTPHandler(splitList(*wsOrigins)),
+		Notifier: notifier, MCP: mcpServer.HTTPHandler(s.wsOrigins),
 		Backups: backups, Settings: settingsSvc, LDAPServer: ldapServerName(directory),
 		// The dashboard's upgrade (PRD v1.107) is the CLI's fetch half run by
 		// the daemon on itself; the restart half is the signal context's own
 		// stop, so an upgrade exit and a SIGTERM are the same clean shutdown.
-		Upgrader: newDaemonUpgrader(logger, stop),
+		Upgrader: newDaemonUpgrader(logger, stop, s.upgradeRepo, s.upgradeRequireSignature),
 		// The updates view (PRD v1.108): local reads only, never an install.
 		HostInspector: newHostInspector(logger),
 		// The images view and the manual sweep (PRD v1.111, §5.2.4).
@@ -920,7 +724,7 @@ func runAgent(args []string) error {
 		// The editor's renderer parses with the node's own base domain and
 		// variables; the same options the GitOps sync uses, so a spec means
 		// the same thing whichever door it arrives through (v1.38, v1.63).
-		Spec: specRenderer{opts: jobspec.Options{BaseDomain: *baseDomain, NodeVars: nodeCfg.Variables}},
+		Spec: specRenderer{opts: jobspec.Options{BaseDomain: s.baseDomain, NodeVars: nodeCfg.Variables}},
 		// The apply path resolves a changed tag itself, so a release is one
 		// rolling deploy rather than one onto the bare tag and a second onto
 		// the digest a tick later (v1.114). The watcher's own resolve, behind
@@ -945,8 +749,8 @@ func runAgent(args []string) error {
 	}
 
 	logger.Info("kanead starting",
-		"version", version, "state", statePath, "socket", *socket,
-		"log_dir", *logDir, "volume_dir", volumes, "network", *networkMode)
+		"version", version, "state", statePath, "socket", s.socket,
+		"log_dir", s.logDir, "volume_dir", volumes, "network", mode)
 
 	tasks := 2
 	if dns != nil {
@@ -979,21 +783,21 @@ func runAgent(args []string) error {
 	}
 	if certs != nil {
 		go func() {
-			errs <- runCertificates(ctx, certs, st, *baseDomain, *tlsDefault,
+			errs <- runCertificates(ctx, certs, st, s.baseDomain, s.tlsDefault,
 				certNotify, logger, notifier.Publish)
 		}()
 	}
 	if secretProviders.Configured() {
 		go func() {
 			errs <- runSecretSync(ctx, secretSyncer, secretProviders,
-				*secretsSyncInterval, logger, notifier.Publish)
+				s.secretsSyncInterval, logger, notifier.Publish)
 		}()
 	}
 	// The mount supervisor runs alongside, not inside, the reconcile loop: a
 	// probe of a wedged mount can take seconds to abandon, and convergence must
 	// not wait for it (spike ③).
 	go mounts.Supervise(ctx, storage.DefaultCheckInterval)
-	go sweepAuthState(ctx, users, trail, *auditRetention, logger)
+	go sweepAuthState(ctx, users, trail, s.auditRetention, logger)
 	// The dispatcher owns its own goroutine so a wedged channel cannot stall
 	// anything that emits: Publish is non-blocking and everything slow happens
 	// behind it (AGENTS.md #8).
@@ -1011,7 +815,7 @@ func runAgent(args []string) error {
 		// purpose: a build that takes four minutes must not stop the loop
 		// noticing that another project moved.
 		go buildQueue.Run(ctx)
-		go runSync(ctx, pipelines, *syncInterval, logger)
+		go runSync(ctx, pipelines, s.syncInterval, logger)
 	}
 	// Its own goroutine for the same reason the sync loop is: a registry that
 	// takes thirty seconds to answer must not hold up convergence. It writes a
@@ -1039,12 +843,12 @@ func runAgent(args []string) error {
 	startMetrics(ctx, metricsSettings{
 		metrics:       metrics,
 		exposition:    edgeExposition,
-		containerdURL: *containerdMetrics,
-		edgeURL:       *edgeMetrics,
+		containerdURL: s.containerdMetrics,
+		edgeURL:       s.edgeMetrics,
 		flows:         flows,
 		node:          nodeReader,
-		interval:      *metricsInterval,
-		autoscale:     *autoscale,
+		interval:      s.metricsInterval,
+		autoscale:     s.autoscale,
 		store:         st,
 		notify:        notify,
 		emit:          notifier.Publish,
@@ -1110,26 +914,22 @@ func sweepAuthState(ctx context.Context, users *auth.Store, trail *audit.Log,
 	}
 }
 
-// Network driver names for --network.
-const (
-	// networkEBPF is the product: Kanea's own eBPF datapath; connect-time
-	// service LB, per-project policy, per-CPU counters (PRD v1.36, §5.2.5).
-	networkEBPF = "ebpf"
-	// networkNetns gives each alloc a bare namespace and nothing else. It exists
-	// so kanead can run on a host without the datapath; a laptop, a CI job;
-	// and is not a supported deployment: no policy is enforced and no service is
-	// load balanced, so allocs are unreachable by name.
-	networkNetns = "netns"
-)
+// A setting has two spellings: the node config attribute kanead reads, and the
+// flag `kanea init` takes for the same thing. The checks below serve both, so
+// each caller says which spelling its operator typed: an error naming a flag
+// kanead does not have is one nobody can act on.
 
-// validNetworkMode refuses anything but the two modes, up front. Before v1.36
-// any value other than one recognised name silently selected the product mode,
-// so a typo configured a node by accident.
-func validNetworkMode(mode string) error {
-	if mode != networkEBPF && mode != networkNetns {
-		return fmt.Errorf("unknown --network %q: want %s or %s", mode, networkEBPF, networkNetns)
+// configLabel names a node config attribute as the file spells it.
+func configLabel(attr string) string { return attr }
+
+// flagLabel names the command-line flag for a node config attribute:
+// network.node_cidr6 is --node-cidr6.
+func flagLabel(attr string) string {
+	_, name, found := strings.Cut(attr, ".")
+	if !found {
+		name = attr
 	}
-	return nil
+	return "--" + strings.ReplaceAll(name, "_", "-")
 }
 
 // agentCIDRs is the parsed subnet trio the ebpf mode runs on: six with
@@ -1146,16 +946,22 @@ type agentCIDRs struct {
 //
 // The v6 trio is all-or-nothing, refused by name: a v6 alloc address without
 // a v6 VIP pool is a half-configured stack whose failures are silent.
-func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string) (agentCIDRs, error) {
+func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string,
+	label func(string) string,
+) (agentCIDRs, error) {
 	var out agentCIDRs
+	var (
+		nodeAttr, clusterAttr, serviceAttr    = label("network.node_cidr"), label("network.cluster_cidr"), label("network.service_cidr")
+		node6Attr, cluster6Attr, service6Attr = label("network.node_cidr6"), label("network.cluster_cidr6"), label("network.service_cidr6")
+	)
 	for _, p := range []struct {
 		flag  string
 		value string
 		into  *netip.Prefix
 	}{
-		{"--node-cidr", node, &out.node},
-		{"--cluster-cidr", cluster, &out.cluster},
-		{"--service-cidr", service, &out.service},
+		{nodeAttr, node, &out.node},
+		{clusterAttr, cluster, &out.cluster},
+		{serviceAttr, service, &out.service},
 	} {
 		prefix, err := netip.ParsePrefix(p.value)
 		if err != nil {
@@ -1167,17 +973,17 @@ func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string) (
 		*p.into = prefix.Masked()
 	}
 	if !out.cluster.Contains(out.node.Addr()) || out.node.Bits() < out.cluster.Bits() {
-		return out, fmt.Errorf("--node-cidr %s is not within --cluster-cidr %s", node, cluster)
+		return out, fmt.Errorf("%s %s is not within %s %s", nodeAttr, node, clusterAttr, cluster)
 	}
 	for _, c := range []struct {
 		flag   string
 		prefix netip.Prefix
 	}{
-		{"--node-cidr", out.node}, {"--cluster-cidr", out.cluster},
+		{nodeAttr, out.node}, {clusterAttr, out.cluster},
 	} {
 		if c.prefix.Overlaps(out.service) {
-			return out, fmt.Errorf("%s %s overlaps --service-cidr %s; a service frontend would be "+
-				"handed an address that is also a container address", c.flag, c.prefix, service)
+			return out, fmt.Errorf("%s %s overlaps %s %s; a service frontend would be "+
+				"handed an address that is also a container address", c.flag, c.prefix, serviceAttr, service)
 		}
 	}
 
@@ -1191,16 +997,17 @@ func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string) (
 		return out, nil
 	}
 	if set != 3 {
-		return out, fmt.Errorf("--node-cidr6, --cluster-cidr6 and --service-cidr6 come as a trio: all three or none")
+		return out, fmt.Errorf("%s, %s and %s come as a trio: all three or none",
+			node6Attr, cluster6Attr, service6Attr)
 	}
 	for _, p := range []struct {
 		flag  string
 		value string
 		into  *netip.Prefix
 	}{
-		{"--node-cidr6", node6, &out.node6},
-		{"--cluster-cidr6", cluster6, &out.cluster6},
-		{"--service-cidr6", service6, &out.service6},
+		{node6Attr, node6, &out.node6},
+		{cluster6Attr, cluster6, &out.cluster6},
+		{service6Attr, service6, &out.service6},
 	} {
 		prefix, err := netip.ParsePrefix(p.value)
 		if err != nil {
@@ -1212,50 +1019,46 @@ func parseAgentCIDRs(node, cluster, service, node6, cluster6, service6 string) (
 		*p.into = prefix.Masked()
 	}
 	if !out.cluster6.Contains(out.node6.Addr()) || out.node6.Bits() < out.cluster6.Bits() {
-		return out, fmt.Errorf("--node-cidr6 %s is not within --cluster-cidr6 %s", node6, cluster6)
+		return out, fmt.Errorf("%s %s is not within %s %s", node6Attr, node6, cluster6Attr, cluster6)
 	}
 	for _, c := range []struct {
 		flag   string
 		prefix netip.Prefix
 	}{
-		{"--node-cidr6", out.node6}, {"--cluster-cidr6", out.cluster6},
+		{node6Attr, out.node6}, {cluster6Attr, out.cluster6},
 	} {
 		if c.prefix.Overlaps(out.service6) {
-			return out, fmt.Errorf("%s %s overlaps --service-cidr6 %s; a service frontend would be "+
-				"handed an address that is also a container address", c.flag, c.prefix, service6)
+			return out, fmt.Errorf("%s %s overlaps %s %s; a service frontend would be "+
+				"handed an address that is also a container address", c.flag, c.prefix, service6Attr, service6)
 		}
 	}
 	return out, nil
 }
 
-// buildNetwork selects the network driver.
+// buildNetwork returns the network for mode: the eBPF datapath on Linux, a
+// bare namespace per alloc anywhere else (networkModeFor).
 //
-// An Init failure in ebpf mode is a hard startup error, deliberately unlike
-// the warn-and-continue the old external agent got: there is no separate
-// process that might come up later. Loading the programs *is* the datapath:
-// if that fails, nothing will ever pass traffic, there is nothing to retry
-// against, and a control plane that started anyway would converge every alloc
-// onto a network that silently drops everything.
+// A datapath Init failure is a hard startup error, deliberately unlike the
+// warn-and-continue the old external agent got: there is no separate process
+// that might come up later. Loading the programs *is* the datapath: if that
+// fails, nothing will ever pass traffic, there is nothing to retry against,
+// and a control plane that started anyway would converge every alloc onto a
+// network that silently drops everything.
 func buildNetwork(ctx context.Context, mode string, cfg datapath.Config, logger *slog.Logger) (reconciler.Network, error) {
-	switch mode {
-	case networkNetns:
-		logger.Warn("network policy and service load balancing are disabled",
-			"network", networkNetns, "detail", "development mode: allocs get a bare namespace")
+	if mode == networkNetns {
+		logger.Warn("network policy, service load balancing and internal DNS are disabled",
+			"network", networkNetns,
+			"detail", "the eBPF datapath needs Linux; on this platform allocs get a bare namespace")
 		return reconciler.NetnsNetwork{}, nil
-
-	case networkEBPF:
-		dp, err := datapath.New(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("network: %w", err)
-		}
-		if err := dp.Init(ctx); err != nil {
-			return nil, fmt.Errorf("network: %w", err)
-		}
-		return dp, nil
-
-	default:
-		return nil, fmt.Errorf("unknown --network %q: want %s or %s", mode, networkEBPF, networkNetns)
 	}
+	dp, err := datapath.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("network: %w", err)
+	}
+	if err := dp.Init(ctx); err != nil {
+		return nil, fmt.Errorf("network: %w", err)
+	}
+	return dp, nil
 }
 
 // buildEgressUID resolves the build daemon's account to the uid the
@@ -1322,7 +1125,7 @@ const (
 // determines the address either way. The socket itself is bound in Serve,
 // which runAgent starts only after buildNetwork's Init has created the
 // interface, so the address is bindable by then.
-func buildDNS(mode, listen, upstreams string, fileUpstreams []string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
+func buildDNS(mode, listen string, upstreams []string, nodeCIDR netip.Prefix, logger *slog.Logger) (*network.DNS, error) {
 	if listen == dnsOff {
 		logger.Warn("internal DNS is disabled; services are reachable only by address")
 		return nil, nil
@@ -1340,7 +1143,7 @@ func buildDNS(mode, listen, upstreams string, fileUpstreams []string, nodeCIDR n
 		listen = net.JoinHostPort(hostAddr.String(), strconv.Itoa(network.DefaultDNSPort))
 	}
 
-	resolvers, err := upstreamResolvers(upstreams, fileUpstreams)
+	resolvers, err := upstreamResolvers(upstreams)
 	if err != nil {
 		return nil, err
 	}
@@ -1359,9 +1162,8 @@ func nameserverOf(dns *network.DNS) string {
 	return dns.Listen()
 }
 
-// upstreamResolvers resolves the forwarding targets: the flag wins, the
-// server config's dns stanza otherwise (v1.66), and the host's own resolvers
-// when neither says anything.
+// upstreamResolvers resolves the forwarding targets: the node config's dns
+// stanza (v1.66), or the host's own resolvers when it names none.
 //
 // Forwarding to the host's own resolvers by default keeps a workload's view
 // of the internet identical to the node's, which is what an operator expects
@@ -1369,10 +1171,7 @@ func nameserverOf(dns *network.DNS) string {
 // node where that stopped being what they wanted: resolv.conf is read once
 // at startup and held, so pinning belongs in config, not in whatever DHCP
 // last wrote.
-func upstreamResolvers(configured string, fromFile []string) ([]string, error) {
-	if configured != "" {
-		return splitList(configured), nil
-	}
+func upstreamResolvers(fromFile []string) ([]string, error) {
 	if len(fromFile) > 0 {
 		return fromFile, nil
 	}
@@ -1409,71 +1208,5 @@ func fanOut(ctx context.Context, in <-chan struct{}, out ...chan<- struct{}) {
 				}
 			}
 		}
-	}
-}
-
-// resolveNodePullPolicy applies §15.1's precedence to R33's node default: an
-// explicit flag wins (and says so, or the operator cannot tell which of two
-// sources is in force), the images stanza otherwise, and if-not-present when
-// neither, which is what every node did before v1.84.
-//
-// "always" is refused as a node default here as it is in the stanza: it means
-// per-service auto-update (R19), and turning that on for every service on a
-// node is not a default anybody asked for.
-// resolveImageGC decides whether the image GC sweeps (PRD §5.2.4, v1.111).
-// v1.51's precedence: --image-gc wins and says so, the gc block's enabled
-// otherwise, and on when neither says anything - the one default in this
-// family whose absence is not off, because a disk that fills silently is
-// exactly the surprise §5.2.4 forbids. The tuning knobs (interval, min_age,
-// keep) are file-only and travel separately.
-func resolveImageGC(flag string, fromFile *nodeconfig.ImageGCConfig, configPath string,
-	logger *slog.Logger,
-) (disabled bool, err error) {
-	fileSaysSomething := fromFile != nil
-	switch flag {
-	case "":
-		if fileSaysSomething && fromFile.Disabled {
-			logger.Info("image gc disabled by server config", "config", configPath)
-		}
-		return fileSaysSomething && fromFile.Disabled, nil
-	case "off":
-		if fileSaysSomething && !fromFile.Disabled {
-			logger.Info("server config images gc block is not consulted for on/off (--image-gc wins)",
-				"config", configPath)
-		}
-		return true, nil
-	case "on":
-		if fileSaysSomething && fromFile.Disabled {
-			logger.Info("server config images gc block is not consulted for on/off (--image-gc wins)",
-				"config", configPath)
-		}
-		return false, nil
-	default:
-		return false, fmt.Errorf("--image-gc %q is not a mode; it must be \"on\" or \"off\"", flag)
-	}
-}
-
-func resolveNodePullPolicy(flag, fromFile, configPath string, logger *slog.Logger) (string, error) {
-	switch flag {
-	case "":
-		if fromFile != "" {
-			logger.Info("image pull policy from server config",
-				"config", configPath, "policy", fromFile)
-			return fromFile, nil
-		}
-		return runtime.PullIfNotPresent, nil
-	case runtime.PullIfNotPresent, runtime.PullNever:
-		if fromFile != "" {
-			logger.Info("server config images stanza is not consulted (--image-pull-policy wins)",
-				"config", configPath)
-		}
-		return flag, nil
-	case runtime.PullAlways:
-		return "", fmt.Errorf("--image-pull-policy %q is not a node default: it turns on image "+
-			"auto-update for one service. Declare it on the service's task",
-			flag)
-	default:
-		return "", fmt.Errorf("--image-pull-policy %q is not a policy; it must be %q or %q",
-			flag, runtime.PullIfNotPresent, runtime.PullNever)
 	}
 }

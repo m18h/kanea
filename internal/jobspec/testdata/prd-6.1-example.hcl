@@ -93,7 +93,7 @@ service "web" {
     # domains optional; defaults to web.shop.<base_domain>
     domains = ["shop.example.com", "www.shop.example.com"]
     # Where the certificate comes from (R20, §7.3). Omit the block entirely and
-    # the node's --tls-default decides; there is no field here for a path.
+    # the node's tls.default_mode decides; there is no field here for a path.
     tls { mode = "acme" }                        # acme | self-signed | provided | plaintext
 
     # Upstream protocol (R28, v1.41). Omit for HTTP/1.1 upstreams. "grpc" makes

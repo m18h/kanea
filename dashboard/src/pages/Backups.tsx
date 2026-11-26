@@ -94,9 +94,10 @@ export function Backups() {
         <PageHeader title="Backups" />
         <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
           No backup destination is configured on this daemon. Its state exists only on
-          its own disk: a disk failure would lose all of it. Set{' '}
-          <code className="font-mono text-xs">--backup-dir</code> or{' '}
-          <code className="font-mono text-xs">--backup-s3</code>, then read{' '}
+          its own disk: a disk failure would lose all of it. Add a{' '}
+          <code className="font-mono text-xs">backup</code> stanza to{' '}
+          <code className="font-mono text-xs">/etc/kanea/kanea.hcl</code>, or set a destination
+          in Settings. Then read{' '}
           <code className="font-mono text-xs">docs/DR_RUNBOOK.md</code>.
         </p>
       </section>

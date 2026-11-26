@@ -92,8 +92,8 @@ func TestPolicyIsClosedByDefault(t *testing.T) {
 				t.Fatalf("ResolveSocket = %v, want ErrNotAllowed", err)
 			}
 			if !strings.Contains(err.Error(), "/etc/kanea/kanea.hcl") ||
-				!strings.Contains(err.Error(), "--passthrough-config") {
-				t.Errorf("error %v does not name both ways to enable it", err)
+				!strings.Contains(err.Error(), "defines no socket blocks") {
+				t.Errorf("error %v does not say how an operator would enable it", err)
 			}
 		})
 	}
@@ -118,7 +118,7 @@ func TestLoadReportsAMissingFile(t *testing.T) {
 
 // Since v1.51 the grants live in /etc/kanea/kanea.hcl beside stanzas other
 // decoders own. hclRoot's remain body is what makes that work: Load over a
-// full server config must extract the grants and ignore the rest.
+// full node config must extract the grants and ignore the rest.
 func TestLoadExtractsGrantsFromAFullServerConfig(t *testing.T) {
 	dir := shortDir(t)
 	sock := filepath.Join(dir, "rt.sock")

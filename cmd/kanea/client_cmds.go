@@ -1857,11 +1857,11 @@ func checkPublishedPorts(ctx context.Context, client *api.Client, desired []reco
 		for _, p := range d.Publish {
 			if !policy.Enabled {
 				return fmt.Errorf("%s publishes node port %d, and this node has published "+
-					"ports turned off (--publish-ports off)", name, p.Host)
+					"ports turned off (edge.publish.ports = \"off\")", name, p.Host)
 			}
 			if !policy.Allows(p.Host) {
 				return fmt.Errorf("%s publishes node port %d, which this node does not allow "+
-					"(--publish-ports %s). Which ports may be claimed belongs to whoever owns "+
+					"(edge.publish.ports = %q). Which ports may be claimed belongs to whoever owns "+
 					"the machine, not to a spec", name, p.Host, policy.Spec)
 			}
 		}

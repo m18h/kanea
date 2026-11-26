@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/m18h/kanea/internal/nodeconfig"
 	"github.com/m18h/kanea/internal/provision"
 	"github.com/m18h/kanea/internal/reconciler"
 )
@@ -81,9 +82,6 @@ func deniedByPermission(err error) bool {
 type preflightOptions struct {
 	dataDir          string
 	containerdSocket string
-	// networkMode is "ebpf" or "netns"; the BPF checks are skipped for the
-	// latter, which is the development configuration.
-	networkMode string
 	// buildkitSocket is the rootless build daemon's address; "off" skips it.
 	buildkitSocket string
 	// layout locates the components `kanea install` placed.
@@ -128,7 +126,7 @@ func componentChecks(opts preflightOptions) []checkResult {
 	results := []checkResult{
 		checkSocket("containerd", opts.containerdSocket,
 			"run `kanea install`: Kanea installs and supervises its own containerd; "+
-				"or point --containerd at an existing one"),
+				"or set containerd.socket in "+nodeconfig.DefaultPath+" to an existing one"),
 		checkVersionMatrix(opts.layout),
 		checkSubnets(opts.layout, opts.serviceCIDR),
 		checkStateDBPerms(opts.dataDir),
@@ -136,10 +134,8 @@ func componentChecks(opts preflightOptions) []checkResult {
 	if opts.layout.NodeCIDR6 != "" || opts.serviceCIDR6 != "" {
 		results = append(results, checkSubnets6(opts.layout, opts.serviceCIDR6), checkKernelIPv6())
 	}
-	if opts.networkMode != networkNetns {
-		results = append(results, checkBPF())
-		results = append(results, networkEgressChecks(opts)...)
-	}
+	results = append(results, checkBPF())
+	results = append(results, networkEgressChecks(opts)...)
 	if opts.buildkitSocket != "off" {
 		results = append(results, checkBuildkit(opts.buildkitSocket, opts.layout))
 	}
@@ -326,7 +322,8 @@ func checkSubnets(layout provision.Layout, serviceCIDR string) checkResult {
 	const name = "container subnet"
 	if err := layout.ValidateNetworking(); err != nil {
 		return checkResult{Name: name, Detail: err.Error(),
-			Fix: "pass --node-cidr and --cluster-cidr to `kanea install`"}
+			Fix: "set network.node_cidr and network.cluster_cidr in " + nodeconfig.DefaultPath +
+				" and re-run `kanea init`"}
 	}
 	node, cluster := layout.Networking()
 	if serviceCIDR == "" {
@@ -335,11 +332,11 @@ func checkSubnets(layout provision.Layout, serviceCIDR string) checkResult {
 	services, err := netip.ParsePrefix(serviceCIDR)
 	if err != nil {
 		return checkResult{Name: name,
-			Detail: fmt.Sprintf("--service-cidr %q is not a CIDR", serviceCIDR),
-			Fix:    "pass a CIDR to kanead's --service-cidr"}
+			Detail: fmt.Sprintf("network.service_cidr %q is not a CIDR", serviceCIDR),
+			Fix:    "set network.service_cidr in " + nodeconfig.DefaultPath + " to a CIDR"}
 	}
-	for _, c := range []struct{ flag, value string }{
-		{"--node-cidr", node}, {"--cluster-cidr", cluster},
+	for _, c := range []struct{ attr, value string }{
+		{"network.node_cidr", node}, {"network.cluster_cidr", cluster},
 	} {
 		prefix, err := netip.ParsePrefix(c.value)
 		if err != nil {
@@ -348,9 +345,10 @@ func checkSubnets(layout provision.Layout, serviceCIDR string) checkResult {
 		if prefix.Overlaps(services) {
 			return checkResult{
 				Name: name,
-				Detail: fmt.Sprintf("%s %s overlaps --service-cidr %s; a service frontend would be "+
-					"handed an address that is also a container address", c.flag, c.value, serviceCIDR),
-				Fix: "move one of them: --node-cidr/--cluster-cidr at install, --service-cidr on kanead",
+				Detail: fmt.Sprintf("%s %s overlaps network.service_cidr %s; a service frontend would be "+
+					"handed an address that is also a container address", c.attr, c.value, serviceCIDR),
+				Fix: "move one of them in " + nodeconfig.DefaultPath +
+					" (re-run `kanea init` after changing network.node_cidr or network.cluster_cidr)",
 			}
 		}
 	}
@@ -363,7 +361,7 @@ func checkSubnets(layout provision.Layout, serviceCIDR string) checkResult {
 func checkBuildkit(socket string, layout provision.Layout) checkResult {
 	if _, err := os.Stat(filepath.Join(layout.BinDir(), "buildctl")); err != nil {
 		return warn("buildkit", "buildctl is not installed",
-			"run `kanea install --only buildkit`, or run kanead with --buildkit off")
+			"run `kanea install --only buildkit`, or set builds.buildkit_addr = \"off\" in "+nodeconfig.DefaultPath)
 	}
 	// Installed is not the same as reachable. kanead execs `buildctl` by name,
 	// and systemd's default PATH does not include Kanea's bin dir, so a node
@@ -681,26 +679,27 @@ func confirm(in *bufio.Reader, want string) (bool, error) {
 }
 
 // checkSubnets6 is checkSubnets' dual-stack half (PRD v1.41): the courtesy
-// pre-check of what parseAgentCIDRs will enforce on kanead's own argv.
+// pre-check of what parseAgentCIDRs will enforce on kanead's node config.
 func checkSubnets6(layout provision.Layout, serviceCIDR6 string) checkResult {
 	const name = "container subnet (v6)"
 	if layout.NodeCIDR6 == "" || layout.ClusterCIDR6 == "" || serviceCIDR6 == "" {
 		return checkResult{Name: name,
-			Detail: "--node-cidr6, --cluster-cidr6 and --service-cidr6 come as a trio: all three or none",
-			Fix:    "set the missing *6 flags, or none of them"}
+			Detail: "network.node_cidr6, network.cluster_cidr6 and network.service_cidr6 come as a trio: all three or none",
+			Fix:    "set the missing *_cidr6 attributes in " + nodeconfig.DefaultPath + ", or none of them"}
 	}
 	if err := layout.ValidateNetworking(); err != nil {
 		return checkResult{Name: name, Detail: err.Error(),
-			Fix: "pass --node-cidr6 and --cluster-cidr6 to `kanea install`"}
+			Fix: "set network.node_cidr6 and network.cluster_cidr6 in " + nodeconfig.DefaultPath +
+				" and re-run `kanea init`"}
 	}
 	services6, err := netip.ParsePrefix(serviceCIDR6)
 	if err != nil || !services6.Addr().Is6() || services6.Addr().Is4In6() {
 		return checkResult{Name: name,
-			Detail: fmt.Sprintf("--service-cidr6 %q is not an IPv6 CIDR", serviceCIDR6),
-			Fix:    "pass an IPv6 prefix to kanead's --service-cidr6"}
+			Detail: fmt.Sprintf("network.service_cidr6 %q is not an IPv6 CIDR", serviceCIDR6),
+			Fix:    "set network.service_cidr6 in " + nodeconfig.DefaultPath + " to an IPv6 prefix"}
 	}
-	for _, c := range []struct{ flag, value string }{
-		{"--node-cidr6", layout.NodeCIDR6}, {"--cluster-cidr6", layout.ClusterCIDR6},
+	for _, c := range []struct{ attr, value string }{
+		{"network.node_cidr6", layout.NodeCIDR6}, {"network.cluster_cidr6", layout.ClusterCIDR6},
 	} {
 		prefix, err := netip.ParsePrefix(c.value)
 		if err != nil {
@@ -709,8 +708,8 @@ func checkSubnets6(layout provision.Layout, serviceCIDR6 string) checkResult {
 		if prefix.Overlaps(services6) {
 			return checkResult{
 				Name: name,
-				Detail: fmt.Sprintf("%s %s overlaps --service-cidr6 %s; a service frontend would be "+
-					"handed an address that is also a container address", c.flag, c.value, serviceCIDR6),
+				Detail: fmt.Sprintf("%s %s overlaps network.service_cidr6 %s; a service frontend would be "+
+					"handed an address that is also a container address", c.attr, c.value, serviceCIDR6),
 				Fix: "move one of them",
 			}
 		}
@@ -733,7 +732,7 @@ func isULA(a netip.Addr) bool {
 	return a.Is6() && !a.Is4In6() && (a.As16()[0]&0xFE) == 0xFC
 }
 
-// checkKernelIPv6 verifies the kernel has IPv6 at all when the flags ask for
+// checkKernelIPv6 verifies the kernel has IPv6 at all when the node config asks for
 // it: a kernel booted with ipv6.disable=1 has no /proc/sys/net/ipv6, and the
 // datapath's v6 half would fail at the first sysctl instead of here.
 func checkKernelIPv6() checkResult {
@@ -744,7 +743,38 @@ func checkKernelIPv6() checkResult {
 	if _, err := os.Stat("/proc/sys/net/ipv6"); err != nil {
 		return checkResult{Name: name,
 			Detail: "/proc/sys/net/ipv6 is missing; the kernel has IPv6 disabled",
-			Fix:    "remove ipv6.disable=1 from the kernel command line, or drop the *6 flags"}
+			Fix:    "remove ipv6.disable=1 from the kernel command line, or drop the *_cidr6 attributes from " + nodeconfig.DefaultPath}
 	}
 	return checkResult{Name: name, OK: true, Detail: "/proc/sys/net/ipv6 present"}
+}
+
+// checkNodeConfig reports whether /etc/kanea/kanea.hcl is a file the daemons
+// will accept, which since PRD v1.115 is the whole of "is this node
+// configured". It runs the load kanead runs (loadErr is its result) and the
+// two refusals kanead makes straight after it, so a doctor that passes this
+// line is a kanead that gets past its first screen of startup.
+//
+// Absent is not a failure: no file is every default, a supported node.
+func checkNodeConfig(cfg *nodeconfig.Config, s agentSettings, loadErr error) checkResult {
+	const name = "node config"
+	const fix = "fix " + nodeconfig.DefaultPath + " and restart kanead; the checks below assumed the defaults"
+	if loadErr != nil {
+		return checkResult{Name: name, Detail: loadErr.Error(), Fix: fix}
+	}
+	if _, err := parseAgentCIDRs(s.nodeCIDR, s.clusterCIDR, s.serviceCIDR,
+		s.nodeCIDR6, s.clusterCIDR6, s.serviceCIDR6, configLabel); err != nil {
+		return checkResult{Name: name, Detail: err.Error(), Fix: fix}
+	}
+	switch {
+	case cfg.Path == "":
+		return checkResult{Name: name, OK: true,
+			Detail: "no " + nodeconfig.DefaultPath + "; every setting is its default"}
+	case len(cfg.Ignored) > 0:
+		return checkResult{Name: name, OK: true, Warn: true,
+			Detail: fmt.Sprintf("%s loads, but this version does not read: %s",
+				cfg.Path, strings.Join(cfg.Ignored, ", ")),
+			Fix: "check the names for a typo; a stanza nothing reads configures nothing"}
+	default:
+		return checkResult{Name: name, OK: true, Detail: cfg.Path + " loads"}
+	}
 }

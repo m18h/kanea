@@ -1,9 +1,8 @@
 # Kanea Disaster Recovery Runbook
 
-> Baseline: PRD §15.3 (S3 state replication & backup/restore) and §15.4
-> (upgrades & schema migration). This document describes what the code does
-> today; where something is not yet built, it says so rather than describing a
-> plan as a procedure.
+> How to get a node's state back: from a backup, onto a new machine or the
+> same one. This document describes what the code does today; where something
+> is not built, it says so rather than describing a plan as a procedure.
 
 ---
 
@@ -33,16 +32,17 @@ from the master key. If the id in the manifest does not match the key you hold,
 a restore refuses with a message saying exactly that, rather than failing with
 an authentication error you would have to interpret.
 
-Since v1.74 the manifest is also **MAC'd**: a restore verifies the manifest
-itself against the key before trusting anything in it, so a bucket-write
-attacker cannot roll you back to an older genuine archive by swapping
-manifests. Archives written before v1.74 have no MAC and restore with a loud
-warning instead - when you see it, treat the archive's age as unverified and
-confirm the id and created-at are the state you mean to roll back to before
-letting the replay run. The same version refuses a restore whose segment chain
-has a hole (a segment deleted from the bucket): it says which index the state
-is good up to, and `--skip-replay` restores the snapshot alone if that is what
-you want.
+The manifest is **authenticated** as well: a restore verifies the manifest
+itself against the key before trusting anything in it, so someone who can
+write to the bucket cannot roll you back to an older genuine archive by
+swapping manifests. Archives written by early releases carry no
+authentication code and restore with a loud warning instead. When you see it,
+treat the archive's age as unverified, and confirm the id and created-at are
+the state you mean to roll back to before letting the replay run.
+
+A restore also refuses a segment chain with a hole in it (a segment deleted
+from the bucket). It says which index the state is good up to, and
+`--skip-replay` restores the snapshot alone if that is what you want.
 
 `kanea init` runs the escrow ceremony: it prints the key once and requires you
 to type it back before it writes anything. That is deliberately not a y/n
@@ -62,8 +62,8 @@ prompt: the point is to establish that you actually recorded it.
 | Backed up | Not backed up |
 |---|---|
 | The whole Store: projects, services, allocs, certs (including the self-signed CA at `ca/self-signed`), secrets, pipelines, audit log, accounts and tokens | Container images, re-pulled from the registry |
-| Change segments between snapshots (RPO bound) | The datapath's pinned BPF maps, which are **derived state, repopulated from desired state, never restored** (§18) |
-| | Workload logs and metrics, which are file and in-memory pipelines by design (constraint #2) |
+| Change segments between snapshots (RPO bound) | The datapath's pinned BPF maps, which are **derived state, repopulated from desired state, never restored** |
+| | Workload logs and metrics, which are file and in-memory pipelines by design |
 | | Container filesystems and local volume contents |
 
 Two consequences worth internalising before you need them:
@@ -81,12 +81,14 @@ Two consequences worth internalising before you need them:
   the old certificate installed has to be re-trusted**, with `kanea ca show` on
   the new node, installed again everywhere. That is a cost measured in devices, not
   minutes, and it is the reason the CA is in the archive rather than being a
-  key-ceremony artefact like the master key. Certificates an operator *provided*
-  (`--tls-certs-config`) are files on the node and are not in the archive at all;
-  back them up with the rest of `/etc`. The same goes for the server config
-  `/etc/kanea/kanea.hcl` (host-path allowlist, device/socket grants, PRD §15.1)
-  and any separate file `--passthrough-config` names: node policy lives outside
-  the archive by design, so restoring a node means restoring `/etc/kanea` too.
+  key-ceremony artefact like the master key.
+- **`/etc/kanea` is not in the archive.** The node config
+  `/etc/kanea/kanea.hcl` (listeners, subnets, the host-path allowlist, device
+  and socket grants, `provider` and `certificate` blocks) is a file on the
+  node. So are the certificates an operator provided and the credential files
+  `provider` blocks name. Node policy lives outside the archive by design, so
+  restoring a node means restoring `/etc/kanea` too: back it up with the rest
+  of `/etc`.
 
 ---
 
@@ -94,7 +96,7 @@ Two consequences worth internalising before you need them:
 
 | | Target | What decides it |
 |---|---|---|
-| **RPO** | ≤ 5 minutes | Change segments ship every 60 s by default (`--backup-segment-interval`) |
+| **RPO** | ≤ 5 minutes | Change segments ship every 60 s by default (`backup.segment_interval`) |
 | **RTO, control plane** | ≤ 15 minutes | Restore is a download, a decrypt and a replay |
 | **RTO, workloads** | Best effort | Image pulls; a registry mirror helps most |
 
@@ -108,19 +110,24 @@ The header reports when replication last succeeded. "Last segment: 40 minutes
 ago" on a busy node means the destination is unreachable and nobody noticed.
 The dashboard's Settings page shows the same numbers beside the destination.
 
-**Where the destination is decided** (PRD v1.46): the unit's `--backup-*`
-flags are the seed; a `settings/backup` record written from the dashboard's
-Settings page or `PUT /v1/settings/backup` wins over them, and deleting the
-record reverts to the flags. Changing the destination at runtime is safe by
-construction: the new destination is probed with a real test write *before*
-anything commits, the old one receives a final segment ship, and the new one
-gets an immediate full snapshot. One consequence for this runbook: when
-reconstructing which bucket a dead node was shipping to, the unit file alone
-is not the answer. The settings record (in the Store, and therefore in the
-archives themselves) may have superseded it. `kanea backup list` on a live
-node, or the newest archive's manifest in whichever bucket you find, is
-authoritative. The offline `kanea restore` command always takes its
-destination explicitly and is unaffected.
+**Where the destination is decided.** The `backup` stanza in
+`/etc/kanea/kanea.hcl` is the starting point. A destination saved from the
+dashboard's Settings page (or `PUT /v1/settings/backup`) is stored in the
+Store and wins over the stanza; deleting it reverts to `kanea.hcl`. That is
+the only place in Kanea where two sources can disagree, and the rest of this
+runbook refers back to this paragraph.
+
+Changing the destination at runtime is safe by construction: the new
+destination is probed with a real test write *before* anything commits, the
+old one receives a final segment ship, and the new one gets an immediate full
+snapshot.
+
+One consequence for an incident: when reconstructing which bucket a dead node
+was shipping to, `kanea.hcl` alone is not the answer, because a saved
+destination may have superseded it. `kanea backup list` on a live node, or the
+newest archive's manifest in whichever bucket you find, is authoritative. The
+offline `kanea restore --from` always takes its destination explicitly and is
+unaffected.
 
 ---
 
@@ -231,7 +238,22 @@ At the next start, before anything opens the Store, the daemon **moves the
 current state aside** (`state.db.before-restore-<timestamp>`) and restores. If
 the restore turns out to be the wrong archive, what was there is still there.
 
-To cancel a staged restore before restarting:
+**A staged restore reads its destination from `kanea.hcl`, and only a
+directory works.** The restore runs before the Store is open, so it cannot
+see a destination saved from the dashboard and cannot resolve the `secret:`
+reference in `backup.s3.secret_key`. What happens instead:
+
+| Destination | At the restart |
+|---|---|
+| `backup.dir` in `kanea.hcl` | The restore runs. |
+| `backup.s3` in `kanea.hcl` | kanead stops with `backup: S3 credentials are required`. The current state is untouched. |
+| Saved from the dashboard only | kanead stops with `a restore is staged but no backup destination is configured`. The current state is untouched. |
+
+In the last two cases the request stays staged and kanead will not start
+until you cancel it. To restore from S3, cancel the request, stop kanead, and
+use the offline form from §3.3 with `--from s3://…`.
+
+To cancel a staged restore:
 
 ```bash
 rm /var/lib/kanea/restore-request.json
@@ -241,11 +263,30 @@ rm /var/lib/kanea/restore-request.json
 
 ## 5. First-boot auto-restore
 
-A node with no state at all and a destination configured can restore itself:
+A node with no state at all and a destination in the `backup` stanza of
+`/etc/kanea/kanea.hcl` can restore itself when `backup.restore_if_empty` is set:
 
-```bash
-kanead --backup-s3 s3://kanea-backups/node-1 … --restore-if-empty
+```hcl
+backup {
+  restore_if_empty = true
+  s3 {
+    url        = "s3://kanea-state/prod/node-a"
+    endpoint   = "https://s3.eu-central-1.amazonaws.com"
+    region     = "eu-central-1"
+    access_key = "AKIAEXAMPLE"
+    secret_key = "secret:shared/backup-s3"
+  }
+}
 ```
+
+It has the limit §4 describes, for the same reason: this step runs before the
+Store is opened, so it has only what is on the disk. That is `kanea.hcl` and
+the master key, which must already be back at `<data_dir>/master.key`. With
+the S3 destination above, kanead stops at start with
+`backup: S3 credentials are required` rather than restoring. A `backup.dir`
+destination needs no credential and restores as described. To bring a blank
+node back from S3, use the offline `kanea restore --from s3://…` from §3.3,
+which takes the secret key from a file.
 
 Off by default, deliberately. Bringing an entire platform's state back because a
 directory looked empty is not something to do without being asked.
@@ -254,12 +295,17 @@ directory looked empty is not something to do without being asked.
 
 ## 6. Verification and drills
 
-**Verify an archive without the key.** Hashes are over the ciphertext, so
-"are the bytes intact" is answerable before you go looking for the key:
+**Verify an archive.** `kanea backup verify` asks the running daemon to check
+one archive in the current destination:
 
 ```bash
 kanea backup verify 20260808T120000Z
 ```
+
+It checks the manifest's authentication code against the node's key, then the
+snapshot's size and SHA-256 against the manifest. The hash is over the
+ciphertext, so nothing is decrypted. It does not read the change segments and
+it does not prove the archive restores; the drill below does that.
 
 **Drill the restore.** Verification proves the bytes; it does not prove the
 procedure. Restore to a scratch path on a machine that is not production:
@@ -345,9 +391,11 @@ something that tells you rather than something you check.
   bucket into the host header and the host header is signed. What remains
   untested is the services themselves: AWS S3, R2, B2 and Wasabi have not been
   in the loop, and each has quirks around region handling and what it does with
-  a request the others accept. **Run `kanea backup verify` after configuring a
-  new destination**, before you rely on it. It writes, lists and deletes
-  through the same code path a real backup uses.
+  a request the others accept. **After configuring a new destination, take a
+  backup and verify it** (`kanea backup create`, then `kanea backup verify
+  <id>`) before you rely on it. Saving a destination from the dashboard
+  already probes it with a test write; a destination written into `kanea.hcl`
+  gets no probe until the first snapshot.
 - **An archive above 5 GiB is refused rather than split.** Multipart upload is
   not implemented. A single node's Store is orders of magnitude below the limit;
   the error names the number if you ever meet it.
@@ -357,3 +405,6 @@ something that tells you rather than something you check.
   that wrote it, which matters only for a bucket several nodes write to.
 - **Local volumes are not in an archive.** See §1. A service that keeps data in
   a volume needs its own backup for that volume.
+- **A restore at start works only from a directory.** A staged restore and
+  first-boot auto-restore both read `backup.dir`; with an S3 destination use
+  the offline `kanea restore --from` (§4, §5).

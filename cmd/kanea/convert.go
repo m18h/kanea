@@ -266,11 +266,11 @@ func convertExpose(svc *jobspec.Service, e *jobspec.Expose) *reconciler.Expose {
 		// carried inward: a stored record names a certificate source (R20), and
 		// `letsencrypt = true` names exactly one of them. Only true translates:
 		// false was indistinguishable from an absent block before v1.33 and
-		// still defers to the node's --tls-default.
+		// still defers to the node's tls.default_mode.
 		//
 		// The mode itself is *not* resolved here. toDesired runs client-side
 		// (`kanea run`, the MCP server, the pipeline) so baking a node's
-		// --tls-default in at conversion would make one spec mean different
+		// tls.default_mode in at conversion would make one spec mean different
 		// things on two machines. An empty mode on a stored record means "the
 		// node decides", and the node decides it in ResolveTLSMode.
 		//nolint:staticcheck // reading the deprecated field is the point: this is

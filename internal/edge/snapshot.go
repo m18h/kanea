@@ -60,7 +60,7 @@ type Snapshot struct {
 	Listeners []Listener `json:"listeners,omitempty"`
 	// Functions is the functions-port dispatch table (PRD §7.2.3): functions
 	// with an http trigger on a node with no base domain, reached as
-	// /<project>/<function>/… on the port `kanea-edge --functions-port`
+	// /<project>/<function>/… on the port `edge.functions_port`
 	// binds. kanead decides which functions need path dispatch (the node-side
 	// mode resolution, R20's pattern); the edge decides the port.
 	//

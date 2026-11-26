@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/m18h/kanea/internal/edge"
 	"github.com/m18h/kanea/internal/provision"
 )
 
@@ -24,9 +23,7 @@ import (
 
 // unitOptions describes the install the units are written for.
 type unitOptions struct {
-	dir     string
-	dataDir string
-	logDir  string
+	dir string
 	// reserve is the control plane's memory floor, as a systemd size.
 	reserve string
 	// binary is the absolute path to the kanea executable.
@@ -36,25 +33,6 @@ type unitOptions struct {
 	// execs by name; systemd's default PATH does not include Kanea's bin dir.
 	// Empty means provision.DefaultPrefix.
 	prefix string
-	// network is kanead's --network mode; empty means the default (ebpf).
-	network string
-	// nodeCIDR and clusterCIDR are rendered into kanead's ExecStart, so the
-	// subnets `kanea init` was told about survive into the daemon's argv
-	// rather than living only in the operator's shell history.
-	nodeCIDR    string
-	clusterCIDR string
-	// The dual-stack trio (v1.41), rendered only when set: there are no
-	// v6 defaults, and the unit for a v4-only node must stay byte-identical.
-	nodeCIDR6    string
-	clusterCIDR6 string
-	serviceCIDR6 string
-	// listen is the API/dashboard network address (v1.45), rendered only when
-	// set for the same reason as the v6 trio: the unit for a socket-only node
-	// must stay byte-identical. kanead owns the listener, so the flag belongs
-	// on its argv (the v1.33 rule for the CIDRs, applied to the bind address).
-	listen     string
-	listenCert string
-	listenKey  string
 }
 
 // unitFile is one file to write.
@@ -138,32 +116,12 @@ func workloadSlice() string {
 }
 
 // kaneadService is the control-plane daemon.
+//
+// ExecStart carries no arguments (PRD §15.1, v1.115): everything the daemon
+// is configured with is /etc/kanea/kanea.hcl. That is what makes the unit a
+// file an upgrade may rewrite without asking: nothing an operator chose
+// lives in it.
 func kaneadService(opts unitOptions) string {
-	mode := opts.network
-	if mode == "" {
-		mode = networkEBPF
-	}
-	node := opts.nodeCIDR
-	if node == "" {
-		node = provision.DefaultNodeCIDR
-	}
-	cluster := opts.clusterCIDR
-	if cluster == "" {
-		cluster = provision.DefaultClusterCIDR
-	}
-	v6Flags := ""
-	if opts.nodeCIDR6 != "" {
-		v6Flags = ` --node-cidr6 ` + opts.nodeCIDR6 +
-			` --cluster-cidr6 ` + opts.clusterCIDR6 +
-			` --service-cidr6 ` + opts.serviceCIDR6
-	}
-	listenFlags := ""
-	if opts.listen != "" {
-		listenFlags = ` --listen ` + opts.listen
-		if opts.listenCert != "" {
-			listenFlags += ` --listen-cert ` + opts.listenCert + ` --listen-key ` + opts.listenKey
-		}
-	}
 	// kanead execs `buildctl` by name when it drives a build, and systemd's
 	// default PATH does not include Kanea's bin dir, so without this line
 	// every build fails with "executable file not found in $PATH" on a node
@@ -196,9 +154,9 @@ func kaneadService(opts unitOptions) string {
 		# binary) which Type=simple would report as a successful start.
 		Type=exec
 		Environment=PATH=` + binDir + `:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-		ExecStart=` + opts.binary + ` agent --data-dir ` + opts.dataDir + ` --log-dir ` + opts.logDir +
-		` --network ` + mode + ` --node-cidr ` + node + ` --cluster-cidr ` + cluster + v6Flags + listenFlags +
-		` --edge-group ` + provision.EdgeUser + `
+		# No arguments: kanead is configured by /etc/kanea/kanea.hcl alone.
+		# Edit that file and restart this unit; do not add flags here.
+		ExecStart=` + opts.binary + ` agent
 		Restart=always
 		RestartSec=5s
 		Slice=kanea.slice
@@ -231,11 +189,11 @@ func kaneadService(opts unitOptions) string {
 
 // edgeService is the ingress proxy.
 //
-// The two projection paths are written out rather than left to the defaults,
-// because they are the whole interface between this process and kanead and an
-// operator has to be able to see and change them. They are spelled with the
-// same constants the daemon publishes to and the edge reads from, so the unit
-// cannot come to disagree with the code about where the files live.
+// It takes no arguments either: its listeners and the two projection paths
+// (the whole interface between this process and kanead) are the bind and
+// edge stanzas of /etc/kanea/kanea.hcl, the same attributes kanead publishes
+// to, so the two processes cannot come to disagree about where the files
+// live.
 //
 // A separate unit because it is a separate process, from day one (§18 rule 8):
 // north-south traffic survives a control-plane restart, an upgrade, or a crash.
@@ -254,8 +212,9 @@ func edgeService(opts unitOptions) string {
 		[Service]
 		# See kanead.service: no sd_notify, so no Type=notify.
 		Type=exec
-		ExecStart=` + opts.binary + ` edge --routes ` + edge.DefaultSnapshotPath +
-		` --certs ` + edge.DefaultBundlePath + `
+		# No arguments: the edge reads the bind and edge stanzas of
+		# /etc/kanea/kanea.hcl. Edit that file and restart this unit.
+		ExecStart=` + opts.binary + ` edge
 		Restart=always
 		RestartSec=2s
 		Slice=kanea.slice
@@ -281,8 +240,8 @@ func edgeService(opts unitOptions) string {
 		ProtectHome=yes
 		PrivateTmp=yes
 		# No ReadWritePaths: the edge writes nothing. ProtectSystem=strict makes
-		# the filesystem read-only, not invisible, so the two projections above
-		# are still readable.
+		# the filesystem read-only, not invisible, so /etc/kanea/kanea.hcl and
+		# the two projections kanead publishes are still readable.
 
 		[Install]
 		WantedBy=multi-user.target

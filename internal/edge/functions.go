@@ -97,7 +97,7 @@ func (f *functionsSet) Apply(routes []FunctionRoute) {
 			f.warned = true
 			f.log.Warn("functions need path dispatch but no functions port is configured",
 				"functions", len(table),
-				"detail", "start kanea-edge with --functions-port, or give the node a base domain")
+				"detail", "set edge.functions_port in /etc/kanea/kanea.hcl, or give the node a base domain")
 		}
 	case f.ln == nil:
 		f.bindLocked()

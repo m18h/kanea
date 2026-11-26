@@ -334,7 +334,7 @@ func (r *Reconciler) domainsFor(d Desired) []string {
 // reads, which it shares a name with.
 //
 // Explicit beats the pre-v1.33 bool beats the node's default. The node default
-// is applied here rather than at apply time so that changing --tls-default
+// is applied here rather than at apply time so that changing tls.default_mode
 // takes effect on the next pass instead of on the next `kanea run` of every
 // service, and so that a stored record says what the *spec* asked for and
 // nothing more.

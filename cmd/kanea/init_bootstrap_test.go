@@ -80,7 +80,6 @@ func testBootstrapOptions(fake *fakeAdminAPI, runner *recordingRunner) bootstrap
 	runner.fake = fake
 	return bootstrapOptions{
 		listen: "127.0.0.1:8600", timeout: time.Second,
-		network:  networkEBPF,
 		nodeCIDR: "10.244.0.0/24", clusterCIDR: "10.244.0.0/16", serviceCIDR: "10.201.0.0/16",
 		client: fake, run: runner.run,
 	}
@@ -294,20 +293,14 @@ func TestInitSummaryVariants(t *testing.T) {
 	if got := render(socketOnly); !strings.Contains(got, api.DefaultSocket) {
 		t.Errorf("socket-only summary does not name the socket:\n%s", got)
 	}
-
-	netns := base
-	netns.dnsAddr = ""
-	if got := render(netns); !strings.Contains(got, "netns mode has no service frontends") {
-		t.Errorf("netns summary does not explain the missing DNS:\n%s", got)
-	}
 }
 
 func TestDNSAddrForDerivesTheNodeCIDRsDotOne(t *testing.T) {
-	if got := dnsAddrFor(networkEBPF, "10.9.4.0/24"); got != "10.9.4.1:53" {
+	if got := dnsAddrFor("10.9.4.0/24"); got != "10.9.4.1:53" {
 		t.Errorf("dnsAddrFor = %q, want 10.9.4.1:53", got)
 	}
-	if got := dnsAddrFor(networkNetns, "10.9.4.0/24"); got != "" {
-		t.Errorf("netns mode derived a DNS address: %q", got)
+	if got := dnsAddrFor("not a cidr"); got != "" {
+		t.Errorf("an unparseable CIDR derived a DNS address: %q", got)
 	}
 }
 

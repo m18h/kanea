@@ -11,7 +11,7 @@ import type { Service } from '@/lib/api'
  *
  * An address is omitted rather than guessed in one case: an `expose` block
  * with no domains is served at an FQDN generated under the node's
- * `--base-domain`, which lives behind `GET /v1/settings` and is **admin-only**.
+ * `base_domain`, which lives behind `GET /v1/settings` and is **admin-only**.
  * Rather than show the control to some roles and not others, or fetch a route
  * a viewer is refused, that route contributes nothing. A wrong URL is worse
  * than an absent one.
@@ -20,7 +20,7 @@ import type { Service } from '@/lib/api'
  * empty whenever the node decides (R20: resolution happens node-side, because
  * `toDesired` runs client-side and baking a default in would make one spec
  * mean different things on two machines), so the dashboard cannot read it off
- * the record. https is the right guess: `--tls-default` is `acme` unless an
+ * the record. https is the right guess: `tls.default_mode` is `acme` unless an
  * operator changed it, and plaintext is the opt-in. Only an explicit
  * `plaintext` produces an http URL.
  */

@@ -13,7 +13,7 @@ import (
 // DefaultMaxConns bounds live connections on one tcp listener when the spec
 // does not say.
 //
-// 256 is a per-listener figure; --max-published-conns bounds the whole process.
+// 256 is a per-listener figure; edge.publish.max_conns bounds the whole process.
 // A connection costs roughly 24 KiB (two goroutines and a connSet entry) and
 // the splice buffers io.Copy uses for TCP→TCP are kernel pipes, not Go heap.
 const DefaultMaxConns = 256

@@ -7,8 +7,8 @@
 // rotation propagates on the next poll instead of on the next human. A job
 // spec never sees any of this: it references `secret:<project>/<name>`
 // exactly as before, and which of those paths are provider-backed is this
-// node's config (`--secrets-providers-config`), never the spec's (R17's rule,
-// applied to secret origin).
+// node's config (the provider blocks of /etc/kanea/kanea.hcl), never the
+// spec's (R17's rule, applied to secret origin).
 //
 // The seam follows internal/certsource: a closed Kind set, a batch call per
 // pass, partial failure as data rather than as an error that suppresses the

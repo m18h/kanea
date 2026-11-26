@@ -6,7 +6,7 @@ Guidance for AI agents (and humans) working in this repository. Read this before
 
 **Kanea** is a lightweight, single-binary container orchestration platform written in Go, "container orchestration in one binary." It runs services on **containerd**, networks them with **its own eBPF datapath** (nothing from the Kubernetes stack underneath, and since PRD v1.36 no Cilium either), terminates TLS with **Let's Encrypt**, and ships a **React + shadcn/ui** dashboard, an **MCP server** for AI agents, GitOps pipelines (kaniko), eBPF-driven autoscaling, and S3-backed state replication.
 
-**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.114). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins, and the disagreement means one of them needs an amendment.
+**[`PRD.md`](./PRD.md) is the north star.** It is complete and internally consistent (v1.115). Every architectural decision, naming rule, milestone, and risk is specified there. When this file and the PRD disagree, the PRD wins, and the disagreement means one of them needs an amendment.
 
 ## Current status
 
@@ -53,9 +53,10 @@ here; the bullets in `docs/DECISIONS.md` carry the details and the history.
     it publishes exactly once and never again (the `routesArePublished` lesson).
 12. **A spec names a grant, never a path** - GitOps deploys specs automatically, so a
     spec is an untrusted document and node-side config holds the mapping.
-13. **Config files come in two families and must not mix**: the reload family
-    (keep-last-good, content-fingerprinted - certificates, secret providers) and
-    load-once `kanea.hcl` (absent is off, malformed is fatal).
+13. **`kanea.hcl` is the only config file**: load-once, absent is off, malformed is
+    fatal. The reload family is now only the **files a block points at** (certificate
+    pairs, provider credentials): content-fingerprinted, keep-last-good. A block itself
+    never reloads.
 14. **Fail closed**: a missing certificate, verifier or identity is a 503 or a drop,
     never open.
 15. **Every optional daemon dependency must be wired in `cmd/kanea`**, pinned by tests
@@ -225,7 +226,7 @@ Every change, not just a large one: OWASP §14 checks reviewed, `govulncheck` cl
 
 | File | Content |
 |---|---|
-| `PRD.md` | Full product requirements (v1.114), the north star |
+| `PRD.md` | Full product requirements (v1.115), the north star |
 | `AGENTS.md` | This file |
 | `docs/DECISIONS.md` | The decision record: status, trip-over bullets, refusals, spikes |
 | `README.md` | The public front door: install, quickstart, requirements |

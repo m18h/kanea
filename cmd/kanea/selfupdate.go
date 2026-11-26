@@ -28,8 +28,9 @@ import (
 // is not. Verifying Sigstore in-process was rejected: sigstore-go is the
 // dependency tree the hand-written-HTTP rule exists to refuse.
 
-// defaultRepo is where releases live. KANEA_REPO overrides it, exactly like
-// the install script, so a fork upgrades from itself.
+// defaultRepo is where releases live. upgrade.repo in the node config
+// overrides it (install.sh spells the same thing KANEA_REPO), so a fork
+// upgrades from itself.
 const defaultRepo = "m18h/kanea"
 
 // oidcIssuer pins who vouched for the signing certificate: the same identity
@@ -85,11 +86,7 @@ type releaseSource struct {
 	client *http.Client
 }
 
-func newReleaseSource() *releaseSource {
-	repo := os.Getenv("KANEA_REPO")
-	if repo == "" {
-		repo = defaultRepo
-	}
+func newReleaseSource(repo string) *releaseSource {
 	return &releaseSource{
 		base: "https://github.com/" + repo,
 		client: &http.Client{
@@ -220,7 +217,7 @@ func verifyChecksum(path, wantHex string) error {
 // run, and - by default - never required to be runnable. cosign absent and
 // signature absent are each a note the caller prints; a signature that fails
 // to verify is fatal. required turns the two notes into refusals (v1.105,
-// `--require-signature` / KANEA_REQUIRE_SIGNATURE): a checksum fetched from
+// `--require-signature` / upgrade.require_signature): a checksum fetched from
 // the same place as the binary proves only that the two agree, and a node
 // that cares gets to insist on the signature. Deliberately never downloads
 // cosign itself: a verifier fetched over the same channel would be a second
@@ -229,7 +226,8 @@ func verifySignature(ctx context.Context, base, checksums, sig, pem string, requ
 	cosign, lookErr := exec.LookPath("cosign")
 	if lookErr != nil {
 		if required {
-			return "", errors.New("--require-signature: cosign is not installed, so the " +
+			return "", errors.New("a verified signature is required (--require-signature, or " +
+				"upgrade.require_signature in the node config): cosign is not installed, so the " +
 				"signature cannot be checked. Install the cosign package (sigstore) and re-run; " +
 				"the upgrade deliberately does not download a verifier for itself")
 		}
@@ -237,7 +235,8 @@ func verifySignature(ctx context.Context, base, checksums, sig, pem string, requ
 	}
 	if sig == "" || pem == "" {
 		if required {
-			return "", errors.New("--require-signature: this release publishes no signature " +
+			return "", errors.New("a verified signature is required (--require-signature, or " +
+				"upgrade.require_signature in the node config): this release publishes no signature " +
 				"(checksums.txt.sig/.pem are missing); refusing the checksum-only archive")
 		}
 		return "no signature published for this release; checksum only", nil

@@ -109,7 +109,7 @@ func TestAGrantOnANodeWithNoConfigFailsTheAlloc(t *testing.T) {
 		t.Fatal("a service got its passthrough on a node with no grants configured")
 	}
 	if !strings.Contains(err.Error(), "/etc/kanea/kanea.hcl") ||
-		!strings.Contains(err.Error(), "--passthrough-config") {
+		!strings.Contains(err.Error(), "defines no device or socket blocks") {
 		t.Errorf("error %v does not say how an operator would enable it", err)
 	}
 }

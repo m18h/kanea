@@ -1,8 +1,10 @@
 package secretsource
 
 import (
+	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -211,41 +213,43 @@ func TestParseRefusesByName(t *testing.T) {
 	}
 }
 
+// newProviders builds the loader over an in-memory document.
+func newProviders(t *testing.T, src string) *Providers {
+	t.Helper()
+	p, err := NewProviders("kanea.hcl", []byte(src), nil, discardLogger())
+	if err != nil {
+		t.Fatalf("NewProviders: %v", err)
+	}
+	return p
+}
+
 // A rewritten credential file with the same size is still a change: the
 // certbot lesson, applied to provider tokens.
 func TestChangedSeesACredentialRewrite(t *testing.T) {
 	dir := t.TempDir()
 	token := writeFile(t, dir, "token", "aaaa", 0o600)
-	config := writeFile(t, dir, "providers.hcl", minimalConfig(token), 0o644)
 
-	p := NewProviders(config, nil, discardLogger())
+	p := newProviders(t, minimalConfig(token))
 	if !p.Changed() {
 		t.Fatal("the first poll should report a change")
 	}
 	if p.Changed() {
-		t.Fatal("an untouched config reported a change")
+		t.Fatal("untouched credentials reported a change")
 	}
 	// Same length, same file, new content.
 	writeFile(t, dir, "token", "bbbb", 0o600)
 	if !p.Changed() {
 		t.Fatal("a rewritten token file went unnoticed")
 	}
-}
-
-// A half-saved config keeps the last set that built, and complains once.
-func TestCurrentKeepsTheLastGoodConfig(t *testing.T) {
-	dir := t.TempDir()
-	token := writeFile(t, dir, "token", "t", 0o600)
-	config := writeFile(t, dir, "providers.hcl", minimalConfig(token), 0o644)
-
-	p := NewProviders(config, nil, discardLogger())
-	if got := p.Current(); len(got) != 1 {
-		t.Fatalf("Current = %d providers, want 1", len(got))
+	if p.Changed() {
+		t.Fatal("the rewrite was reported twice")
 	}
-
-	writeFile(t, dir, "providers.hcl", `provider "doppler" {`, 0o644)
-	if got := p.Current(); len(got) != 1 {
-		t.Fatalf("a broken config dropped the working providers (got %d)", len(got))
+	// A credential that disappears is a change too, and so is its return.
+	if err := os.Remove(token); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Changed() {
+		t.Fatal("a removed token file went unnoticed")
 	}
 }
 
@@ -255,16 +259,15 @@ func TestCurrentKeepsTheLastGoodConfig(t *testing.T) {
 func TestCurrentRebuildsOnlyOnAChange(t *testing.T) {
 	dir := t.TempDir()
 	token := writeFile(t, dir, "token", "t", 0o600)
-	config := writeFile(t, dir, "providers.hcl", minimalConfig(token), 0o644)
 
-	p := NewProviders(config, nil, discardLogger())
+	p := newProviders(t, minimalConfig(token))
 	first := p.Current()
 	second := p.Current()
 	if len(first) != 1 || len(second) != 1 {
 		t.Fatalf("Current = %d, %d providers, want 1 each", len(first), len(second))
 	}
 	if first[0] != second[0] {
-		t.Error("an unchanged config rebuilt the providers")
+		t.Error("unchanged credentials rebuilt the providers")
 	}
 
 	writeFile(t, dir, "token", "rotated", 0o600)
@@ -277,16 +280,108 @@ func TestCurrentRebuildsOnlyOnAChange(t *testing.T) {
 	}
 }
 
-func TestUnconfiguredProvidersDoNothing(t *testing.T) {
-	p := NewProviders("", nil, discardLogger())
-	if p.Configured() {
-		t.Error("an empty path reports configured")
+// A credential file that changes into something a provider cannot be built
+// from keeps the last set that built, and a fix rebuilds.
+func TestCurrentKeepsTheLastGoodSetWhenABuildFails(t *testing.T) {
+	dir := t.TempDir()
+	token := writeFile(t, dir, "token", "t", 0o600)
+	srv := httptest.NewTLSServer(nil)
+	defer srv.Close()
+	caPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
+	ca := writeFile(t, dir, "ca.pem", caPEM, 0o644)
+
+	p := newProviders(t, fmt.Sprintf(`
+provider "vault" "infra" {
+  address    = "https://vault.internal:8200"
+  token_file = %q
+  ca_file    = %q
+  mount      = "kv"
+  allow      = ["media"]
+  sync {
+    path  = "apps/media"
+    field = "s3_secret_key"
+    to    = "media/s3-secret"
+  }
+}
+`, token, ca))
+	first := p.Current()
+	if len(first) != 1 {
+		t.Fatalf("Current = %d providers, want 1", len(first))
 	}
-	if p.Changed() {
-		t.Error("an empty path reports changes")
+
+	writeFile(t, dir, "ca.pem", "not a certificate", 0o644)
+	kept := p.Current()
+	if len(kept) != 1 || kept[0] != first[0] {
+		t.Fatalf("a failed build did not keep the last good set (got %d providers)", len(kept))
 	}
-	if got := p.Current(); got != nil {
-		t.Errorf("an empty path serves providers: %v", got)
+	if again := p.Current(); len(again) != 1 || again[0] != first[0] {
+		t.Fatal("the last good set was dropped on the pass after a failed build")
+	}
+
+	writeFile(t, dir, "ca.pem", caPEM, 0o644)
+	fixed := p.Current()
+	if len(fixed) != 1 || fixed[0] == first[0] {
+		t.Fatal("a repaired credential file did not rebuild the providers")
+	}
+}
+
+// The blocks are read once, so what the constructor is handed decides
+// everything: a malformed block is fatal there, and a document with no
+// provider block is the feature turned off.
+func TestNewProvidersReadsTheDocumentOnce(t *testing.T) {
+	const others = "data_dir = \"/x\"\n\nbind {\n  api_addr = \"127.0.0.1:8600\"\n}\n"
+	cases := map[string]struct {
+		src        string
+		wantErr    string
+		configured bool
+	}{
+		"nil src":                {src: ""},
+		"only unrelated stanzas": {src: others},
+		"a provider among unrelated stanzas": {
+			src:        others + minimalConfig("/token"),
+			configured: true,
+		},
+		"syntax error":    {src: `provider "doppler" {`, wantErr: "secretsource:"},
+		"malformed block": {src: dopplerBlock(`  allow = []`, "    name = \"a\"\n    to = \"shop/a\""), wantErr: "no scopes in `allow`"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var src []byte
+			if tc.src != "" {
+				src = []byte(tc.src)
+			}
+			p, err := NewProviders("kanea.hcl", src, nil, discardLogger())
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
+				}
+				if p != nil {
+					t.Error("a failed constructor returned a loader")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewProviders: %v", err)
+			}
+			if got := p.Configured(); got != tc.configured {
+				t.Errorf("Configured = %v, want %v", got, tc.configured)
+			}
+			if got := p.Path(); got != "kanea.hcl" {
+				t.Errorf("Path = %q", got)
+			}
+			if tc.configured {
+				if got := p.Current(); len(got) != 1 {
+					t.Errorf("Current = %d providers, want 1", len(got))
+				}
+				return
+			}
+			if p.Changed() {
+				t.Error("an unconfigured loader reports changes")
+			}
+			if got := p.Current(); got != nil {
+				t.Errorf("an unconfigured loader serves providers: %v", got)
+			}
+		})
 	}
 }
 
