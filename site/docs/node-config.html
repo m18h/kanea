@@ -283,8 +283,13 @@
     <p>
       kanead hands out every address itself, so treat these ranges as fixed once the node
       is installed. <code>kanea init</code> writes <code>node_cidr</code> and
-      <code>cluster_cidr</code> into the file for that reason. There is no driver to
-      choose: every node runs the <a href="architecture.html#arch-network">eBPF datapath</a>.
+      <code>cluster_cidr</code> into the file for that reason.
+    </p>
+    <p>
+      There is no network mode to set. A Linux node runs the eBPF datapath, and eBPF
+      <a href="architecture.html#arch-network-linux">runs only on Linux</a>. On any other
+      system kanead falls back to bare network namespaces, for development only, and
+      these ranges go unused.
     </p>
 
     <div class="tablewrap">

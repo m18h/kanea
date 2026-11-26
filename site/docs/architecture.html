@@ -230,6 +230,28 @@ External:  containerd  ·  buildkitd  ·  Linux kernel (eBPF, cgroups v2, netfil
       there is no CO-RE and no <code>vmlinux.h</code>.
     </p>
 
+    <h3 id="arch-network-linux">eBPF runs only on Linux</h3>
+    <p>
+      eBPF is a Linux kernel feature, so the datapath works only on Linux. kanead picks
+      the network mode from the system it runs on. No setting changes it.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>System</th><th>Mode</th><th>What an alloc gets</th></tr></thead>
+        <tbody>
+          <tr><td>Linux</td><td><code>ebpf</code></td><td>An address, service VIPs, load balancing, network policy and internal DNS.</td></tr>
+          <tr><td>Anything else</td><td><code>netns</code></td><td>A bare network namespace: no address, no policy, no load balancing and no internal DNS.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The <code>netns</code> mode lets kanead start on a development machine. It is not a
+      way to run services: allocs cannot reach each other by name or by address. A node
+      you <a href="install.html#install-requirements">install</a> is always Linux and
+      always runs <code>ebpf</code>. The dashboard shows the mode under Settings, in the
+      Node tab.
+    </p>
+
     <h3 id="arch-network-identity">IP is identity</h3>
     <p>
       kanead allocates every alloc address from the node CIDR and every service

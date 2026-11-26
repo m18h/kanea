@@ -357,7 +357,7 @@ and one inside it stands until the next autoscale decision.</pre>
       <table>
         <thead><tr><th>Tab</th><th>What you do there</th></tr></thead>
         <tbody>
-          <tr><td>Node</td><td>Read what the node config decided: listen address, TLS, base domain, DNS, directories and the published-port policy. Read-only: edit <code>/etc/kanea/kanea.hcl</code> and restart kanead to change them.</td></tr>
+          <tr><td>Node</td><td>Read what the node config decided: listen address, TLS, base domain, DNS, directories and the published-port policy, plus the network mode the system gave it. Read-only: edit <code>/etc/kanea/kanea.hcl</code> and restart kanead to change them.</td></tr>
           <tr><td>Backup</td><td>Set the backup destination, a directory or S3. kanead probes a new destination with a test write before saving it. See <a href="backups.html#backups-destination">Back up a node</a>.</td></tr>
           <tr><td>Notifications</td><td>Configure channels node-wide and per project. Each has a test button.</td></tr>
           <tr><td>Accounts</td><td>Manage accounts and API tokens. See <a href="auth.html#auth-tokens">Sign-in and access</a>.</td></tr>

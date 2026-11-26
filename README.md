@@ -40,7 +40,7 @@ The same binary carries the dashboard, build pipelines, autoscaling, backups and
 | | |
 |---|---|
 | Platform | `linux/amd64`, `linux/arm64` |
-| Kernel | 5.10 or newer, cgroups v2 unified hierarchy with the `cpu`, `memory` and `pids` controllers |
+| Kernel | Linux 5.10 or newer, cgroups v2 unified hierarchy with the `cpu`, `memory` and `pids` controllers. The network is eBPF, which runs only on Linux |
 | Init system | systemd |
 | Clock | NTP-synchronised |
 

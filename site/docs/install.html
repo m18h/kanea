@@ -54,7 +54,7 @@
         <thead><tr><th>Requirement</th><th>What it must be</th></tr></thead>
         <tbody>
           <tr><td><b>Architectures</b></td><td><code>linux/amd64</code>, <code>linux/arm64</code>. Anything else is refused before a byte is downloaded.</td></tr>
-          <tr><td><b>Kernel</b></td><td>&ge; 5.10, cgroups v2 unified hierarchy.</td></tr>
+          <tr><td><b>Kernel</b></td><td>Linux &ge; 5.10, cgroups v2 unified hierarchy. The network is eBPF, which <a href="architecture.html#arch-network-linux">runs only on Linux</a>.</td></tr>
           <tr><td><b>Init system</b></td><td>systemd.</td></tr>
           <tr><td><b>Clock</b></td><td>NTP-synchronised. Certificates and audit timestamps depend on it.</td></tr>
         </tbody>
