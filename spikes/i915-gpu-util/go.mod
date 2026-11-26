@@ -1,5 +1,5 @@
 module github.com/m18h/kanea/spikes/i915-gpu-util
 
-go 1.27.3
+go 1.27.4
 
-require golang.org/x/sys v0.46.0
+require golang.org/x/sys v0.50.0

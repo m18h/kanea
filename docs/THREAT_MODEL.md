@@ -449,7 +449,7 @@ attacker cannot reach.
 **What is *not* defended:**
 
 - **A component whose pinned version is later found vulnerable.** The pin is
-  reproducibility, not immunity: if containerd 2.3.3 gets a CVE, every node
+  reproducibility, not immunity: if containerd 2.4.2 gets a CVE, every node
   installs the vulnerable version until the manifest is bumped and a release
   cut. The answer is manifest review on the same cadence as `govulncheck`, not
   a runtime control, and it is a deliberate trade against the alternative,

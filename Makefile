@@ -29,7 +29,9 @@ lint: ## golangci-lint (config: .golangci.yml)
 
 .PHONY: security
 security: ## Security gates: gosec + govulncheck + gitleaks (AGENTS.md constraint #7)
-	gosec -quiet ./...
+	@# spikes/ is excluded as in CI: gosec v2.30 walks nested modules, and the
+	@# spikes are throwaway validation code that ships in no binary.
+	gosec -quiet -exclude-dir=spikes ./...
 	govulncheck $(if $(GOVULNDB),-db "$(GOVULNDB)",) ./...
 	gitleaks detect --source . --verbose
 
@@ -82,8 +84,8 @@ dashboard: ## Dashboard gates: lint, typecheck, test, build, audit
 # running in the trust root nobody reviewed. Bump these deliberately.
 tools: ## Install dev tools (gitleaks via package manager: brew install gitleaks)
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
-	$(GO) install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
-	$(GO) install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+	$(GO) install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
+	$(GO) install golang.org/x/vuln/cmd/govulncheck@v1.10.0
 
 .PHONY: check
 check: vet test lint security dashboard bpf-verify ## Run all gates (CI parity); must pass before merge

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # provision-vm.sh: one-time setup of the kanea-spike OrbStack VM
-# (Ubuntu 24.04 arm64): containerd 2.3.3, runc 1.5.1, CNI plugins 1.9.1, Go 1.26.5.
+# (Ubuntu 24.04 arm64): containerd 2.4.2, runc 1.5.3, CNI plugins 1.9.1, Go 1.26.5.
 # All downloads checksum-verified. Idempotent. Spike-only, nothing ships.
 set -euo pipefail
 
-CONTAINERD_VERSION="2.3.3"
-RUNC_VERSION="1.5.1"
+CONTAINERD_VERSION="2.4.2"
+RUNC_VERSION="1.5.3"
 CNI_VERSION="1.9.1"
 # No Go toolchain: spike code cross-compiles on macOS (GOOS=linux GOARCH=arm64).
 ARCH="$(dpkg --print-architecture)" # arm64

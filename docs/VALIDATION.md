@@ -21,6 +21,7 @@ indistinguishable from one nobody checked.
 | Intel GPU occupancy is real and reaches the dashboard | §9.1, §17 (v1.96) | [§12](#12-intel-gpu-occupancy-v196), **confirmed 2026-08-21** |
 | A `USER <non-root>` build step cannot reach the metadata service | §10.2, §14 A10 (v1.105) | [§8](#8-a-build-cannot-reach-the-metadata-service-v175-v1105) check ③, **pending** |
 | :80 binds with no capability; restricted runs drop-ALL | §6.2 R13 (v1.105) | [§13](#13-the-v1105-posture-on-a-real-alloc), **pending** |
+| Components at containerd 2.4.2 / runc 1.5.3 / buildkit 0.35.1 run the lifecycle, build and wasm spikes | `internal/provision/components.json` | **pending**; re-run `spikes/containerd-lifecycle`, `spikes/kaniko-build`, `spikes/wasm-functions` |
 
 ---
 

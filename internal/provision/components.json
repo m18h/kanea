@@ -21,13 +21,13 @@
   "components": [
     {
       "name": "containerd",
-      "version": "2.3.3",
+      "version": "2.4.2",
       "kind": "archive",
       "summary": "container runtime daemon",
       "url": "https://github.com/containerd/containerd/releases/download/v{{.Version}}/containerd-static-{{.Version}}-linux-{{.Arch}}.tar.gz",
       "hashes": {
-        "amd64": "34d418fbea898a7787edb869c17b7d3c56d3314d42226032dd6f0e62cfdd18a5",
-        "arm64": "2618fbdbf55e26897f03b4d01b78e66d6746865d19ca72469b2675c4a62e5322"
+        "amd64": "da656542e754c699a0f438eab925e6ffdbd6346a4428e659f83dc058f04dcffe",
+        "arm64": "37b84b9534533672528141b9d815f58621a2fe5deee2daa84317800255756689"
       },
       "files": [
         {"from": "bin/containerd", "to": "bin/containerd", "mode": "0755"},
@@ -37,13 +37,13 @@
     },
     {
       "name": "runc",
-      "version": "1.5.1",
+      "version": "1.5.3",
       "kind": "binary",
       "summary": "OCI runtime",
       "url": "https://github.com/opencontainers/runc/releases/download/v{{.Version}}/runc.{{.Arch}}",
       "hashes": {
-        "amd64": "177df879d50c913eb205e898d5c1c05a18f574053c0ce5524c471208eaf06f6f",
-        "arm64": "ca70e7dbd6616ca782a59b5d3ac86909123fdaa9fa3f89dcf29051c70eee7ce9"
+        "amd64": "50dcc0b257d724fe07f3852c2dda52340223f038227c7572644eec870741223e",
+        "arm64": "07b52aee923cc432c38fe4fb6809a08fc6471994efed650af3635350588a20be"
       },
       "files": [
         {"from": "", "to": "bin/runc", "mode": "0755"}
@@ -71,12 +71,12 @@
     },
     {
       "name": "buildkit",
-      "version": "0.32.0",
+      "version": "0.35.1",
       "kind": "image",
       "summary": "rootless build daemon (the only build driver)",
       "image": "docker.io/moby/buildkit",
       "tag": "v{{.Version}}-rootless",
-      "digest": "sha256:40615b4a00f9a791b6fd1d6c41ebfc690e4f4b2e3710240bdd043b4467bc4d7a",
+      "digest": "sha256:7d02292556e66feea6d2d89b7ec143503b57e4f59a4efc6b7ece8547e4d3e5be",
       "_files": "These extract cleanly and run on the host; PRD §23.2 specified it that way.",
       "files": [
         {"from": "usr/bin/buildkitd", "to": "bin/buildkitd", "mode": "0755"},
