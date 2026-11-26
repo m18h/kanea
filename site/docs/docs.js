@@ -2,7 +2,8 @@
 //
 // PAGES below is the single source of the nav: the sidebar, the Previous/Next
 // links at the foot of a page and their order all come from it. To add a page,
-// add a row here; no page carries a hand-written list of the others.
+// add a row here; no page carries a hand-written list of the others. A row
+// with head: true is its group's own page: the group heading links to it.
 //
 // What it does, in order:
 //   1. On index.html, sends an old single-page anchor (index.html#spec-task)
@@ -14,6 +15,7 @@
 (function () {
   var PAGES = [
     { group: null, file: 'index.html', title: 'Documentation' },
+    { group: 'Get started', file: 'get-started.html', title: 'Get started', head: true },
     { group: 'Get started', file: 'install.html', title: 'Install a node' },
     { group: 'Get started', file: 'first-service.html', title: 'Deploy your first service' },
     { group: 'Get started', file: 'concepts.html', title: 'Concepts' },
@@ -101,10 +103,16 @@
   var group = null, index = -1;
 
   PAGES.forEach(function (page, i) {
-    if (page.group && page.group !== group) frag.appendChild(el('h4', page.group));
+    var a;
+    if (page.head) {
+      a = link('', page.file, page.title);
+      frag.appendChild(el('h4')).appendChild(a);
+    } else {
+      if (page.group && page.group !== group) frag.appendChild(el('h4', page.group));
+      a = link('part', page.file, page.title);
+      frag.appendChild(a);
+    }
     group = page.group;
-    var a = link('part', page.file, page.title);
-    frag.appendChild(a);
     if (page.file !== here) return;
     index = i;
     a.setAttribute('aria-current', 'page');
@@ -122,6 +130,13 @@
 
   list.textContent = '';
   list.appendChild(frag);
+
+  // The list can be longer than its panel. Start with the page being read
+  // near the top, so its sections show below it rather than off the bottom.
+  var open = list.querySelector('[aria-current="page"]');
+  if (open && list.scrollHeight > list.clientHeight) {
+    list.scrollTop = Math.max(0, open.offsetTop - 80);
+  }
 
   // ---- previous / next ----
   if (index >= 0) {

@@ -185,8 +185,10 @@ ol.steps li:not(:last-child)::after {
   content: ""; position: absolute; left: 13.5px; top: 34px; bottom: 4px;
   width: 1px; background: var(--border);
 }
-ol.steps h3 { margin-bottom: 4px; }
-ol.steps p { margin: 0 0 10px; color: var(--muted); font-size: .92rem; }
+/* A step's title sits on its number's line; the docs' h3 spacing would push
+   it a line below the circle. */
+ol.steps h3 { margin: 0 0 6px; padding: 0; border: 0; font-size: 1.1rem; line-height: 30px; }
+ol.steps p { margin: 0 0 10px; }
 pre.plain {
   margin: 0; padding: 12px 14px; overflow-x: auto;
   border: 1px solid var(--border); border-radius: 8px;
@@ -202,16 +204,18 @@ th { font-weight: 600; color: var(--muted); font-size: .78rem; text-transform: u
 td code { font-size: .84rem; color: var(--accent); }
 
 /* ---------- docs list ---------- */
+/* A card per page: the title over one line of what the page is for. */
 .docs { display: grid; gap: 12px; grid-template-columns: repeat(2, 1fr); }
 @media (max-width: 620px) { .docs { grid-template-columns: 1fr; } }
 .doc {
-  display: flex; align-items: baseline; gap: 12px;
-  padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius);
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius);
   text-decoration: none; background: var(--card);
 }
-.doc:hover { border-color: var(--muted); }
-.doc b { font-family: var(--mono); font-weight: 600; font-size: .88rem; }
-.doc span { color: var(--muted); font-size: .86rem; }
+.doc:hover { border-color: var(--accent); }
+.doc b { font-weight: 600; font-size: .95rem; color: var(--fg); }
+.doc:hover b { color: var(--accent); }
+.doc span { color: var(--muted); font-size: .86rem; line-height: 1.5; }
 
 /* ---------- footer ---------- */
 footer { border-top: 1px solid var(--border); padding: 34px 0 56px; color: var(--muted); font-size: .86rem; }
@@ -240,21 +244,26 @@ footer .sp { margin-left: auto; }
   .docs-shell { grid-template-columns: 1fr; gap: 0; padding-top: 28px; }
 }
 
-.sidebar { position: sticky; top: 82px; font-size: .9rem; }
+.sidebar { position: sticky; top: 82px; font-size: .875rem; line-height: 1.45; }
+/* The links reach 10px left of the text for their hover and current tint. The
+   panel scrolls, so it clips: the padding keeps that 10px inside it. */
 .sidebar nav {
   max-height: calc(100vh - 116px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  padding-right: 6px;
+  margin-left: -10px; padding: 0 6px 0 10px;
 }
-.sidebar a.part {
-  font-weight: 600; color: var(--fg);
-  margin-top: 16px; padding-left: 10px;
+/* A page, and under the page being read, its sections. */
+.sidebar a.part { color: var(--fg); }
+.sidebar a.sub { padding: 3px 10px 3px 22px; font-size: .82rem; }
+/* The section being read is marked by a bar, not a second tinted block: the
+   page above it already carries the tint, and two of them read as one. */
+.sidebar a.sub[aria-current] {
+  color: var(--fg); font-weight: 550;
+  box-shadow: inset 2px 0 0 var(--accent);
+  border-radius: 0 6px 6px 0;
 }
-.sidebar a.part:first-child { margin-top: 0; }
-.sidebar a.sub { padding-left: 22px; font-size: .855rem; }
-.sidebar a.sub[aria-current] { background: var(--accent-dim); }
 
 /* On a narrow screen the sidebar collapses behind a button: the page list and
    the current page's sections, stacked above the first paragraph, would push
@@ -280,51 +289,59 @@ footer .sp { margin-left: auto; }
 .sidebar h4 {
   font: 600 .7rem/1 var(--mono);
   letter-spacing: .12em; text-transform: uppercase;
-  color: var(--muted); margin: 22px 0 10px;
+  color: var(--muted); margin: 20px 0 8px;
 }
 .sidebar h4:first-child { margin-top: 0; }
 .sidebar a {
-  display: block; padding: 5px 10px; margin-left: -10px;
+  display: block; padding: 4px 10px; margin-left: -10px;
   border-radius: 6px; text-decoration: none; color: var(--muted);
 }
 .sidebar a:hover { color: var(--fg); background: var(--bg-soft); }
 .sidebar a[aria-current="page"] {
   color: var(--accent); background: var(--accent-dim); font-weight: 550;
 }
+/* A group with a page of its own: the heading is the link to it. */
+.sidebar h4 a {
+  margin: -6px 0 -6px -10px; padding: 6px 10px;
+  font: inherit; letter-spacing: inherit; color: var(--fg);
+}
+.sidebar h4 a::after { content: " \2192"; color: var(--muted); letter-spacing: 0; }
 
 .prose { min-width: 0; max-width: 76ch; }
 .prose h1 { font-size: 2.1rem; margin: 0 0 12px; }
 
 /* Three levels on every docs page: h2 is a section (docs.js lists these in
-   the sidebar), h3 a subsection within it, h4 a block inside that. */
+   the sidebar), h3 a subsection within it, h4 a block inside that. Only h2
+   draws a rule, so a section and its first subsection never stack two. */
 .prose h2 {
-  font-size: 1.9rem; margin: 84px 0 20px;
-  padding-top: 30px; border-top: 2px solid var(--accent-dim);
-  scroll-margin-top: 78px; letter-spacing: -.025em;
+  font-size: 1.5rem; margin: 56px 0 14px;
+  padding-top: 28px; border-top: 1px solid var(--border);
+  scroll-margin-top: 78px; letter-spacing: -.02em;
 }
-.prose h2:first-of-type { margin-top: 56px; }
-.prose h3 {
-  font-size: 1.32rem; margin: 46px 0 12px;
-  padding-top: 20px; border-top: 1px solid var(--border);
-  scroll-margin-top: 78px;
-}
-.prose h4 { font-size: 1.02rem; margin: 30px 0 8px; scroll-margin-top: 78px; }
+.prose h2:first-of-type { margin-top: 40px; }
+.prose h3 { font-size: 1.15rem; margin: 34px 0 10px; scroll-margin-top: 78px; }
+.prose h2 + h3 { margin-top: 18px; }
+.prose h4 { font-size: 1rem; margin: 26px 0 8px; scroll-margin-top: 78px; }
 @media (max-width: 900px) {
   /* Selecting a section must move to the section, not strand its title behind
      the sticky chrome: on a narrow screen that is the 58px header plus the
      ~62px contents bar, so 78px is 40-odd px short and the heading lands
      hidden. 132px clears both with a small gap. */
   .prose h2, .prose h3, .prose h4 { scroll-margin-top: 132px; }
-  .prose h2 { margin: 64px 0 18px; }
+  .prose h2 { margin: 44px 0 14px; }
 }
-.prose > p:first-of-type { font-size: 1.05rem; color: var(--muted); }
+/* The lede is the paragraph under the title. Not p:first-of-type: that is
+   the eyebrow above it. */
+.prose > h1 + p { font-size: 1.05rem; color: var(--muted); }
 .prose p { margin: 0 0 16px; }
 .prose ul, .prose ol { margin: 0 0 16px; padding-left: 22px; }
+/* The numbered steps draw their own gutter. */
+.prose ol.steps { padding-left: 0; }
+.prose ol.steps > li { margin-bottom: 0; }
 .prose li { margin-bottom: 7px; }
 .prose li::marker { color: var(--muted); }
 .prose a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
-/* break-word, not anywhere: a long path wraps in a paragraph on a narrow screen
-   without letting a table squeeze its code column to one character. */
+/* break-word in running text: a long path wraps on a narrow screen. */
 .prose code {
   font-size: .875em; padding: 1px 5px; border-radius: 5px;
   background: var(--bg-soft); border: 1px solid var(--border);
@@ -342,7 +359,13 @@ footer .sp { margin-left: auto; }
 }
 .prose table code { border: 0; background: none; padding: 0; }
 .prose td, .prose th { vertical-align: top; }
+/* The first column is a name and stays on one line. In the columns after it a
+   long value may break anywhere, or one path would take the width the
+   explanation beside it needs and push the table past its frame. */
 .prose th:first-child, .prose td:first-child { white-space: nowrap; }
+.prose td:not(:first-child) code { overflow-wrap: anywhere; }
+/* A table whose first column is a sentence, not a name. */
+.prose table.prose-first td:first-child { white-space: normal; }
 
 /* A rule reference: the identifier stays with the sentence it governs. */
 .rule {

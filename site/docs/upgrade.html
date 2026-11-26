@@ -302,7 +302,7 @@ runs any state migrations. Running workloads are untouched throughout.</pre>
           <tr><td><code>--volume-dir</code></td><td><code>storage.volume_dir</code></td><td></td></tr>
           <tr><td><code>--socket</code></td><td><code>bind.api_socket</code></td><td></td></tr>
           <tr><td><code>--containerd</code></td><td><code>containerd.socket</code></td><td></td></tr>
-          <tr><td><code>--network</code></td><td><code>network.driver</code></td><td></td></tr>
+          <tr><td><code>--network</code></td><td>none</td><td><code>ebpf</code> converts to nothing: the eBPF datapath is the only network. A unit with <code>--network netns</code> is refused, because that mode is removed. Take the flag out of the unit, then run the migration again.</td></tr>
           <tr><td><code>--bpf-dir</code></td><td><code>network.bpf_dir</code></td><td></td></tr>
           <tr><td><code>--node-cidr</code></td><td><code>network.node_cidr</code></td><td></td></tr>
           <tr><td><code>--cluster-cidr</code></td><td><code>network.cluster_cidr</code></td><td></td></tr>

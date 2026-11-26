@@ -102,7 +102,6 @@
         <tr><td><code>--log-dir</code></td><td><code>/var/log/kanea/allocs</code></td><td>Workload log directory.</td></tr>
         <tr><td><code>--unit-dir</code></td><td><code>/etc/systemd/system</code></td><td>Where the systemd units are written.</td></tr>
         <tr><td><code>--prefix</code></td><td><code>/usr/local/lib/kanea</code></td><td>Where component binaries are installed.</td></tr>
-        <tr><td><code>--network</code></td><td><code>ebpf</code></td><td>Network mode: <code>ebpf</code> or <code>netns</code>.</td></tr>
         <tr><td><code>--node-cidr</code></td><td><code>10.244.0.0/24</code></td><td>This node's container subnet. Its <code>.1</code> is the internal DNS address.</td></tr>
         <tr><td><code>--cluster-cidr</code></td><td><code>10.244.0.0/16</code></td><td>The range treated as internal. It must contain <code>--node-cidr</code>.</td></tr>
         <tr><td><code>--node-cidr6</code></td><td>-</td><td>This node's IPv6 container subnet. Opt-in; needs the other two <code>*6</code> flags.</td></tr>
@@ -194,7 +193,7 @@
         <tr><td><code>--arch</code></td><td>host architecture</td><td>Target architecture: <code>amd64</code> or <code>arm64</code>.</td></tr>
         <tr><td><code>-o</code></td><td><code>kanea_&lt;version&gt;_linux_&lt;arch&gt;_bundle.tar.gz</code></td><td>Output path.</td></tr>
         <tr><td><code>--dir</code></td><td>off</td><td>Write a directory instead of a tarball.</td></tr>
-        <tr><td><code>--no-images</code></td><td>off</td><td>Omit buildkit. Only useful for a <code>netns</code> node that runs no builds.</td></tr>
+        <tr><td><code>--no-images</code></td><td>off</td><td>Omit buildkit. For a node that runs no builds, with <code>builds.buildkit_addr = "off"</code>.</td></tr>
         <tr><td><code>--containerd</code></td><td><code>/run/kanea/containerd.sock</code></td><td>containerd socket used to export the image components.</td></tr>
       </tbody>
     </table></div>
@@ -549,7 +548,7 @@ kanea run --image=nginx:1.27-alpine --name=web --project=demo [--count=1]</pre>
       The alloc table's <code>REASON</code> column says why each alloc last stopped, or why
       it never ran:
     </p>
-    <div class="tablewrap"><table>
+    <div class="tablewrap"><table class="prose-first">
       <thead><tr><th>Reason</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>OOMKilled</code></td><td>Killed for memory. Read from the alloc's cgroup, not guessed from exit code 137.</td></tr>

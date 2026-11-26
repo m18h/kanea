@@ -90,7 +90,7 @@
           <tr><td><a href="#nodeconfig-auth"><code>auth</code></a></td><td>Session cookies, single sign-on (OIDC) and directory login (LDAP).</td></tr>
           <tr><td><a href="#nodeconfig-audit"><code>audit</code></a></td><td>How long audit entries are kept.</td></tr>
           <tr><td><a href="#nodeconfig-dashboard"><code>dashboard</code></a></td><td>Whether the dashboard is served, and which extra origins may connect.</td></tr>
-          <tr><td><a href="#nodeconfig-network"><code>network</code></a></td><td>The network driver and the address ranges allocs and services use.</td></tr>
+          <tr><td><a href="#nodeconfig-network"><code>network</code></a></td><td>The address ranges allocs and services use.</td></tr>
           <tr><td><a href="#nodeconfig-dns"><code>dns</code></a></td><td>The internal resolver's address and its upstream resolvers.</td></tr>
           <tr><td><a href="#nodeconfig-storage"><code>storage</code></a></td><td>Where local volumes live and which host directories a spec may mount.</td></tr>
           <tr><td><a href="#nodeconfig-images"><code>images</code></a></td><td>The default pull policy and image garbage collection.</td></tr>
@@ -282,15 +282,15 @@
 
     <p>
       kanead hands out every address itself, so treat these ranges as fixed once the node
-      is installed. <code>kanea init</code> writes <code>driver</code>, <code>node_cidr</code>
-      and <code>cluster_cidr</code> into the file for that reason.
+      is installed. <code>kanea init</code> writes <code>node_cidr</code> and
+      <code>cluster_cidr</code> into the file for that reason. There is no driver to
+      choose: every node runs the <a href="architecture.html#arch-network">eBPF datapath</a>.
     </p>
 
     <div class="tablewrap">
       <table>
         <thead><tr><th>Attribute</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td><code>driver</code></td><td>string</td><td><code>"ebpf"</code></td><td>The network driver. <code>"netns"</code> is for development only: it has no network policy and no service load balancing.</td></tr>
           <tr><td><code>node_cidr</code></td><td>string</td><td><code>"10.244.0.0/24"</code></td><td>The subnet alloc addresses come from. Its <code>.1</code> is the node's own address on that subnet.</td></tr>
           <tr><td><code>cluster_cidr</code></td><td>string</td><td><code>"10.244.0.0/16"</code></td><td>The routed range, masqueraded on egress. It must contain <code>node_cidr</code>.</td></tr>
           <tr><td><code>service_cidr</code></td><td>string</td><td><code>"10.201.0.0/16"</code></td><td>The pool service frontend addresses come from. It must not overlap the other two.</td></tr>
@@ -907,7 +907,6 @@ journalctl -u kanead -n 20</pre>
 <span class="c"># kanead is the IPAM: these are fixed when the node is installed. node_cidr</span>
 <span class="c"># must sit inside cluster_cidr, and neither may overlap service_cidr.</span>
 <span class="k">network</span> {
-  <span class="k">driver</span>       = <span class="s">"ebpf"</span>                  <span class="c"># or "netns": development only, no policy, no service LB</span>
   <span class="k">node_cidr</span>    = <span class="s">"10.244.0.0/24"</span>         <span class="c"># alloc addresses</span>
   <span class="k">cluster_cidr</span> = <span class="s">"10.244.0.0/16"</span>         <span class="c"># routed range, masqueraded on egress</span>
   <span class="k">service_cidr</span> = <span class="s">"10.201.0.0/16"</span>         <span class="c"># service frontends</span>

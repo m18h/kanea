@@ -315,7 +315,6 @@ Configure a backup destination before you need one; see docs/DR_RUNBOOK.md.</pre
 alloc_log_dir = "/var/log/kanea/allocs"
 
 network {
-  driver       = "ebpf"
   node_cidr    = "10.244.0.0/24"
   cluster_cidr = "10.244.0.0/16"
 }
@@ -360,7 +359,7 @@ bind {
       keeps the key, the certificate, the accounts and your settings.
     </p>
     <div class="tablewrap">
-      <table>
+      <table class="prose-first">
         <thead><tr><th>Kept</th><th>Rewritten</th></tr></thead>
         <tbody>
           <tr><td>The master key. An existing key is never regenerated.</td><td>The four systemd units, every time, at mode 0644.</td></tr>

@@ -137,7 +137,7 @@ The site at [m18h.github.io/kanea/docs](https://m18h.github.io/kanea/docs/) hold
 
 | Group | Pages |
 |---|---|
-| Get started | [Install a node](https://m18h.github.io/kanea/docs/install.html) · [Deploy your first service](https://m18h.github.io/kanea/docs/first-service.html) · [Concepts](https://m18h.github.io/kanea/docs/concepts.html) |
+| [Get started](https://m18h.github.io/kanea/docs/get-started.html) | [Install a node](https://m18h.github.io/kanea/docs/install.html) · [Deploy your first service](https://m18h.github.io/kanea/docs/first-service.html) · [Concepts](https://m18h.github.io/kanea/docs/concepts.html) |
 | Guides | [Domains and HTTPS](https://m18h.github.io/kanea/docs/domains.html) · [Secrets](https://m18h.github.io/kanea/docs/secrets.html) · [Volumes and host access](https://m18h.github.io/kanea/docs/volumes.html) · [Back up a node](https://m18h.github.io/kanea/docs/backups.html) · [Sign-in and access](https://m18h.github.io/kanea/docs/auth.html) · [The dashboard](https://m18h.github.io/kanea/docs/dashboard.html) · [Remote nodes and CI](https://m18h.github.io/kanea/docs/remote.html) · [AI agents (MCP)](https://m18h.github.io/kanea/docs/mcp.html) · [Upgrade and uninstall](https://m18h.github.io/kanea/docs/upgrade.html) · [Sample stacks](https://m18h.github.io/kanea/docs/stacks.html) · [Troubleshooting](https://m18h.github.io/kanea/docs/troubleshooting.html) |
 | Reference | [Node config (`kanea.hcl`)](https://m18h.github.io/kanea/docs/node-config.html) · [Spec reference](https://m18h.github.io/kanea/docs/spec.html) · [CLI reference](https://m18h.github.io/kanea/docs/cli.html) |
 | Internals | [Architecture](https://m18h.github.io/kanea/docs/architecture.html) |
