@@ -4,7 +4,7 @@
 // driver it should ship (PRD §10.2 defers that decision to this spike).
 //
 // Candidates: kaniko v1.24.0 (the PRD's incumbent, upstream ARCHIVED),
-// buildkit v0.32.0 (rootless), buildah v1.45.0.
+// buildkit v0.35.1 (rootless), buildah v1.45.0.
 //
 // Nothing here ships. M7 implements the winner in internal/gitops.
 package main
@@ -21,7 +21,7 @@ const (
 	ctrNamespace   = "kanea-spike-build"
 
 	kanikoImage   = "gcr.io/kaniko-project/executor:v1.24.0"
-	buildkitImage = "docker.io/moby/buildkit:v0.32.0-rootless"
+	buildkitImage = "docker.io/moby/buildkit:v0.35.1-rootless"
 	buildahImage  = "quay.io/buildah/stable:v1.43.1" // newest published image; source is at v1.45.0
 
 	regAddr = "127.0.0.1:5000"

@@ -96,7 +96,7 @@ var builders = []builder{
 	{
 		Name:   "buildkit",
 		Image:  buildkitImage,
-		Status: "actively maintained (v0.32.0, 2026-07-29)",
+		Status: "actively maintained (v0.35.1, 2026-11-19)",
 		notes: "buildkitd is a daemon, not a one-shot task: as a containerd task it needs a PRIVILEGED " +
 			"container (nested runc does bind mounts), uid 0, a host /sys/fs/cgroup, an existing " +
 			"XDG_RUNTIME_DIR, and --oci-worker-net=host for the nested build steps",

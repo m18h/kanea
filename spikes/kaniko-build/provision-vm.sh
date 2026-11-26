@@ -5,13 +5,13 @@
 # Sets up a local OCI registry with basic auth (so push credentials are exercised
 # the way PRD §10.2 describes) and pulls the three candidate builders:
 #   kaniko   v1.24.0: the PRD's incumbent; upstream repo is ARCHIVED (read-only)
-#   buildkit v0.32.0: actively maintained, rootless image
+#   buildkit v0.35.1: actively maintained, rootless image
 #   buildah  v1.43.1: actively maintained, chroot isolation available
 # Idempotent. Spike-only, nothing ships.
 set -euo pipefail
 
 KANIKO_IMAGE="gcr.io/kaniko-project/executor:v1.24.0"
-BUILDKIT_IMAGE="docker.io/moby/buildkit:v0.32.0-rootless"
+BUILDKIT_IMAGE="docker.io/moby/buildkit:v0.35.1-rootless"
 BUILDAH_IMAGE="quay.io/buildah/stable:v1.43.1"
 REGISTRY_IMAGE="docker.io/library/registry:3"
 

@@ -96,7 +96,7 @@ export class ExecSession {
   }
 
   /** sendInput forwards stdin bytes, split under the server's frame cap. */
-  sendInput(bytes: Uint8Array): void {
+  sendInput(bytes: Uint8Array<ArrayBuffer>): void {
     if (this.ws.readyState !== WebSocket.OPEN) return
     for (let off = 0; off < bytes.length; off += maxStdinFrame) {
       this.ws.send(bytes.subarray(off, off + maxStdinFrame))
