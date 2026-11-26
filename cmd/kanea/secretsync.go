@@ -24,7 +24,7 @@ const (
 	// replication RPO's number (§15.3): rotation tools work in minutes, and
 	// anything faster is spending someone else's API rate limit.
 	secretSyncDefaultInterval = 5 * time.Minute
-	// secretSyncMinInterval is the floor the flag refuses below: a poll is a
+	// secretSyncMinInterval is the floor secrets.sync_interval refuses below: a poll is a
 	// request against a provider's rate limit, five of them per pass.
 	secretSyncMinInterval = 30 * time.Second
 	// secretSyncRetryInterval is the first retry after a failed pass; each

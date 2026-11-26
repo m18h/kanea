@@ -22,14 +22,14 @@ var ErrInvalidSettings = errors.New("api: invalid settings")
 // the API decides who may change settings; the binary decides what a record
 // becomes.
 type SettingsService interface {
-	// Node reports the flag-decided facts, read-only.
+	// Node reports the facts kanea.hcl decided, read-only.
 	Node() NodeConfigView
 	Backup(ctx context.Context) (BackupSettingsView, error)
 	// PutBackup validates, probes the new destination, commits the record and
 	// swaps replication: in that order, so a bad destination leaves the old
 	// replication untouched.
 	PutBackup(ctx context.Context, rec settings.BackupSettings) (BackupSettingsView, error)
-	// ResetBackup deletes the record, reverting to the flags.
+	// ResetBackup deletes the record, reverting to kanea.hcl.
 	ResetBackup(ctx context.Context) (BackupSettingsView, error)
 	Notifications(ctx context.Context) (NotificationSettingsView, error)
 	PutNotifications(ctx context.Context, rec settings.NotificationSettings) (NotificationSettingsView, error)
@@ -38,8 +38,8 @@ type SettingsService interface {
 	PutProjectNotifications(ctx context.Context, project string, n *jobspec.Notifications) (ProjectNotificationsView, error)
 }
 
-// NodeConfigView is what the flags decided: shown, never edited here. Changing
-// any of it is a unit edit and a restart, and the page says so.
+// NodeConfigView is what kanea.hcl decided: shown, never edited here. Changing
+// any of it is an edit of that file and a restart, and the page says so.
 type NodeConfigView struct {
 	Listen       string `json:"listen,omitempty"`
 	TLS          bool   `json:"tls"`
@@ -61,7 +61,7 @@ type NodeConfigView struct {
 // BackupSettingsView is the effective backup configuration and where it came
 // from. The secret key travels only as the reference's name.
 type BackupSettingsView struct {
-	// Source is "store", "flags" or "none".
+	// Source is "store", "file" or "none".
 	Source   string                   `json:"source"`
 	Settings *settings.BackupSettings `json:"settings,omitempty"`
 	// Status is live replication health, when replication runs.
@@ -135,7 +135,7 @@ func (s *Server) handlePutBackupSettings(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, view)
 }
 
-// handleResetBackupSettings deletes the record, reverting to the flags.
+// handleResetBackupSettings deletes the record, reverting to kanea.hcl.
 func (s *Server) handleResetBackupSettings(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
 		writeError(w, http.StatusServiceUnavailable, errNoSettings)
@@ -147,7 +147,7 @@ func (s *Server) handleResetBackupSettings(w http.ResponseWriter, r *http.Reques
 		writeSettingsError(w, err)
 		return
 	}
-	s.log.Info("backup settings reverted to flags", "source", view.Source)
+	s.log.Info("backup settings reverted to kanea.hcl", "source", view.Source)
 	writeJSON(w, http.StatusOK, view)
 }
 

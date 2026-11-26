@@ -8,8 +8,8 @@ import { useDateStyle } from '@/hooks/useDateStyle'
 import { timeOrNever } from '@/lib/settings'
 
 /**
- * NodeSection shows what the unit flags decided: read facts, never forms.
- * Changing any of it is a unit edit and a restart, and the section says so
+ * NodeSection shows what kanea.hcl decided: read facts, never forms.
+ * Changing any of it is an edit of that file and a restart, and the section says so
  * rather than growing inputs that could not take effect.
  */
 export function NodeSection({ node }: { node: NodeConfig }) {
@@ -28,7 +28,8 @@ export function NodeSection({ node }: { node: NodeConfig }) {
       <div className="flex items-baseline gap-3">
         <h2 className="text-lg font-semibold tracking-tight">Node</h2>
         <span className="text-xs text-muted-foreground">
-          These are unit flags: edit the kanead unit and restart to change them.
+          These come from <code className="font-mono text-xs">/etc/kanea/kanea.hcl</code> on
+          the node: edit it and restart kanead to change them.
         </span>
       </div>
 

@@ -152,7 +152,7 @@ func (s *Server) handleListFunctions(w http.ResponseWriter, r *http.Request) {
 
 // functionRate reads the latest flows_per_second sample for a function:
 // the datapath's connect counter, which sees edge, east-west and invoker
-// traffic alike (§9.1). Nil when no sample exists: under --network netns
+// traffic alike (§9.1). Nil when no sample exists: under network.driver "netns"
 // there is no datapath, and "no data is never zero".
 func (s *Server) functionRate(subject string) *float64 {
 	if s.metrics == nil {

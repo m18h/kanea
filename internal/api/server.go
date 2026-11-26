@@ -69,7 +69,7 @@ type ServerConfig struct {
 	// Secrets backs the write-only secrets surface. Nil disables those routes.
 	Secrets SecretStore
 	// SecretSync reports external-provider sync status (§5.2.13). Nil means
-	// no providers are configured and the route answers 404 naming the flag.
+	// no providers are configured and the route answers 404 naming kanea.hcl.
 	// Callers must pass untyped nil when unconfigured: a typed nil pointer
 	// in an interface field is a non-nil interface (the buildReplication
 	// lesson).

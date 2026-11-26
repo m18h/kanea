@@ -213,4 +213,4 @@ func (s *Server) handleRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 var errNoBackups = errors.New(
-	"api: no backup destination is configured on this daemon (see --backup-dir or --backup-s3-endpoint)")
+	"api: no backup destination is configured on this daemon (see backup.dir or backup.s3 in /etc/kanea/kanea.hcl)")

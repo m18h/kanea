@@ -19,7 +19,7 @@ export const exposeSchema = z.object({
   Domains: z.array(z.string()).nullish(),
   Port: z.number(),
   // Where the certificate comes from (R20). Empty means the node's
-  // --tls-default decides, so this is not a value to render as "none".
+  // tls.default_mode decides, so this is not a value to render as "none".
   TLSMode: z.string().optional(),
   TLSName: z.string().optional(),
   // The pre-v1.33 spelling, still on records written before the upgrade.
@@ -204,7 +204,7 @@ export const functionViewSchema = z.object({
   healthy: z.number(),
   restarts: z.number(),
   // Absent means "not measured", never zero; the datapath is not scraped
-  // under --network netns, and a dash is the honest render.
+  // under network.driver "netns", and a dash is the honest render.
   invocations_per_minute: z.number().optional(),
   invoker: invokerStatsSchema.nullish(),
 })
@@ -1177,7 +1177,7 @@ export const backupLiveStatusSchema = z.object({
 })
 
 export const backupSettingsViewSchema = z.object({
-  // "store", "flags" or "none": where the effective configuration came from.
+  // "store", "file" or "none": where the effective configuration came from.
   source: z.string(),
   settings: backupSettingsRecordSchema.nullish(),
   status: backupLiveStatusSchema.nullish(),
@@ -1242,7 +1242,7 @@ export async function putBackupSettings(
   return backupSettingsViewSchema.parse(await resp.json())
 }
 
-/** Delete the backup record, reverting the node to its unit flags. */
+/** Delete the backup record, reverting the node to its kanea.hcl. */
 export async function resetBackupSettings(csrf?: string): Promise<BackupSettingsView> {
   const resp = await apiFetch('/v1/settings/backup', {
     method: 'DELETE',
@@ -1520,7 +1520,7 @@ export type SecretProviderStatus = z.infer<typeof secretProviderStatusSchema>
 
 /**
  * Read provider sync status: metadata by construction, never values. Null
- * when this node has no --secrets-providers-config, which is the common case
+ * when this node's kanea.hcl has no provider blocks, which is the common case
  * and not worth a section, let alone an error.
  */
 export async function fetchSecretProviders(

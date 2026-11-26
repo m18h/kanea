@@ -207,7 +207,7 @@ func newDatapath(cfg Config, s seams) (*Datapath, error) {
 		}
 	}
 	if v6Count != 0 && v6Count != 3 {
-		return nil, fmt.Errorf("datapath: --node-cidr6, --cluster-cidr6 and --service-cidr6 come as a trio: all three or none")
+		return nil, fmt.Errorf("datapath: network.node_cidr6, network.cluster_cidr6 and network.service_cidr6 come as a trio: all three or none")
 	}
 	if v6Count == 3 {
 		for _, p := range []struct {

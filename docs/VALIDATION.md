@@ -22,6 +22,7 @@ indistinguishable from one nobody checked.
 | A `USER <non-root>` build step cannot reach the metadata service | §10.2, §14 A10 (v1.105) | [§8](#8-a-build-cannot-reach-the-metadata-service-v175-v1105) check ③, **pending** |
 | :80 binds with no capability; restricted runs drop-ALL | §6.2 R13 (v1.105) | [§13](#13-the-v1105-posture-on-a-real-alloc), **pending** |
 | Components at containerd 2.4.2 / runc 1.5.3 / buildkit 0.35.1 run the lifecycle, build and wasm spikes | `internal/provision/components.json` | **pending**; re-run `spikes/containerd-lifecycle`, `spikes/kaniko-build`, `spikes/wasm-functions` |
+| An installed node migrates its unit flags into kanea.hcl on upgrade, with no workload restart | §15.1 (v1.115) | **pending**; on a VM with the previous release: `sudo kanea upgrade`, then `systemctl is-active kanead kanea-edge` (both active within 30 s), `systemctl cat kanead` shows a bare `ExecStart`, `/etc/kanea/kanea.hcl` holds the old values, `kanea ps` ages unchanged |
 
 ---
 
@@ -31,7 +32,7 @@ indistinguishable from one nobody checked.
 works":
 
 > `init`→first HTTPS service ≤ 5 min on a fresh VM, **including on a node with
-> no public name**, where that means `--tls-default self-signed`,
+> no public name**, where that means `tls.default_mode = "self-signed"`,
 > `kanea ca show`, and one certificate installed on one device (§7.3)
 
 So this is **two timed runs**, and the first needs no domain at all. Both start
@@ -47,7 +48,7 @@ the finding, not a footnote.
 
 ### Run A: no public name (local VM)
 
-The `--tls-default self-signed` path. No DNS, no ACME, no inbound ports: this
+The `tls.default_mode = "self-signed"` path. No DNS, no ACME, no inbound ports: this
 one runs on a laptop.
 
 ```bash
@@ -61,8 +62,12 @@ curl -fsSL https://raw.githubusercontent.com/m18h/kanea/main/scripts/install.sh 
 sudo kanea init
 
 # 4. a service with a self-signed certificate from the node's own CA
-sudo systemctl edit --full kanead    # or set --tls-default in the unit / kanea.hcl
-# ... --base-domain home.lan --tls-default self-signed
+sudoedit /etc/kanea/kanea.hcl
+#   base_domain = "home.lan"
+#   tls {
+#     default_mode = "self-signed"
+#   }
+sudo systemctl restart kanead
 
 # Checked against the real parser. The blocks are on their own lines on
 # purpose: HCL's single-line block form takes exactly one argument, so
@@ -105,8 +110,8 @@ The ACME path. This needs a cheap cloud VM with a public A record, because
 HTTP-01 needs inbound :80 from Let's Encrypt and forwarding a laptop VM's port
 is not an honest substitute for what an operator will do.
 
-Same walk, with `--base-domain <your.domain>` and `--tls-default acme` (plus
-`--acme-email`). Record time to a browser-green Let's Encrypt certificate.
+Same walk, with `base_domain = "<your.domain>"` and `tls.default_mode = "acme"` (plus
+`acme.email`) in `/etc/kanea/kanea.hcl`. Record time to a browser-green Let's Encrypt certificate.
 
 ### Results
 

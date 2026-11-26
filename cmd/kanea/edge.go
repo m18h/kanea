@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -13,7 +12,7 @@ import (
 	"github.com/m18h/kanea/internal/edge"
 	"github.com/m18h/kanea/internal/jobspec"
 	"github.com/m18h/kanea/internal/logging"
-	"github.com/m18h/kanea/internal/ratelimit"
+	"github.com/m18h/kanea/internal/nodeconfig"
 )
 
 // runEdge is kanea-edge: the public ingress proxy.
@@ -26,38 +25,19 @@ import (
 // crashed, or mid-upgrade is invisible here: the last route table keeps
 // serving.
 func runEdge(args []string) error {
-	fs := flag.NewFlagSet("edge", flag.ContinueOnError)
-	snapshot := fs.String("routes", edge.DefaultSnapshotPath, "route table kanead publishes")
-	httpAddr := fs.String("http", edge.DefaultHTTPAddr, "public HTTP listen address")
-	httpsAddr := fs.String("https", edge.DefaultHTTPSAddr,
-		"public HTTPS listen address (\"off\" serves plaintext only)")
-	certs := fs.String("certs", edge.DefaultBundlePath, "certificate bundle kanead publishes")
-	statusAddr := fs.String("status", edge.DefaultStatusAddr,
-		"loopback health/diagnostics address (\"off\" disables)")
-	poll := fs.Duration("poll", edge.DefaultPollInterval, "how often to re-read the route table")
-	drain := fs.Duration("drain", edge.DefaultDrainTimeout, "how long in-flight requests get on shutdown")
-	publishDrain := fs.Duration("publish-drain", 0,
-		"how long connections on published tcp ports get on shutdown (default: --drain)")
-	maxPublishedConns := fs.Int("max-published-conns", edge.DefaultMaxPublishedConns,
-		"node-wide ceiling on live connections across every published tcp port")
-	functionsPort := fs.Int("functions-port", 0,
-		"node port dispatching /<project>/<function>/ to http-triggered functions "+
-			"on a node with no base domain; 0 disables")
-	bodyTimeout := fs.Duration("body-timeout", edge.DefaultBodyTimeout,
-		"bound on reading a request body (0 disables)")
-	upstreamTimeout := fs.Duration("upstream-timeout", edge.DefaultResponseHeaderTimeout,
-		"bound on an upstream starting to answer (does not bound the body)")
-	securityHeaders := fs.Bool("security-headers", true,
-		"add the default security response headers")
-	limiterCap := fs.Int("rate-limit-buckets", ratelimit.DefaultCapacity,
-		"maximum tracked rate-limit buckets before least-recently-used eviction")
-	memLimit := fs.String("memory-limit", "", "GOMEMLIMIT for this process, e.g. 128MiB")
-	logLevel := fs.String("log-level", "info", "debug|info|warn|error")
-	if err := fs.Parse(args); err != nil {
+	if len(args) > 0 {
+		return daemonArgs("edge", args)
+	}
+	// The edge reads the same file kanead does (PRD §15.1, v1.115), and only
+	// its own two stanzas of it: a mistake in a stanza that is kanead's to
+	// validate must not take the public listeners down with it.
+	file, err := nodeconfig.LoadEdge(nodeconfig.DefaultPath)
+	if err != nil {
 		return err
 	}
+	s := resolveEdgeSettings(file)
 
-	logger, closer, err := logging.New(logging.Config{Level: *logLevel, Format: "text"})
+	logger, closer, err := logging.New(logging.Config{Level: s.logLevel, Format: "text"})
 	if err != nil {
 		return fmt.Errorf("logging: %w", err)
 	}
@@ -70,10 +50,10 @@ func runEdge(args []string) error {
 	// A soft memory limit rather than a hard one: the edge sits inside the
 	// §21 platform budget, and GC pressure is a better failure mode than an
 	// OOM kill for the process holding public traffic.
-	if *memLimit != "" {
-		limit, err := jobspec.ParseByteSize(*memLimit)
+	if s.memLimit != "" {
+		limit, err := jobspec.ParseByteSize(s.memLimit)
 		if err != nil {
-			return fmt.Errorf("--memory-limit: %w", err)
+			return fmt.Errorf("edge.memory_limit: %w", err)
 		}
 		debug.SetMemoryLimit(limit)
 		logger.Info("memory limit set", "bytes", limit)
@@ -82,40 +62,40 @@ func runEdge(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	status := *statusAddr
+	status := s.statusAddr
 	if status == statusOff {
 		status = ""
 	}
 	// Without TLS the edge still serves :80: a node with no certificate yet
 	// must be reachable, or the HTTP-01 validation that would produce one
 	// cannot complete (PRD §7.3).
-	tlsAddr := *httpsAddr
+	tlsAddr := s.httpsAddr
 	if tlsAddr == tlsOff {
 		tlsAddr = ""
 		logger.Warn("TLS is disabled; serving plaintext only")
 	}
 
 	server, err := edge.New(edge.Config{
-		HTTPAddr:     *httpAddr,
+		HTTPAddr:     s.httpAddr,
 		HTTPSAddr:    tlsAddr,
-		BundlePath:   *certs,
+		BundlePath:   s.certs,
 		StatusAddr:   status,
-		SnapshotPath: *snapshot,
-		PollInterval: *poll,
-		DrainTimeout: *drain,
-		// Separate from --drain on purpose: a game session or a psql
+		SnapshotPath: s.snapshot,
+		PollInterval: s.poll,
+		DrainTimeout: s.drain,
+		// Separate from edge.drain_timeout on purpose: a game session or a psql
 		// connection is not an HTTP request, and an operator may well want 60 s
 		// here and 15 s on :443.
-		PublishDrain:      *publishDrain,
-		MaxPublishedConns: *maxPublishedConns,
-		FunctionsPort:     *functionsPort,
+		PublishDrain:      s.publishDrain,
+		MaxPublishedConns: s.maxPublishedConns,
+		FunctionsPort:     s.functionsPort,
 		Version:           version,
 		Logger:            logger,
 		Proxy: edge.ProxyConfig{
-			BodyTimeout:           *bodyTimeout,
-			ResponseHeaderTimeout: *upstreamTimeout,
-			SecurityHeaders:       *securityHeaders,
-			LimiterCapacity:       *limiterCap,
+			BodyTimeout:           s.bodyTimeout,
+			ResponseHeaderTimeout: s.upstreamTimeout,
+			SecurityHeaders:       s.securityHeaders,
+			LimiterCapacity:       s.limiterCap,
 		},
 	})
 	if err != nil {

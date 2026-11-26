@@ -57,7 +57,7 @@ func newVIPAllocator(st Store, cidr, cidr6 string) (*vipAllocator, error) {
 		return nil, fmt.Errorf("service CIDR %q: %w", cidr, err)
 	}
 	if !prefix.Addr().Is4() {
-		return nil, fmt.Errorf("service CIDR %q: v4 frontends come from a v4 pool; --service-cidr6 is the v6 half", cidr)
+		return nil, fmt.Errorf("service CIDR %q: v4 frontends come from a v4 pool; network.service_cidr6 is the v6 half", cidr)
 	}
 	a := &vipAllocator{store: st, prefix: prefix.Masked()}
 	if cidr6 != "" {

@@ -580,7 +580,7 @@ func (c *Client) PutBackupSettings(ctx context.Context, rec settings.BackupSetti
 	return view, err
 }
 
-// ResetBackupSettings deletes the record, reverting to the daemon's flags.
+// ResetBackupSettings deletes the record, reverting to the node's kanea.hcl.
 func (c *Client) ResetBackupSettings(ctx context.Context) (BackupSettingsView, error) {
 	var view BackupSettingsView
 	err := c.do(ctx, http.MethodDelete, PathSettings+"/backup", nil, &view)

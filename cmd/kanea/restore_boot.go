@@ -68,7 +68,7 @@ func restoreAtStart(ctx context.Context, opts bootRestoreOptions) error {
 
 	if !opts.sink.configured() {
 		return errors.New("a restore is staged but no backup destination is configured; " +
-			"point --backup-dir or --backup-s3-endpoint at where the archives are, " +
+			"set backup.dir or backup.s3 in /etc/kanea/kanea.hcl to where the archives are, " +
 			"or delete " + filepath.Join(opts.dataDir, backup.RequestFileName))
 	}
 

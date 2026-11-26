@@ -293,8 +293,8 @@ export function describeBackupSource(source: string): {
   switch (source) {
     case 'store':
       return { label: 'from settings', variant: 'ok' }
-    case 'flags':
-      return { label: 'from unit flags', variant: 'muted' }
+    case 'file':
+      return { label: 'from kanea.hcl', variant: 'muted' }
     default:
       return { label: 'not configured', variant: 'error' }
   }

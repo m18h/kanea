@@ -13,8 +13,8 @@ import { cn } from '@/lib/utils'
 import { useSession } from '@/hooks/useSession'
 
 /**
- * Settings (PRD v1.46, §12.2): the node's flag-decided facts, the two Store
- * records that supersede flags (backup destination, notification channels),
+ * Settings (PRD v1.46, §12.2): the facts the node's kanea.hcl decided, the two Store
+ * records that supersede it (backup destination, notification channels),
  * accounts and tokens, and the audit log; one section per tab, deep-linkable
  * as /settings/<tab> through the ordinary router (bare /settings is the first
  * tab). Only the active tab mounts, so the Accounts and Audit queries run

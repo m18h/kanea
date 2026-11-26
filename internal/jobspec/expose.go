@@ -332,7 +332,7 @@ func validateExposeDomains(svc *Service, e *Expose, seen map[string]bool) hcl.Di
 // "provided" is the only one a grant name means anything for.
 //
 // There is deliberately no warning for an absent tls block. The whole point of
-// --tls-default is that a homelabber annotates nothing and still gets a
+// tls.default_mode is that a homelabber annotates nothing and still gets a
 // certificate, and a warning on every service teaches people to ignore
 // warnings: after which the two below stop being read either.
 func validateExposeTLS(svc *Service, e *Expose) hcl.Diagnostics {
@@ -391,7 +391,7 @@ func validateExposeTLS(svc *Service, e *Expose) hcl.Diagnostics {
 		if !*t.LetsEncrypt {
 			detail = fmt.Sprintf("Service %q writes `letsencrypt = false`. Write "+
 				"`mode = %q` if you meant plain HTTP: an absent mode does not mean "+
-				"no certificate, it means whatever this node's --tls-default is.",
+				"no certificate, it means whatever this node's tls.default_mode is.",
 				svc.Name, certsource.ModePlaintext)
 		}
 		diags = append(diags, &hcl.Diagnostic{
@@ -787,7 +787,7 @@ func validateExposeProtocol(svc *Service, e *Expose) hcl.Diagnostics {
 	// cleartext on :80 (the edge serves no inbound h2c) so a route declared
 	// both ways could never carry a real gRPC client. A declared contradiction
 	// is a plan error; an *undeclared* mode resolving to plaintext on a
-	// --tls-default plaintext node is the agent's warning at resolution time,
+	// tls.default_mode plaintext node is the agent's warning at resolution time,
 	// because R20 makes that resolution node-side and plan cannot see it.
 	if e.TLS != nil && e.TLS.Mode == string(certsource.ModePlaintext) {
 		diags = append(diags, &hcl.Diagnostic{

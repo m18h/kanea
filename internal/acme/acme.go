@@ -149,7 +149,7 @@ func New(cfg Config) (*Manager, error) {
 	if cfg.Directory == "" {
 		cfg.Directory = LetsEncryptStaging
 		cfg.Logger.Warn("no ACME directory configured; using the Let's Encrypt staging CA",
-			"detail", "certificates will not be publicly trusted; set --acme-directory to go live")
+			"detail", "certificates will not be publicly trusted; set acme.directory in /etc/kanea/kanea.hcl to go live")
 	}
 	return &Manager{
 		directory: cfg.Directory,

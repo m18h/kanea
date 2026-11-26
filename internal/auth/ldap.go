@@ -96,7 +96,7 @@ func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
 	// I-5, recorded: userinfo in the URL is not refused, and the URL is
 	// written to audit entries and daemon logs on directory logins - an
 	// operator who embeds credentials in it has put them in both. The bind
-	// credential travels in --ldap-bind-password (a secret: reference), never
+	// credential travels in auth.ldap.bind_password (a secret: reference), never
 	// here; the URL is treated as configuration, not as a credential carrier.
 	switch parsed.Scheme {
 	case "ldaps", "ldap":
@@ -122,7 +122,7 @@ func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
 		// group search would silently fall back to memberOf and look like it
 		// worked.
 		return nil, errors.New(
-			"auth: --ldap-group-base-dn and --ldap-group-filter go together (both, or neither for memberOf)")
+			"auth: auth.ldap.group_base_dn and auth.ldap.group_filter go together (both, or neither for memberOf)")
 	}
 	if cfg.GroupFilter != "" && strings.Count(cfg.GroupFilter, "%s") != 1 {
 		return nil, fmt.Errorf(
@@ -144,9 +144,9 @@ func NewLDAP(cfg LDAPConfig) (*LDAP, error) {
 
 	tlsConfig := &tls.Config{ServerName: parsed.Hostname(), MinVersion: tls.VersionTLS12}
 	if cfg.CAFile != "" {
-		pem, err := os.ReadFile(cfg.CAFile) // #nosec G304; an operator flag
+		pem, err := os.ReadFile(cfg.CAFile) // #nosec G304; an operator-set node config path
 		if err != nil {
-			return nil, fmt.Errorf("auth: read --ldap-ca: %w", err)
+			return nil, fmt.Errorf("auth: read auth.ldap.ca_file: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(pem) {

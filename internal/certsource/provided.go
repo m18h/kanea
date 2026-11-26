@@ -33,8 +33,13 @@ import (
 // machine's private keys to serve.
 //
 // The grant carries an `allow` list of projects for the same reason the
-// passthrough grants do, and the default is that the config file does not
-// exist.
+// passthrough grants do, and the default is that the node config defines no
+// certificate block.
+//
+// The blocks are read once, at startup. The certificate and key files they
+// name are re-read on every pass and fingerprinted by content, because a
+// certificate is a thing with an expiry date that a renewal tool rewrites
+// behind Kanea's back.
 //
 // Nothing here ever falls back to another source. A provided certificate that
 // cannot be resolved leaves the service on plaintext, because a silent
@@ -43,16 +48,13 @@ import (
 // it means something.
 type Provided struct {
 	log *slog.Logger
-
-	mu sync.Mutex
-	// path is the config file, empty when the feature is off.
+	// path is the file the certificate blocks were read from, for diagnostics.
 	path string
-	// policy is the last config that parsed. A parse failure keeps it, the way
-	// edge.Watcher keeps the last good snapshot: a half-saved file must not
-	// take working sites down.
-	policy   *certPolicy
+	// policy is fixed for the life of the process: a block never reloads.
+	policy *certPolicy
+
+	mu       sync.Mutex
 	loaded   bool
-	warned   bool
 	lastHash [sha256.Size]byte
 }
 
@@ -99,35 +101,43 @@ type hclCertificate struct {
 	DefRange hcl.Range `hcl:",def_range"`
 }
 
-// NewProvided builds the source. An empty path turns the feature off: the
+// NewProvided parses the certificate blocks in src, once. A malformed block is
+// returned as an error, which the caller treats as fatal at startup. Empty
+// src, or a document with no certificate block, turns the feature off: the
 // source still exists and satisfies nothing, which is what makes
-// `--tls-default provided` on an unconfigured node an explicit failure per
-// service rather than a startup error nobody can act on.
-func NewProvided(path string, logger *slog.Logger) *Provided {
+// tls.default_mode "provided" on such a node an explicit failure per service
+// rather than a startup error nobody can act on. filename only labels
+// diagnostics.
+func NewProvided(filename string, src []byte, logger *slog.Logger) (*Provided, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Provided{path: strings.TrimSpace(path), log: logger, policy: &certPolicy{}}
+	policy, err := parseCertPolicy(filename, src)
+	if err != nil {
+		return nil, err
+	}
+	return &Provided{path: filename, log: logger, policy: policy}, nil
 }
 
 // Mode reports which spec mode this source serves.
 func (p *Provided) Mode() Mode { return ModeProvided }
 
-// Configured reports whether an operator pointed this node at a config file.
-func (p *Provided) Configured() bool { return p.path != "" }
+// Configured reports whether the node config defines at least one certificate.
+func (p *Provided) Configured() bool { return len(p.policy.grants) > 0 }
 
-// Changed reports whether the config or any file it names has moved since the
-// last call, so the caller can skip a pass that would produce the same bundle.
+// Changed reports whether any certificate or key file a grant names has moved
+// since the last call, so the caller can skip a pass that would produce the
+// same bundle.
 //
-// It hashes the config source and every certificate and key it names, rather
-// than stat-ing them. A renewal tool that writes the same size at the same
-// second is not hypothetical: certbot writes then renames, and the mtime it
-// leaves is whatever the temporary file had.
+// It hashes every certificate and key, rather than stat-ing them. A renewal
+// tool that writes the same size at the same second is not hypothetical:
+// certbot writes then renames, and the mtime it leaves is whatever the
+// temporary file had.
 //
 // It is deliberately a poll and not fsnotify: write-then-rename replaces the
 // inode a watch is registered on, which is exactly why internal/edge polls too.
 func (p *Provided) Changed() bool {
-	if p.path == "" {
+	if len(p.policy.grants) == 0 {
 		return false
 	}
 	sum := p.fingerprint()
@@ -141,7 +151,8 @@ func (p *Provided) Changed() bool {
 	return true
 }
 
-// fingerprint hashes the config and everything it points at.
+// fingerprint hashes each grant's certificate and key files, and nothing
+// else: the blocks themselves cannot change.
 //
 // An unreadable file contributes its error text, so a certificate that
 // disappears and comes back is two changes rather than none.
@@ -152,23 +163,8 @@ func (p *Provided) fingerprint() [sha256.Size]byte {
 		line := fmt.Sprintf(format, args...)
 		h.Write([]byte(line))
 	}
-
-	src, err := os.ReadFile(p.path) // #nosec G304: operator-supplied config path
-	if err != nil {
-		write("config-error:%v\n", err)
-		return sum(h)
-	}
-	h.Write(src)
-
-	// Parse to find the files, but do not report a parse failure here: Ensure
-	// is where a bad config is diagnosed, and Changed must still return true
-	// so the operator sees the complaint on the pass that follows their edit.
-	policy, perr := parseCertPolicy(p.path, src)
-	if perr != nil {
-		return sum(h)
-	}
-	for _, name := range policy.order {
-		g := policy.grants[name]
+	for _, name := range p.policy.order {
+		g := p.policy.grants[name]
 		for _, f := range []string{g.certPath, g.keyPath} {
 			body, err := os.ReadFile(f) // #nosec G304: operator-supplied path
 			if err != nil {
@@ -190,15 +186,12 @@ func sum(h interface{ Sum([]byte) []byte }) [sha256.Size]byte {
 
 // Ensure resolves each request against the configured grants.
 //
-// The config is re-read on every pass, a deliberate divergence from
-// --passthrough-config's load-once: a device grant is a decision, and a
-// certificate is a thing with an expiry date that a renewal tool rewrites
-// behind Kanea's back.
+// The grants are fixed at startup; the files they name are read on every
+// pass, so a renewed certificate is served without a restart.
 func (p *Provided) Ensure(_ context.Context, reqs []Request) (Result, error) {
-	policy := p.reload()
 	var res Result
 	for _, req := range reqs {
-		cert, err := p.resolve(policy, req)
+		cert, err := p.resolve(p.policy, req)
 		if err != nil {
 			res.Failures = append(res.Failures, Failure{Request: req, Err: err})
 			continue
@@ -208,41 +201,16 @@ func (p *Provided) Ensure(_ context.Context, reqs []Request) (Result, error) {
 	return res, nil
 }
 
-// reload re-reads the config, keeping the last good one on failure.
-func (p *Provided) reload() *certPolicy {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.path == "" {
-		return &certPolicy{}
-	}
-	src, err := os.ReadFile(p.path) // #nosec G304; operator-supplied config path
-	if err == nil {
-		var policy *certPolicy
-		if policy, err = parseCertPolicy(p.path, src); err == nil {
-			p.policy, p.warned = policy, false
-			return p.policy
-		}
-	}
-	// Logged once per bad state, like edge.Watcher: a config nobody fixes for a
-	// week must not be a log line every minute.
-	if !p.warned {
-		p.warned = true
-		p.log.Error("certificate config unusable; keeping the last one that parsed",
-			"path", p.path, "error", err, "grants", len(p.policy.grants))
-	}
-	return p.policy
-}
-
 // resolve picks the certificate for one request.
 func (p *Provided) resolve(policy *certPolicy, req Request) (Certificate, error) {
-	if p.path == "" {
-		return Certificate{}, fmt.Errorf(
-			"%w: this node has no --tls-certs-config, so there is no certificate to give it",
-			ErrNoCertificate)
-	}
 	if len(policy.grants) == 0 {
-		return Certificate{}, fmt.Errorf("%w: %s defines no certificate blocks",
-			ErrNoCertificate, p.path)
+		file := p.path
+		if file == "" {
+			file = "/etc/kanea/kanea.hcl"
+		}
+		return Certificate{}, fmt.Errorf(
+			"%w: this node's %s defines no certificate blocks, so there is no certificate to give it",
+			ErrNoCertificate, file)
 	}
 
 	var candidates []certGrant
@@ -404,7 +372,7 @@ func coversAll(certDomains, want []string) bool {
 	return true
 }
 
-// parseCertPolicy reads the config file.
+// parseCertPolicy reads the certificate blocks of a node config document.
 func parseCertPolicy(filename string, src []byte) (*certPolicy, error) {
 	parser := hclparse.NewParser()
 	file, diags := parser.ParseHCL(src, filename)
@@ -466,5 +434,5 @@ func parseCertPolicy(filename string, src []byte) (*certPolicy, error) {
 	return policy, nil
 }
 
-// Path is the config file an operator pointed this node at, for logs.
+// Path is the file the certificate blocks were read from, for logs.
 func (p *Provided) Path() string { return p.path }

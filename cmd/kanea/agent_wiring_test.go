@@ -37,7 +37,7 @@ func TestTheAgentWiresEveryOptionalReconcilerDependency(t *testing.T) {
 		// historical default, which is exactly why a missing wire here would
 		// be invisible: `images { pull_policy = "never" }` would be accepted,
 		// logged, and then quietly ignored on every pull.
-		"DefaultPullPolicy": "the images stanza and --image-pull-policy are silently ignored",
+		"DefaultPullPolicy": "the images stanza's pull_policy is silently ignored",
 		// R35's plain-file tree. Its zero value is not a working default: a
 		// service declaring any file fails its alloc, and the failure would be
 		// a daemon-wiring bug wearing a spec error's clothes.

@@ -306,11 +306,17 @@ func TestInstallOverIsAtomicAcrossFilesystemsByCopy(t *testing.T) {
 }
 
 func TestSelfUpdateBaseURLComposition(t *testing.T) {
-	// KANEA_REPO parity with the install script: a fork upgrades from itself.
-	t.Setenv("KANEA_REPO", "someone/fork")
-	source := newReleaseSource()
+	// upgrade.repo, like the install script's KANEA_REPO: a fork upgrades
+	// from itself.
+	source := newReleaseSource("someone/fork")
 	if want := "https://github.com/someone/fork"; source.base != want {
 		t.Fatalf("base = %q, want %q", source.base, want)
+	}
+	// The environment variable the daemon used to read is not consulted:
+	// one place to configure a node means one place.
+	t.Setenv("KANEA_REPO", "another/fork")
+	if got := newReleaseSource(defaultRepo).base; got != "https://github.com/"+defaultRepo {
+		t.Fatalf("base = %q; KANEA_REPO must no longer reach the daemon", got)
 	}
 }
 

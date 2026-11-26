@@ -56,7 +56,7 @@ type Options struct {
 	// omits `domains` gets <service>.<project>.<base_domain> (§7.2).
 	//
 	// Optional: a spec is parseable without it (`kanea plan` run against a file
-	// alone has no server config to read) and the auto-FQDN is then left for
+	// alone has no node config to read) and the auto-FQDN is then left for
 	// the agent to fill in. What it costs is the R16 collision check between a
 	// generated domain and an explicitly declared one, which is only possible
 	// when the generated name is known.
@@ -397,7 +397,7 @@ type hclTLS struct {
 	Mode string `hcl:"mode,optional"`
 	Name string `hcl:"name,optional"`
 	// LetsEncrypt is a pointer because absent and false stopped meaning the
-	// same thing in v1.33. Absent now means "whatever this node's --tls-default
+	// same thing in v1.33. Absent now means "whatever this node's tls.default_mode
 	// is"; false meant "no certificate" when ACME was the only source there was.
 	// A bool could not tell those apart, and the deprecation warning has to.
 	LetsEncrypt *bool     `hcl:"letsencrypt,optional"`

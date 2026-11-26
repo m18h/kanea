@@ -102,7 +102,7 @@ func TestSecretsUnavailableWithoutAStore(t *testing.T) {
 }
 
 // The sync status surface (PRD §5.2.13): metadata only, and absent (with a
-// pointer at the flag) on a node with no providers configured.
+// pointer at the node config) on a node with no providers configured.
 func TestSecretProvidersStatus(t *testing.T) {
 	status := []secretsource.ProviderStatus{{
 		Kind: secretsource.KindDoppler, Name: "ci", Mappings: 1,
@@ -129,8 +129,8 @@ func TestSecretProvidersAbsentWhenUnconfigured(t *testing.T) {
 	if code != http.StatusNotFound {
 		t.Errorf("providers without config = %d, want 404", code)
 	}
-	if !strings.Contains(body, "secrets-providers-config") {
-		t.Errorf("the refusal does not name the flag: %s", body)
+	if !strings.Contains(body, "add provider blocks to /etc/kanea/kanea.hcl") {
+		t.Errorf("the refusal does not name the provider blocks: %s", body)
 	}
 }
 

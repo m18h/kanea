@@ -41,6 +41,7 @@ var commands = []command{
 	{"agent", "run the control-plane daemon (kanead)", runAgent},
 	{"edge", "run the edge ingress proxy (kanea-edge, separate process)", runEdge},
 	{"doctor", "verify node health: deps, versions, disk, clock", runDoctor},
+	{"config", "node configuration: migrate (convert a pre-v0.40 unit's flags into /etc/kanea/kanea.hcl)", runConfig},
 	{"firewall", "print the host-firewall rules this node's workloads need (it never applies them)", runFirewall},
 	{"plan", "dry-run diff of a job spec; selectors (shop, shop/web) scope it", runPlan},
 	{"run", "apply a job spec or just the selected services (shop/web …); alias: apply", runRun},

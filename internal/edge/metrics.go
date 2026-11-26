@@ -83,7 +83,7 @@ const (
 	ReasonRateLimit     = "rate_limit"
 	// ReasonListenerLimit is a published listener's own max_conns (§7.2.2).
 	ReasonListenerLimit = "listener_limit"
-	// ReasonNodeLimit is the node-wide --max-published-conns ceiling.
+	// ReasonNodeLimit is the node-wide edge.publish.max_conns ceiling.
 	ReasonNodeLimit = "node_limit"
 	// ReasonNoBackends is a udp datagram with nowhere to go (v1.42): the
 	// service is starting or scaled to zero, and UDP has no way to tell the

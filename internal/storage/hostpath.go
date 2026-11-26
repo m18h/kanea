@@ -79,7 +79,7 @@ func (p HostPathPolicy) Allowed() []string { return p.allowed }
 func (p HostPathPolicy) Resolve(path string) (string, error) {
 	if !p.Enabled() {
 		return "", fmt.Errorf("%w: no host paths are configured on this node "+
-			"(set storage.allowed_host_paths in /etc/kanea/kanea.hcl, or --allowed-host-paths)",
+			"(set storage.allowed_host_paths in /etc/kanea/kanea.hcl)",
 			ErrHostPathNotAllowed)
 	}
 	if !filepath.IsAbs(path) {
@@ -133,7 +133,7 @@ func (p HostPathPolicy) ResolveOrCreate(path string, create bool) (string, error
 	}
 	if !p.Enabled() {
 		return "", fmt.Errorf("%w: no host paths are configured on this node "+
-			"(set storage.allowed_host_paths in /etc/kanea/kanea.hcl, or --allowed-host-paths)",
+			"(set storage.allowed_host_paths in /etc/kanea/kanea.hcl)",
 			ErrHostPathNotAllowed)
 	}
 	if !filepath.IsAbs(path) {

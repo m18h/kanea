@@ -25,7 +25,7 @@ import (
 // Config controls one logger sink. The zero value is valid: info level, JSON,
 // stderr only, no rotation.
 type Config struct {
-	// Level: debug|info|warn|error. Default info (server config: log_level, PRD §15.1).
+	// Level: debug|info|warn|error. Default info (node config: log_level, PRD §15.1).
 	Level string
 	// Format: json|text. Default json.
 	Format string

@@ -70,7 +70,7 @@ type ProxyConfig struct {
 	// MaxIdleConnsPerHost bounds the pooled connections held per upstream.
 	MaxIdleConnsPerHost int
 	// SecurityHeaders installs the §14 A05 response defaults on every proxied
-	// response (server config `edge.default_security_headers`, §15.1).
+	// response (node config `edge.security_headers`, §15.1).
 	SecurityHeaders bool
 	// LimiterCapacity bounds the rate-limit bucket set. Zero means the default.
 	LimiterCapacity int
@@ -684,7 +684,7 @@ func (p *Proxy) applySecurityHeaders(h http.Header, overTLS bool) {
 	}
 }
 
-// securityHeaderDefaults are the headers `edge.default_security_headers`
+// securityHeaderDefaults are the headers `edge.security_headers`
 // installs (PRD §15.1, §14 A05). Deliberately short: each one is safe for an
 // arbitrary application to receive. Anything with a real chance of breaking a
 // working service belongs in the service's own `headers` block.

@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Adopted v1.114 |
+| **Status** | Adopted v1.115 |
 | **Author** | Michael K. Essandoh (<michael@essandoh.dev>) |
-| **Last updated** | 2026-11-05 (v1.114) |
+| **Last updated** | 2026-11-26 (v1.115) |
 | **Document type** | Product Requirements Document (PRD) |
 
 > **v1.1 amendments**: incorporates the engineering review (performance/reliability/security): edge proxy split into `kanea-edge` (§5.2.6), Store-level CDC replication + master-key escrow (§15.3), upgrade & migration framework (§15.4), workload hardening defaults + CSRF/CSWSH/OIDC hardening (§14), ACME wildcard-default policy (§7.3), metrics pipeline redesign (§9.1), storm controls (§4.3, §11), realistic RTO targets (§15.3, §21), total-platform footprint budget (§21).
@@ -12,6 +12,8 @@
 > **v1.2 amendments**: adds the **MCP server** (first-class AI-agent interface: §5.2.1, §13.3, §16.3, M9→M10 renumbering) and **edge middleware** on the `expose` block; IP restriction, rate limiting, header manipulation (§5.2.6, §6.1, §7.2, M3).
 
 > **v1.3 amendments**: **image-only deployment** is explicit as the minimal, first-class path (G14, §6.2 R8, CLI quick-run) and adds **service references & dependencies**: `${service.<name>.host}` / `${service.<name>.port.*}` interpolation, `depends_on`, topological health-gated starts, cycle rejection (§6.2 R9-R10, §7.1.1, §4.3).
+
+> **v1.115 amendments**: **the node has one configuration file** (§15.1, §16.2, §5.2.13, §7.3). Node configuration came from five places - `kanea agent` flags, `kanea edge` flags, `/etc/kanea/kanea.hcl`, three side files named by flags, and two daemon environment variables - and every release since v1.51 added a precedence rule between two of them. **Both daemons now accept no arguments**: `kanead` and `kanea-edge` read `/etc/kanea/kanea.hcl`, at that fixed path, once at startup, and every former flag is an attribute of it (§15.1 is the complete schema). Removed with no successor: `--config` (the path is not overridable and `off` is gone), `--passthrough-config`, `--secrets-providers-config`, `--tls-certs-config`, and the daemon-side `KANEA_REPO` / `KANEA_REQUIRE_SIGNATURE` environment variables, which become `upgrade.repo` and `upgrade.require_signature`. **`provider` and `certificate` blocks live in `kanea.hcl` and are read once**, like the `device` and `socket` grants beside them; the credential and certificate **files** they name are still re-read by content fingerprint, keep-last-good, because a rotation tool rewrites those behind Kanea's back and nobody rewrites a block that way. **`kanea init` writes the file**, pinning the data directory, the alloc log directory, the network driver and CIDRs and the edge's certificate group, so a later default change cannot renumber a node. **Installed nodes convert themselves**: `kanea config migrate` folds an older unit's flags, its drop-ins and the three side files into `kanea.hcl` and rewrites both units' `ExecStart` to the bare command, and `kanead`, started under systemd with arguments, runs that migration once and exits to be restarted under the rewritten unit, so `kanea upgrade` needs no operator step. A daemon given arguments anywhere else refuses by name. **The "flag wins" doctrine of v1.51 / v1.61 / v1.66 / v1.84 / v1.111 is retired**: there is one source, so there is nothing to win; the one precedence left is the backup destination's, where a destination saved through the API still beats the file's `backup` stanza. **The edge decodes only `bind` and `edge`**, so a mistake in a `kanead`-only stanza never stops ingress. **§15.1's sketch names are replaced before anything reads them**: `datapath` becomes `network` (the flag and the docs always said network, and `netns` is not a datapath), `state.replication` and the cron-shaped `backup` become one `backup` stanza, top-level `tls_default` becomes `tls { default_mode ca_name }`, and `auth_ref` / `bot_token_ref` give way to attributes named for the thing, whose value is always `secret:<path>`. The sketch stanzas nothing ever implemented - `resources`, `cluster_id`, `storage "label"`, `edge.default_rate_limit`, `auth.basic`, `notifications.telegram`, `acme.dns01.provider` - leave §15.1; the memory reserve stays `kanea init --reserve`. New conventions, stated in §15.1: a path attribute added from here on ends `_file` or `_dir`, durations are strings, lists are HCL lists, and a disableable address, path or URL takes the literal `"off"`.
 
 > **v1.114 amendments**: **a release is one rolling deploy, and the alloc that runs the init sequence tells the truth about its age** (§6.2 R19/R32/R33, §12.2, §16.1). Three defects, all of them in the same place - what a deploy of a service with `init` blocks actually does on the node - and all three found from one `kanea describe` beside three hours of `kanead` logs on a real project: `count = 2`, three init steps, `pull_policy = always`.
 
@@ -426,7 +428,7 @@ Job spec (HCL) ──parse/validate──▶ Desired state (Store)
 #### 5.2.5 Network driver (internal eBPF datapath)
 - The datapath is Kanea's own (v1.36): three small eBPF programs, a handful of pinned maps and plain netlink plumbing, all loaded and written by `kanead` from one compiled-in object (`internal/datapath`). There is no network agent, no kvstore and no CNI: the platform that allocates every address is the program that writes the kernel's maps with them. The Cilium integration this replaces is recorded in the v1.5-v1.35 amendments and in [spike ① report](./spikes/cilium-standalone/REPORT.md), which stays as the history of why those versions look the way they do.
 - **IP is identity.** `kanead` allocates every alloc IP from the node CIDR and every service VIP from the service CIDR (durably, in the Store; §7.1), so the identity map (`pod IP → {project, service, flags}`) is written by the allocator itself: no identity-allocation protocol, no label race, no settle window. The numeric project/service ids behind the maps are Store-allocated, monotonic and never reused, which is what keeps pinned map contents meaningful across a `kanead` restart. And the claimed identity is bound, not merely asserted (v1.77): `veth_src`/`veth_src6` pin each host veth to the one address kanead assigned it, and `from_container` drops anything else as `DROP_SPOOF`, so an alloc cannot speak under another's - or the host's - name.
-- **The subnet is the operator's, and it is set at install time** (v1.33). `kanea install` and `kanea init` take `--node-cidr` (this node's alloc allocation range) and `--cluster-cidr` (the routed, masqueraded range), and write them into the `kanead` unit they generate: `kanead` is the IPAM, so the flags belong on its argv. Both are validated as IPv4 prefixes, the node CIDR must sit inside the cluster CIDR, and **neither may overlap the service CIDR** (§7.1). Changing the node CIDR also moves the internal resolver, which binds the first address of the node CIDR on the `kanea0` host interface: the address every alloc's `resolv.conf` points at and the identity host-originated traffic carries. **Dual-stack is the same trio, suffixed** (v1.41): `--node-cidr6`, `--cluster-cidr6` and `--service-cidr6`; all three or none, with the same containment and non-overlap rules, ULA (`fd00::/8`) recommended. Set, they add a v6 address to every alloc, a v6 twin to every VIP, and AAAA answers to internal DNS; unset, nothing changes except that the tc programs now **drop** IPv6 instead of passing it unpoliced (see below).
+- **The subnet is the operator's, and it is set at install time** (v1.33). `kanea install` and `kanea init` take `--node-cidr` (this node's alloc allocation range) and `--cluster-cidr` (the routed, masqueraded range), and write them into `/etc/kanea/kanea.hcl` as `network.node_cidr` and `network.cluster_cidr` (§15.1): `kanead` is the IPAM, and the node config is the only place it reads them from. `kanea init` pins both even when they are the defaults, so a later default change cannot renumber a node. Both are validated as IPv4 prefixes, the node CIDR must sit inside the cluster CIDR, and **neither may overlap the service CIDR** (§7.1). Changing the node CIDR also moves the internal resolver, which binds the first address of the node CIDR on the `kanea0` host interface: the address every alloc's `resolv.conf` points at and the identity host-originated traffic carries. **Dual-stack is the same trio, suffixed** (v1.41): `--node-cidr6`, `--cluster-cidr6` and `--service-cidr6` at install, `network.node_cidr6`, `network.cluster_cidr6` and `network.service_cidr6` in the file; all three or none, with the same containment and non-overlap rules, ULA (`fd00::/8`) recommended. Set, they add a v6 address to every alloc, a v6 twin to every VIP, and AAAA answers to internal DNS; unset, nothing changes except that the tc programs now **drop** IPv6 instead of passing it unpoliced (see below).
 - **Attach is synchronous and deny-closed.** Per alloc, in order: netns → identity map write → veth pair created with the host side **down** (`kn` name prefix + an ifalias recording `<alloc>/<ip>`; the ownership mark that makes reaping safe) → policy programs attached at tc on the host side → addresses and static neighbors → link up → the host `/32` route **last**. The first moment a packet can reach or leave the alloc, policy is already enforcing with identity already resolved; a skipped step fails closed, because an identity miss is a drop. The deny window this replaces was temporal (Cilium's `reserved:init`, held shut by attach order and bounded retries); this one is structural. Attach has no wait loop and completes in milliseconds.
 - **Service LB is connect-time socket rewrite.** One cgroup `connect4` program at the root cgroup (`BPF_F_ALLOW_MULTI`, held by a pinned link) rewrites `VIP:port → backend` at `connect(2)`, for host processes and containers alike, which is the one property `kanea-edge` depends on: it dials a VIP with a plain dialer (§5.2.6, unchanged). Backends update by **generation flip**: the new set is written under the next generation, one atomic map update of the service entry commits it, the old generation is deleted; a concurrent `connect()` sees a complete old set or a complete new set, never a torn one. There is no per-packet NAT and no conntrack entry per flow, and **an established connection never consults a map**: `kanead` can restart, or recreate every map, without touching live traffic. A VIP with no backends refuses at `connect()` (EPERM) rather than black-holing into a timeout. **Service ports are TCP-only in v1**: a `protocol = "udp"` port (v1.42) never enters the LB and never gets a frontend; it exists only to be published (§7.2.2), and everything that would rely on a frontend (`expose`, `${service.*.port}` references, `http`/`tcp` health checks) refuses it at `plan` by name, because a UDP port the LB silently did not balance would be R21's dropped control. East-west UDP needs `sendmsg4`/`recvmsg4` programs and stays in §19.3.
 - **Policy is ingress at the veth, SYN-gated, union-only.** The tc program on each host-side veth admits: a source with the host flag (`kanead`'s DNS replies and probes, the edge's upstream dials), a source in the same project, or a source named by an `allow_from` edge (R14), and **drops everything else, including any source the identity map does not know**. Enforcement is per connection attempt: TCP that is not a SYN passes, which is what lets cross-project replies flow without a conntrack. That is deliberately weaker than stateful tracking (an in-node ACK probe passes the filter and is stopped only by the stack's RST) and is stated in `docs/THREAT_MODEL.md` rather than hidden; the upgrade to an LRU conntrack map is additive. Rules only ever union: an `allow_from` entry adds reachability and can never weaken the project default-deny.
@@ -465,12 +467,12 @@ The control plane must survive anything workloads do: a runaway container can ne
 ```
 /sys/fs/cgroup
 ├── kanea.slice                 # kanead + kanea-edge (+ containerd and buildkitd, via their own units)
-│     memory.min       = system_reserve_memory   # kernel-protected floor; reclaim never touches it (default 256 MiB, §15.1; build nodes raise it; v1.62)
+│     memory.min       = reserve                 # kernel-protected floor; reclaim never touches it (`kanea init --reserve`, default 256 MiB, §15.1; build nodes raise it; v1.62)
 │     memory.swap.max  = 0                       # the floor is RAM, not swap
 │     cpu.weight       = 10000                   # wins CPU contention (CPU is compressible; weight suffices)
 │     OOMScoreAdjust   = -900                    # global OOM picks workload containers first, never kanea
 └── kanea-workloads.slice       # every kanea-managed alloc lives under this single parent
-      memory.max       = total RAM − system_reserve_memory   # workloads can never consume the reserve, collectively
+      memory.max       = total RAM − reserve                 # workloads can never consume the reserve, collectively
       memory.swap.max  = 0
       cpu.weight       = 100
       └── per-alloc cgroups: memory.max / cpu.max / pids.max from the spec's resources {} block (§6.2 R11)
@@ -478,7 +480,7 @@ The control plane must survive anything workloads do: a runaway container can ne
 
 - **"Memory lock" = guarantee, not `mlock`.** Literal `mlockall` on the Go control plane is **rejected**: the GC grows the heap unpredictably and `RLIMIT_MEMLOCK` turns pin-overflow into hard allocation failure; the lock itself could crash `kanead`. The guarantee comes from `memory.min` (the kernel refuses to reclaim the floor under pressure), `OOMScoreAdjust=-900`, and no swap in the slice.
 - **Per-alloc limits are enforced where declared** (§6.2 R11, v1.58): `resources.cpu` (MHz) → `cpu.max` quota; `resources.memory` (MiB) → `memory.max` (hard; breach OOM-kills the alloc, the reconciler restarts it per policy, event emitted, and since v1.68 the kill is **identified as one**, by reading the alloc cgroup's `memory.events` `oom_kill` counter rather than guessing from exit 137, §17); a default `pids.max` caps fork-bombs on every alloc (a service may declare its own with `resources.pids`, §6.2 R11, v1.89; the cap's presence and its default are unchanged). An omitted limit sets no per-alloc quota: the alloc is bounded by the workload parent's collective ceiling, which with the control-plane floor is the isolation that actually protects the platform. All limits are set via the containerd OCI spec at task creation, and every task's cgroup is placed under the workload parent.
-- **Admission control:** workload budget = total RAM − reserve. `kanea plan` renders the budget; `apply` refuses Σ declared memory above the budget unless `resources.oversubscribe = true` in the server config (§15.1).
+- **Admission control:** workload budget = total RAM − reserve. `kanea plan` renders the budget; `apply` refuses Σ declared memory above the budget.
 - **Setup:** `kanea init` installs the `kanea.slice` / `kanea-workloads.slice` systemd units. Since v1.30 the host components' units are Kanea's own (§5.2.12), so each simply declares `Slice=kanea.slice`: **you do not need a drop-in for a unit you wrote**. Drop-ins remain for exactly one case: an adopted external containerd (`--containerd external`), whose unit belongs to the distribution and must be extended rather than replaced. Init also provisions the **rootless build daemon**: the `kanea-buildkit` system user with subuid/subgid ranges, the `uidmap` package, and the `buildkitd` unit (`rootlesskit --net=host`, socket in the daemon user's `$HOME` (*not* under a copy-up'd `/run`, where it would be invisible to clients) and root-reachable only). On non-systemd hosts `kanead` creates the hierarchy directly at startup (it runs as root anyway) and `kanea install` places binaries without writing units, naming what has to be supervised by hand. `kanea doctor` verifies cgroup v2, hierarchy placement, the effective floor, and that the build socket answers.
 - The cgroup hierarchy is **node-local runtime state**, never represented in the Store, never replicated (§18); it is rebuilt on every boot/agent start.
 - **Process hardening complements the resource guarantees, where the process's job allows it:** `kanea-edge` runs with `NoNewPrivileges=yes`, `ProtectSystem=strict`, `PrivateTmp=yes` and its own unprivileged user (§5.2.6). `kanead` carries `NoNewPrivileges=yes` and **deliberately nothing that implies a mount namespace** (v1.53) (no `ProtectSystem`, `ProtectHome`, `PrivateTmp` or `ReadWritePaths`) because it is the node's mount manager: the netns bind mounts runc joins and the volume mounts containerd binds into containers must be made in the host mount namespace or they are invisible to their consumers. Combined with the §14 workload hardening defaults and the datapath's default-deny policy (§7.1), this gives three isolation layers: resource (cgroups), process (sandboxing), network (eBPF policy).
@@ -501,12 +503,12 @@ Kanea runs on a kernel, cgroups v2, systemd and a clock. Everything else it need
 
 `kanead` can mirror named secrets **from** external managers **into** its own encrypted store: **Doppler** (service-token REST), **AWS Secrets Manager** (SigV4-signed `GetSecretValue`), **HashiCorp Vault** (KV v2 over token auth), **Azure Key Vault** (OAuth2 client credentials), and **GCP Secret Manager** (service-account JWT-bearer). The direction is the design: values land in the store the rest of the platform already reads, so every consumer (reconciler, notifier, GitOps, storage, edge-auth projection) is untouched, the node keeps working through a provider outage on whatever the last pass wrote, and a rotation propagates on the next poll instead of on the next human.
 
-- **The spec never sees a provider.** A workload references `secret:<project>/<name>` exactly as before; which of those paths are provider-backed is declared in a node config file named by `--secrets-providers-config` (default `""`: no file, no providers). Each `provider "<kind>" "<name>"` block maps external coordinates to local paths via `sync` blocks, and carries a **required, non-empty `allow`** list of local scopes those mappings may write into: writing into `shared/` must be stated, not implied. Two mappings targeting one local path are refused by name, anywhere in the file: two writers on one path is a fight, not a merge.
-- **Config semantics are the §7.3 `provided` certificate file's, not the passthrough file's**: re-read via a content fingerprint (SHA-256 over the config *and every credential file it names*; a renamed-into-place token changes no mtime worth trusting), parse failure keeps the last good config and warns once, and a fingerprint change triggers an immediate pass. A device grant is a decision; a credential is a thing a rotation tool rewrites behind Kanea's back.
+- **The spec never sees a provider.** A workload references `secret:<project>/<name>` exactly as before; which of those paths are provider-backed is declared by `provider` blocks in the node config (`/etc/kanea/kanea.hcl`, §15.1; no block, no providers). Each `provider "<kind>" "<name>"` block maps external coordinates to local paths via `sync` blocks, and carries a **required, non-empty `allow`** list of local scopes those mappings may write into: writing into `shared/` must be stated, not implied. Two mappings targeting one local path are refused by name, anywhere in the file: two writers on one path is a fight, not a merge.
+- **Config semantics are the §7.3 `provided` certificate block's**: the `provider` blocks are read once with the rest of `kanea.hcl`, and a malformed block refuses startup (v1.115); the **credential files** they name are re-read via a content fingerprint (SHA-256 over every credential file; a renamed-into-place token changes no mtime worth trusting), a rebuild that fails keeps the last good providers and warns once, and a fingerprint change triggers an immediate pass. A block is a decision; a credential is a thing a rotation tool rewrites behind Kanea's back.
 - **Provider credentials are files on the node**, 0600-checked with `master.key`'s exact rule, re-read every pass. Never inline in the config, and never `secret:` references: a credential stored in the store it fills would ride every CDC segment and backup, and be replaceable through the write-only API by any admin token. Azure and GCP exchange theirs for short-lived access tokens, **cached in memory** until near expiry, never stored, never in status output, never logged. **Ambient cloud identity (IMDS, managed identity, metadata servers) is deliberately not supported**: every variant dials the link-local range the platform's own egress posture (§14 A10) treats as hostile, and Kanea nodes are typically not cloud instances. Vault AppRole and JWKS-style dynamic auth are likewise deferred: token file only.
 - **A pass is quiet unless something changed.** The syncer resolves the current local value and compares in process; an unchanged value produces **no Store write**; a rewrite per poll would be a metric stream through the Store in everything but name (constraint: §15.3's CDC ships every mutation). A stored plaintext hash was rejected for the comparison: beside the ciphertext it is an offline dictionary oracle against a stolen `state.db` that the AEAD exists to deny.
 - **Provenance, and who wins.** A synced secret's metadata carries `source` (`doppler/ci`): visible in `kanea secret ls` and `GET /v1/secrets`, which stay metadata-only. The mapping is declarative intent and the sync always reasserts it: a manual `kanea secret put` over a managed path holds until the next pass, which overwrites, restamps, and warns once per path. The reverse never happens silently: a mapping removed from the config, or an external secret that stops existing, **leaves the local value in place** with its provenance stamp. Deleting on a config edit would turn a typo into a mass secret deletion that fails every referencing alloc with no local undo; `kanea secret rm` is the one deletion path (the v1.41 `lb/vip6` rule).
-- **Failure is per-mapping, isolation is per-provider.** A mapping the provider cannot serve is a named failure that never suppresses its siblings; a provider that fails entirely never stops the others (§7.3's rule for certificate sources). Passes emit `secret.synced` / `secret.sync_failed` (§11), status is served metadata-only at `GET /v1/secrets/providers` and `kanea secret providers`, and a failed pass retries on a doubling backoff capped at the configured interval (default 5 m, floor 30 s: a poll is a request against someone else's rate limit).
+- **Failure is per-mapping, isolation is per-provider.** A mapping the provider cannot serve is a named failure that never suppresses its siblings; a provider that fails entirely never stops the others (§7.3's rule for certificate sources). Passes emit `secret.synced` / `secret.sync_failed` (§11), status is served metadata-only at `GET /v1/secrets/providers` and `kanea secret providers`, and a failed pass retries on a doubling backoff capped at the configured interval (`secrets.sync_interval`, default 5 m, floor 30 s: a poll is a request against someone else's rate limit).
 - **Transport hygiene without the egress guard.** The §14 A10 guard exists because notification URLs are attacker-influencable spec text; a provider endpoint is operator-written node config, the same trust class as the replication S3 endpoint, and Vault legitimately answers on RFC1918, so the guard is not consulted (the §11 invoker's argument, recorded in the threat model). Kept regardless: **redirects refused** (a 302 to the metadata service is the classic residual), response bodies read under a hard size cap, short per-dial timeouts, and error bodies decoded into typed shapes or truncated; an error string must never be able to carry a value.
 - **Clients are hand-written HTTP, no SDKs**: the §15.3 S3-sink decision, for the same reasons: five fixed-verb clients are auditable, the dependency tree the §14 gates chase does not grow, and the one hard part (SigV4) is shared with the backup sink through a single extracted implementation.
 
@@ -515,11 +517,11 @@ Kanea runs on a kernel, cgroups v2, systemd and a clock. Everything else it need
 `kanead` embeds a minimal OCI distribution (`/v2/`) server so that a single node can build, push and pull its own images with no external registry. It exists for §10.2's pipeline and for nothing else; it is deliberately not a product feature with a lifecycle of its own.
 
 - **The protocol is theirs, not ours.** `/v2/` is the OCI distribution base path that BuildKit's push and containerd's pull hardcode; it is not a Kanea API version, and the registry is not a route on the API server (§5.2.1's unauthenticated list is untouched). The served subset is exactly what those two clients emit - blob `HEAD`/`GET`, the upload `POST`/`PATCH`/`PUT` with digest verification, manifest `HEAD`/`GET`/`PUT` with stored bytes returned verbatim under their recorded media type - and everything else answers `UNSUPPORTED`, stated rather than half-implemented.
-- **Loopback is a refusal, not a default.** The listener (default `127.0.0.1:5100`; `--registry`, `"off"` supported, and `--buildkit off` implies off) refuses a non-loopback bind outright, the internal DNS rule (K-27) rather than the edge status listener's warn-loudly: an unauthenticated-read registry on a routable address is a leak, and a control that cannot be enforced is refused. It runs as its own `http.Server` with its own timeouts, never behind the API's auth/CSRF middleware, which is wrong for this protocol in both directions.
+- **Loopback is a refusal, not a default.** The listener (`builds.registry_addr`, default `127.0.0.1:5100`; `"off"` supported, and `builds.buildkit_addr = "off"` implies off) refuses a non-loopback bind outright, the internal DNS rule (K-27) rather than the edge status listener's warn-loudly: an unauthenticated-read registry on a routable address is a leak, and a control that cannot be enforced is refused. It runs as its own `http.Server` with its own timeouts, never behind the API's auth/CSRF middleware, which is wrong for this protocol in both directions.
 - **Writes are gated by a per-boot credential.** A random secret minted at startup, held in memory, never persisted or logged, delivered to BuildKit inside the build's existing materialised `config.json` as a Basic credential (containerd's authorizer inside `buildkitd` answers the challenge; no token service). The threat is concrete: builds run host-networked (§10.2), so a repo-controlled `RUN` step can reach this listener; with writes gated it can read images, not poison them, and that read residual is recorded in the threat model beside the loopback-diagnostics row it joins. Reads are anonymous by design, because the reconciler's pull must work with no credential (that is what makes localhost plain-HTTP pulls containerd's default behaviour).
 - **Names are bounded** (the attacker-chosen-keys rule): a pushed repository must be exactly `<project>/<service>` for a declared build pipeline, tags are capped per repository, upload sessions are capped and expire, only `sha256` digests are accepted, and every refusal is counted. `cache_repo` may never point at the internal registry: the name bound is the control, and widening it for cache repos would trade a stated boundary for a convenience BuildKit's own local cache already provides on one node.
 - **Storage is derived, node-local state** under `<data-dir>/registry`: blobs content-addressed and verified on the way in, an existing blob re-pushed writes nothing (§15.3's steady-state rule), keep-last-5 manifests per repository with an orphan-blob sweep after each manifest write, and the whole tree is §5.2.4's third content store under the same disk-watermark coverage. It is never replicated and never backed up (§18 rules 5/7): a lost image is rebuilt by rebuilding, which the pipeline that made it still knows how to do.
-- **The default target is resolved on the node.** A `build` block that omits `target` gets `<registry-addr>/<project>/<service>` filled in at pipeline request assembly (§10.2), never in client-side conversion and never into the stored record - the §6.2 R33 / `--tls-default` mechanism. The pinned deploy reference therefore names this listener's address; changing `--registry`'s port later means previously pinned digests cannot be *freshly* pulled until the next build (running allocs and already-pulled images are untouched), which is stated here as the known limit rather than solved with a name indirection v1 does not need.
+- **The default target is resolved on the node.** A `build` block that omits `target` gets `<registry-addr>/<project>/<service>` filled in at pipeline request assembly (§10.2), never in client-side conversion and never into the stored record - the §6.2 R33 / `tls.default_mode` mechanism. The pinned deploy reference therefore names this listener's address; changing `builds.registry_addr`'s port later means previously pinned digests cannot be *freshly* pulled until the next build (running allocs and already-pulled images are untouched), which is stated here as the known limit rather than solved with a name indirection v1 does not need.
 
 ---
 
@@ -582,8 +584,8 @@ project "shop" {
   }
 }
 
-# Storage resources may be declared here (project level) or in the server
-# config (§8, §15.1). Volume blocks reference them by name.
+# Storage resources are declared here, at project level (§8). Volume blocks
+# reference them by name.
 storage "local-ssd" {
   type = "local"
 }
@@ -671,7 +673,7 @@ service "web" {
     # port = "api"
 
     # Where the certificate comes from (R20, §7.3). Omit the block entirely and
-    # the node's --tls-default decides; there is no field here for a path.
+    # the node's tls.default_mode decides; there is no field here for a path.
     tls { mode = "acme" }                        # acme | self-signed | provided | plaintext
 
     # Upstream protocol (R28, v1.41). Omit for HTTP/1.1 upstreams. "grpc" makes
@@ -920,21 +922,21 @@ function "resize-avatar" {
 
 - **R14**: **`network.policy.allow_from` is the explicit ingress allowlist.** Each entry is a fully-qualified `"<project>/<service>"`; both halves are DNS-1123 labels, validated at parse time. Kanea programs one additional ingress allow edge per listed peer into the datapath's policy map (§5.2.5): ingress rules **union**, so an entry only ever *adds* reachability and can never weaken the project default-deny. There is **no whole-project wildcard**: naming the peer service is the point, and `"analytics/*"` is a parse error. Same-project entries are accepted and redundant (the default already permits them), so an operator may be explicit without changing behaviour. A cross-project peer is addressed by its literal internal DNS name (`<service>.<project>.kanea`) because `${service.…}` interpolation stays same-project until v1.1 (R9, §19.3).
 
-- **R15**: **`host` volumes are operator-gated.** A `storage` block of type `host` names an absolute `path`, validated at parse time as absolute, clean and free of `..`. Whether it may actually be mounted is **not** decided by the job spec: `kanead` refuses any path that does not sit under a prefix in `storage.allowed_host_paths` (§15.1); set in `/etc/kanea/kanea.hcl`'s `storage` stanza, or by `--allowed-host-paths`, which wins when both exist (v1.51); whose default is **empty**, so the driver does nothing until an operator enables it. The check is applied to the path *after* symlink resolution (`/srv/data/link → /etc` is otherwise a trivial escape) and the directory must already exist and be a directory, because creating it on demand turns a typo into a silently empty volume. **Unless the spec asks for it:** `create = true` on the storage block (v1.69) makes Kanea create the directory, and the default is unchanged for everyone who did not: the typo failure mode is opt-in, not removed. Creation is allowlist-gated *first*: the nearest **existing** ancestor is resolved through symlinks and checked against the prefixes before anything is created, so a `create` outside a permitted prefix never makes a directory, and the ordinary check above runs again on the result. `create` is refused at `plan` on any other driver: a `local` directory is always created, and on `nfs`/`smb`/`s3` it means nothing. An alloc whose host volume fails this check does not start (§8's "mount failures fail the alloc loudly"). Host volumes are shared by every alloc of a service: the directory is the operator's, not Kanea's, and Kanea never deletes it.
+- **R15**: **`host` volumes are operator-gated.** A `storage` block of type `host` names an absolute `path`, validated at parse time as absolute, clean and free of `..`. Whether it may actually be mounted is **not** decided by the job spec: `kanead` refuses any path that does not sit under a prefix in `storage.allowed_host_paths` (§15.1), set in `/etc/kanea/kanea.hcl`'s `storage` stanza and nowhere else (v1.115), whose default is **empty**, so the driver does nothing until an operator enables it. The check is applied to the path *after* symlink resolution (`/srv/data/link → /etc` is otherwise a trivial escape) and the directory must already exist and be a directory, because creating it on demand turns a typo into a silently empty volume. **Unless the spec asks for it:** `create = true` on the storage block (v1.69) makes Kanea create the directory, and the default is unchanged for everyone who did not: the typo failure mode is opt-in, not removed. Creation is allowlist-gated *first*: the nearest **existing** ancestor is resolved through symlinks and checked against the prefixes before anything is created, so a `create` outside a permitted prefix never makes a directory, and the ordinary check above runs again on the result. `create` is refused at `plan` on any other driver: a `local` directory is always created, and on `nfs`/`smb`/`s3` it means nothing. An alloc whose host volume fails this check does not start (§8's "mount failures fail the alloc loudly"). Host volumes are shared by every alloc of a service: the directory is the operator's, not Kanea's, and Kanea never deletes it.
 
 - **R16**: **`expose` is validated at `plan`, fail-closed** (§7.2, §7.2.1). A service may only be exposed if it declares a port to expose (`expose` without `network { port … }` is an error, not a route to nowhere), and the upstream port must be unambiguous: declared with `port = "<name>"` (v1.49), which takes precedence over every convention; or named `http`; or the sole declared port. An explicit `port` naming a port the service does not declare is refused listing what it does declare, and one naming a `udp` port is refused with R21's reasoning (no frontend for the edge to dial). **A service may carry several `expose` blocks** (v1.50), each a complete route validated by every rule here independently: only the first block may omit `domains` (one auto-FQDN per service), a domain claimed by two blocks is refused exactly as one claimed by two services, and every block that declares `auth` must declare the same `auth` (the verifier bundle is keyed per service; v1.40's invariant). Every `domains` entry is validated as a hostname (labels, length, no scheme, no path, no port, no trailing dot) and **no two services may claim the same domain**, counting the auto-FQDNs that omitted `domains` blocks generate. Middleware is checked here too, because an ingress control that fails open is worse than one that is absent: `ip_restriction` entries must parse as CIDRs, `rate_limit` needs a positive `requests` and a valid `window` with `per` one of `ip` / `header:<name>` / `service`, and `headers` may not set or remove the hop-by-hop headers or the `X-Forwarded-*` set the edge owns (§5.2.6); a spec that could rewrite `X-Forwarded-For` would be forging the identity every other control is keyed on.
 
-- **R17**: **`task.device` names an operator grant, not a device.** A `device` block carries a label (local to the task) and a `grant` naming an entry in the node's server config (§15.1; `/etc/kanea/kanea.hcl` since v1.51, or the separate file `--passthrough-config` names). The job spec has no field for a device path, which is the point: a spec author cannot request `/dev/mem` because there is nowhere to write it. Parse time validates only shape: the grant name is a DNS-1123 label, and labels are unique within a task. Everything else is the node's: `kanead` refuses a grant it does not have, a grant whose `allow` list does not name the requesting project, and a path that is not a character or block device when it is resolved. Resolution happens **after** symlink evaluation and at every alloc start, not once at load, because a path that was a device when the daemon booted and is a regular file now is the swap the check exists to catch. The device appears inside the container at its host path, and the grant carries the cgroup permissions (`rw` by default, never `m` unless the operator writes it): a `Linux.Devices` node without a matching allow rule in the device cgroup is a node the container can see and cannot open. An alloc whose device grant fails does not start (§8's "mount failures fail the alloc loudly"); it never starts without the device it asked for.
+- **R17**: **`task.device` names an operator grant, not a device.** A `device` block carries a label (local to the task) and a `grant` naming an entry in the node config (§15.1; `/etc/kanea/kanea.hcl`). The job spec has no field for a device path, which is the point: a spec author cannot request `/dev/mem` because there is nowhere to write it. Parse time validates only shape: the grant name is a DNS-1123 label, and labels are unique within a task. Everything else is the node's: `kanead` refuses a grant it does not have, a grant whose `allow` list does not name the requesting project, and a path that is not a character or block device when it is resolved. Resolution happens **after** symlink evaluation and at every alloc start, not once at load, because a path that was a device when the daemon booted and is a regular file now is the swap the check exists to catch. The device appears inside the container at its host path, and the grant carries the cgroup permissions (`rw` by default, never `m` unless the operator writes it): a `Linux.Devices` node without a matching allow rule in the device cgroup is a node the container can see and cannot open. An alloc whose device grant fails does not start (§8's "mount failures fail the alloc loudly"); it never starts without the device it asked for.
 
 - **R18**: **`task.socket` is R17 for unix sockets, and is acknowledged as privilege delegation.** A `socket` block names a `grant` and the absolute `mount_path` it should appear at inside the container (`/var/run/docker.sock` for the docker-compatible tooling this exists to serve). `mount_path` is validated at parse time as absolute, clean and free of `..`, may not sit under `/dev`, `/proc` or `/sys`, and may not collide with another socket or a declared volume: two things on one path means one of them silently wins. The bind carries `nosuid`, `noexec` and `nodev`. **None of that makes it safe, and it is not intended to**: a container given the container runtime's socket can create containers that do not have the §14 A05 defaults, so the grant is equivalent to root on the node and §15.1's config is the only control over it. It is therefore project-scoped, empty by default, and readable in one file by whoever owns the machine. The reasoning is R15's, at a consequence R15's prefix allowlist would understate, which is why this is a separate grant kind with its own name rather than a relaxation of the `host` volume driver's "must be a directory" check.
 
 - **R19**: **`update.auto` follows the tag the service already declares.** Off by default. When on, `kanead` re-resolves `task.image`'s tag against its registry every `update.interval` (default 6 h, minimum 5 min: a poll loop is a request to someone else's registry), and when the digest behind the tag has moved it pins the new one and lets the reconciler converge through the ordinary rolling update. It is **refused at parse time on a service whose image is already a digest** (a digest does not move, so the request is a contradiction) and **on a service with a `build` block** (§10.2's pipeline pins that image; two writers on one field is a fight, not a feature). The declared tag is never overwritten: the resolved digest is separate state, and it is preserved across `kanea apply` like the restart generation (§16.1) - with one deliberate exception (v1.110): the check clock (`ImageCheckedAt`) is *not* carried, so an apply re-arms the poll and the tag is re-resolved within one watcher sweep (about a minute) instead of waiting out `update.interval`; a re-pushed tag lands with a push and an apply, not six hours later. An apply that **changes** the declared tag drops the pin (the old digest is not the tag just asked for) and **resolves the new one in the same mutation** (v1.114), so the release reaches the planner as one spec-hash change and rolls once; a registry that cannot be reached falls back to the watcher's next sweep, which costs the second rolling deploy that fallback exists to avoid. **A failed update reverts:** the digest that was running is kept, and if the new one has not converged within `update.deadline` (default 10 min) it is re-pinned and the service returns to what worked. Converged means *healthy* for a service with a `check` block and *running without crash-looping* for one without, because `Healthy` is only ever written by a probe (§6.2 R7). Both outcomes emit events (§11): `image.updated`, `image.update_failed`. Private registries are read with `task.registry_auth_ref`, a `secret:` reference under the same project scoping as every other credential (R5).
 
-- **R20**: **`expose.tls.mode` names a certificate source, never a path.** One of `acme`, `self-signed`, `provided` or `plaintext` (§7.3); an unknown value is an error rather than a fallback, because a mode nobody recognises would otherwise decide how the service is served by accident. **An absent `tls` block is not "no TLS"**: it means "the node decides", resolved against `--tls-default` when `kanead` reads desired state rather than when the CLI converts the spec, so the same spec cannot mean different things on two machines. `mode = "provided"` may carry a `name` selecting one of the certificates an operator configured on this node (§15.1), validated at parse time only as a DNS-1123 label; everything else is the node's, which is R17's split exactly: **the spec has no field for a certificate path, a filename or PEM bytes**, because GitOps deploys specs automatically and `handleApply` round-trips a desired record verbatim, so a path *field* is an input surface whether or not the HCL parser is what filled it. `name` on any other mode is an error, since there is nothing for it to select. The pre-v1 spelling `tls { letsencrypt = true }` still parses as `mode = "acme"` and warns; `letsencrypt = false` warns more loudly, because it used to be indistinguishable from an absent field and now is not.
+- **R20**: **`expose.tls.mode` names a certificate source, never a path.** One of `acme`, `self-signed`, `provided` or `plaintext` (§7.3); an unknown value is an error rather than a fallback, because a mode nobody recognises would otherwise decide how the service is served by accident. **An absent `tls` block is not "no TLS"**: it means "the node decides", resolved against `tls.default_mode` (§15.1) when `kanead` reads desired state rather than when the CLI converts the spec, so the same spec cannot mean different things on two machines. `mode = "provided"` may carry a `name` selecting one of the certificates an operator configured on this node (§15.1), validated at parse time only as a DNS-1123 label; everything else is the node's, which is R17's split exactly: **the spec has no field for a certificate path, a filename or PEM bytes**, because GitOps deploys specs automatically and `handleApply` round-trips a desired record verbatim, so a path *field* is an input surface whether or not the HCL parser is what filled it. `name` on any other mode is an error, since there is nothing for it to select. The pre-v1 spelling `tls { letsencrypt = true }` still parses as `mode = "acme"` and warns; `letsencrypt = false` warns more loudly, because it used to be indistinguishable from an absent field and now is not.
 
 - **R21**: **`network { publish }` binds a node port, and declares what that port can enforce** (§7.2.2). The block's label names the `network { port }` it forwards to: there is deliberately **no field for a container port number**, so a published port cannot name a port the service never declared. `host` is the node port, 1-65535. `mode` is `http` (default), `tcp`, or `udp` (v1.42). It is a sibling of `expose`, not a field of it: `expose` is host-routing-shaped; its `domains` default to an auto-FQDN and its `tls` requests a certificate *for those domains*, and nesting a portless, certificate-less listener inside it would make every one of those fields conditionally meaningful and force R16's unambiguous-port rule to weaken. **A `tcp` or `udp` listener that declares `rate_limit` or `headers` is an error**, because a raw stream carries no requests to count and no headers to rewrite, and a control the edge would silently drop is worse than one the spec never claimed: R16's fail-closed rule, inverted. `max_conns` is `tcp` and `udp` only (on `udp` it bounds live sessions). **A port's `protocol` and a publish's `mode` must agree** (v1.42): `mode = "udp"` may name only a `protocol = "udp"` port and vice versa; a datagram relay in front of a TCP socket, or the reverse, is a listener that black-holes by construction, refused at `plan`. A `protocol = "udp"` port is declarable **only to be published**: it gets no VIP frontend (§5.2.5), no `expose`, no `${service.*.port}` reference and no `http`/`tcp` health check, each refused by name; an unpublished UDP port earns a warning, because it is reachable by nothing. Within a service, one container port publishes on one host port and one host port serves one container port **per L4 family**, one host port may carry one `http`/`tcp` listener and one `udp` listener at once (DNS's shape); **across the applied set, no two services may claim the same host port in the same family**, counted the same way R16 counts domains, because each spec is individually fine and the collision is between them.
 
-- **R22**: **the permitted port range belongs to the node.** 80, 443 and the control-plane API and status ports are reserved at `plan` time, because they are constants of the platform. Everything else is gated by `kanead`'s `--publish-ports` (default `1024-65535`, `off` to disable publishing entirely) and enforced at **apply**, not only at `plan`: GitOps never goes through the CLI, so a check that lived only in the CLI would not be a check. Ports below 1024 are therefore refused by default: a spec able to claim 22, 25 or 53 on this node's address would be deciding something that belongs to whoever owns the machine. The node publishes its own range so `kanea plan` can report the refusal in front of the person who typed it, but the range is the daemon's answer and the daemon is where it is enforced. This is R15's and R17's split for the third time: the spec says what it wants, the node says what is allowed, and the default is restrictive.
+- **R22**: **the permitted port range belongs to the node.** 80, 443 and the control-plane API and status ports are reserved at `plan` time, because they are constants of the platform. Everything else is gated by the node's `edge.publish.ports` (§15.1; default `1024-65535`, `"off"` to disable publishing entirely) and enforced at **apply**, not only at `plan`: GitOps never goes through the CLI, so a check that lived only in the CLI would not be a check. Ports below 1024 are therefore refused by default: a spec able to claim 22, 25 or 53 on this node's address would be deciding something that belongs to whoever owns the machine. The node publishes its own range so `kanea plan` can report the refusal in front of the person who typed it, but the range is the daemon's answer and the daemon is where it is enforced. This is R15's and R17's split for the third time: the spec says what it wants, the node says what is allowed, and the default is restrictive.
 
 - **R23**: **`task.user` is the workload's identity, and it is numeric.** An optional `user` block carries `uid`, `gid` and an optional `groups` list of supplementary GIDs; each is a non-negative integer below 2³²−1, `groups` holds no duplicates and is bounded in length. **There is no field for a username**, and the omission is the same one R17 makes for device paths: resolving `"postgres"` means reading `/etc/passwd` out of the container's own rootfs, which lets a container-controlled file decide which uid the control plane runs a process as. `kanea exec --user` already refused that, and the job spec does not get the weaker rule. A name is also not stable (it resolves to whatever the next base-image rebuild says) so under R19 auto-update it would come to mean a different uid than the one anybody reviewed. **An absent block is not "root"**: it means the image's own `USER` directive stands, which is what every spec written before this rule already meant, so adding the rule changes no running service. When the block is present it overrides the image, and it is applied alongside the other §14 A05 defaults rather than through the runtime's user-resolution helpers, which read the rootfs. `kanea exec` and an `exec` health check both inherit it, because both derive from the task's own process spec: a probe running as root against a workload running as 999 would create files the workload cannot read. **A non-root user is not a substitute for R13**: capabilities are still dropped to nothing and still granted only from the permitted set. It is, in practice, what makes most of those grants unnecessary.
 
@@ -946,7 +948,7 @@ function "resize-avatar" {
 
 - **R27**: **`auth` names how a request proves itself, and every field is a reference** (v1.40). An `auth` block on `expose` or on a function's `trigger "http"` declares exactly one mode: two modes in one block is an error, not a fallback chain. `basic_ref` names a secret holding htpasswd-format lines (`user:$2y$…`); **bcrypt hashes only**: a line that is not a bcrypt hash is refused when the projection is built, because a plaintext password in a "hash" file is a credential pretending to be verifier material. `bearer_ref` names a secret holding accepted tokens, one per line; the edge is published **SHA-256 hashes of them, never the tokens**, so the restricted file cannot authenticate anyone. A `jwt` block carries `algorithm` (one of `HS256`, `RS256`, `ES256`: configured, never read from the token), exactly one of `secret_ref` (HS256) or `public_key_ref` (RS256/ES256, PEM), and optional `issuer` and `audience` claims to require. **There is no JWKS URL and no field for one**: the edge makes no outbound calls, so keys are static references rotated like any credential. All references are R3/R5-scoped. The spec never carries a path, a key or a password: R17's split, applied to authentication. The route table carries only a fail-closed marker; verifier material travels in the restricted bundle (§7.3's file, 0640). A route whose auth entry cannot be resolved or published serves **503, never open**; auth runs after the rate limit (brute force meets 429 before bcrypt) and before header transforms (§7.2.1). Published ports do not take the block in v1: deliberate, recorded here rather than silently absent.
 
-- **R28**: **`protocol` names how the edge dials the upstream, and it is refused where it cannot work** (v1.41). `expose.protocol` is one of: absent, `"http"` (the default, normalized away), or `"grpc"`; the marker means "dial this route's VIP over plaintext HTTP/2 (h2c)"; it is named for the operator's intent, and a plain-h2c REST upstream works under it too (documented, not policed). Anything else is a parse error. With `protocol = "grpc"`, the exposed port is the one named **`grpc`** if the service declares it, then R16's rule as before (named `http`, else the sole port): deterministic when both exist, `grpc` wins because the spec said so. **Refused at `plan`, fail-closed:** `protocol = "grpc"` beside a declared `tls { mode = "plaintext" }` (the plaintext path is HTTP/1.1 cleartext on :80 (the edge serves no inbound h2c) so the route could never carry a real gRPC client; a declared contradiction is a plan error, not a warning), and `protocol = "grpc"` beside a `publish` of the same port in `http` mode, including the defaulted mode (that listener would serve HTTP/1.1 on the LAN: R21's silently dropped control; `mode = "tcp"` is the correct spelling and the diagnostic says so). An **undeclared** TLS mode that resolves to plaintext on a `--tls-default plaintext` node is an agent-side warning at resolution time, never a plan error: R20 makes that resolution node-side, and plan cannot see it. **Functions cannot declare it, structurally**: `trigger "http"` has no `protocol` field and must not gain one (wasi-http is HTTP/1.1); R25's pattern, where the absence of the field is the refusal. `Expose.Protocol` is not SpecHash material: nothing about the upstream dial is baked into a container, so changing it republishes routes and never rolls an alloc.
+- **R28**: **`protocol` names how the edge dials the upstream, and it is refused where it cannot work** (v1.41). `expose.protocol` is one of: absent, `"http"` (the default, normalized away), or `"grpc"`; the marker means "dial this route's VIP over plaintext HTTP/2 (h2c)"; it is named for the operator's intent, and a plain-h2c REST upstream works under it too (documented, not policed). Anything else is a parse error. With `protocol = "grpc"`, the exposed port is the one named **`grpc`** if the service declares it, then R16's rule as before (named `http`, else the sole port): deterministic when both exist, `grpc` wins because the spec said so. **Refused at `plan`, fail-closed:** `protocol = "grpc"` beside a declared `tls { mode = "plaintext" }` (the plaintext path is HTTP/1.1 cleartext on :80 (the edge serves no inbound h2c) so the route could never carry a real gRPC client; a declared contradiction is a plan error, not a warning), and `protocol = "grpc"` beside a `publish` of the same port in `http` mode, including the defaulted mode (that listener would serve HTTP/1.1 on the LAN: R21's silently dropped control; `mode = "tcp"` is the correct spelling and the diagnostic says so). An **undeclared** TLS mode that resolves to plaintext on a node whose `tls.default_mode` is `plaintext` is an agent-side warning at resolution time, never a plan error: R20 makes that resolution node-side, and plan cannot see it. **Functions cannot declare it, structurally**: `trigger "http"` has no `protocol` field and must not gain one (wasi-http is HTTP/1.1); R25's pattern, where the absence of the field is the refusal. `Expose.Protocol` is not SpecHash material: nothing about the upstream dial is baked into a container, so changing it republishes routes and never rolls an alloc.
 
 - **R29**: **`restart` bounds crash restarts, and its schedule is validated where it is written** (v1.55). The block carries `attempts` (a non-negative integer, where zero or an absent block means the platform default of 5) and `backoff`, a comma-separated list of positive durations (`"10s,30s,1m,5m"`; empty means the default schedule). A negative `attempts`, an empty schedule entry, a token that is not a duration, or a non-positive duration is a `plan` error carrying the service's own position, not a conversion failure downstream of it. The semantics are the reconciler's, stated here so they are normative: each restart waits the next schedule entry, and **the last entry repeats**, so a chronically failing alloc settles at the longest delay rather than falling off the end; an alloc that exhausts its budget is marked **failed and left alone**; the fix is a spec change or a `kanea restart`, and either works because both produce a new spec hash and **the restart budget belongs to the spec hash that spent it**: history is never carried onto an alloc created from a different hash, so deploying a fix resets the count. The policy itself is deliberately **not SpecHash material** (tightening a backoff schedule must not roll every healthy alloc) while the counters are durable in the alloc record (v1.37's transition rule), or `attempts = 5` would reset every time `kanead` was upgraded. **The budget counts only exits the daemon witnessed** (v1.98): an exit spends an attempt only when the running daemon started that container or observed it running, and an alloc first found already stopped - a node reboot, a power loss, an exit during a daemon restart - is **recovered** instead (`ActionRecover`): torn down and recreated immediately, the persisted backoff deadline ignored, the counter carried but neither incremented nor reset, no `service.crashed` event emitted and the §4.3 breaker untouched, the recovery named in the applied-action log line. A record already marked failed stays failed across a reboot - that verdict was reached while the platform watched, and its fix is the same deploy or `kanea restart` as ever - and the witnessed set lives only in the daemon's memory, since persisting it would recreate the cross-reboot charging it exists to prevent. Exit code zero is not exempt: `count` is a promise, and a process exiting cleanly still leaves it broken; run-to-completion workloads are §19's parked batch feature, not a restart mode.
 - **R30**: **Shared variables declare once and substitute at parse** (v1.63). A top-level `variables { }` block names values the rest of the spec references as `${name}` (or bare `name` where HCL takes an expression) and the node's `/etc/kanea/kanea.hcl` may carry a `variables { }` stanza whose entries sit **under** the spec's own (defaults-then-specialize, the R20 shape); caller-supplied values (a pipeline's checkout `GIT_*`) sit above both. Values are primitives: string, number or bool, carried as strings; a list or object is refused by name. A variable's value may reference node variables and built-ins, **never another spec variable**, one rule instead of an ordering-and-cycles story. Declaring a reserved name (the built-ins (`GIT_SHA`, `GIT_SHA_SHORT`, `GIT_BRANCH`, `KANEA_PROJECT`), `service`, or `secret` (R35's interpolation namespace, v1.85)) is refused at every level, as is declaring the same name twice across a spec's files. An undefined reference is the unknown-variable parse error it has always been, with file and line. **Variables are never secrets**: the node's stanza is served read-only to any authenticated caller (`GET /v1/vars`), so a secret stays a `secret:` reference (R3); a variable whose value contains one is validated by R5 on the substituted result. Substitution is parse-time: a changed value deploys as an ordinary spec-hash mismatch (nothing new in the SpecHash material), and spec generation emits resolved literals, the generated marker's standing caveat.
@@ -979,7 +981,7 @@ function "resize-avatar" {
 ### 7.2 North-south (public exposure)
 
 - Only the edge proxy listens publicly, on 80/443, and on the node ports services publish (§7.2.2).
-- **Automatic FQDNs:** every service with an `expose` block gets `service.project.<base_domain>` (e.g., `web.shop.apps.example.com`): `base_domain` set in server config. Custom `domains` override/extend.
+- **Automatic FQDNs:** every service with an `expose` block gets `service.project.<base_domain>` (e.g., `web.shop.apps.example.com`): `base_domain` set in the node config (§15.1). Custom `domains` override/extend.
 - Operator sets one **wildcard DNS record** (`*.apps.example.com → node IP`) once; all services routable instantly.
 - **Upstream selection:** a route points at the service's VIP (§7.1), not at an alloc: the eBPF LB does the balancing, so the edge holds one upstream address per service and never a backend list. The port is the one named **`http`**, or the service's only port if it declares exactly one. A service that exposes several ports without an `http` among them is a **`plan` error** (R16): v1 routes by Host alone, so there is no request attribute left to choose a port with, and picking one silently is how traffic ends up at the metrics listener.
 - **A domain belongs to one service.** Two services claiming the same host (including two that default to the same auto-FQDN) is a `plan` error, not a last-writer-wins race in the edge (R16).
@@ -1019,10 +1021,10 @@ Host routing needs a name, and a single-node install often has none, or has one 
 - **The route is fixed when the listener binds, not looked up per request.** A published port is reached by address, so the `Host` header is an IP literal that would never match a domain in the table.
 - **A spec that declares middleware a TCP listener cannot honour is a `plan` error** (R21), not a control the edge quietly drops. This is §7.2.1's fail-closed rule inverted: a rate limit that is *ignored* is worse than one that is *absent*, because the spec says the service is protected and it is not.
 - **The upstream sees the edge's address, not the client's.** There is no `X-Forwarded-For` for a raw stream, so `pg_hba.conf` host rules, address-based bans and anything else that authenticates by source address stop meaning anything behind a published TCP port. `ip_restriction` is checked at accept time, before the upstream is dialled and before a byte is forwarded, and that is the entire mitigation. PROXY protocol would restore the address and is deliberately not built (§19.3): most services do not speak it, and a misconfiguration prepends garbage to the stream and presents as protocol corruption rather than as a config error.
-- **The permitted range is the node's decision, not the spec's.** `kanead` takes `--publish-ports` (default `1024-65535`; `off` disables publishing entirely) and refuses anything outside it at apply, not only at `plan`: GitOps never goes through the CLI. 80, 443 and the control-plane API and status ports are reserved outright. Ports below 1024 are refused by default because a spec that could claim 22, 25 or 53 on this node's address would be deciding something that belongs to whoever owns the machine; the same split as `storage.allowed_host_paths` (R15) and the passthrough grants (R17-R18): the spec says what it wants, the node says whether it is allowed, and the default is restrictive.
-- **The connection ceiling is bounded and stated.** Per-listener `max_conns` (default 256) and a process-wide `--max-published-conns` (default 1024) are refusals, never queues: the discipline §10.2 uses for builds. A queued TCP connection is a client holding a socket open until it times out anyway.
+- **The permitted range is the node's decision, not the spec's.** `kanead` reads `edge.publish.ports` (§15.1; default `1024-65535`; `"off"` disables publishing entirely) and refuses anything outside it at apply, not only at `plan`: GitOps never goes through the CLI. 80, 443 and the control-plane API and status ports are reserved outright. Ports below 1024 are refused by default because a spec that could claim 22, 25 or 53 on this node's address would be deciding something that belongs to whoever owns the machine; the same split as `storage.allowed_host_paths` (R15) and the passthrough grants (R17-R18): the spec says what it wants, the node says whether it is allowed, and the default is restrictive.
+- **The connection ceiling is bounded and stated.** Per-listener `max_conns` (default 256) and a process-wide `edge.publish.max_conns` (default 1024) are refusals, never queues: the discipline §10.2 uses for builds. A queued TCP connection is a client holding a socket open until it times out anyway.
 - **Datapath policy needs nothing.** The per-project isolation policy already admits the host identity without a port restriction, and the edge is a host process: edge→VIP:5432 is permitted exactly as edge→VIP:8080 already is. Adding per-port rules as "hardening" would turn a permissive union into one that must enumerate every port every service ever declares, and getting it wrong denies traffic silently.
-- **A `udp` listener is a session relay, and it dials backends, not the VIP** (v1.42). The connect-time LB translates `connect(2)`; an unconnected datagram never makes that call, so there is no UDP frontend to dial (§5.2.5): the routes projection carries the backend alloc addresses for UDP listeners alone, and a backend-set change republishes the snapshot like any other edit to it. Each new client source address opens a **session**: one connected socket to one backend, chosen by **rendezvous hash of the client address over the live backend set**, so a client keeps its backend across an edge restart, a session expiry and other backends' churn; a stateful UDP protocol (a game session, a DTLS handshake) must not migrate backends mid-conversation. Sessions expire on idleness (90 s without a datagram in either direction) and are swept, not kept: the client's next datagram re-creates the session, and the hash lands it on the same backend. `max_conns` bounds live sessions per listener (default 256, sharing `--max-published-conns` with the tcp side), refused-not-queued; a **per-source-IP cap** (8, v1.77) bounds the spoofed-source flood the listener cap's full-address keying cannot see, and a **pre-verification byte cap** (4 KiB, v1.77) bounds what a session may send to its client until a second datagram from the same socket proves receipt, so one spoofed datagram cannot turn the node into an amplifier; `ip_restriction` is checked before a session exists, which is the accept-time hook a datagram socket lacks, recovered at the only moment there is. Refusals and expiries are counted (`kanea_edge_udp_*`, §9.1.1's discipline): a session cap nobody can see reads as packet loss. **The upstream sees the edge's address**, exactly as on `tcp`, and the same caveat applies doubly: address-authenticated UDP protocols (TFTP's port dance, SIP's Via headers) do not survive a relay, and the docs say so rather than pretending.
+- **A `udp` listener is a session relay, and it dials backends, not the VIP** (v1.42). The connect-time LB translates `connect(2)`; an unconnected datagram never makes that call, so there is no UDP frontend to dial (§5.2.5): the routes projection carries the backend alloc addresses for UDP listeners alone, and a backend-set change republishes the snapshot like any other edit to it. Each new client source address opens a **session**: one connected socket to one backend, chosen by **rendezvous hash of the client address over the live backend set**, so a client keeps its backend across an edge restart, a session expiry and other backends' churn; a stateful UDP protocol (a game session, a DTLS handshake) must not migrate backends mid-conversation. Sessions expire on idleness (90 s without a datagram in either direction) and are swept, not kept: the client's next datagram re-creates the session, and the hash lands it on the same backend. `max_conns` bounds live sessions per listener (default 256, sharing `edge.publish.max_conns` with the tcp side), refused-not-queued; a **per-source-IP cap** (8, v1.77) bounds the spoofed-source flood the listener cap's full-address keying cannot see, and a **pre-verification byte cap** (4 KiB, v1.77) bounds what a session may send to its client until a second datagram from the same socket proves receipt, so one spoofed datagram cannot turn the node into an amplifier; `ip_restriction` is checked before a session exists, which is the accept-time hook a datagram socket lacks, recovered at the only moment there is. Refusals and expiries are counted (`kanea_edge_udp_*`, §9.1.1's discipline): a session cap nobody can see reads as packet loss. **The upstream sees the edge's address**, exactly as on `tcp`, and the same caveat applies doubly: address-authenticated UDP protocols (TFTP's port dance, SIP's Via headers) do not survive a relay, and the docs say so rather than pretending.
 
 §6.1 shows the `http` kind. The `tcp` kind, on the two things people actually ask for:
 
@@ -1090,15 +1092,15 @@ service "factorio" {
 
 ### 7.2.3 Function endpoints (v1.39)
 
-A function's `trigger "http"` lowers to the `expose` machinery, so on a node with a base domain a function is a host-routed service like any other: `resize-avatar.shop.<base_domain>`, TLS by R20, middleware by §7.2.1, nothing new in the edge. Two consequences are worth stating. **A subdomain per function walks toward §22 R8's ACME rate limit faster than services do** (functions are cheap to declare, which is the point) and the existing mitigation is the existing one: the per-project wildcard via DNS-01 beyond the ~20-name threshold (§7.3). And **a node with no base domain still gets HTTP functions**, which host routing cannot give it: the edge binds one **functions port** (`kanea-edge --functions-port`, default off when unset and no function declares an http trigger) and dispatches by path; `http://<node>:<port>/<project>/<function>/…` → the function's VIP, prefix stripped.
+A function's `trigger "http"` lowers to the `expose` machinery, so on a node with a base domain a function is a host-routed service like any other: `resize-avatar.shop.<base_domain>`, TLS by R20, middleware by §7.2.1, nothing new in the edge. Two consequences are worth stating. **A subdomain per function walks toward §22 R8's ACME rate limit faster than services do** (functions are cheap to declare, which is the point) and the existing mitigation is the existing one: the per-project wildcard via DNS-01 beyond the ~20-name threshold (§7.3). And **a node with no base domain still gets HTTP functions**, which host routing cannot give it: the edge binds one **functions port** (`edge.functions_port`, default off when unset and no function declares an http trigger) and dispatches by path; `http://<node>:<port>/<project>/<function>/…` → the function's VIP, prefix stripped.
 
 - **This is a mode of §7.2.2's listener machinery, not path routing.** The dispatcher is a published-port listener whose route table is function-name → VIP instead of a single fixed upstream; the §7.2.1 middleware chain applies the way it does to any `http` listener. General path-prefix routing on the host-routed :443 remains parked (§7.2.1 roadmap, §19.3): when it ships, it ships for services and functions alike, and this port does not change meaning.
-- **Which mode a function gets is the node's decision, resolved when `kanead` reads desired state**; R20's `--tls-default` pattern: the spec never encodes it, so one spec means the same thing on every node.
+- **Which mode a function gets is the node's decision, resolved when `kanead` reads desired state**; R20's `tls.default_mode` pattern: the spec never encodes it, so one spec means the same thing on every node.
 - **The functions port is plaintext HTTP, by design.** A client connecting by IP sends no SNI, which is the same fact that keeps `tls` off published ports (§19.3). A function that needs TLS needs a name, and a name means the FQDN path.
 
 ### 7.3 TLS & certificate sources
 
-**A service says where its certificate comes from, and there are four answers** (R20). `expose.tls.mode` is one of `acme`, `self-signed`, `provided` or `plaintext`; an absent `tls` block means whatever the node's `--tls-default` is, so a homelabber sets the policy once and annotates nothing. Every source publishes into the same bundle the edge already reads (§5.2.6), and **`kanead` owns all of them**: obtaining or minting a certificate is *writing*, and the edge does not write.
+**A service says where its certificate comes from, and there are four answers** (R20). `expose.tls.mode` is one of `acme`, `self-signed`, `provided` or `plaintext`; an absent `tls` block means whatever the node's `tls.default_mode` is, so a homelabber sets the policy once and annotates nothing. Every source publishes into the same bundle the edge already reads (§5.2.6), and **`kanead` owns all of them**: obtaining or minting a certificate is *writing*, and the edge does not write.
 
 | `mode` | Where the certificate comes from | For |
 |---|---|---|
@@ -1109,7 +1111,7 @@ A function's `trigger "http"` lowers to the `expose` machinery, so on a node wit
 
 - **`plaintext` exists because it was already happening and nothing could say so.** Before v1.33 a service whose certificate had not been issued (or on a node with no ACME configured at all) simply served HTTP, and the only signal was its absence. Declaring it makes it reviewable, and gives the edge the one fact it needs to stop redirecting the route and to withhold HSTS (§5.2.6).
 - **The self-signed CA is per node, generated on first use, and lives in the Store.** ECDSA P-256, ten years, kept in the `certs` bucket beside the ACME account key, so it travels in the encrypted archive and is restored with everything else. Leaves are 90 days, deliberately Let's Encrypt's number: the 2/3 renewal rule below then exercises the renewal path every two months instead of once a decade, which is when a bug in it is cheap. `kanea ca show` prints the CA certificate to install on a phone, laptop or TV; there is no command and no API route that returns the CA *key*, in the same spirit as §16.3's rule about secrets. It is **not** a §15.4 key-ceremony artefact and the distinction is the point: the master key is unrecoverable and every backup dies with it, whereas losing this CA costs re-trusting some devices. A restore onto a node with no archive therefore produces a *new* CA, and every device that trusted the old one must be re-trusted (§15.3).
-- **A `provided` certificate is named, not pathed**: R17's rule at TLS. The operator defines `certificate "<name>" { cert, key, allow }` in the node's own config (§15.1), listing the projects that may claim it; a spec asks for `mode = "provided"` and optionally a name. **What the certificate covers is read from its own SANs**, never declared: a domain list that could disagree with the certificate is a configuration that lies, and reading the SANs is also why a wildcard needs no filename convention. The files are re-read on a short poll rather than watched, because certbot and its kin write-then-rename and a watch registered on the old inode never fires; an operator who rotates a certificate should not wait for the renewal pass.
+- **A `provided` certificate is named, not pathed**: R17's rule at TLS. The operator defines `certificate "<name>" { cert, key, allow }` in the node's own config (§15.1), listing the projects that may claim it; a spec asks for `mode = "provided"` and optionally a name. **What the certificate covers is read from its own SANs**, never declared: a domain list that could disagree with the certificate is a configuration that lies, and reading the SANs is also why a wildcard needs no filename convention. The block is read once with the rest of `kanea.hcl` (v1.115); the certificate and key files it names are re-read on a short poll rather than watched, because certbot and its kin write-then-rename and a watch registered on the old inode never fires; an operator who rotates a certificate should not wait for the renewal pass.
 - **Nothing ever falls back to a weaker source.** A service whose `provided` certificate is missing, unreadable or not allowed to it emits `cert.failed` and serves plaintext: it does *not* quietly get a self-signed one. A silent downgrade to a certificate nothing trusts is worse than plain HTTP, because plain HTTP is visibly plain HTTP while a browser interstitial is something an operator learns to click through, and then clicks through on the day it means something. An *expired* provided certificate is published anyway, with the event naming the date: refusing it at midnight turns a stale site into an unreachable one.
 - Challenges: **HTTP-01** (via edge proxy), **TLS-ALPN-01**, **DNS-01** (needed for wildcards).
 - **`kanead` runs the ACME client; the edge only serves what it is handed.** Issuance writes to the `certs` bucket, renewal is a control-plane timer, and a failure is an event: none of which the edge can do, because it holds no Store handle and no write access (§5.2.6). What the edge gets is a projection: the certificate bundle, and for HTTP-01 the `token → keyAuth` pairs it answers `/.well-known/acme-challenge/*` with. Since publishing and the edge's poll are not synchronous, **`kanead` fetches its own challenge URL through the edge and waits for the right answer before telling the CA to validate**: a validation that fails only because the edge had not reloaded yet costs a failed-validation slot, and that limit takes an hour to clear.
@@ -1118,7 +1120,7 @@ A function's `trigger "http"` lowers to the `expose` machinery, so on a node wit
 - **Delivery order (M3 → M5):** **HTTP-01 ships in M3** and is what the auto-FQDNs of §7.2 use: the edge owns port 80, so it is the challenge with no prerequisites. **DNS-01 and the wildcard default ship in M5**, once the secrets store exists to hold the update credential as a `secret:` reference (R3/R5). **TLS-ALPN-01 is deferred past M5** (v1.20): it is the alternative for a node that does *not* own port 80, which is not a situation Kanea is in.
 - **DNS-01 is RFC 2136, TSIG-signed** (v1.20): dynamic updates against BIND, Knot or PowerDNS, spoken directly with `miekg/dns` rather than through a provider catalogue that would link every vendor SDK into the binary. An unsigned update is refused, one is a passing ACME challenge for every name in the zone. Hosted providers are a curated list, added individually.
 - **ACME rate limits are a design input:** hundreds of per-service certs + frequent redeploys hit Let's Encrypt limits (50 certs/registered domain/week, duplicate-cert 5/week, failed-validation caps). Beyond ~20 exposed services, Kanea **defaults to a wildcard cert via DNS-01**, **per project**, `*.<project>.<base_domain>`, because a wildcard covers exactly one label and the generated names of §7.2 are `service.project.<base_domain>`. Per-service certs remain for custom domains, which are somebody else's zone and not Kanea's to ask a CA for `*.` of. Without a DNS-01 solver the threshold is a **loud warning** rather than a switch: a wildcard cannot be validated over HTTP. **The collapse is an ACME rate-limit workaround and applies to no other source** (a CA this node owns has no rate limit) so it is skipped entirely for a project any of whose exposed services resolved to a different mode.
-- **`--acme-directory` defaults to production** (v1.33), not to the LE staging endpoint. Staging's job was to absorb the first attempt, when the DNS is usually still wrong; `mode = "self-signed"` does that job better, because it yields HTTPS that actually works rather than a certificate that is untrusted *and* expires. Staging remains available by name, and is what CI and `init` testing use.
+- **`acme.directory` defaults to production** (v1.33), not to the LE staging endpoint. Staging's job was to absorb the first attempt, when the DNS is usually still wrong; `mode = "self-signed"` does that job better, because it yields HTTPS that actually works rather than a certificate that is untrusted *and* expires. Staging remains available by name, and is what CI and `init` testing use.
 - Certs stored in Store (`certs` bucket), replicated to S3 with the rest of state; renewed at 2/3 of lifetime; renewal events emitted (notification-able).
 - Internal traffic (alloc↔alloc) is plaintext within the node, and that is the design, not a gap (v1.36): it never leaves the kernel of a machine the operator owns, so encrypting it protects against nothing the kernel boundary does not already decide. Inter-node encryption becomes a real question at the clustering milestone, where kernel WireGuard between node peers answers it without per-workload identity (§19.2).
 
@@ -1131,7 +1133,7 @@ Named **storage resources** are defined at server level (config) or project leve
 | Driver | Mechanism | Ownership (R24) | Notes |
 |---|---|---|---|
 | `local` | Host path under `data_dir/volumes/` | `chown` + `chmod` on the volume directory | Default; per-alloc or shared |
-| `host` | An existing operator-owned directory, named by `path` (or one Kanea creates, with `create = true` (v1.69) | **Refused**) the directory is the operator's | **Off unless enabled:** the path must sit under a prefix in the server config's `storage.allowed_host_paths` (§15.1), which defaults to empty. Shared by every alloc of the service |
+| `host` | An existing operator-owned directory, named by `path` (or one Kanea creates, with `create = true` (v1.69) | **Refused**) the directory is the operator's | **Off unless enabled:** the path must sit under a prefix in the node config's `storage.allowed_host_paths` (§15.1), which defaults to empty. Shared by every alloc of the service |
 | `s3` | FUSE mount; **`mountpoint-s3` (default, read-mostly)** or **`s3fs` (opt-in read-write)**, selected by `mode` (M0 spike ③) | `--uid`/`--gid`/`--file-mode`/`--dir-mode` (ro); `uid=`/`gid=`/`umask=` (rw) | Any S3-compatible endpoint **over https** (v1.72: the credential is sent to it on every request); read-only is the default; **not for latency-sensitive or many-small-files data** (one round trip per file op: 200 files ≈ 30 s at 30 ms RTT). `goofys` is rejected (unmaintained since 2020, no arm64 build); `rclone mount` is not a built-in driver (defers uploads ~6 s past `close()`) |
 | `nfs` | Kernel NFS mount | **Refused**: no `uid=` exists; the server decides | `server`, `export`, mount options |
 | `smb` | Kernel CIFS mount | `uid=`, `gid=`, `file_mode=`, `dir_mode=` | `server`, `share`, credentials, `vers=3.0` default |
@@ -1188,7 +1190,7 @@ Sources:                              Aggregation:                      Consumer
 - **The seed rides the subscription (v1.79).** The same range read is carried on the **first frame** of a `stats` or `node` websocket subscription (§12.1), which is what a chart actually needs: one round trip instead of two, and a reconnect re-seeds for free. One builder serves both surfaces, so the REST route and the frame cannot drift about what a window means. Two additions make everything seedable: a **series selector** (the default sets are unchanged, so a pre-v1.79 request is byte-identical) and a **per-alloc breakdown**, whose alloc set is discovered from the Store rather than from the ring's key space, so it is identical to the live sample's and no sparkline is seeded for a row the live frames never feed. `GET /v1/stats/history` keeps the same additions and stays: it is the answer for a one-shot caller with nowhere to put a long-lived connection.
 - **Two more node series (v1.79):** `node_load1` and `node_allocs_running`, both under names the exporter's fixed list does not publish. The second is **counted inside the alloc-map refresh the metrics path already performs**, never by a listing added for it: a Store walk per scrape to draw one line is the read budget §18 rule 2 tells this pipeline not to spend, and the recording call takes a plain number so `internal/scaling` still imports neither the Store nor the reconciler. It therefore lands at that refresh's cadence rather than the scrape's, so most slots hold no point; that is a gap like any other and carrying the last value forward would be §9.2's mistake.
 - **Node aggregates are memoized per slot (v1.79).** The read-time sum and the weighted mean each cost a ring walk per service plus a full scan of the ring's key space, and the node topic would otherwise pay it per subscriber per interval. Both surfaces truncate their range to a slot boundary and the answer is cached against that slot, which is the same trick the alloc listing plays against the Store index: `Record` drops out-of-order samples, so a slot's answer is final once the slot has passed. The residual is stated rather than hidden: the newest slot may be partially assembled, so a sum can read momentarily low and is correct at the next one.
-- **Function invocations are datapath connects, not edge rps (v1.39).** A connect to a function's VIP *is* an invocation (from the edge, from another service east-west, or from the §11 invokers) so the Functions page's rate is `flows_per_second` for the lowered service, one number from the counters the datapath already writes. Edge rps alone would silently miss every east-west call. Nothing new enters the kernel or the TS: the series already exists for every service. Under `--network netns` (dev/CI: no datapath) the rate falls back to edge rps plus the invokers' own counters and is labelled partial. `idle` on the Functions page means this counter was **observed present and zero** over a full window; absent data renders as active, never idle: "no data is never zero", applied to invocation.
+- **Function invocations are datapath connects, not edge rps (v1.39).** A connect to a function's VIP *is* an invocation (from the edge, from another service east-west, or from the §11 invokers) so the Functions page's rate is `flows_per_second` for the lowered service, one number from the counters the datapath already writes. Edge rps alone would silently miss every east-west call. Nothing new enters the kernel or the TS: the series already exists for every service. Under `network.driver = "netns"` (dev/CI: no datapath) the rate falls back to edge rps plus the invokers' own counters and is labelled partial. `idle` on the Functions page means this counter was **observed present and zero** over a full window; absent data renders as active, never idle: "no data is never zero", applied to invocation.
 
 #### 9.1.1 The two shapes (v1.35)
 
@@ -1242,7 +1244,7 @@ The labelled family **never enters `internal/scaling`**. That store is the evalu
 - **BuildKit is the only build driver.** kaniko is removed (upstream archived since 2025-06; its layer cache measurably saves no time) and buildah is not shipped, one builder, one code path, one thing to pin and patch. The runner keeps a narrow internal driver seam so a second driver *could* be added, but v1 exposes no choice.
 - **Either `Containerfile` or `Dockerfile` is accepted**, with **`Containerfile` taking precedence** when both are present (the Podman/buildah convention). BuildKit's frontend defaults to `Dockerfile`, so the runner detects the recipe and passes `--opt filename=` explicitly (M0 spike ④). `build.dockerfile` overrides the detection and may name either file.
 - Pipeline runner: submits the build with the Git checkout as context; pushes to the configured registry (auth from a secret-materialised `config.json`, never in the context); supports layer caching (`cache_repo`). `context`/`dockerfile` are relative paths inside the checkout (absolute and `..` forms are refused at plan, symlinks in the context path at build time - v1.73), and `target`/`tag`/`cache_repo` are validated as references with no option-syntax characters, because buildctl parses its output and cache flags as comma-separated `key=value` lists (v1.73).
-- **An omitted `target` means the node's internal registry** (§5.2.14, v1.109): the runner's request is assembled with `<registry-addr>/<project>/<service>` filled in **on the node**, never client-side and never into the stored record (the R33 mechanism), and the plain-HTTP allowance that push needs is granted per request and **for the `--output` alone** - the cache flags follow only the node's explicit posture, so a defaulted target can never downgrade an external `cache_repo` push to cleartext. The internal push credential (§5.2.14's per-boot secret) is merged into the same materialised `config.json` the line above describes, beside a `registry_auth_ref` credential when the spec names one. An omitted `tag` is unchanged: `${GIT_SHA_SHORT}`, or `latest` for a commit-less local build. With the registry off (`--registry off`, or `--buildkit off`), an omitted target is refused by name at request assembly, in front of the operator rather than mid-build; `cache_repo` naming the internal registry is refused by the same name bound.
+- **An omitted `target` means the node's internal registry** (§5.2.14, v1.109): the runner's request is assembled with `<registry-addr>/<project>/<service>` filled in **on the node**, never client-side and never into the stored record (the R33 mechanism), and the plain-HTTP allowance that push needs is granted per request and **for the `--output` alone** - the cache flags follow only the node's explicit posture, so a defaulted target can never downgrade an external `cache_repo` push to cleartext. The internal push credential (§5.2.14's per-boot secret) is merged into the same materialised `config.json` the line above describes, beside a `registry_auth_ref` credential when the spec names one. An omitted `tag` is unchanged: `${GIT_SHA_SHORT}`, or `latest` for a commit-less local build. With the registry off (`builds.registry_addr = "off"`, or `builds.buildkit_addr = "off"`), an omitted target is refused by name at request assembly, in front of the operator rather than mid-build; `cache_repo` naming the internal registry is refused by the same name bound.
 - **Build isolation is collective, not per build:** the `buildkitd` unit carries one systemd memory/CPU cap and concurrency is bounded inside the daemon (`--oci-max-parallelism`, default 1), so builds cannot starve workloads.
 - **No hardening exception is needed anywhere.** The daemon is unprivileged and non-root; nothing in the build path runs as a privileged container, and §14's workload defaults are untouched (M0 spike ④). This is the property that decided the driver: every *task-shaped* builder measured needed either elevated capabilities or full privilege.
 - **The daemon owns its own content store** (`$HOME/.local/share/buildkit`, its own overlayfs snapshotter: it cannot use containerd's, being unprivileged). Image GC and disk watermarks (§5.2.4) must cover that path; containerd does not manage it.
@@ -1317,7 +1319,7 @@ The labelled family **never enters `internal/scaling`**. That store is the evalu
 
 - **Basic auth:** accounts in the **Store** with **bcrypt** (or argon2id) password hashes; `kanea user add` creates them at runtime over the authenticated API: no config edit, no reload, and one writer for both credentials and state (v1.18).
 - **OAuth2/OIDC:** generic OIDC (Google, Keycloak, Authentik, GitLab, …): authorization-code flow with **PKCE**, `state` + `nonce` validation, full ID-token verification (signature, issuer, audience, expiry), restricted redirect URIs, deny-by-default claim→role mapping. An account the provider authenticates but no claim maps is **refused**: authenticated is not authorized.
-- **LDAP** (v1.47): username/password logins verified against a directory (`go-ldap/v3`); service bind (credential a `secret:` reference), escaped user search under `--ldap-user-base-dn`, bind as the found DN, group extraction (`memberOf`, or a group search when `--ldap-group-base-dn`/`--ldap-group-filter` are set), static group→role mapping (`--ldap-admin-groups`/`--ldap-viewer-groups`), deny-by-default. TLS mandatory (`ldaps://` or forced StartTLS: no insecure flag); empty passwords refused before the network is touched (RFC 4513's unauthenticated bind). Identity is ephemeral like OIDC's: no account record, only a session. A local Store account with the same name **always wins**; the directory is consulted only for names Kanea does not hold.
+- **LDAP** (v1.47): username/password logins verified against a directory (`go-ldap/v3`); service bind (credential a `secret:` reference), escaped user search under `auth.ldap.user_base_dn`, bind as the found DN, group extraction (`memberOf`, or a group search when `auth.ldap.group_base_dn`/`auth.ldap.group_filter` are set), static group→role mapping (`auth.ldap.admin_groups`/`auth.ldap.viewer_groups`), deny-by-default. TLS mandatory (`ldaps://` or forced StartTLS: no insecure switch); empty passwords refused before the network is touched (RFC 4513's unauthenticated bind). Identity is ephemeral like OIDC's: no account record, only a session. A local Store account with the same name **always wins**; the directory is consulted only for names Kanea does not hold.
 - **GitHub is a separate path, not a preset** (v1.19). GitHub's OAuth issues no ID token, so there is nothing signed to verify: an identity from it can only be a `GET /user` call carrying an access token. That is a different trust argument from the one above and gets its own implementation and its own review, rather than being hidden behind a config preset that makes two unlike things look alike.
 
 ### 13.3 Sessions, tokens, roles
@@ -1352,277 +1354,297 @@ OWASP Top 10 (2021) compliance is a **release gate**: every milestone's definiti
 
 ---
 
-## 15. Server Configuration & State Durability
+## 15. Node Configuration & State Durability
 
-### 15.1 Server config (`/etc/kanea/kanea.hcl`)
+### 15.1 Node config (`/etc/kanea/kanea.hcl`)
 
-Since v1.51 the file is real: `kanead` probes this path once at startup (override
-the location with `--config <path>`, disable the file with `--config off`). Absent
-means every stanza's zero value: the posture of a node that never wrote it. This
-version reads the `storage` stanza, the `device`/`socket` grant blocks, (since
-v1.61) the `bind` stanza's API listener half, and (since v1.63) the `variables`
-stanza: node-wide spec variables, R2/R30's lowest-precedence source, served
-read-only over `GET /v1/vars`. Because `variables` is a file-only half with no
-flag, the v1.61 all-halves probe-skip is retired: a version that reads it must
-probe the file, and `--config off` remains the whole-file switch. Every
-other stanza below is the design sketch it has always been, and a file that
-carries one is loaded with a startup warning naming what was not read, never
-silently swallowed, never refused. A present-but-malformed file, or one that is
-not a regular file owned by root (or the daemon's own uid) and writable only by
-its owner, refuses startup: this file is the §14 A05 boundary, and deny-closed is
-the only honest failure. It is read once, like the grants it carries, never
-polled, never reloaded.
+The node has one configuration file, and its path is fixed: nothing overrides it and nothing disables it (v1.115). Absent means every default: the posture of a node that never wrote it. A malformed file, or one that is not a regular file owned by root (or the daemon's own uid) and writable only by its owner, refuses startup: this file is the §14 A05 boundary, and deny-closed is the only honest failure. It is read once, never polled and never reloaded: edit it, then restart. Both `kanead` and `kanea-edge` read it, and neither accepts arguments. An unknown attribute inside a stanza is an error; an unknown top-level stanza is a startup warning naming it, never silently swallowed and never refused.
+
+The edge decodes only `bind` and `edge`, so a mistake in a `kanead`-only stanza never stops ingress. A syntax error anywhere in the file still does.
+
+`provider`, `certificate`, `device` and `socket` blocks are read once, with the rest of the file. The files a `provider` or `certificate` block points at (credentials, certificate pairs) are re-read by content fingerprint, keep-last-good (§5.2.13, §7.3).
 
 ```hcl
-# cluster_id names the cluster this node belongs to. Empty by default: a
-# single node needs none, and required by clustering (NG1, §18) when it
-# arrives: two nodes with different ids must never join.
-cluster_id  = ""
-data_dir    = "/var/lib/kanea"
-log_level   = "info"
-base_domain = "apps.example.com"        # enables service.project.apps.example.com
+# /etc/kanea/kanea.hcl - the node's one configuration file.
+#
+# Every attribute is optional. A value shown here is the default unless its
+# comment says otherwise; an attribute left out means that default. kanead
+# and kanea-edge read the file once, at startup: edit it, then restart them.
 
-# Node-wide spec variables (§6.2 R2/R30, v1.63): defaults every spec on this
-# node may reference as ${name}; a spec's own variables block wins. Primitives
-# only, never secrets: the stanza is served to any authenticated caller
-# (GET /v1/vars). Reserved names (the built-ins, `service`) are refused.
+data_dir      = "/var/lib/kanea"         # state, the master key, volumes
+alloc_log_dir = "/var/log/kanea/allocs"  # per-alloc workload logs
+log_level     = "info"                   # debug | info | warn | error
+base_domain   = "apps.example.com"       # no default; gives <service>.<project>.apps.example.com
+
+# Node-wide spec variables: defaults every spec on this node may reference as
+# ${name}. A spec's own variables block wins. Primitives only, never secrets:
+# the stanza is served to any authenticated caller.
 variables {
   domain = "home.lan"
 }
 
-# Where images may come from, by default, for every service on this node
-# (§6.2 R33, v1.84). Read since v1.84; the fifth stanza. --image-pull-policy,
-# when set, wins and this stanza is not consulted (said in the log when both
-# exist). A spec's own task.pull_policy / init.pull_policy wins over both.
-images {
-  pull_policy = "if-not-present"        # "if-not-present" | "never" | "always"
-
-  # Image GC (§5.2.4, v1.111). On by default; the block tunes or disables it.
-  # An image is deleted only when it is unreferenced by every service and
-  # alloc record, older than min_age, and outside the newest `keep` of a
-  # repository something still references. A node whose default pull_policy
-  # is "never" refuses to collect at all: preloaded images cannot come back.
-  gc {
-    enabled  = true
-    interval = "12h"                    # floor 10m
-    min_age  = "48h"                    # floor 1h
-    keep     = 2                        # newest N per in-use repository
-  }
-}
-
+# Every listener the node opens.
 bind {
-  # api_addr and its TLS are read since v1.61: the API/dashboard listener
-  # kanead binds. --listen, when set, wins and this stanza is not consulted;
-  # --listen none is the explicit socket-only.
-  api_addr = "192.168.1.10:8600"
+  api_socket = "/run/kanea/kanead.sock"  # the CLI's unix socket
+  api_addr   = "192.168.1.10:8600"       # no default; omit for socket-only
 
-  # api_tls is R20's mode set, applied to the node's own listener:
-  #   acme        Let's Encrypt via the ordinary §7.3 pass; requires api_domain
-  #   self-signed the node CA (`kanea ca show`); names api_domain when given,
-  #               else api_addr's host; as an IP SAN when that host is an IP
-  #   provided    api_cert/api_key files, loaded once (a renewal restarts kanead)
-  #   plaintext   explicit HTTP; beyond loopback it is allowed because it was
-  #               typed, logged loudly, and implies the insecure-cookie posture
-  # Unset resolves: a pair means provided, loopback means plaintext, anything
-  # else refuses; v1.45's posture unchanged.
-  api_tls    = "self-signed"
-  api_domain = ""                        # the certificate's name, when one is needed
-  api_cert   = ""                        # provided mode's pair
-  api_key    = ""
+  # How the API/dashboard listener is secured:
+  #   acme        a public certificate; requires api_domain
+  #   self-signed the node CA; names api_domain, else api_addr's host
+  #   provided    the api_cert/api_key pair, loaded once
+  #   plaintext   explicit HTTP; beyond loopback it is logged loudly
+  # Unset: a pair means provided, loopback means plaintext, anything else
+  # is refused.
+  api_tls    = "acme"
+  api_domain = "kanea.example.com"
+  # api_cert = "/etc/kanea/tls/api.crt"  # provided mode's pair
+  # api_key  = "/etc/kanea/tls/api.key"
 
-  edge_http  = ":80"                     # still sketch: accepted, warned, not read
-  edge_https = ":443"
-}
-
-resources {                              # node resource isolation (§5.2.11)
-  system_reserve_memory = "256MiB"       # protected floor: kanead, edge, containerd; raise on build nodes (buildkitd is +157 MiB, v1.62)
-  oversubscribe         = false          # refuse apply when Σ declared memory > (total RAM − reserve)
-}
-
-edge {                                   # defaults for all exposed services (§7.2.1)
-  default_security_headers = true
-  default_rate_limit { requests = 1000  window = "1m"  per = "ip" }
-
-  # Which node ports a spec may claim (§7.2.2, R22). "off" disables publishing.
-  # Below 1024 is refused by default: a spec able to claim :22 would be deciding
-  # something that belongs to whoever owns the machine.
-  publish {
-    ports     = "1024-65535"
-    max_conns = 1024                     # process-wide ceiling across every tcp listener
-  }
-}
-
-# Where an exposed service's certificate comes from when its spec does not say
-# (§7.3, R20): acme | self-signed | provided | plaintext.
-tls_default = "acme"
-
-storage {                                # host-volume allowlist (§8, §6.2 R15)
-  # Empty by default: no job spec can mount a host directory until an operator
-  # names a permitted parent here. An unrestricted host mount is `privileged`
-  # under another name, so this boundary belongs to whoever owns the node.
-  # Read since v1.51. --allowed-host-paths, when set, wins and this stanza is
-  # not consulted ("off" disables host volumes regardless of the file).
-  allowed_host_paths = []                # e.g. ["/srv/kanea", "/opt/shared"]
-}
-
-# Device and socket grants (§6.2 R17-R18), read from this file since v1.51.
-# `--passthrough-config <path>` overrides: grants then come only from that
-# separate file, named-but-missing stays fatal, and "off" disables grants
-# regardless of the file. No file and no flag means no grants, and a spec
-# asking for one fails its alloc rather than starting without it.
-#
-# A spec never names a path: it asks for a grant by name, and the node resolves
-# it. `allow` is required and may not be empty: a grant nobody is named for is
-# a typo, not a permissive default.
-device "gpu" {
-  nodes = ["/dev/dri/renderD128"]         # char/block devices, resolved per alloc
-  allow = ["media"]                        # projects that may request it
-  mode  = "rw"                             # cgroup permissions; "m" only if written
-}
-
-# A socket grant is root on the node for whoever holds it (R18). It is listed
-# here, per project, because that is the only control over it.
-socket "containerd" {
-  path  = "/run/kanea/containerd.sock"
-  allow = ["ops"]
-}
-
-containerd { socket = "/run/containerd/containerd.sock" }
-
-datapath {
-  # Set at install time and written into kanead's unit (§5.2.5): kanead is the
-  # IPAM. Both are validated as IPv4 prefixes; node_cidr must sit inside
-  # cluster_cidr, and neither may overlap service_cidr.
-  node_cidr    = "10.244.0.0/24"         # alloc addresses (IP = identity)
-  cluster_cidr = "10.244.0.0/16"         # routed range, masqueraded on egress
-  service_cidr = "10.201.0.0/16"         # service frontends (VIPs), outside cluster_cidr
-  bpf_dir      = "/sys/fs/bpf/kanea"     # pinned maps, programs and the cgroup link
-}
-
-acme {
-  email     = "ops@example.com"
-  directory = "production"               # or "staging", or a directory URL
-  # dns01 { provider = "cloudflare", auth_ref = "secret:acme/cloudflare" }
-}
-
-# Certificates the operator put on this node (§7.3, R20). Read from a separate
-# file named by `--tls-certs-config`, which defaults to "": no file, no
-# certificates. Same shape and same reasoning as the device and socket grants
-# above: a spec asks for one by name and never names a path, and `allow` is
-# required because a certificate nobody is named for is a typo.
-#
-# What it covers is read from the certificate's own SANs, never declared here:
-# a domain list that could disagree with the certificate is one that lies.
-certificate "shop" {
-  cert  = "/etc/kanea/tls/shop.crt"       # leaf + intermediates, PEM
-  key   = "/etc/kanea/tls/shop.key"
-  allow = ["shop"]                        # projects that may claim it
-}
-
-# External secret providers (§5.2.13, v1.44). Read from a separate file named
-# by `--secrets-providers-config`, which defaults to "": no file, no
-# providers. Same shape and same reasoning as the grants above: a spec keeps
-# saying `secret:<project>/<name>` and never names a provider; where a value
-# comes from is this node's decision. `allow` is required: the scopes the
-# provider's mappings may write into, and credentials are 0600 files on the
-# node, never inline and never `secret:` references. Re-read by content
-# fingerprint (config + every credential file), like the certificate file.
-provider "doppler" "ci" {
-  token_file = "/etc/kanea/secrets/doppler.token"
-  project    = "backend"                  # Doppler project + config to read
-  config     = "prd"
-  allow      = ["shop", "shared"]         # writing into shared/ must be stated
-  sync {
-    name = "DATABASE_URL"
-    to = "shop/db-url"
-  }
-  sync {
-    name = "STRIPE_KEY"
-    to = "shop/stripe-key"
-  }
-}
-provider "vault" "infra" {
-  address    = "https://vault.internal:8200"
-  token_file = "/etc/kanea/secrets/vault.token"
-  # ca_file  = "/etc/kanea/tls/vault-ca.pem"   # extra root for a private endpoint
-  mount      = "kv"                       # KV v2 mount
-  allow      = ["media"]
-  sync {
-    path = "apps/media"
-    field = "s3_secret_key"
-    to = "media/s3-secret"
-  }
-}
-provider "aws-sm" "prod" {
-  region          = "eu-west-1"
-  access_key      = "AKIA…"               # an identifier, not a secret
-  secret_key_file = "/etc/kanea/secrets/aws.secret"
-  allow           = ["shop"]
-  sync {
-    id = "prod/shop/db"
-    json_key = "password"
-    to = "shop/db-password"
-  }
-}
-provider "azure-kv" "corp" {
-  vault_uri          = "https://corp-vault.vault.azure.net"
-  tenant_id          = "00000000-…"       # identifiers, not secrets
-  client_id          = "11111111-…"
-  client_secret_file = "/etc/kanea/secrets/azure.secret"
-  allow              = ["shop"]
-  sync {
-    name = "db-password"
-    to = "shop/db-password"
-  }   # optional: version = "…"
-}
-provider "gcp-sm" "prod" {
-  credentials_file = "/etc/kanea/secrets/gcp-sa.json"      # service-account key JSON
-  project          = "my-project"         # defaults to the key's project_id
-  allow            = ["shop"]
-  sync {
-    name = "db-password"
-    to = "shop/db-password"
-  }   # version defaults "latest"
+  edge_http  = ":80"                     # the edge's public HTTP listener
+  edge_https = ":443"                    # "off" serves plaintext only
 }
 
 auth {
-  basic {
-    user "admin" { password_bcrypt = "$2y$10$…" }
-  }
+  insecure_cookies = false               # true only behind plain HTTP
+
+  # Single sign-on. No default: without an issuer, password login only.
   oidc {
     issuer        = "https://auth.example.com/realms/kanea"
     client_id     = "kanea"
-    client_secret = "secret:oidc/client-secret"
-    role_claim    = "kanea_role"
+    client_secret = "secret:shared/oidc"  # omit for a public PKCE client
+    redirect_url  = "https://kanea.example.com/v1/auth/oidc/callback"
+    scopes        = ["profile", "email"]  # beyond openid; [] requests none
+    role_claim    = "groups"
+    admin_claims  = ["kanea-admins"]
+    viewer_claims = ["kanea-viewers"]
+  }
+
+  # Directory login. No default: without a url, no LDAP.
+  ldap {
+    url            = "ldaps://ldap.example.com"
+    bind_dn        = "cn=kanea,ou=services,dc=example,dc=com"
+    bind_password  = "secret:shared/ldap-bind"
+    user_base_dn   = "ou=people,dc=example,dc=com"
+    user_filter    = "(uid=%s)"
+    group_base_dn  = "ou=groups,dc=example,dc=com"
+    group_filter   = "(member=%s)"
+    admin_groups   = ["cn=kanea-admins,ou=groups,dc=example,dc=com"]
+    viewer_groups  = ["cn=kanea-viewers,ou=groups,dc=example,dc=com"]
+    ca_file        = "/etc/kanea/tls/ldap-ca.pem"
+  }
+}
+
+audit {
+  retention = "2160h"                    # 90 days; "0" keeps entries forever
+}
+
+dashboard {
+  enabled = true
+  origins = []                           # extra Origins allowed to open the live websocket
+}
+
+# kanead is the IPAM: these are fixed when the node is installed. node_cidr
+# must sit inside cluster_cidr, and neither may overlap service_cidr.
+network {
+  driver       = "ebpf"                  # or "netns": development only, no policy, no service LB
+  node_cidr    = "10.244.0.0/24"         # alloc addresses
+  cluster_cidr = "10.244.0.0/16"         # routed range, masqueraded on egress
+  service_cidr = "10.201.0.0/16"         # service frontends
+  # The IPv6 trio comes together or not at all. No defaults.
+  node_cidr6    = "fd00:10:244::/64"
+  cluster_cidr6 = "fd00:10:244::/56"
+  service_cidr6 = "fd00:10:201::/112"
+  bpf_dir       = "/sys/fs/bpf/kanea"    # pinned maps, programs and links
+}
+
+dns {
+  listen    = "10.244.0.1:53"            # default: the node CIDR's .1; "off" disables
+  upstreams = ["1.1.1.1", "9.9.9.9:53"]  # default: the host's resolv.conf
+}
+
+storage {
+  volume_dir = "/var/lib/kanea/volumes"  # default: <data_dir>/volumes
+  # Empty by default: no spec can mount a host directory until a permitted
+  # parent is named here.
+  allowed_host_paths = ["/srv/kanea"]
+}
+
+images {
+  pull_policy = "if-not-present"         # or "never"
+
+  # Image garbage collection. An image is deleted only when nothing
+  # references it, it is older than min_age, and it is outside the newest
+  # `keep` of a repository something still uses.
+  gc {
+    enabled  = true
+    interval = "12h"                     # floor 10m
+    min_age  = "48h"                     # floor 1h
+    keep     = 2
+  }
+}
+
+containerd {
+  socket = "/run/kanea/containerd.sock"
+}
+
+metrics {
+  interval       = "5s"
+  containerd_url = "http://127.0.0.1:1338/v1/metrics"  # "off" disables cgroup metrics
+  edge_url       = "http://127.0.0.1:8601/metrics"     # "off" disables the L7 signal
+}
+
+scaling {
+  enabled = true                         # act on the scaling policies services declare
+}
+
+builds {
+  buildkit_addr     = "unix:///var/lib/kanea/buildkit/run/buildkitd.sock"  # "off" disables GitOps and builds
+  log_dir           = "/var/lib/kanea/builds"                              # default: <data_dir>/builds
+  registry_addr     = "127.0.0.1:5100"   # the internal build registry; "off" disables
+  insecure_registry = false              # push built images over plain HTTP
+}
+
+gitops {
+  sync_interval = "2m"                   # how often git sources are polled
+}
+
+# External secret providers. `secrets` holds the schedule; each `provider`
+# block maps values from one provider into this node's store. Credentials are
+# 0600 files on the node, never inline. A rotated credential file is picked
+# up without a restart; a changed block needs one.
+secrets {
+  sync_interval = "5m"                   # floor 30s
+}
+
+provider "doppler" "ci" {
+  token_file = "/etc/kanea/secrets/doppler.token"
+  project    = "backend"
+  config     = "prd"
+  allow      = ["shop", "shared"]        # the scopes its mappings may write into
+  sync {
+    name = "DATABASE_URL"
+    to   = "shop/db-url"
+  }
+}
+
+provider "vault" "infra" {
+  address    = "https://vault.internal:8200"
+  token_file = "/etc/kanea/secrets/vault.token"
+  mount      = "kv"
+  allow      = ["media"]
+  sync {
+    path  = "apps/media"
+    field = "s3_secret_key"
+    to    = "media/s3-secret"
+  }
+}
+
+tls {
+  # Where an exposed service's certificate comes from when its spec does not
+  # say: acme | self-signed | provided | plaintext.
+  default_mode = "acme"
+  ca_name      = "home.lan"              # default: base_domain, else the hostname
+}
+
+# Certificates the operator put on this node. A spec asks for one by name and
+# never names a path. What a certificate covers is read from its own SANs. A
+# renewed pair is picked up without a restart; a changed block needs one.
+certificate "shop" {
+  cert  = "/etc/kanea/tls/shop.crt"      # leaf + intermediates, PEM
+  key   = "/etc/kanea/tls/shop.key"
+  allow = ["shop"]                       # projects that may claim it
+}
+
+acme {
+  email          = "ops@example.com"     # no default; without it no certificate is requested from a CA
+  directory      = "production"          # or "staging", or a directory URL
+  ca_bundle_file = "/etc/kanea/tls/acme-ca.pem"  # no default; for a private CA
+  verify_url     = "http://127.0.0.1:80" # where kanead reaches its own edge
+
+  # RFC 2136 dynamic updates: enables DNS-01 and wildcards. No defaults.
+  dns01 {
+    server         = "ns1.example.com:53"
+    zone           = "example.com"
+    tsig_key       = "kanea-acme"
+    tsig_secret    = "secret:shared/tsig"
+    tsig_algorithm = "hmac-sha256."
+  }
+}
+
+# The ingress proxy. kanead publishes the two files; kanea-edge reads them.
+edge {
+  routes_file      = "/run/kanea-edge/routes.json"  # "off" stops kanead publishing routes
+  certs_file       = "/run/kanea-edge/certs.json"
+  certs_group      = "kanea-edge"        # default: owner only; `kanea init` writes this
+  status_addr      = "127.0.0.1:8601"    # health and metrics; "off" disables
+  poll_interval    = "1s"
+  drain_timeout    = "15s"
+  body_timeout     = "5m"                # "0" disables
+  upstream_timeout = "1m"
+  functions_port   = 0                   # 0 disables the path-routed functions listener
+  security_headers = true
+  rate_limit_buckets = 65536
+  memory_limit     = "128MiB"            # no default; a soft GOMEMLIMIT
+  log_level        = "info"
+
+  # Which node ports a spec may publish.
+  publish {
+    ports         = "1024-65535"         # "off" disables publishing
+    max_conns     = 1024                 # ceiling across every published tcp port
+    drain_timeout = "60s"                # default: drain_timeout above
   }
 }
 
 notifications {
-  telegram { bot_token_ref = "secret:notify/telegram-bot" chat_id = "-100…" }
-  on = ["deploy.failed", "backup.failed", "cert.failed"]
+  allow_private   = false                # targets on private or loopback addresses
+  allow_http      = false                # plain-http targets
+  event_retention = 500
 }
 
-state {
-  replication {
-    s3 {
-      bucket      = "kanea-state"
-      endpoint    = "https://s3.eu-central-1.amazonaws.com"   # any S3-compatible
-      prefix      = "prod/node-a"
-      auth_ref    = "secret:s3/state-replicator"
-      interval    = "5m"
-    }
+# State replication. A destination saved from the dashboard wins over this
+# stanza; this is the fallback, and the only source a blank node can restore
+# from.
+backup {
+  # One destination, no default: a directory, or the s3 block below.
+  # dir = "/mnt/backup/kanea"
+  snapshot_interval = "6h"
+  segment_interval  = "1m"               # bounds the recovery point
+  retention         = 7                  # snapshots kept
+  restore_if_empty  = false              # restore the newest archive onto a node with no state
+
+  s3 {
+    url        = "s3://kanea-state/prod/node-a"
+    endpoint   = "https://s3.eu-central-1.amazonaws.com"
+    region     = "eu-central-1"
+    access_key = "AKIAEXAMPLE"
+    secret_key = "secret:shared/backup-s3"
+    path_style = true
   }
 }
 
-backup {
-  schedule  = "0 * * * *"                # hourly
-  retention { hourly = 24  daily = 7  weekly = 4 }
+upgrade {
+  repo              = "m18h/kanea"       # where releases are fetched from
+  require_signature = false              # refuse a release whose cosign signature cannot be verified
 }
 
-storage "local-ssd" { type = "local" }
+# Device and socket grants. A spec asks for a grant by name; the node resolves
+# it. `allow` is required: a grant nobody is named for is a typo.
+device "gpu" {
+  nodes = ["/dev/dri/renderD128"]        # device node paths, resolved per alloc
+  allow = ["media"]                      # projects that may request it
+  mode  = "rw"                           # cgroup permissions
+}
+
+# A socket grant is root on the node for whoever holds it.
+socket "containerd" {
+  path  = "/run/kanea/containerd.sock"
+  allow = ["ops"]
+}
 ```
 
-- **Resource guards:** `resources.system_reserve_memory` is the cgroup-protected floor for everything except workload containers (§5.2.11); the workload budget is total RAM − reserve. `kanea init` warns when the reserve exceeds 30% of total RAM (small hosts) or falls below 256 MiB (under-protection: beneath the default, the floor no longer covers even a non-building control plane; v1.62; a node running pipelines should set 512 MiB, §5.2.11); `kanea doctor` verifies the cgroup hierarchy is in place. With `oversubscribe = false` (default), `apply` refuses specs whose Σ declared memory exceeds the workload budget.
+- **Conventions:** attribute names are snake_case; durations are strings (`"5m"`); lists are HCL lists, never comma strings; a disableable address, path or URL takes the literal `"off"`; booleans are `enabled` or an adjective, never `disable_*`; a path attribute added from v1.115 on ends `_file` or `_dir` (the shipped `certificate { cert key }` and `bind.api_cert` / `bind.api_key` keep their names); a credential attribute's value is always `secret:<path>`, never the credential itself.
+- **Backup destination precedence:** a destination saved through the API or the dashboard wins; the `backup` stanza is the fallback, and the only source `backup.restore_if_empty` can use on a blank node (§15.3).
+- **Memory reserve:** the reserve is the cgroup-protected floor for everything except workload containers (§5.2.11); the workload budget is total RAM − reserve. It stays `kanea init --reserve`, written into `kanea.slice`, and is not a `kanea.hcl` attribute: `MemoryMin` is systemd's to set, not `kanead`'s. `kanea init` warns when the reserve exceeds 30% of total RAM (small hosts) or falls below 256 MiB (under-protection: beneath the default, the floor no longer covers even a non-building control plane; v1.62; a node running pipelines should set 512 MiB, §5.2.11); `kanea doctor` verifies the cgroup hierarchy is in place.
 
 ### 15.2 State model
 
@@ -1634,7 +1656,7 @@ storage "local-ssd" { type = "local" }
 - **Replication model: Store-level CDC, not Litestream:** bbolt has **no WAL** (it is a copy-on-write B+tree that rewrites pages in place), so Litestream-style log shipping is impossible. Instead, every `Store` mutation emits a **change record** (carrying its monotonic index, §15.2) that the replicator ships as change segments to the S3-compatible bucket continuously, with periodic full snapshots as segment bases. The DB file is compacted on a schedule (§5.2.3).
 - **Encryption & key escrow (critical):** all segments/snapshots are client-side encrypted (§14, A02). The master key is **escrowed at `kanea init` via a key ceremony** (print-once + written confirmation, or passphrase-derived KEK): *if the key dies with the node, every backup is unreadable.* The DR runbook starts with key recovery.
 - **Backup:** scheduled (cron) + on-demand snapshots. Archive = state snapshot + certs + secrets (encrypted; the manifest is **HMAC-authenticated** (v1.74) and verified before restore, and the segment chain replayed onto a snapshot must be contiguous or the restore refuses with the `--skip-replay` escape hatch). The `certs` bucket carries **the node's self-signed CA** (§7.3) along with every leaf, so it needs no separate path, but a node rebuilt *without* an archive generates a **new** CA, and every device that trusted the old one must be re-trusted. That is the cost of the CA deliberately not being escrowed, and the runbook says so.
-- **Restore:** `kanea restore --from s3://bucket/prefix [--snapshot <id>]` on a stopped node; or **first-boot auto-restore**: if `state.replication.s3` is set and local state is empty, the agent offers pull-and-restore.
+- **Restore:** `kanea restore --from s3://bucket/prefix [--snapshot <id>]` on a stopped node; or **first-boot auto-restore**: if `backup.restore_if_empty` is true, the `backup` stanza names a destination (§15.1) and local state is empty, `kanead` pulls and restores before it serves.
 - **Recovery order:** master key → Store snapshot + segment replay → **datapath maps repopulated from desired state** (derived state; nothing under the bpffs pin root is ever backed up or restored, §5.2.5) → images re-pulled (parallel queue, bounded concurrency) → allocs re-attached (bounded concurrency, exposed services first) → edge routes live.
 - **Realistic targets:** **RPO ≤ 5 min** (change segments). **RTO: control plane ≤ 15 min; full workload convergence is best-effort**; a fresh node must re-pull every image, and registry bandwidth/rate limits dominate. A registry mirror is recommended; an optional image pre-seed flag exists for small fleets.
 - **Not backed up:** container images (re-pulled; optional pre-seed), ephemeral logs (optional inclusion flag).
@@ -1642,7 +1664,7 @@ storage "local-ssd" { type = "local" }
 ### 15.4 Upgrades & schema migration
 
 - **State migrations:** BoltDB buckets carry schema versions; `kanea agent` runs forward-only migrations at startup (with a pre-migration local snapshot + automatic S3 snapshot when replication is configured). Job specs are versioned via `spec_version` (§6.2, R6).
-- **Upgrade flow:** `kanea upgrade` fetches the target release itself (v1.59: resolve latest or `--version`, verify sha256 + cosign-when-present against the release's signed `checksums.txt`, install atomically over its own path; `--no-fetch` for package-manager-owned nodes, `--check` to only report; since v1.105 **`--require-signature`** turns cosign-when-present into a refusal - cosign missing, or a release published without its `.sig`/`.pem` pair, is fatal and names what to install, and `KANEA_REQUIRE_SIGNATURE=1` gives `install.sh` the same posture; neither ever downloads cosign itself, which would be a second trust root pretending to verify the first) → `kanea-edge` drains and restarts first (brief, connection-drained), then `kanead` restarts; running allocs and the eBPF dataplane are untouched throughout; the datapath's programs, maps and cgroup link are pinned in bpffs and owned by no process (§5.2.5), so there is nothing for a restart to tear down. Since v1.107 the **dashboard drives the same flow over the API** (§16.1, admin-only): same fetch, same verification, same order, backup first; kanead answers the request, restarts the edge, and exits so systemd restarts it onto the new binary. No downgrade over the API (`--allow-downgrade` is CLI-only); without systemd the install is staged and the response says `restart_required`.
+- **Upgrade flow:** `kanea upgrade` fetches the target release itself (v1.59: resolve latest or `--version`, verify sha256 + cosign-when-present against the release's signed `checksums.txt`, install atomically over its own path; `--no-fetch` for package-manager-owned nodes, `--check` to only report; since v1.105 **`--require-signature`** turns cosign-when-present into a refusal - cosign missing, or a release published without its `.sig`/`.pem` pair, is fatal and names what to install, `upgrade.require_signature = true` in the node config (§15.1) makes it the node's standing posture, API-driven upgrades included, and `KANEA_REQUIRE_SIGNATURE=1` gives `install.sh` the same posture; neither ever downloads cosign itself, which would be a second trust root pretending to verify the first) → `kanea-edge` drains and restarts first (brief, connection-drained), then `kanead` restarts; running allocs and the eBPF dataplane are untouched throughout; the datapath's programs, maps and cgroup link are pinned in bpffs and owned by no process (§5.2.5), so there is nothing for a restart to tear down. Since v1.107 the **dashboard drives the same flow over the API** (§16.1, admin-only): same fetch, same verification, same order, backup first; kanead answers the request, restarts the edge, and exits so systemd restarts it onto the new binary. No downgrade over the API (`--allow-downgrade` is CLI-only); without systemd the install is staged and the response says `restart_required`.
 - **Compatibility:** the component manifest (§5.2.12) **is** the version matrix, one table, compiled into the binary, pinning every host component per Kanea release. `kanea init` installs from it and `kanea doctor` enforces it. A matrix kept separately from the thing that installs would be a matrix that describes a node nobody has. Since v1.108 the dashboard's Updates page shows the same comparison - pins against receipts - beside the OS's own pending updates.
 - **Rollback:** previous binary + pre-upgrade snapshot restore; documented in the ops runbook.
 
@@ -1706,14 +1728,15 @@ GET    /api/v1/notifications/channels | POST …/test
 kanea init                 # interactive first-install: kernel/NTP checks, host components, listen address, key ceremony; starts kanead, creates the first admin, prints the node summary
 kanea install              # install/upgrade the pinned host components (§5.2.12); --only, --dry-run, --bundle
 kanea bundle create        # author an offline bundle on a connected machine (air-gapped installs)
-kanea agent --config=…     # run the control-plane daemon (systemd-managed normally);
-                           # --config names the §15.1 server config, default
-                           # /etc/kanea/kanea.hcl when it exists, "off" disables
-kanea edge -config=…       # run the edge ingress proxy (separate systemd unit)
-kanea doctor               # verify node health: deps, versions, bpffs, disk, clock; --offline
+kanea agent                # run the control-plane daemon (systemd-managed normally); takes no flags:
+                           # its configuration is /etc/kanea/kanea.hcl (§15.1), read once at startup
+kanea edge                 # run the edge ingress proxy (separate systemd unit); takes no flags:
+                           # it reads the same file's bind and edge stanzas
+kanea doctor               # verify node health: deps, versions, bpffs, disk, clock; --prefix, --offline
                            # a check the running user may not perform is reported skipped, never failed
 kanea firewall             # print the rules this node's workloads need, for ufw/firewalld/nft/iptables
-                           # --manager, --all; it prints and never applies (§5.2.5: no foreign table is written)
+                           # --prefix, --manager, --all; it prints and never applies (§5.2.5: no foreign table is written)
+kanea config migrate       # convert an older unit's flags into /etc/kanea/kanea.hcl; --unit-dir, --dry-run
 kanea plan app.hcl [shop] [shop/web …]   # dry-run diff; selectors scope it to a project or service
                            # one block per service, one row per resource added, changed or removed,
                            # and the rows that replace running allocs say so
@@ -1864,7 +1887,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry *(partiall
 | Category | Requirement |
 |---|---|
 | **Platform** | Linux amd64/arm64; kernel ≥ 5.10 (Kanea's own eBPF datapath, §5.2.5: the floor is spike-validated, not inherited); cgroups v2; bpffs; systemd; NTP-synced clock (ACME/OIDC/HMAC validity); checked at `init`, and this is the whole list. containerd, `runc`, rootless `buildkitd` and the wasmtime shim (v1.39) are **installed by `kanea init` at pinned versions** (§5.2.12), online or from an offline bundle; they are no longer prerequisites the operator supplies |
-| **Footprint** | kanea idle RSS ≤ 150 MiB, **total platform ≤ 1 GiB including containerd and kanea-edge**: a footprint ceiling, decoupled since v1.62 from the default `system_reserve_memory` (256 MiB, §5.2.11), which floors only the non-building control plane; dashboard bundle ≤ 1.5 MiB gzipped. Resident components since v1.36: **rootless `buildkitd` 157 MiB (spike ④)** + containerd 42 MiB ≈ 199 MiB before Kanea's own processes; v1.36 removed the two next-largest tenants (cilium-agent 153 MiB and etcd 23 MiB, the M0 measurements) and replaced them with pinned BPF maps, which are kernel memory bounded by construction (< 5 MiB at the §21 scale targets, sized from the CIDRs at startup) and no resident process at all. **Published ports (§7.2.2) add a bounded, operator-set term:** `--max-published-conns` × ~24 KiB, which is ~24 MiB at the default 1024 and is why the default is not larger: a ceiling nobody has turned on must not pre-spend a tenth of the budget. **The edge's labelled metrics (§9.1.1) add a second bounded term:** services × per-service series ceiling × ~200 B, ~4 MiB at 500 services with every ceiling saturated. It is bounded *because of* the ceiling, not because traffic is well-behaved, so the ceiling carries a footprint test of its own. **The internal registry (§5.2.14, v1.109) adds a third bounded term, ≤ 32 MiB**: writes stream through digest verification to disk and reads are served from files, so no blob is ever held in memory, and the bound is HTTP buffers times the 8-session upload cap |
+| **Footprint** | kanea idle RSS ≤ 150 MiB, **total platform ≤ 1 GiB including containerd and kanea-edge**: a footprint ceiling, decoupled since v1.62 from the default reserve (`kanea init --reserve`, 256 MiB, §5.2.11), which floors only the non-building control plane; dashboard bundle ≤ 1.5 MiB gzipped. Resident components since v1.36: **rootless `buildkitd` 157 MiB (spike ④)** + containerd 42 MiB ≈ 199 MiB before Kanea's own processes; v1.36 removed the two next-largest tenants (cilium-agent 153 MiB and etcd 23 MiB, the M0 measurements) and replaced them with pinned BPF maps, which are kernel memory bounded by construction (< 5 MiB at the §21 scale targets, sized from the CIDRs at startup) and no resident process at all. **Published ports (§7.2.2) add a bounded, operator-set term:** `edge.publish.max_conns` × ~24 KiB, which is ~24 MiB at the default 1024 and is why the default is not larger: a ceiling nobody has turned on must not pre-spend a tenth of the budget. **The edge's labelled metrics (§9.1.1) add a second bounded term:** services × per-service series ceiling × ~200 B, ~4 MiB at 500 services with every ceiling saturated. It is bounded *because of* the ceiling, not because traffic is well-behaved, so the ceiling carries a footprint test of its own. **The internal registry (§5.2.14, v1.109) adds a third bounded term, ≤ 32 MiB**: writes stream through digest verification to disk and reads are served from files, so no blob is ever held in memory, and the bound is HTTP buffers times the 8-session upload cap |
 | **Storage** | S3 volumes cost **one object-store round trip per file operation** (~30 ms typical): creating or listing a 200-file directory takes tens of seconds, and a FUSE call with a dead backend blocks for tens of seconds uninterruptibly; S3 volumes are for bulk/read-mostly data, never for hot paths or many small files (M0 spike ③) |
 | **Scale** | ≥ 500 services / ≥ 2000 allocs per node; reconcile loop ≤ 1 s at that scale |
 | **Record size** | The first byte budgets the platform has had for a `Desired` record, added with R35 (v1.85) because that rule is the first thing that can put bulk bytes in one. **64 KiB per file, 128 KiB per service, 512 KiB per apply**, checked at `plan` for whoever typed it and at the apply seam for a record that never met the parser; plus **256 KiB per rendered file and 1 MiB per rendered alloc**, checked on the node *before the first write*, since a placeholder is tens of bytes and the secret it names may be 64 KiB, so a plan-time bound does not bound what is written. The per-service number is set by replication rather than by taste: a record is JSON in bbolt so bytes base64 at 1.33×, the change log holds a **second full copy** of every value it ships, and §15.3 batches segments by count rather than by size. Config files live in a **16 MiB tmpfs of their own**, separate from the 4 MiB secrets tmpfs so that a file cannot fail credential delivery for a service that declares none; `size=` is a ceiling rather than a reservation, so the footprint line above pays only for what is written |
@@ -1873,7 +1896,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry *(partiall
 | **Security** | §14 gates in CI; signed releases; SBOM published |
 | **Licensing** | **Apache-2.0**, chosen for the explicit patent grant: the norm for the infrastructure Kanea sits next to (containerd, BuildKit) and the one property a permissive licence without it does not give a self-hosted platform. No per-file headers: a convention applied to every file is a convention that will be applied unevenly, and `LICENSE` is not ambiguous. No CLA. Third-party terms travel with the module graph and are not restated here |
 | **Reliability** | `kanead` restart disturbs neither running allocs **nor north-south traffic** (separate `kanea-edge` process); reconciler heals drift ≤ 30 s; log drains never backpressure workloads; workloads can never starve or OOM-kill the control plane (cgroup memory floor + OOM-killer policy, §5.2.11); disk watermark alerts at 80/90% |
-| **UX** | `init`→first HTTPS service ≤ 5 min on a fresh VM: **including on a node with no public name**, where that means `--tls-default self-signed`, `kanea ca show`, and one certificate installed on one device (§7.3); every CLI mutation has `--json` |
+| **UX** | `init`→first HTTPS service ≤ 5 min on a fresh VM: **including on a node with no public name**, where that means `tls.default_mode = "self-signed"`, `kanea ca show`, and one certificate installed on one device (§7.3); every CLI mutation has `--json` |
 | **i18n/a11y** | Dashboard EN only v1; WCAG 2.1 AA contrast via shadcn theme |
 
 ---
@@ -1882,7 +1905,7 @@ Multi-node clustering (per §18 constraints) · embedded OCI registry *(partiall
 
 | # | Risk / Question | Impact | Mitigation |
 |---|---|---|---|
-| R1 | **Kanea owns its eBPF datapath** (v1.36; replaced standalone Cilium, whose non-k8s file interfaces had churned once already, which was this row's residual risk) | High → Medium | **Spike-gated** ([spike ⑤](./spikes/ebpf-datapath/REPORT.md)): connect-time LB from host and alloc under systemd, tc policy with attach-before-up, pinned-link/filter survival across restarts, the generation flip under load, netfilter interplay and the 5.10 floor are validated on real kernels before the driver ships; the discipline spike ① set for the driver this replaces. Residual risk: **maintaining BPF programs across kernel releases is now Kanea's job.** Mitigation: no CO-RE/BTF dependency (the programs read only UAPI context types), pinned `cilium/ebpf` library, committed generated artifacts verified by CI, kernel floor enforced by `doctor`, `--network netns` as the dev/CI mode |
+| R1 | **Kanea owns its eBPF datapath** (v1.36; replaced standalone Cilium, whose non-k8s file interfaces had churned once already, which was this row's residual risk) | High → Medium | **Spike-gated** ([spike ⑤](./spikes/ebpf-datapath/REPORT.md)): connect-time LB from host and alloc under systemd, tc policy with attach-before-up, pinned-link/filter survival across restarts, the generation flip under load, netfilter interplay and the 5.10 floor are validated on real kernels before the driver ships; the discipline spike ① set for the driver this replaces. Residual risk: **maintaining BPF programs across kernel releases is now Kanea's job.** Mitigation: no CO-RE/BTF dependency (the programs read only UAPI context types), pinned `cilium/ebpf` library, committed generated artifacts verified by CI, kernel floor enforced by `doctor`, `network.driver = "netns"` as the dev/CI mode |
 | R2 | ~~Hubble L7 metrics: CPU cost + ring-buffer drops under load → fidelity loss at peak~~ | **Retired (v1.36)** | Hubble left the platform with Cilium. East-west counters are per-CPU map increments written by the datapath's own programs (§9.1): nothing is parsed per request and there is no ring buffer to drop from, so the fidelity trade this row managed no longer exists |
 | R3 | FUSE S3 mount performance/reliability | Medium | Spike-chosen driver; documented "not for hot data"; NFS/SMB as alternatives |
 | R4 | BuildKit frontend edge cases (some Dockerfiles); **single-driver risk** | Medium | **De-risked in M0** ([spike ④ report](./spikes/kaniko-build/REPORT.md), 11/11 on the daemon path): rootless `buildkitd` verified for build+push, `Containerfile`/`Dockerfile`, digest reporting, cache reuse, resource caps and clean failure surfacing, with no privilege anywhere and 546 ms warm builds. Single-driver risk is accepted deliberately (one builder to pin and patch); the runner keeps an internal driver seam, and buildah was measured as a working drop-in (26/27, task-shaped) should it ever be needed |

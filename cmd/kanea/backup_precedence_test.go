@@ -9,8 +9,8 @@ import (
 	"github.com/m18h/kanea/internal/store"
 )
 
-// The v1.46 startup precedence: a Store record wins over the unit's flags; a
-// record that cannot be used falls back to the flags *loudly* rather than
+// The v1.46 startup precedence: a Store record wins over the backup stanza of
+// kanea.hcl; a record that cannot be used falls back to the file *loudly* rather than
 // leaving the node silently unreplicated; "backups were never happening and
 // nothing said so" is the failure the whole subsystem exists to prevent.
 
@@ -41,7 +41,7 @@ func TestBuildBackupsPrefersTheStoreRecordOverFlags(t *testing.T) {
 	}
 }
 
-func TestBuildBackupsFallsBackToFlagsWithoutARecord(t *testing.T) {
+func TestBuildBackupsFallsBackToTheFileWithoutARecord(t *testing.T) {
 	ctx := context.Background()
 	st := openScalingStore(t)
 	dataDir := t.TempDir()
@@ -54,8 +54,8 @@ func TestBuildBackupsFallsBackToFlagsWithoutARecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildBackups: %v", err)
 	}
-	if got := m.Source(); got != sourceFlags {
-		t.Errorf("Source = %q, want %q; no record means the flags are the seed", got, sourceFlags)
+	if got := m.Source(); got != sourceFile {
+		t.Errorf("Source = %q, want %q; no record means kanea.hcl is the seed", got, sourceFile)
 	}
 }
 
@@ -131,8 +131,8 @@ func TestBuildBackupsFallsBackToFlagsOnABadRecord(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildBackups returned an error for a bad record; it must fall back: %v", err)
 			}
-			if got := m.Source(); got != sourceFlags {
-				t.Errorf("Source = %q, want %q; a bad record falls back to the flags", got, sourceFlags)
+			if got := m.Source(); got != sourceFile {
+				t.Errorf("Source = %q, want %q; a bad record falls back to kanea.hcl", got, sourceFile)
 			}
 		})
 	}

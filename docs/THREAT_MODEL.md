@@ -476,9 +476,9 @@ because a spec is not a trusted document: Kanea syncs specs from git and deploys
 them automatically (§3.8), so anything a spec can declare, anyone who can push to
 a synced repository can declare. The boundary is therefore drawn at the node:
 since v1.51 both policies live in `/etc/kanea/kanea.hcl` (the `storage`
-allowlist stanza and the `device`/`socket` grant blocks), probed once at daemon
-start, with `--allowed-host-paths` and `--passthrough-config` remaining as
-explicit overrides. Either way it is a file on the machine, written by whoever
+allowlist stanza and the `device`/`socket` grant blocks), read once at daemon
+start, and since v1.115 no flag or second file can override them. It is a file
+on the machine, written by whoever
 owns it, and no API, MCP tool or spec can add to it.
 
 **What is defended:**
@@ -521,9 +521,9 @@ owns it, and no API, MCP tool or spec can add to it.
 - **Socket binds carry `nosuid`, `noexec` and `nodev`,** and the mount is
   `rbind` so submounts are not hidden.
 - **The policy file is trust-checked before it is parsed** (v1.51). Because the
-  boundary above now rests on a well-known path, `kanead` refuses a server
-  config (probed at `/etc/kanea/kanea.hcl` or named by flag, since the check
-  does not weaken for argv) that is not a regular file, is owned by neither root
+  boundary above now rests on a well-known path, `kanead` refuses a node
+  config (`/etc/kanea/kanea.hcl`, the only path it reads) that is not a regular
+  file, is owned by neither root
   nor the daemon's own uid, or is group- or world-writable. The check is
   writability-only by design: this is policy, not a secret, and 0644 root:root
   is the expected mode (the 0600 rule for provider credential files, §3.19, is
@@ -549,7 +549,7 @@ owns it, and no API, MCP tool or spec can add to it.
   container in contact with a kernel driver and its ioctl surface. Kanea applies
   no seccomp filtering over that surface, and a kernel bug reachable through it
   is reachable from a granted container.
-- **An operator can grant something ruinous.** `--passthrough-config` will accept
+- **An operator can grant something ruinous.** A `device` block will accept
   a grant for any character device on the node. It refuses `/`, requires the
   target to be the right kind of file and requires a project list; it does not
   and cannot decide that `/dev/mem` is a bad idea. Grant review is an operator
@@ -567,7 +567,7 @@ what crosses it. That is the feature, and the honest way to describe it is
 
 What is defended:
 
-- **Which ports may be claimed belongs to the node.** `--publish-ports` is an
+- **Which ports may be claimed belongs to the node.** `edge.publish.ports` is an
   operator-set range, unprivileged (`1024-65535`) by default, and `off` disables
   the feature outright. It is enforced in `handleApply`, not only at plan time,
   because a GitOps sync reaches the Store without ever passing through the CLI
@@ -640,7 +640,7 @@ untrusted public traffic (§5.2.6).
   Deleting the Store key is the honest mechanism, and it costs re-trusting every
   device.
 - **A spec names a source, never a path.** `tls { mode = "provided", name = "x" }`
-  names a grant in `--tls-certs-config`; the file mapping that name to a
+  names a `certificate` block in `/etc/kanea/kanea.hcl`; the block mapping that name to a
   certificate and key lives on the node, and each grant names the projects that
   may claim it. Same boundary as §3.12, for the same reason.
 - **Nothing falls back to a weaker source.** A `provided` certificate that cannot
@@ -881,9 +881,9 @@ difference seriously.
 
 **The channel is the proof, so the channel is mandatory TLS.** `ldaps://`, or
 `ldap://` with StartTLS forced before any bind, and there is no insecure
-flag, deliberately, where the session cookie has one (`--insecure-cookies`):
+setting, deliberately, where the session cookie has one (`auth.insecure_cookies`):
 the wire here carries the user's actual password, not a derived credential.
-`--ldap-ca` trusts a private CA; nothing weakens verification.
+`auth.ldap.ca_file` trusts a private CA; nothing weakens verification.
 
 **The unauthenticated-bind trap is closed before the network is touched.**
 RFC 4513 §5.1.2 lets a server treat a bind with a DN and an *empty* password
@@ -892,7 +892,7 @@ refused pre-dial: a directory server's permissiveness must never become a
 login.
 
 **Filter injection is escaped at both insertion points.** The typed name is
-substituted into `--ldap-user-filter` through `ldap.EscapeFilter`, and the
+substituted into `auth.ldap.user_filter` through `ldap.EscapeFilter`, and the
 resolved DN is escaped again into the group filter. A user search that
 matches more than one entry is refused as ambiguous rather than resolved by
 order.
@@ -1066,8 +1066,8 @@ which for most base images is root, so a step is worth the same review a
 `user { uid = 0 }` task would get.
 
 **`pull_policy` is not a security control and is not claimed as one.**
-`never` bounds where an image may come from on *this node* (§15.1's `images`
-stanza, or `--image-pull-policy`), which is an availability and air-gap
+`never` bounds where an image may come from on *this node* (§15.1's
+`images.pull_policy`), which is an availability and air-gap
 property: it stops a node reaching a registry it should not, and it does
 nothing about what is already in the content store. Image *authenticity* is
 still a digest in the spec, exactly as it was.
@@ -1188,7 +1188,7 @@ stops being true.
 
 **A spec asks for the container runtime socket.** It parses: `socket` blocks are
 valid HCL and the grant name is well-formed. It then fails at the node, because
-no grant by that name exists: `--passthrough-config` is unset by default, and
+no grant by that name exists: `kanea.hcl` carries no `socket` block by default, and
 the alloc fails loudly rather than starting without what it asked for. Adding
 the grant is a file on the machine, so a repository push cannot do it, and the
 grant names the projects allowed to claim it, so granting `ops` does not grant

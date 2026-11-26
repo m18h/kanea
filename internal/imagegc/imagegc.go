@@ -53,12 +53,12 @@ type Config struct {
 	Store  store.Reader
 	Images Images
 	Logger *slog.Logger
-	// NodePullPolicy is the node's resolved default (flag, then stanza, then
+	// NodePullPolicy is the node's resolved default (images.pull_policy, then
 	// if-not-present). "never" refuses the whole collector: preloaded images
 	// cannot be re-pulled, so deletion there is unrecoverable.
 	NodePullPolicy string
 	// Disabled records that the operator turned the collector off
-	// (--image-gc off, or images.gc.enabled = false). The manual trigger
+	// (images.gc.enabled = false). The manual trigger
 	// then refuses too: a sweep the config forbids is a sweep, however it
 	// was asked for.
 	Disabled bool
@@ -163,7 +163,7 @@ func New(cfg Config) (*Collector, error) {
 	case cfg.NodePullPolicy == runtime.PullNever:
 		c.refusal = "the node's default pull policy is \"never\": preloaded images cannot be re-pulled, so deleting one is unrecoverable"
 	case cfg.Disabled:
-		c.refusal = "image gc is disabled (--image-gc off, or images { gc { enabled = false } })"
+		c.refusal = "image gc is disabled (images.gc.enabled = false in /etc/kanea/kanea.hcl)"
 	}
 	return c, nil
 }

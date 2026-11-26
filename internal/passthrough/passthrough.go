@@ -2,7 +2,7 @@
 // may be given (PRD §6.2 R17-R18).
 //
 // The model is R15's, with one addition. R15 splits *shape* from *permission*:
-// a job spec says what it wants, the server config says what is allowed, and
+// a job spec says what it wants, the node config says what is allowed, and
 // the default allows nothing. This package is the permission half for devices
 // and sockets, but unlike `storage.allowed_host_paths`, a spec here never
 // names a path at all. It names a *grant*, an operator defines that grant on
@@ -341,7 +341,7 @@ func resolve(path string) (string, os.FileInfo, error) {
 
 func notConfigured(kind, grant string) error {
 	return fmt.Errorf("%w: this node has no %s grants, so %q cannot be given "+
-		"(add %s blocks to /etc/kanea/kanea.hcl, or set --passthrough-config)",
+		"(this node's /etc/kanea/kanea.hcl defines no %s blocks)",
 		ErrNotAllowed, kind, grant, kind)
 }
 

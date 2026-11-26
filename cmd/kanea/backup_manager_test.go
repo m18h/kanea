@@ -189,7 +189,7 @@ func TestSwapToAFailingDestinationLeavesTheOldReplicationRunning(t *testing.T) {
 
 	oldSvc := newDirBackupService(t, st, dataDir, oldDir)
 	m := newBackupManager(slog.New(slog.DiscardHandler))
-	startManager(t, m, oldSvc, sourceFlags)
+	startManager(t, m, oldSvc, sourceFile)
 
 	committed := false
 	err := m.swap(ctx, newFailingBackupService(t, st), sourceStore, func() error {
@@ -209,8 +209,8 @@ func TestSwapToAFailingDestinationLeavesTheOldReplicationRunning(t *testing.T) {
 	if committed {
 		t.Error("the commit ran for a destination that failed its probe")
 	}
-	if got := m.Source(); got != sourceFlags {
-		t.Errorf("Source = %q after a refused swap, want %q unchanged", got, sourceFlags)
+	if got := m.Source(); got != sourceFile {
+		t.Errorf("Source = %q after a refused swap, want %q unchanged", got, sourceFile)
 	}
 	// And the old pipeline still answers: through the manager, the way the
 	// API reaches it.
@@ -230,7 +230,7 @@ func TestSwapShipsTheFinalSegmentToTheOldDestination(t *testing.T) {
 	oldDir, newDir := t.TempDir(), t.TempDir()
 
 	m := newBackupManager(slog.New(slog.DiscardHandler))
-	startManager(t, m, newDirBackupService(t, st, dataDir, oldDir), sourceFlags)
+	startManager(t, m, newDirBackupService(t, st, dataDir, oldDir), sourceFile)
 
 	// Wait out the old pipeline's startup snapshot first, so the change below
 	// is provably *after* it: the final ship is then the only thing that can
@@ -281,7 +281,7 @@ func TestSwapToNilStopsReplication(t *testing.T) {
 	writeMasterKey(t, dataDir)
 
 	m := newBackupManager(slog.New(slog.DiscardHandler))
-	startManager(t, m, newDirBackupService(t, st, dataDir, t.TempDir()), sourceFlags)
+	startManager(t, m, newDirBackupService(t, st, dataDir, t.TempDir()), sourceFile)
 
 	committed := false
 	if err := m.swap(ctx, nil, sourceNone, func() error { committed = true; return nil }); err != nil {

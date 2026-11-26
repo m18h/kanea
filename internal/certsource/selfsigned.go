@@ -79,7 +79,7 @@ var ErrNoCA = errors.New("certsource: this node has no self-signed CA")
 type SelfSignedConfig struct {
 	Store Store
 	// Name identifies the CA in a device's trust list a year from now. The
-	// caller passes --tls-ca-name, else the base domain, else the hostname.
+	// caller passes tls.ca_name, else the base domain, else the hostname.
 	Name   string
 	Logger *slog.Logger
 	// Now is injectable so renewal can be tested without waiting sixty days.

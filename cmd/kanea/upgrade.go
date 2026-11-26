@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/m18h/kanea/internal/api"
+	"github.com/m18h/kanea/internal/nodeconfig"
 )
 
 // runUpgrade is `kanea upgrade` (PRD §15.4).
@@ -47,12 +48,25 @@ func runUpgrade(args []string) error {
 		"do not download anything; restart onto whatever binary is already installed")
 	requireSig := fs.Bool("require-signature", false,
 		"refuse the release unless its cosign signature verifies: a missing cosign binary, "+
-			"or a release published without a signature, becomes fatal instead of a note")
+			"or a release published without a signature, becomes fatal instead of a note "+
+			"(upgrade.require_signature in the node config sets it for good)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *pin != "" && !releaseTag.MatchString(*pin) {
 		return fmt.Errorf("--version %q is not a release tag (vX.Y.Z)", *pin)
+	}
+	// The node's own upgrade stanza: this command and the dashboard's upgrade
+	// are one mechanism, so they must agree on where releases come from. A
+	// file that does not load stops here, because the daemons this is about
+	// to restart would refuse it too.
+	nodeCfg, err := nodeconfig.Probe(nodeconfig.DefaultPath)
+	if err != nil {
+		return err
+	}
+	upgradeFrom := resolveAgentSettings(nodeCfg)
+	if upgradeFrom.upgradeRequireSignature {
+		*requireSig = true
 	}
 
 	o := newOut()
@@ -74,7 +88,7 @@ func runUpgrade(args []string) error {
 	binaryVersion := version
 
 	if *check {
-		source := newReleaseSource()
+		source := newReleaseSource(upgradeFrom.upgradeRepo)
 		latest, err := source.latest(ctx)
 		if err != nil {
 			return err
@@ -89,7 +103,7 @@ func runUpgrade(args []string) error {
 	}
 
 	if !*noFetch {
-		source := newReleaseSource()
+		source := newReleaseSource(upgradeFrom.upgradeRepo)
 		target := *pin
 		if target == "" {
 			if target, err = source.latest(ctx); err != nil {
@@ -270,7 +284,7 @@ func runUI(args []string) error {
 		}
 		if health.Listen == "" {
 			return errors.New("this daemon has no network listener, so the dashboard is not " +
-				"reachable: start kanead with --listen (and --serve-dashboard), or pass --addr")
+				"reachable: set bind.api_addr (and dashboard.enabled) in /etc/kanea/kanea.hcl, or pass --addr")
 		}
 		target = dashboardURL(health.Listen, health.TLS)
 	}

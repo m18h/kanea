@@ -509,7 +509,7 @@ func TestExposeAcceptsEveryTLSMode(t *testing.T) {
 	}
 }
 
-// The whole point of --tls-default is that a homelabber annotates nothing. A
+// The whole point of tls.default_mode is that a homelabber annotates nothing. A
 // service with no tls block must be silent, not merely valid: a warning on
 // every service is a warning nobody reads.
 func TestExposeWithoutATLSBlockSaysNothing(t *testing.T) {

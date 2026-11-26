@@ -183,7 +183,7 @@ func (a *Archiver) Sink() string { return a.sink.Describe() }
 // ErrNotConfigured means no destination is configured; the API maps it to the
 // same 503 an absent backup subsystem always answered with.
 var ErrNotConfigured = errors.New(
-	"backup: no destination is configured (set one with --backup-dir/--backup-s3, or PUT /v1/settings/backup)")
+	"backup: no destination is configured (add a backup stanza to /etc/kanea/kanea.hcl, or PUT /v1/settings/backup)")
 
 // Probe verifies the sink end to end: write a small object, list it back,
 // delete it. It runs through the sink's real Put (the reader-ownership defect

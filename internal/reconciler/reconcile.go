@@ -136,7 +136,7 @@ type VolumeUsage interface {
 // Passthrough is the slice of the node's device and socket grants this package
 // needs (R17, R18).
 //
-// It is the same seam Mounter's ResolveHost is: a grant is server configuration,
+// It is the same seam Mounter's ResolveHost is: a grant is node configuration,
 // so only the agent can answer what one means, and a spec that could answer for
 // itself would not be a grant. A nil Passthrough permits nothing: a service
 // that asked for one fails, rather than starting without what it asked for.
@@ -1428,8 +1428,8 @@ func (r *Reconciler) ensurePassthrough(d Desired) error {
 	}
 	if r.passthrough == nil {
 		return fmt.Errorf("service asks for device or socket passthrough but no grants " +
-			"are configured on this node (add device/socket blocks to /etc/kanea/kanea.hcl, " +
-			"or set --passthrough-config)")
+			"are configured on this node (this node's /etc/kanea/kanea.hcl " +
+			"defines no device or socket blocks)")
 	}
 
 	for i := range d.Devices {

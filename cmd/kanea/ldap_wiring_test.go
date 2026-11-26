@@ -49,7 +49,7 @@ func TestBuildLDAPWithNothingConfiguredIsNil(t *testing.T) {
 }
 
 func TestBuildLDAPWarnsOnHalfAConfiguration(t *testing.T) {
-	// Settings without --ldap-url mean the operator set LDAP up and is not
+	// Settings without auth.ldap.url mean the operator set LDAP up and is not
 	// getting LDAP: worth a line, not an error, and definitely not a
 	// half-built verifier.
 	var buf bytes.Buffer
@@ -60,8 +60,8 @@ func TestBuildLDAPWarnsOnHalfAConfiguration(t *testing.T) {
 	if err != nil || directory != nil {
 		t.Fatalf("half-configured buildLDAP = %+v, %v; want nil, nil", directory, err)
 	}
-	if !strings.Contains(buf.String(), "--ldap-url") {
-		t.Errorf("no warning naming --ldap-url was logged: %s", buf.String())
+	if !strings.Contains(buf.String(), "auth.ldap.url") {
+		t.Errorf("no warning naming auth.ldap.url was logged: %s", buf.String())
 	}
 }
 
@@ -77,9 +77,9 @@ func TestBuildLDAPRefusesABareBindPassword(t *testing.T) {
 	if err == nil {
 		t.Fatal("a literal bind password was accepted")
 	}
-	// The error meets the operator in front of the flag they typed.
-	if !strings.Contains(err.Error(), "--ldap-bind-password") {
-		t.Errorf("error does not name the flag: %v", err)
+	// The error meets the operator in front of the attribute they wrote.
+	if !strings.Contains(err.Error(), "auth.ldap.bind_password") {
+		t.Errorf("error does not name the attribute: %v", err)
 	}
 	if !strings.Contains(err.Error(), "secret:") {
 		t.Errorf("error does not say what the flag takes: %v", err)
@@ -135,7 +135,7 @@ func TestBuildLDAPToleratesAnUnreachableDirectory(t *testing.T) {
 }
 
 func TestLDAPSettingsConfigured(t *testing.T) {
-	// Any one flag counts: configured() is what decides whether "no --ldap-url"
+	// Any one attribute counts: configured() is what decides whether "no auth.ldap.url"
 	// deserves the half-configuration warning.
 	tests := []struct {
 		name string

@@ -180,7 +180,7 @@ describe('backup form', () => {
 
   it('maps the source onto a badge', () => {
     expect(describeBackupSource('store').label).toBe('from settings')
-    expect(describeBackupSource('flags').label).toBe('from unit flags')
+    expect(describeBackupSource('file').label).toBe('from kanea.hcl')
     expect(describeBackupSource('none').variant).toBe('error')
   })
 })

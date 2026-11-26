@@ -41,8 +41,8 @@ type endpoint struct {
 
 // endpointFlags registers --socket and the remote trio.
 //
-// Every client-side command calls this. `kanea agent`'s own --socket is the
-// daemon's flag (where it *listens*) and is deliberately not this one.
+// Every client-side command calls this. kanead's bind.api_socket in the node
+// config is where the daemon *listens* and is deliberately not this flag.
 func endpointFlags(fs *flag.FlagSet) *endpoint {
 	return &endpoint{
 		fs:     fs,

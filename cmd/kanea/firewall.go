@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/m18h/kanea/internal/nodeconfig"
 	"github.com/m18h/kanea/internal/provision"
 )
 
@@ -59,25 +60,36 @@ type firewallFacts struct {
 func runFirewall(args []string) error {
 	fset := flag.NewFlagSet("firewall", flag.ContinueOnError)
 	prefix := fset.String("prefix", provision.DefaultPrefix, "component install prefix")
-	nodeCIDR := fset.String("node-cidr", provision.DefaultNodeCIDR, "this node's container subnet")
-	clusterCIDR := fset.String("cluster-cidr", provision.DefaultClusterCIDR, "the native routing CIDR")
-	networkMode := fset.String("network", networkEBPF, "network mode: ebpf or netns")
 	manager := fset.String("manager", "", "print rules for one manager: ufw, firewalld, nft, iptables")
 	all := fset.Bool("all", false, "print every manager's rules, not just the detected one")
 	if err := fset.Parse(args); err != nil {
 		return err
 	}
-	if err := validNetworkMode(*networkMode); err != nil {
+	// This node's real values, from where kanead reads them: rules printed
+	// for a default subnet on a node that was given another are the exact
+	// failure this command exists to prevent.
+	nodeCfg, err := nodeconfig.Probe(nodeconfig.DefaultPath)
+	if err != nil {
+		return err
+	}
+	s := resolveAgentSettings(nodeCfg)
+	if err := validNetworkMode(s.networkMode, configLabel); err != nil {
 		return err
 	}
 
-	layout := componentLayout(*prefix, *nodeCIDR, *clusterCIDR)
+	layout := componentLayout(*prefix, s.nodeCIDR, s.clusterCIDR)
 	if err := layout.ValidateNetworking(); err != nil {
 		return fmt.Errorf("firewall: %w", err)
 	}
 	node, cluster := layout.Networking()
 
-	facts := firewallFacts{cluster: cluster, resolver: dnsAddrFor(*networkMode, node)}
+	facts := firewallFacts{cluster: cluster, resolver: dnsAddrFor(s.networkMode, node)}
+	switch {
+	case s.dnsListen == dnsOff:
+		facts.resolver = ""
+	case s.dnsListen != "" && facts.resolver != "":
+		facts.resolver = s.dnsListen
+	}
 	if facts.resolver == "" {
 		facts.dnsOff = true
 	} else if ip, port, err := splitHostPortLoose(facts.resolver); err == nil {
@@ -95,7 +107,7 @@ func runFirewall(args []string) error {
 	o.printf("refused by a default-deny posture:\n\n")
 	if facts.dnsOff {
 		o.printf("  forward   %s reaching anything off this node\n", cluster)
-		o.printf("  input     (no internal resolver on this node: --network netns or --dns-listen off)\n\n")
+		o.printf("  input     (no internal resolver on this node: network.driver = \"netns\" or dns.listen = \"off\")\n\n")
 	} else {
 		o.printf("  input     %s reaching the internal resolver at %s\n", cluster, facts.resolver)
 		o.printf("  forward   %s reaching anything off this node\n\n", cluster)

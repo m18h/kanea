@@ -181,7 +181,7 @@ func NewDNS(cfg DNSConfig) (*DNS, error) {
 	if len(selfForward) > 0 {
 		if len(upstreams) == 0 {
 			return nil, fmt.Errorf("dns: every upstream is this resolver's own address (%s); "+
-				"forwarding there is a loop - set --dns-upstream, or a dns stanza, to a real resolver",
+				"forwarding there is a loop - set dns.upstreams in /etc/kanea/kanea.hcl to a real resolver",
 				cfg.Listen)
 		}
 		cfg.Logger.Warn("dropping upstreams that point at this resolver",

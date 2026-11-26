@@ -35,7 +35,7 @@ type Spec struct {
 	EnvGroups []*EnvGroup
 	// BaseDomain is the server's `base_domain`, carried from Options so that
 	// validation can generate the auto-FQDNs of §7.2 and check them for
-	// collisions (R16). Empty when the spec was parsed without server config.
+	// collisions (R16). Empty when the spec was parsed without node config.
 	BaseDomain string
 }
 
@@ -692,11 +692,11 @@ const (
 //
 // Mode names a source, never a path: "acme", "self-signed", "provided" or
 // "plaintext". Name narrows "provided" to one of the grants in the node's
-// --tls-certs-config: the same rule R17 draws for devices, for the same
+// certificate blocks (kanea.hcl): the same rule R17 draws for devices, for the same
 // reason. A spec is deployed by GitOps, so anything it can name, anyone who
 // can push to a synced repository can name.
 //
-// An empty Mode means the node decides (--tls-default). That is what lets a
+// An empty Mode means the node decides (tls.default_mode). That is what lets a
 // homelabber annotate nothing and still get a certificate.
 type TLS struct {
 	Mode string

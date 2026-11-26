@@ -80,12 +80,12 @@ type BuildRequest struct {
 	// allows one.
 	RegistryAuth []byte
 	// Insecure allows a plain-HTTP push of the image output. For a node-local
-	// registry: the node's --insecure-registry posture, or an internal-target
+	// registry: the node's builds.insecure_registry posture, or an internal-target
 	// build (§5.2.14), whose loopback listener is plain HTTP by design.
 	Insecure bool
 	// InsecureCache allows plain HTTP for the cache_repo flags. Separate from
 	// Insecure on purpose: an internal target must never downgrade an
-	// external cache push, so only --insecure-registry sets this.
+	// external cache push, so only builds.insecure_registry sets this.
 	InsecureCache bool
 }
 

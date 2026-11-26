@@ -65,7 +65,7 @@ func assets() fs.FS {
 //     those too would answer a missing script with HTML, which the browser
 //     reports as a syntax error and sends you looking in the wrong place.
 //
-// wsOrigins is the daemon's `--dashboard-origins` allowlist, and it is here
+// wsOrigins is the node config's dashboard.origins allowlist, and it is here
 // for one reason: the CSP's connect-src must permit exactly the origins the
 // websocket handshake accepts. The handshake takes same-origin plus that list
 // (api.Server.checkOrigin), so a policy that named only the first would block,
@@ -202,7 +202,7 @@ const cspCommon = "default-src 'self'; " +
 // r.Host and deliberately not X-Forwarded-Host: a forwarded header is a claim,
 // not evidence (the rule the edge is built on), and trusting one here would let
 // a request name the host its own page may talk to. A reverse proxy that
-// rewrites Host therefore needs `--dashboard-origins`: the same requirement
+// rewrites Host therefore needs dashboard.origins set: the same requirement
 // checkOrigin already imposes on it, for the same socket.
 func contentSecurityPolicy(host string, allowed []string) string {
 	connect := "; connect-src 'self'"
