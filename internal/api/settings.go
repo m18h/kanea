@@ -40,10 +40,13 @@ type SettingsService interface {
 
 // NodeConfigView is what kanea.hcl decided: shown, never edited here. Changing
 // any of it is an edit of that file and a restart, and the page says so.
+// NetworkMode is the exception: the platform decides it ("ebpf" on Linux,
+// "netns" elsewhere), and no file can.
 type NodeConfigView struct {
 	Listen       string `json:"listen,omitempty"`
 	TLS          bool   `json:"tls"`
 	BaseDomain   string `json:"base_domain,omitempty"`
+	NetworkMode  string `json:"network_mode"`
 	NodeCIDR     string `json:"node_cidr"`
 	ClusterCIDR  string `json:"cluster_cidr"`
 	ServiceCIDR  string `json:"service_cidr"`

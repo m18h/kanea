@@ -1011,6 +1011,17 @@ func TestReconcileDoesNotReapAllocsBeingCreated(t *testing.T) {
 	}
 }
 
+// A Network that cannot enumerate its attachments simply is not swept. That is
+// the netns driver's situation by design: /run/netns is shared with the rest of
+// the host and a bare namespace carries no mark of who created it, so "anything
+// I did not expect" would include other tools' namespaces.
+func TestReconcileSkipsSweepWithoutAnInspector(t *testing.T) {
+	if _, ok := any(reconciler.NetnsNetwork{}).(reconciler.NetworkInspector); ok {
+		t.Fatal("NetnsNetwork must not implement NetworkInspector: it cannot tell its " +
+			"namespaces from any other tool's, and reaping deletes")
+	}
+}
+
 // Policy is derived from desired state, so it belongs in the convergence loop.
 func TestReconcileSyncsPolicyForEveryProject(t *testing.T) {
 	h := newHarness(t)

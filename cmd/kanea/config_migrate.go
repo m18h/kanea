@@ -401,15 +401,17 @@ func migrateNode(opts migrateOptions) (migrateReport, error) {
 	if err != nil {
 		return report, err
 	}
-	// The network driver is not a setting any more (PRD v1.115). "ebpf", which
-	// every unit `kanea init` wrote carries, converts to nothing. The
-	// development mode is refused rather than converted: its allocs have bare
-	// namespaces, and dropping the flag would put them on a datapath they
-	// were never attached to without anyone having asked for that.
+	// The network mode is not a setting any more (PRD v1.115): a Linux node
+	// runs the eBPF datapath. "ebpf", which every unit `kanea init` wrote
+	// carries, converts to nothing. "netns" is refused rather than converted:
+	// its allocs have bare namespaces, and dropping the flag would put them
+	// on a datapath they were never attached to without anyone having asked
+	// for that.
 	if mode, set := agentSet["network"].(string); set && mode != "ebpf" {
-		return report, fmt.Errorf("%s has --network %s, and this release has one network: the eBPF datapath. "+
-			"That mode enforced no policy and balanced no service. Remove the flag from the unit "+
-			"to move this node onto the datapath, then run the migration again", kaneadUnit, mode)
+		return report, fmt.Errorf("%s has --network %s, and the network mode is no longer a setting: "+
+			"a Linux node runs the eBPF datapath. That mode enforced no policy and balanced no service. "+
+			"Remove the flag from the unit to move this node onto the datapath, then run the migration again",
+			kaneadUnit, mode)
 	}
 	for _, pair := range [][2]string{{"edge-routes", "routes"}, {"edge-certs", "certs"}} {
 		a, aSet := agentSet[pair[0]].(string)

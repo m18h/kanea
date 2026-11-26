@@ -41,9 +41,9 @@ type Driver interface {
 	Remove(ctx context.Context, project, id string) error
 }
 
-// Network wires an alloc's namespace up and tears it down. The one production
-// implementation is the eBPF datapath (internal/datapath); the seam is what
-// lets the convergence loop be tested without a kernel.
+// Network wires an alloc's namespace up and tears it down. On Linux that is
+// the eBPF datapath (internal/datapath); anywhere else it is NetnsNetwork,
+// behind the same seam.
 type Network interface {
 	Attach(ctx context.Context, spec runtime.AllocSpec) error
 	Detach(ctx context.Context, spec runtime.AllocSpec) error
@@ -697,8 +697,8 @@ func (r *Reconciler) resolvConfFor(project string) (string, error) {
 	return network.WriteResolvConf(r.resolvConfDir, project, r.nameserver)
 }
 
-// errNoInternalDNS marks a node with no embedded resolver configured: an
-// operator turned DNS off.
+// errNoInternalDNS marks a node with no embedded resolver configured: the
+// netns mode a non-Linux node runs, or an operator who turned DNS off.
 var errNoInternalDNS = errors.New("no internal resolver is configured")
 
 // syncPolicies makes network policy match the set of projects in desired state.
@@ -1696,6 +1696,29 @@ func sortedRecords(m map[string]AllocRecord) []AllocRecord {
 	sort.Slice(out, func(i, j int) bool { return out[i].Key() < out[j].Key() })
 	return out
 }
+
+// NetnsNetwork is the network off Linux, where the eBPF datapath cannot load:
+// a persistent netns per alloc, no IPs, no policy, no LB. It lets kanead start
+// on a development machine and is never a deployment; cmd/kanea selects it by
+// platform, and no setting does (PRD v1.115).
+type NetnsNetwork struct{}
+
+// Attach creates the alloc's network namespace.
+func (NetnsNetwork) Attach(_ context.Context, spec runtime.AllocSpec) error {
+	_, err := runtime.CreateNetns(spec.ID)
+	return err
+}
+
+// Detach removes it. Called only after the task is gone.
+func (NetnsNetwork) Detach(_ context.Context, spec runtime.AllocSpec) error {
+	return runtime.DeleteNetns(spec.ID)
+}
+
+// NetnsNetwork deliberately does not implement NetworkInspector. /run/netns is a
+// shared host resource and a bare namespace carries no mark of who made it, so
+// "everything I did not expect" would include namespaces belonging to other
+// tools, and reaping means deleting. The datapath driver can reap precisely
+// because its veths carry an ownership alias (internal/datapath).
 
 // probeHealth runs due health checks and returns the records that changed.
 //
