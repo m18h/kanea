@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign-in and access - Kanea docs</title>
+<meta name="description" content="Create accounts and API tokens on a Kanea node, and let people sign in through an OIDC provider or an LDAP directory.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1>Sign-in and access</h1>
+    <p>
+      Decide who may use the node. Create accounts for people and tokens for scripts,
+      or let people sign in through an identity provider or a directory.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Caller</th><th>Authenticates with</th><th>Role comes from</th></tr></thead>
+        <tbody>
+          <tr><td>A person at the dashboard</td><td>A <a href="#auth-accounts">local account</a>, <a href="#auth-oidc">OIDC</a> or <a href="#auth-ldap">LDAP</a></td><td>The account, a token claim, or a directory group</td></tr>
+          <tr><td>A script, CI job or remote CLI</td><td>An <a href="#auth-tokens">API token</a></td><td>The token</td></tr>
+          <tr><td>The CLI on the node itself</td><td>The local unix socket</td><td>Always admin</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      There are two roles. An <code>admin</code> may change anything. A
+      <code>viewer</code> may read and nothing else.
+    </p>
+
+    <h2 id="auth-accounts">Local accounts</h2>
+
+    <p>
+      Accounts live in <a href="concepts.html#term-store">the Store</a>, so they take
+      effect at once and need no restart. <code>kanea init</code> creates the first
+      admin.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Add an account</h3>
+        <pre class="plain">kanea user add --role=viewer dana</pre>
+        <p>
+          The command prompts for a password of at least 12 characters and prints
+          <code>wrote account dana (viewer)</code>. Without <code>--role</code> the
+          account is an admin. In a script, pipe the password in on standard input.
+        </p>
+      </li>
+      <li>
+        <h3>List accounts</h3>
+        <pre class="plain">kanea user ls</pre>
+        <p>The table shows each name, its role, and when it was created and updated.</p>
+      </li>
+      <li>
+        <h3>Remove an account</h3>
+        <pre class="plain">kanea user rm dana</pre>
+        <p>
+          The account's sessions end with it. Kanea refuses to remove or demote the
+          only admin account.
+        </p>
+      </li>
+    </ol>
+
+    <ul>
+      <li>Running <code>kanea user add</code> for an existing name replaces its password and role, and ends its sessions.</li>
+      <li><code>kanea user revoke-sessions &lt;name&gt;</code> ends every session a name holds and keeps the account. It works for OIDC and LDAP names too.</li>
+      <li>A session lasts 12 hours.</li>
+      <li>People who sign in through OIDC or LDAP never appear in <code>kanea user ls</code>. They hold a session and have no account.</li>
+    </ul>
+
+    <p>
+      The Accounts tab of the dashboard's Settings page manages the same accounts, and
+      API tokens with them.
+    </p>
+
+    <h2 id="auth-tokens">API tokens</h2>
+
+    <p>
+      A token lets a script, a CI job or a remote CLI call the API. It carries a name
+      and a role. There are no finer scopes.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Create a token</h3>
+        <pre class="plain">kanea token create --role=admin --expires-in=720h ci &gt; ci.token</pre>
+        <p>
+          The token is written to standard output once and cannot be shown again. The
+          default role is <code>viewer</code>. Without <code>--expires-in</code> the token
+          never expires, and the command warns you.
+        </p>
+      </li>
+      <li>
+        <h3>Use it</h3>
+        <p>
+          Set <code>KANEA_TOKEN</code> beside <code>KANEA_URL</code>, or pass
+          <code>--token</code>. <a href="remote.html#remote-setup">Remote nodes and
+          CI</a> has the full setup.
+        </p>
+      </li>
+      <li>
+        <h3>List and revoke</h3>
+        <pre class="plain">kanea token ls
+kanea token rm &lt;id&gt;</pre>
+        <p>
+          The list shows each token's id, name, role, age and expiry. Revoke by id, not
+          by name.
+        </p>
+      </li>
+    </ol>
+
+    <h2 id="auth-oidc">Single sign-on with OIDC</h2>
+
+    <p>
+      Add an <code>auth { oidc { … } }</code> block and the dashboard's sign-in page
+      gains a <b>Continue with SSO</b> button. Password login keeps working beside it.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Register Kanea with your provider</h3>
+        <p>
+          Create a client and register one redirect URI: the dashboard's address
+          followed by <code>/v1/auth/oidc/callback</code>. Note the client id and, for a
+          confidential client, the secret.
+        </p>
+      </li>
+      <li>
+        <h3>Store the client secret</h3>
+        <pre class="plain">kanea secret put shared/oidc &lt; client-secret.txt</pre>
+        <p>
+          Skip this for a public client. Kanea uses PKCE on every login, so a client
+          with no secret is a supported setup.
+        </p>
+      </li>
+      <li>
+        <h3>Add the block to the node config</h3>
+        <p>
+          Edit <code>/etc/kanea/kanea.hcl</code>, the
+          <a href="concepts.html#term-node-config">node config</a>.
+          <code>redirect_url</code> must match the registered URI exactly.
+        </p>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">auth</span> {
+  <span class="k">oidc</span> {
+    <span class="k">issuer</span>        = <span class="s">"https://auth.example.com/realms/home"</span>
+    <span class="k">client_id</span>     = <span class="s">"kanea"</span>
+    <span class="k">client_secret</span> = <span class="s">"secret:shared/oidc"</span>
+    <span class="k">redirect_url</span>  = <span class="s">"https://kanea.example.com:8600/v1/auth/oidc/callback"</span>
+    <span class="k">admin_claims</span>  = [<span class="s">"platform-admins"</span>]
+    <span class="k">viewer_claims</span> = [<span class="s">"developers"</span>]
+  }
+}</code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <p>
+          Run <code>sudo systemctl restart kanead</code>.
+          <a href="concepts.html#term-kanead">kanead</a> fetches the issuer's discovery
+          document at startup and refuses to start if it cannot.
+        </p>
+      </li>
+      <li>
+        <h3>Check it worked</h3>
+        <p>
+          Open the dashboard's sign-in page. The <b>Continue with SSO</b> button shows
+          the issuer's host name. Sign in with an account that holds one of the listed
+          claim values.
+        </p>
+      </li>
+    </ol>
+
+    <h3 id="auth-oidc-roles">How a login gets a role</h3>
+
+    <p>
+      Kanea reads one claim from the ID token, <code>groups</code> unless
+      <code>role_claim</code> names another. The claim may be a list, a single string,
+      or a space-separated string.
+    </p>
+    <ul>
+      <li>A value listed in <code>admin_claims</code> gives the admin role. Admin is checked first.</li>
+      <li>A value listed in <code>viewer_claims</code> gives the viewer role.</li>
+      <li>No match means the login is refused. Being authenticated by the provider is not enough.</li>
+    </ul>
+    <p>
+      At least one of the two lists must be set, or kanead refuses to start. The name
+      shown in the audit log is the token's <code>preferred_username</code>, then
+      <code>email</code>, then <code>name</code>.
+    </p>
+
+    <h3 id="auth-oidc-settings">Settings worth knowing</h3>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td><code>issuer</code></td><td>Turns OIDC on. Without it the other attributes do nothing and kanead logs a warning.</td></tr>
+          <tr><td><code>client_id</code>, <code>redirect_url</code></td><td>Both required once <code>issuer</code> is set.</td></tr>
+          <tr><td><code>client_secret</code></td><td>A <code>secret:</code> reference. A literal value is refused. Omit it for a public client.</td></tr>
+          <tr><td><code>scopes</code></td><td>Requested in addition to <code>openid</code>. The default is <code>["profile", "email"]</code>. An empty list requests <code>openid</code> alone.</td></tr>
+          <tr><td><code>role_claim</code></td><td>The claim that carries roles. Add the scope that makes your provider include it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The provider must return a signed ID token. Kanea checks its signature, issuer,
+      audience, expiry and nonce, and a login must finish within ten minutes of
+      starting. Types and defaults are in the
+      <a href="node-config.html#nodeconfig-auth">auth reference</a>.
+    </p>
+
+    <h2 id="auth-ldap">Directory sign-in with LDAP</h2>
+
+    <p>
+      Add an <code>auth { ldap { … } }</code> block and people sign in with their
+      directory name and password, on the same form as local accounts.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Store the service account's password</h3>
+        <pre class="plain">kanea secret put shared/ldap-bind &lt; bind-password.txt</pre>
+        <p>
+          Kanea searches the directory as this account. Leave out both
+          <code>bind_dn</code> and <code>bind_password</code> for an anonymous search.
+        </p>
+      </li>
+      <li>
+        <h3>Add the block to the node config</h3>
+        <pre><code><span class="c"># /etc/kanea/kanea.hcl</span>
+<span class="k">auth</span> {
+  <span class="k">ldap</span> {
+    <span class="k">url</span>           = <span class="s">"ldaps://dc1.corp.example.com"</span>
+    <span class="k">bind_dn</span>       = <span class="s">"cn=kanea,ou=svc,dc=corp,dc=example,dc=com"</span>
+    <span class="k">bind_password</span> = <span class="s">"secret:shared/ldap-bind"</span>
+    <span class="k">user_base_dn</span>  = <span class="s">"ou=people,dc=corp,dc=example,dc=com"</span>
+    <span class="k">user_filter</span>   = <span class="s">"(sAMAccountName=%s)"</span>
+    <span class="k">admin_groups</span>  = [<span class="s">"cn=platform-admins,ou=groups,dc=corp,dc=example,dc=com"</span>]
+    <span class="k">viewer_groups</span> = [<span class="s">"cn=developers,ou=groups,dc=corp,dc=example,dc=com"</span>]
+  }
+}</code></pre>
+      </li>
+      <li>
+        <h3>Restart kanead</h3>
+        <p>
+          Run <code>sudo systemctl restart kanead</code>. A configuration error stops
+          kanead from starting. An unreachable directory does not: kanead logs a warning
+          and LDAP logins fail until the directory is back.
+        </p>
+      </li>
+      <li>
+        <h3>Check it worked</h3>
+        <pre class="plain">sudo journalctl -u kanead | grep "directory"</pre>
+        <p>
+          The log has <code>directory authentication configured</code>. Sign in at the
+          dashboard with a directory account. Each success adds a
+          <code>directory login verified</code> line with the role it mapped to.
+        </p>
+      </li>
+    </ol>
+
+    <h3 id="auth-ldap-connection">The connection</h3>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Attribute</th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td><code>url</code></td><td><code>ldaps://host[:port]</code>, or <code>ldap://host[:port]</code> with StartTLS forced. There is no cleartext option.</td></tr>
+          <tr><td><code>ca_file</code></td><td>A PEM file with the CA to trust, for a directory behind a private CA.</td></tr>
+          <tr><td><code>bind_dn</code>, <code>bind_password</code></td><td>Set both or neither. The password is a <code>secret:</code> reference.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="auth-ldap-users">Finding the user</h3>
+
+    <p>
+      Kanea searches under <code>user_base_dn</code> with <code>user_filter</code>. The
+      filter needs exactly one <code>%s</code>, which receives the typed name with
+      special characters escaped. The default is <code>(uid=%s)</code>.
+    </p>
+    <p>
+      The filter must match exactly one entry. Kanea then binds as that entry with the
+      typed password, and the directory's answer decides the login.
+    </p>
+
+    <h3 id="auth-ldap-groups">Mapping groups to roles</h3>
+
+    <p>There are two ways to learn a user's groups:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Method</th><th>Configure</th><th>Groups are</th></tr></thead>
+        <tbody>
+          <tr><td><code>memberOf</code></td><td>Nothing. This is the default.</td><td>The values of the user entry's <code>memberOf</code> attribute</td></tr>
+          <tr><td>Group search</td><td><code>group_base_dn</code> and <code>group_filter</code>, both</td><td>The DNs of the entries the filter matches</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>group_filter</code> needs one <code>%s</code>, which receives the user's DN,
+      as in <code>(member=%s)</code>. The search runs as the service account.
+    </p>
+    <ul>
+      <li><code>admin_groups</code> and <code>viewer_groups</code> hold group DNs. They are compared without regard to case.</li>
+      <li>Admin is checked first, so someone in both lists is an admin.</li>
+      <li>A user in neither list is refused. At least one list must be set, or kanead refuses to start.</li>
+    </ul>
+
+    <h3 id="auth-ldap-local">Local accounts come first</h3>
+
+    <p>
+      Kanea consults the directory only for a name that has no local account. A
+      directory entry can never shadow a local admin. The login rate limit applies
+      before any bind, so the node cannot serve as a tool for guessing directory
+      passwords.
+    </p>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

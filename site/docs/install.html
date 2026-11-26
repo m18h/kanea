@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install a node - Kanea docs</title>
+<meta name="description" content="Install the kanea binary on a Linux machine, run kanea init, and end up with a running node, an admin account and a dashboard.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Get started</p>
+    <h1 id="install">Install a node</h1>
+    <p>
+      Two commands turn a Linux machine into a node. The install script puts one binary
+      at <code>/usr/local/bin/kanea</code>. <code>sudo kanea init</code> does the rest:
+      the runtime, the master key, the systemd units and your admin account.
+    </p>
+
+    <h2 id="install-requirements">Requirements</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Requirement</th><th>What it must be</th></tr></thead>
+        <tbody>
+          <tr><td><b>Architectures</b></td><td><code>linux/amd64</code>, <code>linux/arm64</code>. Anything else is refused before a byte is downloaded.</td></tr>
+          <tr><td><b>Kernel</b></td><td>&ge; 5.10, cgroups v2 unified hierarchy.</td></tr>
+          <tr><td><b>Init system</b></td><td>systemd.</td></tr>
+          <tr><td><b>Clock</b></td><td>NTP-synchronised. Certificates and audit timestamps depend on it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      You do not install containerd, <code>runc</code>, rootless <code>buildkitd</code> or
+      the wasmtime shim yourself. <code>kanea init</code> installs them at versions pinned
+      by SHA-256 inside the binary. The network layer needs no component, because the eBPF
+      datapath is compiled into <code>kanea</code>.
+    </p>
+    <p>
+      To keep a containerd that is already on the machine, pass
+      <code>--containerd external</code> to <code>kanea init</code>.
+    </p>
+
+    <h2 id="install-script">Run the install script</h2>
+
+    <pre class="plain">curl -fsSL https://m18h.github.io/kanea/install.sh | sudo bash</pre>
+
+    <p>
+      The script resolves the latest release, downloads the archive for this
+      architecture, verifies it, installs one binary, and stops. It generates no keys,
+      starts no services and writes no units. Running it on a node that is serving
+      traffic changes nothing until you act on what it prints.
+    </p>
+
+    <p>
+      The script takes no arguments. Its settings are environment variables, and
+      <code>sudo</code> does not forward them by default. Pass them as
+      <code>sudo VAR=value bash</code>, or use <code>sudo -E</code>.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>KANEA_VERSION</code></td><td><code>latest</code></td><td>The release tag to install, for example <code>vX.Y.Z</code>. <code>latest</code> is resolved from a GitHub redirect, so the script needs no <code>jq</code> and hits no API rate limit.</td></tr>
+          <tr><td><code>KANEA_PREFIX</code></td><td><code>/usr/local/bin</code></td><td>Directory the binary is installed into, mode 0755.</td></tr>
+          <tr><td><code>KANEA_REPO</code></td><td><code>m18h/kanea</code></td><td>The <code>owner/repo</code> releases come from, so a fork installs from itself.</td></tr>
+          <tr><td><code>KANEA_REQUIRE_SIGNATURE</code></td><td><code>0</code></td><td>Set to <code>1</code> to make the cosign verification mandatory. A missing cosign binary or an unsigned release then stops the install. The script never downloads cosign for itself.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre class="plain">curl -fsSL https://m18h.github.io/kanea/install.sh | sudo KANEA_VERSION=vX.Y.Z bash</pre>
+
+    <p>
+      The node needs <code>curl</code>, <code>tar</code> and <code>install</code>, and the
+      script must run under <code>bash</code>, not <code>sh</code>. It refuses four
+      situations before downloading anything: a non-Linux kernel, an architecture other
+      than amd64 or arm64, an unreachable release endpoint, and a repository with no
+      published release.
+    </p>
+
+    <h3 id="install-script-verify">What the script verifies</h3>
+    <p>
+      The checksum is mandatory and no setting skips it. The script downloads
+      <code>checksums.txt</code>, takes the line for the archive it fetched, and runs it
+      through <code>sha256sum -c</code>. A mismatch stops with
+      <code>checksum mismatch: do not run this binary</code>.
+    </p>
+    <p>
+      The Sigstore signature over <code>checksums.txt</code> is checked when
+      <code>cosign</code> is on <code>PATH</code>. The signature is keyless and bound to
+      this repository's release workflow through the GitHub OIDC issuer.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Situation</th><th>Default</th><th>With <code>KANEA_REQUIRE_SIGNATURE=1</code></th></tr></thead>
+        <tbody>
+          <tr><td>cosign present, signature valid</td><td>Prints <code>Signature verified</code>.</td><td>The same.</td></tr>
+          <tr><td>cosign present, signature invalid</td><td>Fatal. The install stops.</td><td>Fatal.</td></tr>
+          <tr><td>cosign present, no signature published</td><td>A note, then the install continues on the checksum alone.</td><td>Fatal.</td></tr>
+          <tr><td>cosign absent</td><td>Prints <code>cosign not found; checksum verified but signature not checked</code> and continues.</td><td>Fatal.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Installing cosign first is the stronger path.
+      <a href="#install-manual">Installing by hand</a> is the same check written out.
+    </p>
+
+    <div class="callout">
+      <b class="label">Note</b>
+      <p>
+        The script has one side effect beyond the binary. It creates the
+        <code>kanea-edge</code> system account if it is missing, because
+        <a href="concepts.html#term-edge">the edge</a> runs as that user and not as root.
+        A failure here is a warning and the install continues.
+      </p>
+    </div>
+
+    <h2 id="install-init">Set up the node</h2>
+
+    <p>
+      <code>sudo kanea init</code> runs the preflight checks, installs the host
+      components, generates the master key, writes the
+      <a href="concepts.html#term-node-config">node config</a> and the systemd units,
+      starts <a href="concepts.html#term-kanead">kanead</a>, and creates the first admin
+      account. Run it once, as root.
+    </p>
+
+    <ol class="steps">
+      <li>
+        <h3>Decide where the master key will be recorded</h3>
+        <p>
+          The key is printed once during init. Without it, every backup this node makes is
+          unreadable and every stored secret is unrecoverable. Have a password manager or
+          a piece of paper ready before you start.
+        </p>
+      </li>
+      <li>
+        <h3>Run init</h3>
+        <pre class="plain">sudo kanea init</pre>
+        <p>
+          Init prints its version and asks its first question.
+        </p>
+      </li>
+      <li>
+        <h3>Choose the listen address</h3>
+        <p>
+          Press Enter to accept <code>127.0.0.1:8600</code>, type an address such as
+          <code>192.168.1.10:8600</code> to reach the dashboard from other machines, or
+          answer <code>none</code> to keep the API on its unix socket only. Init then
+          checks the node and installs the host components, printing one line per check
+          and per component.
+        </p>
+        <p>
+          Init asks this only when <code>--listen</code> is not passed and stdin is a
+          terminal. A <a href="node-config.html#nodeconfig-bind"><code>bind.api_addr</code></a>
+          already in the node config also replaces the question.
+        </p>
+      </li>
+      <li>
+        <h3>Record the master key and type it back</h3>
+        <p>
+          Init prints the key and waits for you to retype it exactly. A mismatch writes
+          nothing and stops. No flag accepts the key unseen. On a match, init writes the
+          key to <code>/var/lib/kanea/master.key</code>, then the node config and the
+          units, and starts kanead.
+        </p>
+      </li>
+      <li>
+        <h3>Create the first admin account</h3>
+        <p>
+          Enter a username, then a password twice. Pass <code>--admin-user</code> to skip
+          the username prompt. Init answers <code>Created admin account "&lt;name&gt;".</code>
+        </p>
+      </li>
+      <li>
+        <h3>Read the summary</h3>
+        <p>
+          Init ends with <code>Kanea is running.</code>, the dashboard URL, the internal
+          DNS address and the three address ranges. Open the dashboard URL and sign in
+          with the account you created.
+        </p>
+      </li>
+      <li>
+        <h3>Allow your user to run the CLI without sudo</h3>
+        <pre class="plain">sudo usermod -aG kanea $USER</pre>
+        <p>
+          Log in again for the group to apply. The CLI reaches kanead over a root-owned
+          socket, and membership of the <code>kanea</code> group is root-equivalent, like
+          the docker group.
+        </p>
+      </li>
+    </ol>
+
+    <p>
+      Every prompt in a run shares one reader, so a piped install answers the same
+      questions in the same order as a typed one.
+    </p>
+
+    <h3 id="install-init-output">What a run prints</h3>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>sudo kanea init</span></div>
+<pre class="plain">$ sudo kanea init
+kanea init: &lt;version&gt;
+
+API/dashboard listen address [127.0.0.1:8600] ("none" for socket-only): 192.168.1.10:8600
+Listener certificate already present at /etc/kanea/api.crt; leaving it alone.
+
+Checking this node:
+  ok    platform         linux/amd64
+  ok    cgroups v2       unified hierarchy with cpu, memory and pids
+  ok    kernel           6.12.43-amd64
+  ok    clock            synchronised (systemd-timesyncd)
+  ok    systemd          running
+  ok    data directory   /var/lib/kanea
+  ok    edge user        kanea-edge
+
+Installing the host components:
+kanea install: &lt;version&gt;
+
+Source: upstream
+Prefix: /usr/local/lib/kanea
+
+  up-to-date  containerd X.Y.Z     container runtime daemon
+  up-to-date  runc X.Y.Z           OCI runtime
+  up-to-date  wasmtime-shim X.Y.Z  wasmtime containerd shim; functions
+
+Wrote /etc/kanea/containerd/config.toml
+Wrote /etc/systemd/system/kanea-containerd.service
+
+Starting containerd to pull the image components…
+  up-to-date  buildkit vX.Y.Z-rootless  rootless build daemon (the only build driver)
+
+Wrote /etc/systemd/system/kanea-buildkit.service
+
+Created /var/lib/kanea, /var/log/kanea/allocs and /etc/kanea
+Wrote /etc/kanea/kanea.hcl
+Master key already present at /var/lib/kanea/master.key; leaving it alone.
+Wrote /etc/systemd/system/kanea.slice
+Wrote /etc/systemd/system/kanea-workloads.slice
+Wrote /etc/systemd/system/kanead.service
+Wrote /etc/systemd/system/kanea-edge.service
+
+Starting kanead:
+  waiting for the control plane…
+First admin username: &lt;name&gt;
+password for &lt;name&gt;:
+again:
+Created admin account "&lt;name&gt;".
+Restarting kanead so the settled listener takes effect…
+
+───────────────────────────────────────────────────────────────
+Kanea is running.
+
+  Dashboard      https://192.168.1.10:8600   (log in as "&lt;name&gt;")
+  Internal DNS   10.244.0.1:53   (allocs resolve &lt;service&gt;.&lt;project&gt; here)
+
+  Addressing
+    node CIDR      10.244.0.0/24      this node's allocs
+    cluster CIDR   10.244.0.0/16      routed, masqueraded as internal
+    service CIDR   10.201.0.0/16      service VIPs
+
+Deploy something:  kanea run &lt;spec.hcl&gt;
+CLI without sudo:  sudo usermod -aG kanea &lt;user&gt;   # root-equivalent; log in again
+Configure a backup destination before you need one; see docs/DR_RUNBOOK.md.</pre>
+    </div>
+
+    <p>
+      Versions and the kernel string are placeholders. This transcript is a second run on
+      a node that already has a key and a listener certificate, so two lines say
+      "leaving it alone" and the components read <code>up-to-date</code>. A first run
+      mints both and installs each component.
+    </p>
+
+    <h3 id="install-init-config">The node config init writes</h3>
+    <p>
+      Init writes <code>/etc/kanea/kanea.hcl</code>. With every default accepted, the
+      file is:
+    </p>
+    <pre class="plain">data_dir      = "/var/lib/kanea"
+alloc_log_dir = "/var/log/kanea/allocs"
+
+network {
+  driver       = "ebpf"
+  node_cidr    = "10.244.0.0/24"
+  cluster_cidr = "10.244.0.0/16"
+}
+
+edge {
+  certs_group = "kanea-edge"
+}
+
+bind {
+  api_addr = "127.0.0.1:8600"
+}</pre>
+    <p>
+      Init pins the directories and address ranges so the node keeps them whatever a
+      later release chooses as a default. Answering <code>none</code> to the listen
+      question leaves <code>api_addr</code> out. An address beyond loopback also gets
+      <code>api_cert</code> and <code>api_key</code>.
+    </p>
+    <p>
+      Every other setting on the node is an attribute of this file, listed in the
+      <a href="node-config.html#nodeconfig">node config reference</a>.
+    </p>
+
+    <h3 id="install-init-tls">TLS for the dashboard</h3>
+    <p>
+      Beyond loopback the listener is served over TLS. Without a
+      <code>--listen-cert</code> and <code>--listen-key</code> pair, init mints a ten-year
+      self-signed pair at <code>/etc/kanea/api.crt</code> and <code>api.key</code>, with
+      the key at mode 0600. It mints the pair once and never again, so the fingerprint
+      you accepted in a browser stays the same.
+    </p>
+    <p>
+      Init refuses an unspecified host such as <code>0.0.0.0</code> or <code>:8600</code>,
+      because the certificate needs an address or a name to carry. Bind a specific
+      address, or set <code>bind.api_domain</code>. The other TLS modes, including a
+      public certificate, are described under
+      <a href="dashboard.html#arch-dashboard">reaching the dashboard</a>.
+    </p>
+
+    <h3 id="install-init-idempotent">What a re-run does</h3>
+    <p>
+      Running <code>sudo kanea init</code> again is safe. It regenerates the units and
+      keeps the key, the certificate, the accounts and your settings.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Kept</th><th>Rewritten</th></tr></thead>
+        <tbody>
+          <tr><td>The master key. An existing key is never regenerated.</td><td>The four systemd units, every time, at mode 0644.</td></tr>
+          <tr><td>The <code>api.crt</code>/<code>api.key</code> pair. Half a pair is an error.</td><td>The containerd config and the component units.</td></tr>
+          <tr><td>The first admin. If any account exists, the step is skipped.</td><td></td></tr>
+          <tr><td>Every setting already in <code>/etc/kanea/kanea.hcl</code>, with its comments and layout. Init adds what is missing and changes an attribute only when you pass its flag.</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A re-run with no flags that finds nothing missing leaves the file untouched. Init
+      restarts kanead only when the listener it settled differs from the running one.
+    </p>
+
+    <h3 id="install-init-flags">Useful init flags</h3>
+    <p>
+      The full list is under <a href="cli.html#cli-init"><code>kanea init</code></a> in
+      the CLI reference. These are the common ones:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Default</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td><code>--listen</code></td><td><code>127.0.0.1:8600</code></td><td>Skips the prompt and replaces the API settings of the file's <code>bind</code> stanza. <code>none</code> keeps the API socket-only.</td></tr>
+          <tr><td><code>--admin-user</code></td><td>prompt</td><td>With a piped password, makes the whole run scriptable.</td></tr>
+          <tr><td><code>--containerd external</code></td><td>install our own</td><td>Adopt the containerd already on the node.</td></tr>
+          <tr><td><code>--bundle</code></td><td>-</td><td>Install the host components from an <a href="#install-airgapped">offline bundle</a>.</td></tr>
+          <tr><td><code>--reserve</code></td><td><code>256M</code></td><td>The control plane's memory floor. A node that runs builds wants 512M, because buildkitd alone holds about 157 MiB.</td></tr>
+          <tr><td><code>--node-cidr</code></td><td><code>10.244.0.0/24</code></td><td>This node's container subnet, written to <code>network.node_cidr</code>. Its <code>.1</code> is also the internal DNS address.</td></tr>
+          <tr><td><code>--no-start</code></td><td><code>false</code></td><td>Write everything and stop, without starting kanead or creating an account.</td></tr>
+          <tr><td><code>--skip-checks</code></td><td><code>false</code></td><td>Run without the preflight. A failed check stops init, so this is how you override one you disagree with.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="install-components">Host components</h2>
+
+    <p>
+      <code>kanea init</code> installs containerd, <code>runc</code>, rootless
+      <code>buildkitd</code> and the wasmtime shim for you. Their versions and SHA-256
+      hashes are compiled into the binary and never fetched. <code>kanea doctor</code>
+      checks the node against the same list.
+    </p>
+    <pre class="plain">kanea install --list         # the pinned versions, straight from the binary
+sudo kanea install --dry-run # resolve and verify every artefact, write nothing
+sudo kanea install           # kanea init runs this for you</pre>
+    <p>
+      Nothing at a distribution's paths is touched. Kanea's containerd lives under
+      <code>/usr/local/lib/kanea</code> and listens on its own socket at
+      <code>/run/kanea/containerd.sock</code>, so Docker on the same machine keeps
+      working.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Flag</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>--list</code></td><td>Print the pinned versions and exit. Needs no network and no root.</td></tr>
+          <tr><td><code>--dry-run</code></td><td>Download and verify everything, write nothing. Run it before an upgrade to see what would move.</td></tr>
+          <tr><td><code>--only</code></td><td>Comma-separated component names. They install in manifest order whatever order you give: containerd and runc first, then the buildkit image, which is pulled through the running containerd.</td></tr>
+          <tr><td><code>--force</code></td><td>Reinstall components already at the pinned version.</td></tr>
+          <tr><td><code>--bundle</code></td><td>Install from an <a href="#install-airgapped">offline bundle</a>. Network fetching is off entirely.</td></tr>
+          <tr><td><code>--containerd external</code></td><td>Adopt an existing containerd. Kanea installs none and writes a slice override for the existing unit.</td></tr>
+          <tr><td><code>--arch</code></td><td>Target architecture. Meaningful only with <code>--dry-run</code>; installing for a foreign architecture is refused.</td></tr>
+          <tr><td><code>--prefix</code>, <code>--conf-dir</code>, <code>--data-dir</code>, <code>--run-dir</code>, <code>--unit-dir</code></td><td>Where binaries, configuration, state, sockets and units go.</td></tr>
+          <tr><td><code>--skip-units</code></td><td>Binaries only. This also skips the image components, since containerd is never started.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="install-manual">Install by hand</h2>
+
+    <p>
+      Each release publishes one archive per architecture with an SPDX SBOM beside it, a
+      <code>kanea_&lt;version&gt;_source.spdx.json</code> for the build's own dependency
+      graph, a <code>checksums.txt</code>, and a keyless cosign signature over that file.
+      The SBOMs are listed inside the checksums, so the one signature covers them too.
+    </p>
+    <pre class="plain">VERSION=vX.Y.Z; ARCH=amd64   # the tag you want, e.g. from the releases page
+BASE=https://github.com/m18h/kanea/releases/download/$VERSION
+
+curl -fLO $BASE/kanea_${VERSION#v}_linux_$ARCH.tar.gz
+curl -fL -O $BASE/checksums.txt -O $BASE/checksums.txt.sig -O $BASE/checksums.txt.pem
+
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature   checksums.txt.sig \
+  --certificate-identity-regexp "https://github.com/m18h/kanea/" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  checksums.txt
+
+sha256sum --ignore-missing -c checksums.txt
+tar xzf kanea_${VERSION#v}_linux_$ARCH.tar.gz
+sudo install -m 0755 kanea /usr/local/bin/kanea</pre>
+    <p>
+      There is no long-lived signing key. Sigstore binds the signature to the release
+      workflow in this repository, and the proof is in a public transparency log. Then
+      continue at <a href="#install-init"><code>sudo kanea init</code></a>.
+    </p>
+
+    <h3 id="install-homebrew">Homebrew</h3>
+    <pre class="plain">brew tap m18h/kanea
+brew trust m18h/kanea   # brew ≥ 6 refuses formulae from untrusted third-party taps
+brew install kanea</pre>
+    <p>
+      Homebrew installs the <code>kanea</code> CLI, and a Mac is a full client. With
+      <code>KANEA_URL</code> and a token it drives a
+      <a href="remote.html#remote">remote node</a>: <code>plan</code>, <code>run</code>,
+      <code>ps</code>, <code>logs</code>, <code>exec</code>, <code>scale</code>. A Mac is
+      never the node, because both daemons need Linux.
+    </p>
+    <p>
+      On Linux the formula installs the same binary, but install a node with the script
+      above. That puts the binary at <code>/usr/local/bin</code>, owned by root, where
+      <code>kanea upgrade</code> can replace it. If brew owns the binary on a node,
+      upgrade with <code>brew upgrade kanea</code>, then
+      <code>sudo kanea upgrade --no-fetch</code> to restart onto it.
+    </p>
+    <p>
+      The formula lives in its own tap,
+      <a href="https://github.com/m18h/homebrew-kanea">m18h/homebrew-kanea</a>, and is
+      regenerated from each release's <code>checksums.txt</code>.
+    </p>
+
+    <h2 id="install-image">The container image</h2>
+
+    <pre class="plain">docker run --rm ghcr.io/m18h/kanea:latest version
+
+# the shape a pipeline uses: the spec on a mount, the node over the network
+docker run --rm -v "$PWD:/workspace:ro" \
+  -e KANEA_URL -e KANEA_TOKEN \
+  ghcr.io/m18h/kanea:vX.Y.Z run shop.hcl   # pin the tag in a pipeline</pre>
+    <p>
+      Use the image in a pipeline that deploys to a node. It carries the CLI and is not a
+      way to run a node: <code>agent</code>, <code>edge</code>, <code>init</code>,
+      <code>install</code>, <code>doctor</code> and <code>upgrade</code> act on a host
+      and its systemd, which a container does not have.
+    </p>
+    <p>
+      One manifest list covers <code>linux/amd64</code> and <code>linux/arm64</code>,
+      tagged <code>vX.Y.Z</code> and <code>latest</code>. <code>latest</code> moves only
+      for a plain <code>vX.Y.Z</code> release, never for a prerelease.
+    </p>
+    <p>
+      The image contains the released binary, not a rebuild of it. The release workflow
+      builds the image from the same archives you can download, after verifying
+      <code>checksums.txt</code> under its signature and each archive against it. The
+      hashes you can <a href="#install-manual">verify by hand</a> therefore describe what
+      is inside the image.
+    </p>
+    <p>
+      The image digest is signed with the same keyless identity as the checksums and
+      carries an SPDX attestation:
+    </p>
+    <pre class="plain">cosign verify ghcr.io/m18h/kanea:vX.Y.Z \
+  --certificate-identity-regexp 'https://github.com/m18h/kanea/' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'</pre>
+    <p>
+      The container runs as an unprivileged user (uid&nbsp;65532) with
+      <code>/workspace</code> as its working directory, so mount your spec there.
+    </p>
+    <p>
+      If your network terminates TLS with its own CA, add the root to
+      <code>/usr/local/share/ca-certificates</code> and run
+      <code>update-ca-certificates</code> in a derived image. Or pass the node's CA with
+      <code>KANEA_CA_CERT</code>, which replaces the system pool: the CLI then trusts
+      that CA and no public one.
+    </p>
+
+    <h2 id="install-airgapped">Air-gapped nodes</h2>
+
+    <p>
+      A node with no egress installs from a bundle. Build the bundle on a machine with a
+      network, carry it across, and pass it to init:
+    </p>
+    <pre class="plain">kanea bundle create --arch amd64 -o kanea-bundle.tar.gz   # connected machine
+sudo kanea init --bundle kanea-bundle.tar.gz              # air-gapped node</pre>
+    <p>
+      The bundle carries no hashes of its own. Its contents are verified against the
+      hashes compiled into the installing node's binary, so a tampered bundle cannot
+      vouch for itself. Each release publishes one bundle per architecture, covered by
+      the same signed <code>checksums.txt</code>.
+    </p>
+    <p>
+      The bundle covers Kanea's own components. Your workload images still come from a
+      registry the node can reach, unless they are preloaded. On a node with preloaded
+      images, set <code>pull_policy = "never"</code> in the
+      <a href="node-config.html#nodeconfig-images"><code>images</code> stanza</a> so an
+      absent image fails at once, by name.
+    </p>
+    <p>
+      <code>kanea doctor --offline</code> skips the single network probe. On a node with
+      no route to the release endpoint, <code>kanea upgrade</code> stops with a pointer
+      to this flow.
+    </p>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

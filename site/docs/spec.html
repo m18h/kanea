@@ -1,0 +1,1419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spec reference - Kanea docs</title>
+<meta name="description" content="Look up every block and field of a Kanea spec, the validation rules a spec is checked against, and one complete example file.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Reference</p>
+    <h1 id="spec">Spec reference</h1>
+    <p>
+      Every block and field a <a href="concepts.html#term-spec">spec</a> accepts, the rules it
+      is checked against, and one complete file. To write and deploy your first one, follow
+      <a href="first-service.html">Deploy your first service</a>.
+    </p>
+    <p>
+      Specs are HCL v2. Every rule on this page is enforced when the file is parsed, and
+      errors carry file, line and column. Run <code>kanea plan</code> to see them before
+      anything changes.
+    </p>
+
+    <h2 id="spec-top-level">Top level</h2>
+    <p>
+      A spec file holds <code>spec_version</code> and any number of the blocks below. Files
+      applied together are parsed as one set and file order is irrelevant: a service may
+      reference a project declared in another file.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>spec_version</code></td><td>number</td><td>Currently <code>1</code>. Later spec revisions are gated on this field.</td></tr>
+          <tr><td><a href="#spec-project"><code>project "&lt;name&gt;"</code></a></td><td>block</td><td>Zero or more. The name is a DNS-1123 label.</td></tr>
+          <tr><td><a href="#spec-service"><code>service "&lt;name&gt;"</code></a></td><td>block</td><td>Zero or more.</td></tr>
+          <tr><td><a href="#spec-function"><code>function "&lt;name&gt;"</code></a></td><td>block</td><td>Zero or more. A wasm module run as a service.</td></tr>
+          <tr><td><a href="#spec-storage"><code>storage "&lt;name&gt;"</code></a></td><td>block</td><td>Zero or more. A named volume backend.</td></tr>
+          <tr><td><a href="#spec-variables"><code>variables</code></a></td><td>block</td><td>Optional. Shared values the rest of the spec references as <code>${name}</code>.</td></tr>
+          <tr><td><a href="#spec-env-group"><code>env_group "&lt;name&gt;"</code></a></td><td>block</td><td>Zero or more. An environment that services opt into with <code>env_from</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="spec-variables">variables</h2>
+    <p>
+      Declare a value once and reference it anywhere as <code>${name}</code>. Where HCL
+      takes an expression, such as <code>count</code>, use the bare name.
+    </p>
+    <pre><code><span class="k">variables</span> {
+  <span class="k">domain</span>   = <span class="s">"shop.example.com"</span>
+  <span class="k">replicas</span> = <span class="s">3</span>
+}
+
+<span class="k">service</span> <span class="s">"web"</span> {
+  <span class="k">project</span> = <span class="s">"shop"</span>
+  <span class="k">count</span>   = replicas
+  <span class="k">expose</span> {
+    <span class="k">domains</span> = [<span class="s">"${domain}"</span>, <span class="s">"www.${domain}"</span>]
+  }
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td>Value types</td><td>String, number or bool. A list or object is refused by name.</td></tr>
+          <tr><td>Precedence</td><td>Lowest to highest: the node's <a href="node-config.html#nodeconfig-variables"><code>variables</code> stanza</a>, the spec's block, pipeline values such as <code>${GIT_SHA_SHORT}</code>.</td></tr>
+          <tr><td>References inside a value</td><td>A value may reference node variables and built-ins. It may not reference another spec variable.</td></tr>
+          <tr><td>Reserved names</td><td><code>GIT_SHA</code>, <code>GIT_SHA_SHORT</code>, <code>GIT_BRANCH</code>, <code>KANEA_PROJECT</code>, <code>service</code> and <code>secret</code> cannot be declared.</td></tr>
+          <tr><td>Duplicates</td><td>Declaring the same name twice across a spec's files is an error.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn">
+      <b class="label">Variables are not secrets</b>
+      <p>
+        The node's stanza is served to any signed-in caller over <code>GET /v1/vars</code>.
+        Keep credentials as <code>secret:</code> references. A variable whose value contains
+        such a reference is fine.
+      </p>
+    </div>
+
+    <h2 id="spec-project">project</h2>
+    <p>
+      A named group of services. It is the isolation boundary for network policy, secrets,
+      containerd namespaces and DNS.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>description</code></td><td>string</td><td>Free text, up to 512 characters. Shown in the dashboard.</td></tr>
+          <tr><td><a href="#spec-project-git"><code>git</code></a></td><td>block</td><td>Optional GitOps source for this project.</td></tr>
+          <tr><td><a href="#spec-project-notifications"><code>notifications</code></a></td><td>block</td><td>Optional channels and filters.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="spec-project-git"><code>git</code></h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>url</code></td><td>string</td><td>Required. <code>https://</code>, <code>ssh://</code>, scp form or a local path. <code>http://</code>, <code>git://</code> and credentials in the URL are refused: use <code>auth_ref</code>.</td></tr>
+          <tr><td><code>branch</code></td><td>string</td><td>Defaults to the repository's default branch.</td></tr>
+          <tr><td><code>path</code></td><td>string</td><td>Directory within the repository that holds specs, for example <code>.kanea/</code>.</td></tr>
+          <tr><td><code>auth_ref</code></td><td>secret ref</td><td>Deploy key or token.</td></tr>
+          <tr><td><code>webhook_secret_ref</code></td><td>secret ref</td><td>HMAC key for the push webhook.</td></tr>
+          <tr><td><code>poll_interval</code></td><td>duration</td><td>How often to poll when no webhook arrives.</td></tr>
+          <tr><td><code>require_approval</code></td><td>bool</td><td>A sync marks the project and a person promotes it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn">
+      <b class="label">A repository speaks for its own project and no other</b>
+      <p>
+        A synced spec that declares a different project is refused. Without that boundary,
+        push access to one repository would be control of every service on the node.
+      </p>
+      <p>
+        The webhook never deploys from the request body. It marks the project dirty, and the
+        sync loop re-reads the source with Kanea's own credential. A forged body can only
+        make a legitimate sync happen sooner.
+      </p>
+    </div>
+
+    <h3 id="spec-project-notifications"><code>notifications</code></h3>
+    <p>Up to five channel blocks, plus two filters.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>on</code></td><td>list(string)</td><td>Event globs, for example <code>["deploy.failed", "scale.*"]</code>. A pattern that matches no known event is a spec error.</td></tr>
+          <tr><td><code>severity</code></td><td>string</td><td>Floor: <code>info</code>, <code>warning</code> or <code>error</code>. Combined with <code>on</code> as an AND.</td></tr>
+          <tr><td><code>telegram</code></td><td>block</td><td><code>chat_id</code>, <code>token_ref</code>. Both required.</td></tr>
+          <tr><td><code>slack</code></td><td>block</td><td><code>url_ref</code>, required. Discord accepts the same shape on its <code>/slack</code> endpoint.</td></tr>
+          <tr><td><code>ntfy</code></td><td>block</td><td><code>url</code> (required), <code>token_ref</code>.</td></tr>
+          <tr><td><code>smtp</code></td><td>block</td><td><code>host</code>, <code>from</code>, <code>to</code> (required); <code>port</code>, <code>username</code>, <code>password_ref</code>.</td></tr>
+          <tr><td><code>webhook</code></td><td>block</td><td><code>url</code> (required), <code>secret_ref</code> for an HMAC signature over the body.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A Slack incoming-webhook URL is a credential, so it is always a reference. Egress is
+      checked at dial time against every resolved address, and redirects are refused.
+    </p>
+
+    <h2 id="spec-storage">storage</h2>
+    <p>
+      A named volume backend. Services mount it by name with a
+      <a href="#spec-volume"><code>volume</code></a> block. The setup guides for each type
+      are on <a href="volumes.html">Volumes and host access</a>.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th><code>type</code></th><th>Fields</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>local</code></td><td>-</td><td>A directory on the node, managed by Kanea. Each alloc gets its own.</td></tr>
+          <tr><td><code>host</code></td><td><code>path</code>, <code>create</code></td><td>A directory the operator owns. It mounts only when its path sits under a prefix in the node's <a href="node-config.html#nodeconfig-storage"><code>storage.allowed_host_paths</code></a>. See <a href="volumes.html#volumes-host">host volumes</a>.</td></tr>
+          <tr><td><code>nfs</code></td><td><code>server</code>, <code>export</code>, <code>options</code></td><td></td></tr>
+          <tr><td><code>smb</code></td><td><code>server</code>, <code>share</code>, <code>auth_ref</code>, <code>options</code></td><td></td></tr>
+          <tr><td><code>s3</code></td><td><code>bucket</code>, <code>endpoint</code>, <code>auth_ref</code>, <code>mode</code></td><td><code>mode = "ro"</code> (the default) selects mountpoint-s3, <code>"rw"</code> selects s3fs. <code>endpoint</code> must be <code>https://</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A <code>host</code> path is absolute, clean and free of <code>..</code>. The directory
+      must already exist unless <code>create = true</code>, which makes Kanea create it inside
+      an allowed prefix. Kanea never changes the ownership of a host volume.
+    </p>
+    <p>
+      <code>auth_ref</code> follows <a href="#spec-rules">secret scope</a>: every service
+      that mounts the storage must be allowed to read the secret. S3 volumes suit bulk,
+      read-mostly data only, for the reasons given under
+      <a href="volumes.html#volumes-network">network volumes</a>.
+    </p>
+
+    <h2 id="spec-service">service</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>project</code></td><td>string</td><td>-</td><td>The owning project.</td></tr>
+          <tr><td><code>description</code></td><td>string</td><td>-</td><td>Free text, up to 512 characters.</td></tr>
+          <tr><td><code>count</code></td><td>number</td><td><code>1</code></td><td>Replicas. Must sit inside <code>scaling</code>'s min and max when that block is present.</td></tr>
+          <tr><td><a href="#spec-service-hardening"><code>hardening</code></a></td><td>string</td><td><code>compatible</code></td><td><code>compatible</code> or <code>restricted</code>.</td></tr>
+          <tr><td><a href="#spec-service-depends_on"><code>depends_on</code></a></td><td>list(string)</td><td>-</td><td>Services that must be healthy before this one starts.</td></tr>
+          <tr><td><a href="#spec-env-group"><code>env_from</code></a></td><td>list(string)</td><td>-</td><td>Env groups this service takes, in order.</td></tr>
+          <tr><td><a href="#spec-task"><code>task</code></a></td><td>block</td><td>-</td><td>Exactly one.</td></tr>
+          <tr><td><a href="#spec-init"><code>init</code></a></td><td>block</td><td>-</td><td>Zero or more setup steps, each labelled.</td></tr>
+          <tr><td><a href="#spec-file"><code>file</code></a></td><td>block</td><td>-</td><td>Zero or more config files, each labelled.</td></tr>
+          <tr><td><a href="#spec-build"><code>build</code></a></td><td>block</td><td>-</td><td>Build from source instead of pulling.</td></tr>
+          <tr><td><a href="#spec-network"><code>network</code></a></td><td>block</td><td>-</td><td>Ports, published node ports and ingress policy.</td></tr>
+          <tr><td><a href="#spec-expose"><code>expose</code></a></td><td>block</td><td>-</td><td>Zero or more public routes.</td></tr>
+          <tr><td><a href="#spec-health_check"><code>health_check</code></a></td><td>block</td><td>-</td><td>Zero or more, each labelled.</td></tr>
+          <tr><td><a href="#spec-volume"><code>volume</code></a></td><td>block</td><td>-</td><td>Zero or more mounts.</td></tr>
+          <tr><td><a href="#spec-scaling"><code>scaling</code></a></td><td>block</td><td>-</td><td>Autoscaling policy.</td></tr>
+          <tr><td><a href="#spec-update"><code>update</code></a></td><td>block</td><td>rolling</td><td>Rollout strategy and image auto-update.</td></tr>
+          <tr><td><a href="#spec-update-restart"><code>restart</code></a></td><td>block</td><td>5 attempts</td><td>Crash restart budget.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="spec-service-hardening"><code>hardening</code></h3>
+    <p>
+      Set <code>hardening = "restricted"</code> for the strong profile. The task must then
+      declare a non-zero <a href="#spec-task-user"><code>user</code></a>, it runs with no
+      capabilities, and a <code>capabilities</code> list beside it is refused.
+    </p>
+    <p>
+      Init steps are unaffected. The usual shape is a root init step that fixes ownership
+      and exits, followed by a restricted task.
+    </p>
+
+    <h3 id="spec-service-depends_on"><code>depends_on</code> and service references</h3>
+    <p>
+      A service does not start until every dependency is healthy. Dependencies come from
+      <code>depends_on</code> and from every <code>${service.…}</code> reference, which
+      creates the same edge implicitly.
+    </p>
+    <ul>
+      <li>References are same-project only. The referenced service and port must exist in the applied set.</li>
+      <li>A dependency cycle is rejected, and the diagnostic shows the cycle.</li>
+      <li>If a dependency degrades after start, dependents keep running and an event is emitted.</li>
+    </ul>
+
+    <h2 id="spec-task">task</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>image</code></td><td>string</td><td>Optional only when a <a href="#spec-build"><code>build</code></a> block is present. Digests are supported and preferred.</td></tr>
+          <tr><td><a href="#spec-task-command"><code>command</code></a></td><td>list(string)</td><td>Overrides the image entrypoint. An argument array, never a shell string.</td></tr>
+          <tr><td><a href="#spec-task-command"><code>args</code></a></td><td>list(string)</td><td>Keeps the image's entrypoint and replaces its arguments.</td></tr>
+          <tr><td><code>env</code></td><td>map</td><td>Values may be <code>secret:</code> references or <code>${service.…}</code> interpolations. See <a href="#spec-interpolation">Interpolation</a>.</td></tr>
+          <tr><td><a href="#spec-task-resources"><code>resources</code></a></td><td>block</td><td><code>cpu</code>, <code>memory</code>, <code>pids</code>.</td></tr>
+          <tr><td><a href="#spec-task-user"><code>user</code></a></td><td>block</td><td>Numeric <code>uid</code>, <code>gid</code>, <code>groups</code>.</td></tr>
+          <tr><td><a href="#spec-task-capabilities"><code>capabilities</code></a></td><td>list(string)</td><td>Grants added to the baseline set. <code>"none"</code> starts from nothing.</td></tr>
+          <tr><td><code>registry_auth_ref</code></td><td>secret ref</td><td>A docker <code>config.json</code> for pulling the image.</td></tr>
+          <tr><td><a href="#spec-pull-policy"><code>pull_policy</code></a></td><td>string</td><td><code>if-not-present</code>, <code>never</code> or <code>always</code>. Omit it to take the node's default.</td></tr>
+          <tr><td><code>read_only_rootfs</code></td><td>bool</td><td>Mounts the root filesystem read-only. Volumes and files still mount as declared. <code>kanea plan</code> warns when it is off.</td></tr>
+          <tr><td><a href="#spec-passthrough"><code>device</code></a></td><td>block</td><td>Requests a host device the operator granted, by name.</td></tr>
+          <tr><td><a href="#spec-passthrough"><code>socket</code></a></td><td>block</td><td>Requests a host unix socket the operator granted, by name.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="spec-task-command"><code>command</code> and <code>args</code></h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Declared</th><th>What runs</th></tr></thead>
+        <tbody>
+          <tr><td>neither</td><td>The image's own entrypoint and arguments.</td></tr>
+          <tr><td><code>command</code></td><td><code>command</code>.</td></tr>
+          <tr><td><code>args</code></td><td>The image's entrypoint, then <code>args</code>. The entrypoint is read from the image on the node.</td></tr>
+          <tr><td>both</td><td><code>command</code>, then <code>args</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The first element of <code>command</code> must be non-empty. Later elements may be
+      empty, because some programs need that: <code>redis-server --save ""</code> disables
+      snapshots. <code>args = []</code> is refused. Omit the field instead.
+    </p>
+
+    <h3 id="spec-task-resources"><code>resources</code></h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>cpu</code></td><td>number</td><td>unbounded</td><td>MHz. <code>1000</code> is one core.</td></tr>
+          <tr><td><code>memory</code></td><td>number</td><td>unbounded</td><td>MiB. Exceeding a declared limit OOM-kills the alloc, emits an event, and the restart policy applies.</td></tr>
+          <tr><td><code>pids</code></td><td>number</td><td><code>256</code></td><td>Process cap for the alloc. Always on.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      An omitted limit means the <a href="concepts.html#term-alloc">alloc</a> may use every
+      core and all allocatable memory, bounded only by the cgroup all workloads share.
+      Scaling on <code>cpu</code> or <code>memory</code> needs the matching limit declared.
+    </p>
+
+    <h3 id="spec-task-user"><code>user</code></h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>uid</code></td><td>number</td><td>Numeric user id.</td></tr>
+          <tr><td><code>gid</code></td><td>number</td><td>Numeric group id.</td></tr>
+          <tr><td><code>groups</code></td><td>list(number)</td><td>Supplementary group ids, without duplicates.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Omit the block and the image's own <code>USER</code> stands. There is no field for a
+      username: resolving one would let a file inside the image choose the uid.
+      <code>kanea exec</code> and <code>exec</code> health checks run as the same user.
+    </p>
+
+    <h3 id="spec-task-capabilities"><code>capabilities</code></h3>
+    <p>
+      Every container starts from a baseline set. The list you declare is added to it. Start
+      the list with <code>"none"</code> to drop the baseline: <code>["none"]</code> grants
+      nothing, and <code>["none", "CAP_NET_RAW"]</code> grants exactly one capability.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Set</th><th>Capabilities</th></tr></thead>
+        <tbody>
+          <tr><td>Baseline</td><td><code>CHOWN</code>, <code>DAC_OVERRIDE</code>, <code>FOWNER</code>, <code>FSETID</code>, <code>KILL</code>, <code>SETGID</code>, <code>SETUID</code></td></tr>
+          <tr><td>May be added</td><td><code>SETPCAP</code>, <code>SETFCAP</code>, <code>NET_BIND_SERVICE</code>, <code>NET_RAW</code>, <code>SYS_CHROOT</code>, <code>MKNOD</code>, <code>AUDIT_WRITE</code></td></tr>
+          <tr><td>Refused at parse</td><td><code>SYS_ADMIN</code>, <code>SYS_MODULE</code>, <code>SYS_RAWIO</code>, <code>SYS_PTRACE</code>, <code>SYS_BOOT</code>, <code>SYS_TIME</code>, <code>SYS_NICE</code>, <code>SYS_RESOURCE</code>, <code>DAC_READ_SEARCH</code>, <code>BPF</code>, <code>PERFMON</code>, <code>MAC_ADMIN</code>, <code>MAC_OVERRIDE</code>, <code>NET_ADMIN</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Binding port 80 inside a container needs no capability. <code>SETFCAP</code> has one
+      caveat: a file capability set on a binary in a read-write host volume stays on the
+      host file.
+    </p>
+
+    <h2 id="spec-init">init</h2>
+    <p>
+      An <code>init</code> block is setup that must finish before the task starts: a schema
+      migration, a <code>chown</code> of a new volume, a config render. A service may declare
+      any number. They run in declaration order, one at a time, and the task is created only
+      after the last exits zero.
+    </p>
+    <pre><code><span class="k">service</span> <span class="s">"api"</span> {
+  <span class="c"># The chown happens in the root init step, so the task itself</span>
+  <span class="c"># runs as 999 with no capabilities at all.</span>
+  <span class="k">hardening</span> = <span class="s">"restricted"</span>
+
+  <span class="c"># Runs as root to fix a directory the task will own as 999.</span>
+  <span class="k">init</span> <span class="s">"fix-perms"</span> {
+    <span class="k">image</span>        = <span class="s">"busybox:1.36"</span>
+    <span class="k">command</span>      = [<span class="s">"chown"</span>, <span class="s">"-R"</span>, <span class="s">"999:999"</span>, <span class="s">"/data"</span>]
+    <span class="k">capabilities</span> = [<span class="s">"CAP_CHOWN"</span>]
+    <span class="k">timeout</span>      = <span class="s">"1m"</span>
+  }
+
+  <span class="k">init</span> <span class="s">"migrate"</span> {
+    <span class="k">image</span>   = <span class="s">"registry.example.com/shop/api-migrate:1.4"</span>
+    <span class="k">command</span> = [<span class="s">"/bin/migrate"</span>, <span class="s">"up"</span>]
+
+    <span class="k">env</span> = {
+      <span class="k">DATABASE_URL</span> = <span class="s">"secret:shop/database-url"</span>
+      <span class="k">DATABASE_HOST</span> = <span class="s">"${service.postgres.host}"</span>   <span class="c"># a real dependency edge</span>
+    }
+
+    <span class="k">timeout</span> = <span class="s">"5m"</span>
+  }
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"registry.example.com/shop/api:1.4"</span>
+    <span class="k">user</span> { <span class="k">uid</span> = 999 }
+  }
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>image</code></td><td>string</td><td><b>Required.</b> An init step has no <code>build</code> block.</td></tr>
+          <tr><td><code>command</code>, <code>args</code></td><td>list(string)</td><td>Same rules as on a <a href="#spec-task-command">task</a>.</td></tr>
+          <tr><td><code>env</code></td><td>map</td><td>Its own. <code>secret:</code> references and <code>${service.…}</code> work as on a task.</td></tr>
+          <tr><td><code>resources</code></td><td>block</td><td>Its own. An omitted limit is unbounded.</td></tr>
+          <tr><td><code>user</code></td><td>block</td><td>Its own numeric identity, independent of the task's.</td></tr>
+          <tr><td><code>capabilities</code></td><td>list(string)</td><td>Same baseline and permitted set as a task.</td></tr>
+          <tr><td><code>registry_auth_ref</code></td><td>secret ref</td><td>This step's pull credential.</td></tr>
+          <tr><td><code>pull_policy</code></td><td>string</td><td><code>if-not-present</code> or <code>never</code>. <code>always</code> is task-only.</td></tr>
+          <tr><td><code>timeout</code></td><td>duration</td><td>Bounds this step. Omit it for no timeout. The kill lands within one reconcile pass after it expires.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Each step shares the alloc's network namespace, volumes, files and secrets. So
+      <code>${service.…}</code> and internal DNS resolve as they do for the task, which makes
+      a wait-for-database step possible. Nothing else is inherited from <code>task</code>.
+    </p>
+    <p>
+      An <code>init</code> block has no <code>device</code>, <code>socket</code>,
+      <code>health_check</code>, <code>expose</code>, <code>scaling</code>,
+      <code>count</code>, <code>depends_on</code>, <code>network</code> or
+      <code>build</code> field. Step names are DNS-1123 labels, unique within a service.
+    </p>
+
+    <h3 id="spec-init-once">When the sequence runs</h3>
+    <p>
+      The sequence runs once per service, not once per alloc. The first alloc (index 0) runs
+      it. Every other alloc of the service waits for it, then starts with no sequence of its
+      own. So <code>count = 3</code> means three replicas and one migration.
+    </p>
+    <ul>
+      <li>The sequence re-runs from the first step whenever the first alloc is created: a deploy, a spec change, a crash restart. A half-run sequence is never resumed, so <b>steps must be idempotent</b>.</li>
+      <li>On a deploy the other allocs wait again until the first alloc has finished the sequence for the new spec.</li>
+      <li>A waiting alloc says what it is waiting for in <code>kanea ps</code>.</li>
+      <li>If the first alloc fails its sequence, the service does not start, and the wait names the failed step.</li>
+    </ul>
+    <div class="callout warn">
+      <b class="label">Per-alloc volumes are prepared for the first alloc only</b>
+      <p>
+        Local storage gives each alloc its own directory. A step that prepares this alloc's
+        volume, such as a <code>chown</code>, prepares the first alloc's and no other.
+        <code>kanea plan</code> warns when a service with <code>count &gt; 1</code> declares
+        both init steps and a local volume. Steps that work on shared state are unaffected.
+      </p>
+    </div>
+
+    <h3 id="spec-init-failure">Logs and failures</h3>
+    <p>
+      Read a step's output with <code>kanea logs shop/api -c migrate</code>. Attempts append
+      to one transcript per alloc. Each attempt opens with a separator line that names the
+      step and its start time.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>What happened</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>The step ran and exited non-zero, or outlived its <code>timeout</code></td><td>The alloc fails and one <a href="#spec-update-restart">restart</a> attempt is spent. A broken migration stops after <code>attempts</code>.</td></tr>
+          <tr><td>The step could not be pulled or created</td><td>Retried every reconcile pass. No attempt is spent, because nothing ran.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="spec-env-group">env_group</h2>
+    <p>
+      An <code>env_group</code> declares environment variables once. A service takes them
+      with <code>env_from</code>. Unlike <a href="#spec-variables"><code>variables</code></a>,
+      which substitutes text you still write in every service, a group is injected.
+    </p>
+    <pre><code><span class="k">env_group</span> <span class="s">"common"</span> {
+  <span class="k">LOG_LEVEL</span> = <span class="s">"info"</span>
+  <span class="k">REGION</span>    = <span class="s">"eu-central-1"</span>
+}
+
+<span class="k">env_group</span> <span class="s">"db"</span> {
+  <span class="k">DATABASE_HOST</span> = <span class="s">"${service.postgres.host}"</span>
+  <span class="k">DATABASE_URL</span>  = <span class="s">"secret:shop/database-url"</span>
+}
+
+<span class="k">service</span> <span class="s">"api"</span> {
+  <span class="k">project</span>  = <span class="s">"shop"</span>
+  <span class="k">env_from</span> = [<span class="s">"common"</span>, <span class="s">"db"</span>]
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"registry.example.com/shop/api:1.4"</span>
+    <span class="k">env</span>   = { <span class="k">LOG_LEVEL</span> = <span class="s">"debug"</span> }   <span class="c"># the service's own env wins</span>
+  }
+}</code></pre>
+    <ul>
+      <li>Groups apply in the order <code>env_from</code> lists them. Each container's own <code>env</code> wins over all of them, for the task and for every init step.</li>
+      <li>A group name is a DNS-1123 label, unique across the spec's files.</li>
+      <li>Taking a group is opt-in per service. Environment is baked into a container, so changing a shared value rolls every service that takes it.</li>
+    </ul>
+    <div class="callout">
+      <b class="label">A group is evaluated once per service that takes it</b>
+      <p>
+        <code>${service.…}</code> is scoped to a project. The <code>db</code> group above
+        resolves to <code>postgres.shop.kanea</code> for a service in <code>shop</code>, and
+        to a different address in another project. The dependency edge lands on the taking
+        service, which is why it starts after <code>postgres</code>.
+      </p>
+      <p>
+        A <code>secret:</code> in a group is checked against every consumer. A group that
+        carries <code>shop</code>'s credential is refused for a service in another project.
+      </p>
+    </div>
+
+    <h2 id="spec-file">file</h2>
+    <p>
+      A <code>file</code> block places content in the container. Use it instead of baking a
+      config file into an image or mounting a host volume to carry one.
+    </p>
+    <pre><code><span class="k">service</span> <span class="s">"web"</span> {
+  <span class="k">file</span> <span class="s">"nginx"</span> {
+    <span class="k">path</span>   = <span class="s">"/etc/nginx/conf.d/app.conf"</span>
+    <span class="k">source</span> = <span class="s">"./nginx.conf"</span>        <span class="c"># read at parse, embedded in the record</span>
+  }
+
+  <span class="k">file</span> <span class="s">"pgpass"</span> {
+    <span class="k">path</span>    = <span class="s">"/etc/app/pgpass"</span>
+    <span class="k">mode</span>    = <span class="s">"0400"</span>
+    <span class="k">content</span> = <span class="s">"db:5432:app:${secret.shop[\"database-password\"]}"</span>
+  }
+}</code></pre>
+    <p>
+      <code>content</code> is an ordinary HCL string, so a whole config file fits in a
+      heredoc.
+    </p>
+    <pre><code><span class="k">file</span> <span class="s">"app-config"</span> {
+  <span class="k">path</span>    = <span class="s">"/etc/app/config.yaml"</span>
+  <span class="k">content</span> = <span class="s">&lt;&lt;-EOT</span>
+<span class="s">    server:</span>
+<span class="s">      addr: ":8080"</span>
+<span class="s">      upstream: "${service.api.host}:${service.api.port.http}"</span>
+<span class="s">    database:</span>
+<span class="s">      dsn: "postgres://app:${secret.shop[\"database-password\"]}@db:5432/app"</span>
+<span class="s">    log:</span>
+<span class="c">      # a literal dollar-brace the app expands itself</span>
+<span class="s">      format: "$${level} $${msg}"</span>
+<span class="s">  EOT</span>
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>path</code></td><td>string</td><td><b>Required.</b> Absolute, clean and free of <code>..</code>. Refused under <code>/dev</code>, <code>/proc</code>, <code>/sys</code>, at <code>/etc/resolv.conf</code>, and where a volume, socket or another file mounts.</td></tr>
+          <tr><td><code>content</code></td><td>string</td><td>Inline. <code>${service.…}</code> and <code>${secret.…}</code> interpolate. Write a literal dollar-brace as <code>$${…}</code>, which is HCL's escape.</td></tr>
+          <tr><td><code>source</code></td><td>string</td><td>A relative path beside the spec, read at parse and embedded. No symlink in any component. Mutually exclusive with <code>content</code>.</td></tr>
+          <tr><td><code>mode</code></td><td>string</td><td>Octal. Default <code>0644</code>, or <code>0400</code> for a file that interpolates a secret. An execute bit is refused.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>Give exactly one of <code>content</code> and <code>source</code>.</li>
+      <li>Files mount read-only with <code>nosuid,noexec,nodev</code>, after volumes. A file at a path inside a volume wins.</li>
+      <li>Init steps see the files too.</li>
+      <li>Content is capped at 64 KiB per file and 128 KiB per service, because the service record is replicated in full on every deploy.</li>
+      <li>Editing a file's content rolls the service.</li>
+    </ul>
+    <div class="callout">
+      <b class="label">A secret in a file never enters Kanea's state</b>
+      <p>
+        <code>${secret.&lt;scope&gt;.&lt;name&gt;}</code> resolves to an opaque placeholder at
+        parse. The stored record keeps the reference, and the node substitutes the value when
+        it creates the container. The credential is absent from the state database, from
+        backups and from <code>GET /v1/services</code>.
+      </p>
+      <p>
+        A file that carries a secret is written <code>0400</code> on a tmpfs of its own, owned
+        by the workload's user. A rotation lands at the next replacement. Use the bracket form
+        for names that are not bare identifiers:
+        <code>${secret.shop["database-password"]}</code>.
+      </p>
+    </div>
+    <div class="callout">
+      <b class="label">Where <code>source</code> can be read</b>
+      <p>
+        <code>kanea run</code> reads it from the directory beside the spec. A synced
+        repository reads it from the commit. The dashboard's spec editor and the MCP spec
+        tools parse text inside <a href="concepts.html#term-kanead">kanead</a>, so they refuse
+        <code>source</code> and want <code>content</code>. Reading a path there would be a
+        root file read on behalf of whoever is signed in.
+      </p>
+    </div>
+
+    <h2 id="spec-pull-policy">pull_policy</h2>
+    <p>
+      <code>pull_policy</code> says where an image may come from. Set it on a
+      <code>task</code> or an <code>init</code> block.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Value</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>if-not-present</code></td><td>Use the node's content store and pull only what is absent. The default.</td></tr>
+          <tr><td><code>never</code></td><td>Use the content store or fail the alloc, naming the policy. For air-gapped nodes and nodes with preloaded images.</td></tr>
+          <tr><td><code>always</code></td><td>Re-resolve the tag and, when the digest has moved, pin it and roll every replica through the update policy. Task only.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Omit the field to take the node's default, which the operator sets with
+      <a href="node-config.html#nodeconfig-images"><code>images.pull_policy</code></a> in
+      the <a href="concepts.html#term-node-config">node config</a>.
+    </p>
+    <p>
+      <code>always</code> does not re-pull at every container creation. That would let two
+      replicas of one spec run different bytes. It turns on
+      <a href="#spec-update-auto"><code>update { auto = true }</code></a> and inherits its
+      refusals: no <code>build</code> block, a tag instead of a digest, and no
+      <code>update { auto = false }</code> beside it.
+    </p>
+
+    <h2 id="spec-passthrough">device and socket</h2>
+    <p>
+      Both blocks name a <a href="concepts.html#term-grant">grant</a> and never a path. The
+      operator defines grants in the node config and the spec asks for one by name. A spec
+      has no field for a device path, so it cannot request <code>/dev/mem</code>.
+    </p>
+    <pre><code><span class="k">service</span> <span class="s">"jellyfin"</span> {
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"jellyfin:10.9"</span>
+
+    <span class="k">device</span> <span class="s">"dri"</span> {
+      <span class="k">grant</span> = <span class="s">"gpu"</span>          <span class="c"># defined by the operator, not here</span>
+    }
+  }
+}
+
+<span class="k">service</span> <span class="s">"watchtower"</span> {
+  <span class="k">task</span> <span class="s">"app"</span> {
+    <span class="k">image</span> = <span class="s">"watchtower:1.7"</span>
+
+    <span class="k">socket</span> <span class="s">"runtime"</span> {
+      <span class="k">grant</span>      = <span class="s">"containerd"</span>
+      <span class="k">mount_path</span> = <span class="s">"/var/run/docker.sock"</span>
+    }
+  }
+}</code></pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>grant</code></td><td>string</td><td>Required on both blocks. Names a <a href="node-config.html#nodeconfig-grants"><code>device</code> or <code>socket</code> grant</a> in the node config. A DNS-1123 label.</td></tr>
+          <tr><td><code>mount_path</code></td><td>string</td><td><code>socket</code> only, required. Where the socket appears in the container. A device appears at its host path.</td></tr>
+          <tr><td><code>read_only</code></td><td>bool</td><td><code>socket</code> only. Restricts the filesystem entry, not the protocol spoken over it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>mount_path</code> is absolute, clean and free of <code>..</code>. It may not sit
+      under <code>/dev</code>, <code>/proc</code> or <code>/sys</code>, and may not collide
+      with another socket or a volume. Block labels are unique within a task.
+    </p>
+    <p>
+      The node checks the grant at every alloc start. It refuses a grant it does not have, a
+      grant whose <code>allow</code> list does not name the project, and a device path that
+      is not a device. A refused grant fails the alloc. To define grants, follow
+      <a href="volumes.html#volumes-devices">Devices and sockets</a>.
+    </p>
+    <div class="callout warn">
+      <b class="label">A socket grant is root on the node</b>
+      <p>
+        A container that holds the runtime socket can start other containers without the
+        hardening defaults. Nothing contains that. The only control is the grant itself: it
+        lives in a file no spec author can write, and it names the projects allowed to use it.
+      </p>
+    </div>
+
+    <h2 id="spec-network">network</h2>
+    <pre class="plain">network {
+  port "http" { container = 8096 }
+
+  publish "http" {
+    host = 8096                                  # http://&lt;node&gt;:8096
+    mode = "http"                                # "http" (default) | "tcp" | "udp"
+    ip_restriction { allow = ["192.168.0.0/16"] }
+  }
+
+  policy { allow_from = ["analytics/collector"] }
+}</pre>
+
+    <h3 id="spec-network-port"><code>port "&lt;name&gt;"</code></h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>container</code></td><td>number</td><td>-</td><td>Required. The port inside the container.</td></tr>
+          <tr><td><code>protocol</code></td><td>string</td><td><code>tcp</code></td><td><code>tcp</code> or <code>udp</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The name is what <code>expose</code>, <code>publish</code> and
+      <code>health_check</code> refer to, and what
+      <code>${service.x.port.&lt;name&gt;}</code> resolves.
+    </p>
+
+    <h3 id="spec-network-publish"><code>publish "&lt;port name&gt;"</code></h3>
+    <p>
+      A node port <a href="concepts.html#term-edge">the edge</a> binds for this service, with
+      or without a domain. The label names a declared <code>port</code>. There is no field
+      for a container port number, so a published port cannot reach an undeclared one.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>host</code></td><td>number</td><td>-</td><td>Required. The node port, 1-65535.</td></tr>
+          <tr><td><code>mode</code></td><td>string</td><td><code>http</code></td><td><code>http</code>, <code>tcp</code> or <code>udp</code>.</td></tr>
+          <tr><td><code>max_conns</code></td><td>number</td><td>node's</td><td><code>tcp</code> only. Bounds live connections on this listener. Refused on an <code>http</code> listener.</td></tr>
+          <tr><td><code>ip_restriction</code></td><td>block</td><td>-</td><td>Allowed in every mode.</td></tr>
+          <tr><td><code>rate_limit</code>, <code>headers</code></td><td>block</td><td>-</td><td><code>http</code> only. On a <code>tcp</code> or <code>udp</code> listener they are a plan error.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td><code>http</code></td><td>The edge proxies HTTP and applies the full middleware chain.</td></tr>
+          <tr><td><code>tcp</code></td><td>Relays bytes, for Postgres or a game server. The upstream sees the edge's address, so <code>ip_restriction</code>, enforced at accept time, is the only client control.</td></tr>
+          <tr><td><code>udp</code></td><td>Relays datagrams. One session per client source address, pinned to a backend so a conversation survives an edge restart.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      UDP source addresses can be forged, so two limits apply. A source IP may hold at most
+      8 live sessions. A session sends at most 4 KiB back until the client sends a second
+      datagram. Refusals are counted in <code>kanea_edge_udp_refused_total</code>.
+    </p>
+    <p>
+      The node decides which ports a spec may claim, with
+      <a href="node-config.html#nodeconfig-edge"><code>edge.publish.ports</code></a>. The
+      default is <code>1024-65535</code>, so a repository cannot take port 22. Ports 80, 443
+      and the control-plane ports are always reserved.
+    </p>
+
+    <h3 id="spec-network-policy"><code>policy</code></h3>
+    <p>
+      <code>allow_from</code> lists the peers in other projects that may reach this service.
+      Each entry is a full <code>"&lt;project&gt;/&lt;service&gt;"</code>.
+    </p>
+    <ul>
+      <li>An entry only adds reachability. It cannot weaken the default, which denies traffic from other projects.</li>
+      <li>There is no wildcard: <code>"analytics/*"</code> is a parse error.</li>
+      <li>Same-project entries are accepted and redundant.</li>
+    </ul>
+
+    <h2 id="spec-expose">expose</h2>
+    <p>
+      An <code>expose</code> block is one public route through the edge: domains, a port,
+      TLS and middleware. The block may repeat, so one service can serve its UI and its API
+      on different names and ports.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>domains</code></td><td>list(string)</td><td>Omitted, the route is <code>&lt;service&gt;.&lt;project&gt;.&lt;base_domain&gt;</code>, from the node's <a href="node-config.html#nodeconfig-top"><code>base_domain</code></a>. Only the first block may omit it.</td></tr>
+          <tr><td><code>port</code></td><td>string</td><td>The declared <code>network { port }</code> the route proxies to. Omitted, the port named <code>http</code>, or the only declared port.</td></tr>
+          <tr><td><code>protocol</code></td><td>string</td><td><code>http</code> (default) or <code>grpc</code>.</td></tr>
+          <tr><td><a href="#spec-expose-tls"><code>tls</code></a></td><td>block</td><td><code>mode</code>, <code>name</code>.</td></tr>
+          <tr><td><a href="#spec-expose-auth"><code>auth</code></a></td><td>block</td><td>Requires a credential on every request.</td></tr>
+          <tr><td><code>ip_restriction</code></td><td>block</td><td><code>allow</code>, <code>deny</code>: lists of CIDRs. An empty <code>allow</code> means everyone. <b>Deny wins.</b></td></tr>
+          <tr><td><code>rate_limit</code></td><td>block</td><td><code>requests</code> and <code>window</code> (required), <code>per</code>, <code>burst</code>. <code>per</code> is <code>ip</code>, <code>service</code> or <code>header:&lt;name&gt;</code>.</td></tr>
+          <tr><td><code>headers</code></td><td>block</td><td><code>request_set</code>, <code>request_remove</code>, <code>response_set</code>, <code>response_remove</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>A service may be exposed only if it declares a port. Naming an undeclared or <code>udp</code> port is a plan error.</li>
+      <li>Every domain is validated as a hostname. No two services may claim the same one, counting generated names.</li>
+      <li>Blocks that declare <code>auth</code> must declare the same auth.</li>
+    </ul>
+
+    <h3 id="spec-expose-middleware">Middleware order</h3>
+    <p>The chain runs in a fixed order, whatever order the blocks are declared in:</p>
+    <pre class="plain">Host match → IP allow/deny → rate limit → auth → header transforms → upstream</pre>
+    <div class="callout warn">
+      <b class="label">You cannot touch X-Forwarded-*</b>
+      <p>
+        The <code>headers</code> block rejects any attempt to set or remove the
+        <code>X-Forwarded-*</code> headers or the hop-by-hop headers. They carry the client
+        identity that IP restriction, rate limiting and the audit log rely on.
+      </p>
+    </div>
+
+    <h3 id="spec-expose-tls"><code>tls</code></h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>mode</code></td><td>string</td><td><code>acme</code>, <code>self-signed</code>, <code>provided</code> or <code>plaintext</code>. An unknown value is an error.</td></tr>
+          <tr><td><code>name</code></td><td>string</td><td>With <code>provided</code>: selects one of the node's <a href="node-config.html#nodeconfig-tls"><code>certificate</code> blocks</a>. A DNS-1123 label.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Omit the block and the node decides, from
+      <a href="node-config.html#nodeconfig-tls"><code>tls.default_mode</code></a>. A mode
+      names a certificate source and never a path. The guide is
+      <a href="domains.html">Domains and HTTPS</a>.
+    </p>
+
+    <h3 id="spec-expose-protocol"><code>protocol</code></h3>
+    <p>
+      <code>protocol = "grpc"</code> makes the edge dial the upstream over cleartext HTTP/2.
+      The route then uses the port named <code>grpc</code> when one is declared. It is
+      refused beside <code>tls { mode = "plaintext" }</code> and beside an
+      <code>http</code>-mode <code>publish</code> of the same port.
+    </p>
+
+    <h3 id="spec-expose-auth"><code>auth</code></h3>
+    <pre class="plain">expose {
+  domains = ["api.example.com"]
+  auth {
+    jwt {
+      algorithm      = "RS256"
+      public_key_ref = "secret:shop/jwt-pub"    # a reference, never a key
+      issuer         = "https://accounts.example.com"
+      audience       = "shop-api"
+    }
+  }
+}</pre>
+    <p>Declare exactly one mode. Every field is a <code>secret:</code> reference.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>basic_ref</code></td><td>secret ref</td><td>htpasswd lines. Bcrypt hashes only.</td></tr>
+          <tr><td><code>bearer_ref</code></td><td>secret ref</td><td>Accepted tokens, one per line. The edge receives SHA-256 hashes of them.</td></tr>
+          <tr><td><code>jwt.algorithm</code></td><td>string</td><td>Required. <code>HS256</code>, <code>RS256</code> or <code>ES256</code>. Configured here, never read from the token.</td></tr>
+          <tr><td><code>jwt.secret_ref</code></td><td>secret ref</td><td>The key for <code>HS256</code>.</td></tr>
+          <tr><td><code>jwt.public_key_ref</code></td><td>secret ref</td><td>The PEM public key for <code>RS256</code> and <code>ES256</code>.</td></tr>
+          <tr><td><code>jwt.issuer</code>, <code>jwt.audience</code></td><td>string</td><td>Optional claims to require.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The edge fetches no JWKS: keys are static references, rotated like any credential. A
+      route whose auth cannot be resolved serves 503 and never opens.
+    </p>
+
+    <h2 id="spec-health_check">health_check</h2>
+    <pre class="plain">health_check "http" {
+  type     = "http"     # http | tcp | exec
+  path     = "/healthz" # http only
+  port     = "http"     # port name, required for http and tcp
+  interval = "10s"
+  timeout  = "2s"
+  failures = 3
+}</pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>type</code></td><td>string</td><td>-</td><td><code>http</code>, <code>tcp</code> or <code>exec</code>.</td></tr>
+          <tr><td><code>path</code></td><td>string</td><td>-</td><td><code>http</code> only.</td></tr>
+          <tr><td><code>port</code></td><td>string</td><td>-</td><td>A declared port name. Required for <code>http</code> and <code>tcp</code>.</td></tr>
+          <tr><td><code>command</code></td><td>list(string)</td><td>-</td><td><code>exec</code> only. An argument array, never a shell string. Runs inside the task's container.</td></tr>
+          <tr><td><code>interval</code></td><td>duration</td><td><code>10s</code></td><td>Time between probes.</td></tr>
+          <tr><td><code>timeout</code></td><td>duration</td><td><code>2s</code></td><td>Bounds one probe.</td></tr>
+          <tr><td><code>failures</code></td><td>number</td><td><code>3</code></td><td>Consecutive failures before the alloc is unhealthy.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <b class="label">Without a check, no alloc is ever "healthy"</b>
+      <p>
+        Only a probe writes alloc health. A service with no <code>health_check</code> block
+        has every alloc unhealthy, and Kanea treats it as "no check configured" instead of
+        "failing". Declare one if you rely on <code>min_healthy</code> or on dependents
+        waiting for this service.
+      </p>
+    </div>
+
+    <h2 id="spec-volume">volume</h2>
+    <pre class="plain">volume "data" {
+  storage    = "local-ssd"    # a declared storage block
+  mount_path = "/var/lib/data"
+  read_only  = false
+  size       = "10GiB"        # a budget, not a quota
+}</pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>storage</code></td><td>string</td><td>Required. The name of a <a href="#spec-storage"><code>storage</code></a> block.</td></tr>
+          <tr><td><code>mount_path</code></td><td>string</td><td>Required. Where the volume appears in the container.</td></tr>
+          <tr><td><code>read_only</code></td><td>bool</td><td>Default <code>false</code>.</td></tr>
+          <tr><td><code>uid</code>, <code>gid</code></td><td>number</td><td>Owner of the volume. See <a href="#spec-volume-ownership">Ownership</a>.</td></tr>
+          <tr><td><code>mode</code></td><td>string</td><td>Octal, for example <code>"0700"</code>.</td></tr>
+          <tr><td><code>size</code></td><td>string</td><td>A budget such as <code>"10GiB"</code>. See <a href="#spec-volume-size">Size budget</a>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>A mount failure fails the alloc. A service never starts with a volume missing.</p>
+
+    <h3 id="spec-volume-ownership">Ownership</h3>
+    <p>
+      Omitted, <code>uid</code>, <code>gid</code> and <code>mode</code> inherit from
+      <a href="#spec-task-user"><code>task.user</code></a>, and an owned volume takes mode
+      <code>0700</code>. With no <code>user</code> block the volume stays root-owned,
+      <code>0750</code>. Set <code>uid = 0</code> to ask for root on purpose.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Storage type</th><th>Ownership fields</th></tr></thead>
+        <tbody>
+          <tr><td><code>local</code></td><td>Applied: the directory is chowned and chmodded.</td></tr>
+          <tr><td><code>smb</code>, <code>s3</code></td><td>Applied as mount options.</td></tr>
+          <tr><td><code>host</code></td><td>Plan error. The directory is the operator's.</td></tr>
+          <tr><td><code>nfs</code></td><td>Plan error. Ownership belongs to the NFS server.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="spec-volume-size">Size budget</h3>
+    <p>
+      <code>size</code> is a budget and nothing enforces it. Kanea measures the volume on a
+      slow background schedule and shows usage in <code>kanea volume list</code>. It emits
+      <code>volume.over_budget</code> when usage crosses the budget and
+      <code>volume.under_budget</code> when it comes back.
+    </p>
+    <ul>
+      <li>On an <code>s3</code> volume, <code>size</code> is a plan error: that driver is never measured.</li>
+      <li>Changing <code>size</code> does not redeploy the service.</li>
+    </ul>
+
+    <h2 id="spec-scaling">scaling</h2>
+    <pre class="plain">scaling {
+  min = 2
+  max = 10
+  metric "cpu"            { target = 70 }   # percent of resources.cpu
+  metric "rps"            { target = 500 }  # requests per second, per alloc
+  metric "p95_latency_ms" { target = 800 }
+  cooldown = "2m"
+}</pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>min</code>, <code>max</code></td><td>number</td><td>Replica bounds. <code>count</code> must fall inside them.</td></tr>
+          <tr><td><code>metric "&lt;name&gt;"</code></td><td>block</td><td><code>target</code>, required. One block per metric.</td></tr>
+          <tr><td><code>cooldown</code></td><td>duration</td><td>Default <code>2m</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Metric</th><th>Target is</th><th>Source</th></tr></thead>
+        <tbody>
+          <tr><td><code>cpu</code></td><td>Percent of the declared <code>resources.cpu</code></td><td>containerd cgroup metrics. Needs the limit declared.</td></tr>
+          <tr><td><code>memory</code></td><td>Percent of the declared <code>resources.memory</code></td><td>containerd cgroup metrics. Needs the limit declared.</td></tr>
+          <tr><td><code>rps</code></td><td>Requests per second, per alloc</td><td>The edge for exposed services, the datapath's counters for traffic between services.</td></tr>
+          <tr><td><code>p95_latency_ms</code></td><td>Milliseconds</td><td>Same as <code>rps</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="spec-update">update and restart</h2>
+    <pre class="plain">update {
+  strategy     = "rolling"   # rolling | replace
+  max_parallel = 1
+  min_healthy  = "30s"
+
+  auto     = true            # follow task.image's tag; off by default
+  interval = "6h"            # how often to re-resolve it; minimum 5m
+  deadline = "10m"           # how long a new digest has to prove itself
+}
+
+restart {
+  attempts = 5
+  backoff  = "10s,30s,1m,5m"
+}</pre>
+
+    <h3 id="spec-update-rollout"><code>update</code>: rollout</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>strategy</code></td><td>string</td><td><code>rolling</code></td><td><code>rolling</code> or <code>replace</code>.</td></tr>
+          <tr><td><code>max_parallel</code></td><td>number</td><td><code>1</code></td><td>Bounds allocs that are down, not replacements in flight.</td></tr>
+          <tr><td><code>min_healthy</code></td><td>duration</td><td><code>10s</code></td><td>How long a replaced alloc must hold before the next replacement starts.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      An alloc that is already unavailable spends the <code>max_parallel</code> budget first.
+      A failing deploy therefore halts instead of working through every replica.
+    </p>
+
+    <h3 id="spec-update-auto"><code>update</code>: image auto-update</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>auto</code></td><td>bool</td><td><code>false</code></td><td>Follow the tag in <code>task.image</code>.</td></tr>
+          <tr><td><code>interval</code></td><td>duration</td><td><code>6h</code></td><td>How often the tag is re-resolved. Minimum <code>5m</code>.</td></tr>
+          <tr><td><code>deadline</code></td><td>duration</td><td><code>10m</code></td><td>How long a new digest has to converge before it is reverted.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      With <code>auto = true</code>, Kanea re-resolves the declared tag and pins the digest
+      behind it when it moves. The tag stays in the spec and the digest is what runs. The
+      roll is an ordinary deploy, gated by <code>max_parallel</code>,
+      <code>min_healthy</code> and the health check.
+    </p>
+    <ul>
+      <li>If the new digest does not converge within <code>deadline</code>, the previous digest is pinned again. Converged means healthy where a health check exists, and running without crash-looping where none does.</li>
+      <li>Re-applying the spec forces a re-check within about a minute. Push new bytes under the same tag, then <code>kanea run</code>.</li>
+      <li>Editing <code>image</code> costs one rolling deploy: the apply resolves the new tag's digest in the same write. If the registry is unreachable, the watcher pins the digest later with a second roll.</li>
+      <li>The pinned digest survives a re-apply. Editing <code>image</code> or turning <code>auto</code> off hands control back to the spec.</li>
+      <li>It is refused on an image that is already a digest and on a service with a <code>build</code> block.</li>
+      <li>Private registries need <code>task.registry_auth_ref</code>.</li>
+      <li>Outcomes emit <code>image.updated</code> and <code>image.update_failed</code>.</li>
+    </ul>
+
+    <h3 id="spec-update-restart"><code>restart</code></h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>attempts</code></td><td>number</td><td><code>5</code></td><td>Crash restarts before the alloc is marked failed. Zero means the default.</td></tr>
+          <tr><td><code>backoff</code></td><td>string</td><td>built-in schedule</td><td>Comma-separated positive durations. Each restart waits the next entry and the last entry repeats.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>An alloc that exhausts <code>attempts</code> is failed and left alone until a deploy or <code>kanea restart</code>. Either resets the count.</li>
+      <li>Only crashes kanead watched are counted. An alloc found stopped at startup, after a reboot or power loss, is recovered at once without spending an attempt.</li>
+      <li>An alloc already marked failed stays failed across a reboot.</li>
+      <li>Changing the <code>restart</code> block does not roll healthy allocs.</li>
+    </ul>
+
+    <h2 id="spec-build">build</h2>
+    <pre class="plain">build {
+  context           = "./web"
+  dockerfile        = "Containerfile"   # optional; auto-detected when omitted
+  target            = "registry.example.com/shop/web"   # optional
+  tag               = "${GIT_SHA_SHORT}"
+  cache_repo        = "registry.example.com/shop/web-cache"
+  registry_auth_ref = "secret:shop/registry"
+}</pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>context</code></td><td>string</td><td>Required. A directory inside the checkout. Absolute paths, <code>..</code> and symlinks are refused.</td></tr>
+          <tr><td><code>dockerfile</code></td><td>string</td><td>A path inside the checkout. Omitted, <code>Containerfile</code> is used, then <code>Dockerfile</code>.</td></tr>
+          <tr><td><code>target</code></td><td>string</td><td>Image reference to push to. Omitted, the node's internal registry is used.</td></tr>
+          <tr><td><code>tag</code></td><td>string</td><td>May not contain a comma, <code>=</code> or whitespace.</td></tr>
+          <tr><td><code>cache_repo</code></td><td>string</td><td>Image reference for the build cache. May not point at the internal registry.</td></tr>
+          <tr><td><code>registry_auth_ref</code></td><td>secret ref</td><td>Push credential. Written as a <code>config.json</code> for the build and kept out of the build context.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>Builds run on rootless BuildKit.</li>
+      <li>With no <code>target</code>, the node composes <code>&lt;registry&gt;/&lt;project&gt;/&lt;service&gt;</code> on its loopback-only build registry. So <code>build { context = "." }</code> is a complete build configuration with no external registry and no push credential.</li>
+      <li>The operator sets the registry and BuildKit addresses in the node's <a href="node-config.html#nodeconfig-builds"><code>builds</code> stanza</a>. The registry defaults to <code>127.0.0.1:5100</code>.</li>
+      <li>A service with a <code>build</code> block and no <code>task.image</code> is valid. It waits until the first build pins a digest. When both are present, the built digest wins.</li>
+      <li>Builds run one at a time. When the queue is full a new build is refused, and shutdown cancels what is still waiting.</li>
+    </ul>
+
+    <h2 id="spec-function">function</h2>
+    <p>
+      A <code>function</code> is a wasm module run as a service. It serves
+      <a href="https://github.com/WebAssembly/wasi-http">wasi-http</a> on the wasmtime shim
+      that <code>kanea init</code> installs. It deploys, rolls and scales like any service,
+      and its triggers decide what calls it.
+    </p>
+    <pre class="plain">function "resize-avatar" {
+  project = "shop"
+  module  = "registry.example.com/shop/resize-avatar:v3"  # FROM scratch + module
+
+  trigger "http" {}                                # its domain name, or the edge's
+                                                   # functions port: /&lt;project&gt;/&lt;function&gt;/
+  trigger "event" { on = ["deploy.failed"] }       # POSTed matching events
+  trigger "cron"  { schedule = "0 3 * * *" }       # five fields, UTC
+
+  resources { memory = 64 }                        # a real cgroup cap
+}</pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>project</code>, <code>description</code>, <code>count</code>, <code>depends_on</code>, <code>env</code></td><td>-</td><td>-</td><td>As on a service and its task.</td></tr>
+          <tr><td><code>module</code></td><td>string</td><td>-</td><td>An OCI image whose entrypoint is the wasm module. Optional when a <code>build</code> block is present.</td></tr>
+          <tr><td><code>port</code></td><td>number</td><td><code>8080</code></td><td>The port the module listens on.</td></tr>
+          <tr><td><code>resources</code></td><td>block</td><td><code>cpu = 100</code>, <code>memory = 64</code></td><td>Enforced by cgroups.</td></tr>
+          <tr><td><code>registry_auth_ref</code></td><td>secret ref</td><td>-</td><td>Pull credential for the module image.</td></tr>
+          <tr><td><code>signing_ref</code></td><td>secret ref</td><td>-</td><td>Key that signs every event and cron POST with an HMAC in <code>X-Kanea-Signature</code>.</td></tr>
+          <tr><td><a href="#spec-function-trigger"><code>trigger "&lt;kind&gt;"</code></a></td><td>block</td><td>-</td><td>At least one is required.</td></tr>
+          <tr><td><code>build</code>, <code>health_check</code>, <code>update</code>, <code>restart</code></td><td>block</td><td>-</td><td>As on a service.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A function has no volumes, devices, sockets, capabilities, <code>user</code>,
+      <code>command</code> or <code>args</code>. The sandbox cannot honour them, so the spec
+      cannot declare them. <code>kanea functions list</code> shows triggers, invocation rate
+      and status.
+    </p>
+
+    <h3 id="spec-function-trigger"><code>trigger</code></h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Kind</th><th>Fields</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>http</code></td><td><code>domains</code>, <code>tls</code>, <code>ip_restriction</code>, <code>rate_limit</code>, <code>headers</code>, <code>auth</code></td><td>The same fields and rules as <a href="#spec-expose"><code>expose</code></a>, without <code>port</code> or <code>protocol</code>.</td></tr>
+          <tr><td><code>event</code></td><td><code>on</code>, <code>path</code></td><td><code>on</code> holds event globs, validated like <a href="#spec-project-notifications"><code>notifications.on</code></a>. Patterns matching <code>function.*</code> are refused.</td></tr>
+          <tr><td><code>cron</code></td><td><code>schedule</code>, <code>path</code></td><td>A five-field cron expression, evaluated in UTC.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>path</code> is where the event or cron POST lands. It is a normalised absolute
+      path and defaults to <code>/</code>. No trigger has a field for a target URL: kanead
+      always calls the function's own address.
+    </p>
+
+    <h2 id="spec-interpolation">Interpolation</h2>
+    <p>Several forms of <code>${…}</code> appear in a spec. They resolve at different times.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Form</th><th>Resolved</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>${VAR}</code></td><td>Parse time</td><td>From the spec's <a href="#spec-variables"><code>variables</code> block</a>, the node's <a href="node-config.html#nodeconfig-variables"><code>variables</code> stanza</a>, and built-ins such as <code>KANEA_PROJECT</code>.</td></tr>
+          <tr><td><code>${GIT_SHA_SHORT}</code></td><td>Checkout time</td><td>Survives parsing as a literal reference. Its value exists only once a commit is checked out.</td></tr>
+          <tr><td><code>${service.&lt;n&gt;.host}</code></td><td>Alloc start</td><td>Becomes <code>&lt;n&gt;.&lt;project&gt;.kanea</code>. A DNS name, never an IP.</td></tr>
+          <tr><td><code>${service.&lt;n&gt;.port.&lt;p&gt;}</code></td><td>Alloc start</td><td>The named port's frontend port.</td></tr>
+          <tr><td><code>${secret.&lt;scope&gt;.&lt;name&gt;}</code></td><td>Container create</td><td>Inside a <a href="#spec-file"><code>file</code></a> block's <code>content</code> only.</td></tr>
+          <tr><td><code>secret:&lt;project&gt;/&lt;name&gt;</code></td><td>Alloc start</td><td>A reference, not interpolation. In <code>env</code>, the variable holds the path of a read-only tmpfs file that contains the value.</td></tr>
+          <tr><td><code>secret-env:&lt;project&gt;/&lt;name&gt;</code></td><td>Alloc start</td><td><code>env</code> only. The variable holds the value itself. Weaker: the value is visible in the process environment.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A secret reference may name the service's own project or <code>shared/</code>, and
+      nothing else. Managing secrets is covered in <a href="secrets.html">Secrets</a>.
+    </p>
+
+    <h2 id="spec-prune">Remove a service from a spec</h2>
+    <p>
+      Deleting a <code>service</code> block and re-applying does not stop the service. An
+      apply replaces the desired state of the services it names and leaves everything else
+      alone. Remove a service with one of these two commands.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>One service</th><th>Everything a spec dropped</th></tr></thead>
+        <tbody>
+          <tr><td><b>Command</b></td><td><code>kanea remove shop/web</code></td><td><code>kanea run --remove-orphans app.hcl</code></td></tr>
+          <tr><td><b>Scope</b></td><td>the service you name</td><td>the spec's <code>project</code> blocks</td></tr>
+          <tr><td><b>Dry run</b></td><td>-</td><td><code>kanea plan --remove-orphans app.hcl</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <code>--remove-orphans</code> makes the spec authoritative for every project it
+      declares a <code>project</code> block for. Anything stored in one of them that the
+      file does not declare is deleted, in the same atomic batch as the applies. Projects the
+      spec does not mention are never touched.
+    </p>
+    <pre class="plain">$ kanea plan --remove-orphans app.hcl
+- destroy shop/legacy-worker (count 1, image legacy:v3)
+    volumes           - scratch  local /scratch rw
+                        (the mount goes; the volume's data is NOT deleted)
+
+~ update shop/web
+    image             web:v1 -&gt; web:v2  (rolls allocs)
+
+Plan: 2 change(s) - 1 update, 1 destroy; 1 replace running allocs.
+Run `kanea run` to apply.
+
+$ kanea run --remove-orphans app.hcl
+[the same block]
+
+Apply? [Y/n]
+applied shop/web
+removed shop/legacy-worker
+
+1 service(s) removed. Volume data was not deleted.</pre>
+    <div class="callout warn">
+      <b class="label">Refused with a selector, and with <code>--image</code></b>
+      <p>
+        <code>kanea run --remove-orphans app.hcl shop/web</code> is refused. A selector sends
+        part of the spec, so the apply cannot speak for a whole project.
+        <code>--image</code> is refused too: it declares one service and no project.
+      </p>
+      <p>Put flags before file arguments.</p>
+    </div>
+
+    <h3 id="spec-prune-survives">What a prune destroys, and what survives</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Goes</th><th>Stays</th></tr></thead>
+        <tbody>
+          <tr><td>The containers, and the alloc records behind <code>kanea ps</code></td><td><b>Volume data</b>, local and network</td></tr>
+          <tr><td>The service's virtual IP, which another service may then take</td><td>Certificates, including issued ACME ones</td></tr>
+          <tr><td>Its routes, and its network volume mounts</td><td>Secrets under the project</td></tr>
+          <tr><td>The restart generation and any pinned image digest</td><td>Its internal datapath id, which is keyed by name</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>Volume data is never deleted. Re-apply a service pruned by mistake and it comes back with its data.</li>
+      <li>A prune frees no disk. Reclaim it by hand with <code>rm</code> under the volume directory.</li>
+      <li>Each removal emits <code>service.removed</code> and is named in the audit log.</li>
+      <li>A <a href="stacks.html#stacks-db">GitOps</a> sync applies additively. A service removed from a synced spec keeps running until someone prunes or stops it.</li>
+    </ul>
+
+    <h2 id="spec-rules">Validation rules</h2>
+    <p>
+      A spec is checked against these rules at parse or plan time. Each failure is reported
+      with file, line and column. The last column links to the section with the detail.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Rule</th><th>What it checks</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td>Name format</td><td>Project and service names are DNS-1123 labels: lowercase alphanumerics and <code>-</code>, alphanumeric at both ends, at most 63 characters.</td><td><a href="#spec-top-level">Top level</a></td></tr>
+          <tr><td>Variable interpolation</td><td><code>${VAR}</code> works in any attribute. An undefined name is a parse error.</td><td><a href="#spec-interpolation">Interpolation</a></td></tr>
+          <tr><td>Secrets by reference</td><td>A secret is named, never inlined. The stored record keeps the reference.</td><td><a href="#spec-interpolation">Interpolation</a></td></tr>
+          <tr><td>Plan before apply</td><td><code>kanea plan</code> shows the create, change and destroy diff and applies nothing.</td><td><a href="first-service.html">First service</a></td></tr>
+          <tr><td>Secret scope</td><td>A service may reference <code>secret:&lt;own-project&gt;/…</code> or <code>secret:shared/…</code> only. Git, registry, storage and notification credentials follow the same scope.</td><td><a href="#spec-interpolation">Interpolation</a></td></tr>
+          <tr><td>Spec version</td><td>Every file declares <code>spec_version = 1</code>.</td><td><a href="#spec-top-level">Top level</a></td></tr>
+          <tr><td>Health check types</td><td><code>type</code> is <code>http</code>, <code>tcp</code> or <code>exec</code>. An <code>exec</code> command is an argument array.</td><td><a href="#spec-health_check">health_check</a></td></tr>
+          <tr><td>Image or build</td><td>A service declares <code>task.image</code>, a <code>build</code> block, or both.</td><td><a href="#spec-build">build</a></td></tr>
+          <tr><td>Service references</td><td><code>${service.…}</code> names a service and port that exist in the same project. Cycles are rejected.</td><td><a href="#spec-service-depends_on">depends_on</a></td></tr>
+          <tr><td>Dependency ordering</td><td>A dependent starts only after its dependencies are healthy. A later failure does not stop dependents.</td><td><a href="#spec-service-depends_on">depends_on</a></td></tr>
+          <tr><td>Resource limits</td><td>A declared limit is enforced and an omitted one is unbounded. Negative values are refused. Scaling on <code>cpu</code> or <code>memory</code> needs the limit.</td><td><a href="#spec-task-resources">resources</a></td></tr>
+          <tr><td>Command and args</td><td><code>command</code> and <code>args</code> are argument arrays. The program is non-empty and <code>args = []</code> is refused.</td><td><a href="#spec-task-command">command and args</a></td></tr>
+          <tr><td>Capabilities</td><td>Only capabilities from the permitted set may be declared. Privilege-equivalent ones are refused, and so is any grant under <code>hardening = "restricted"</code>.</td><td><a href="#spec-task-capabilities">capabilities</a></td></tr>
+          <tr><td>Ingress allowlist</td><td>Each <code>allow_from</code> entry is a full <code>"&lt;project&gt;/&lt;service&gt;"</code>, with no wildcard.</td><td><a href="#spec-network-policy">policy</a></td></tr>
+          <tr><td>Host volume gate</td><td>A <code>host</code> path is absolute, clean and free of <code>..</code>. The node mounts it only under an allowed prefix.</td><td><a href="#spec-storage">storage</a></td></tr>
+          <tr><td>Expose</td><td>An exposed service declares a port, the upstream port is unambiguous, domains are valid and unique, and middleware values parse.</td><td><a href="#spec-expose">expose</a></td></tr>
+          <tr><td>Device grants</td><td>A <code>device</code> block names a grant, and the name is a DNS-1123 label unique within the task.</td><td><a href="#spec-passthrough">device and socket</a></td></tr>
+          <tr><td>Socket grants</td><td>A <code>socket</code> block names a grant and a valid <code>mount_path</code> that collides with nothing.</td><td><a href="#spec-passthrough">device and socket</a></td></tr>
+          <tr><td>Image auto-update</td><td><code>update.auto</code> needs a tag to follow. It is refused on a digest and beside a <code>build</code> block. <code>interval</code> is at least <code>5m</code>.</td><td><a href="#spec-update-auto">auto-update</a></td></tr>
+          <tr><td>TLS mode</td><td><code>tls.mode</code> is one of four certificate sources, and <code>name</code> is a DNS-1123 label.</td><td><a href="#spec-expose-tls">tls</a></td></tr>
+          <tr><td>Published ports</td><td>A <code>publish</code> label names a declared port, <code>host</code> is 1-65535, and a <code>tcp</code> or <code>udp</code> listener carries only <code>ip_restriction</code>.</td><td><a href="#spec-network-publish">publish</a></td></tr>
+          <tr><td>Publish port range</td><td>Ports 80, 443 and the control-plane ports are reserved. Every other port must sit in the node's permitted range, checked at apply.</td><td><a href="#spec-network-publish">publish</a></td></tr>
+          <tr><td>Numeric user</td><td><code>uid</code>, <code>gid</code> and <code>groups</code> are non-negative integers, with no duplicate groups and no usernames.</td><td><a href="#spec-task-user">user</a></td></tr>
+          <tr><td>Volume ownership</td><td><code>uid</code>, <code>gid</code> and <code>mode</code> on a volume are refused for <code>host</code> and <code>nfs</code> storage.</td><td><a href="#spec-volume-ownership">Ownership</a></td></tr>
+          <tr><td>Functions</td><td>A <code>function</code> may not declare volumes, devices, sockets, capabilities, a user, a command or args.</td><td><a href="#spec-function">function</a></td></tr>
+          <tr><td>Function triggers</td><td>A function has at least one trigger. Event patterns match known events, cron schedules have five fields, and paths are normalised.</td><td><a href="#spec-function-trigger">trigger</a></td></tr>
+          <tr><td>Request auth</td><td>An <code>auth</code> block declares exactly one mode, and every credential is a scoped secret reference.</td><td><a href="#spec-expose-auth">auth</a></td></tr>
+          <tr><td>Upstream protocol</td><td><code>protocol</code> is <code>http</code> or <code>grpc</code>. <code>grpc</code> is refused where the route could not carry it.</td><td><a href="#spec-expose-protocol">protocol</a></td></tr>
+          <tr><td>Restart policy</td><td><code>attempts</code> is not negative, and every <code>backoff</code> entry is a positive duration.</td><td><a href="#spec-update-restart">restart</a></td></tr>
+          <tr><td>Shared variables</td><td>Values are primitives, names are not reserved or declared twice, and a value references no other spec variable.</td><td><a href="#spec-variables">variables</a></td></tr>
+          <tr><td>Volume budget</td><td><code>size</code> parses as a byte size and is refused on an <code>s3</code> volume.</td><td><a href="#spec-volume-size">Size budget</a></td></tr>
+          <tr><td>Init steps</td><td>Each <code>init</code> block has an image and a unique DNS-1123 name, and declares none of the service-level fields.</td><td><a href="#spec-init">init</a></td></tr>
+          <tr><td>Pull policy</td><td><code>pull_policy</code> is one of three values. <code>always</code> is refused on an <code>init</code> block and wherever auto-update is.</td><td><a href="#spec-pull-policy">pull_policy</a></td></tr>
+          <tr><td>Env groups</td><td>Group names are unique DNS-1123 labels, <code>env_from</code> names declared groups, and a group's secrets are in scope for every consumer.</td><td><a href="#spec-env-group">env_group</a></td></tr>
+          <tr><td>Config files</td><td>A <code>file</code> has a valid, non-colliding <code>path</code>, exactly one of <code>content</code> and <code>source</code>, no execute bit, and content within the size caps.</td><td><a href="#spec-file">file</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="spec-example">Full example</h2>
+    <p>
+      One project with a database and a web frontend. This file parses and validates against
+      Kanea's own parser.
+    </p>
+
+    <div class="window">
+      <div class="bar"><i></i><i></i><i></i><span>shop.hcl</span></div>
+<pre><span class="c"># shop.hcl: everything for one project</span>
+spec_version = 1
+
+<span class="k">project</span> <span class="s">"shop"</span> {
+  description = <span class="s">"E-commerce storefront stack"</span>
+
+  <span class="k">git</span> {
+    url      = <span class="s">"https://github.com/example/shop-deploy.git"</span>
+    branch   = <span class="s">"main"</span>
+    path     = <span class="s">".kanea/"</span>
+    auth_ref = <span class="s">"secret:shop/github-deploy-key"</span>
+  }
+
+  <span class="k">notifications</span> {
+    <span class="k">slack</span> { url_ref = <span class="s">"secret:shop/slack-webhook"</span> }
+    on       = [<span class="s">"deploy.failed"</span>, <span class="s">"service.unhealthy"</span>, <span class="s">"scale.*"</span>]
+    severity = <span class="s">"warning"</span>
+  }
+}
+
+<span class="k">storage</span> <span class="s">"local-ssd"</span> {
+  type = <span class="s">"local"</span>
+}
+
+<span class="k">service</span> <span class="s">"postgres"</span> {
+  project = <span class="s">"shop"</span>
+
+  <span class="k">task</span> <span class="s">"db"</span> {
+    image = <span class="s">"postgres:16-alpine"</span>
+    env = {
+      POSTGRES_PASSWORD = <span class="s">"secret:shop/postgres-password"</span>
+    }
+    <span class="k">resources</span> {
+      cpu    = 1000
+      memory = 1024
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"pg"</span> { container = 5432 }
+  }
+
+  <span class="k">volume</span> <span class="s">"data"</span> {
+    storage    = <span class="s">"local-ssd"</span>
+    mount_path = <span class="s">"/var/lib/postgresql/data"</span>
+  }
+
+  <span class="k">health_check</span> <span class="s">"tcp"</span> {
+    type     = <span class="s">"tcp"</span>
+    port     = <span class="s">"pg"</span>
+    interval = <span class="s">"10s"</span>
+  }
+}
+
+<span class="k">service</span> <span class="s">"web"</span> {
+  project     = <span class="s">"shop"</span>
+  description = <span class="s">"Storefront frontend"</span>
+  count       = 3
+  depends_on  = [<span class="s">"postgres"</span>]
+
+  <span class="k">build</span> {
+    <span class="c"># No target: the node's internal registry builds, pushes and deploys</span>
+    <span class="c"># this service without any external registry.</span>
+    context = <span class="s">"./web"</span>
+  }
+
+  <span class="k">task</span> <span class="s">"app"</span> {
+    image = <span class="s">"registry.example.com/shop/web:latest"</span>
+
+    env = {
+      NODE_ENV      = <span class="s">"production"</span>
+      DATABASE_URL  = <span class="s">"secret:shop/database-url"</span>
+      DATABASE_HOST = <span class="s">"${service.postgres.host}"</span>
+      DATABASE_PORT = <span class="s">"${service.postgres.port.pg}"</span>
+    }
+
+    <span class="k">resources</span> {
+      cpu    = 500
+      memory = 512
+    }
+  }
+
+  <span class="k">network</span> {
+    <span class="k">port</span> <span class="s">"http"</span> { container = 3000 }
+  }
+
+  <span class="k">expose</span> {
+    domains = [<span class="s">"shop.example.com"</span>, <span class="s">"www.shop.example.com"</span>]
+    <span class="k">tls</span> { mode = <span class="s">"acme"</span> }
+
+    <span class="k">ip_restriction</span> {
+      deny = [<span class="s">"198.51.100.7/32"</span>]
+    }
+
+    <span class="k">rate_limit</span> {
+      requests = 100
+      window   = <span class="s">"1m"</span>
+      per      = <span class="s">"ip"</span>
+      burst    = 20
+    }
+
+    <span class="k">headers</span> {
+      response_set    = { Strict-Transport-Security = <span class="s">"max-age=63072000; includeSubDomains"</span> }
+      response_remove = [<span class="s">"Server"</span>, <span class="s">"X-Powered-By"</span>]
+    }
+  }
+
+  <span class="k">health_check</span> <span class="s">"http"</span> {
+    type     = <span class="s">"http"</span>
+    path     = <span class="s">"/healthz"</span>
+    port     = <span class="s">"http"</span>
+    interval = <span class="s">"10s"</span>
+    timeout  = <span class="s">"2s"</span>
+    failures = 3
+  }
+
+  <span class="k">scaling</span> {
+    min = 2
+    max = 10
+    <span class="k">metric</span> <span class="s">"cpu"</span> { target = 70 }
+    <span class="k">metric</span> <span class="s">"rps"</span> { target = 500 }
+    cooldown = <span class="s">"2m"</span>
+  }
+
+  <span class="k">update</span> {
+    strategy     = <span class="s">"rolling"</span>
+    max_parallel = 1
+    min_healthy  = <span class="s">"30s"</span>
+  }
+
+  <span class="k">restart</span> {
+    attempts = 5
+    backoff  = <span class="s">"10s,30s,1m,5m"</span>
+  }
+}</pre>
+    </div>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

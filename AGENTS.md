@@ -135,9 +135,18 @@ These come from PRD §18 and the security review. Violating them is a bug, even 
                        # never by hand: the {{ }} bindings and the component class in the
                        # inline text/x-dc script are its source. Assets are all local (fonts,
                        # React, screenshots as WebP); nothing is fetched from a CDN.
-                       # style.css belongs to site/docs/index.html, NOT to the landing page;
-                       # docs/ is still hand-written and links ../style.css, so deleting the
-                       # stylesheet with the old landing page leaves the docs unstyled. It did.
+                       # style.css belongs to site/docs/*.html, NOT to the landing page;
+                       # docs/ is hand-written, one page per topic, and every page links
+                       # ../style.css, so deleting the stylesheet with the old landing
+                       # page leaves the docs unstyled. It did.
+                       # docs/docs.js owns what the pages share: the sidebar (its PAGES
+                       # list is the order and the prev/next chain), the mobile toggle,
+                       # and REDIRECTS, the id-prefix map that sends an anchor of the old
+                       # single-page docs (docs/#spec-task) to the page it moved to. A new
+                       # page is a row in PAGES; an id prefix that moves to another page
+                       # is a row in REDIRECTS, above the shorter prefix it would
+                       # otherwise match. The landing page still links docs/#arch and
+                       # its kin and relies on that map.
                        # docs/ also links ../#install and expects that id to exist on the
                        # export; #homebrew stopped existing and the link had to move.
                        # TWO hand edits exist. (1) the MOBILE-PATCH block in index.html's
@@ -181,18 +190,20 @@ things that drift silently and every one of them has drifted at least once:
 
 1. **Docs describe what ships.** New user-visible behaviour since the last tag (a flag,
    a page, a login mechanism, a changed flow) is reflected in `README.md`,
-   `site/index.html` (feature cards + quickstart), `site/docs/index.html` (the CLI and
-   architecture references), and `docs/DR_RUNBOOK.md` where backup/restore behaviour
+   `site/index.html` (feature cards + quickstart), the page under `site/docs/` that
+   covers it (`node-config.html`, `spec.html` and `cli.html` are the references; the
+   rest are guides), and `docs/DR_RUNBOOK.md` where backup/restore behaviour
    moved. The quickstarts must show the *current* flow, not the flow the last release had.
-2. **Version strings that name a release.** Two of them, and they do not look alike:
-   `VERSION=vX.Y.Z` in `README.md`'s manual-install example, and a bare
+2. **The version string that names a release.** One of them: a bare
    `<span>vX.Y.Z</span>` in `site/index.html`'s header, beside the theme toggle. Bump
-   both to the tag being cut. (The README one shipped as `v0.1.0` for four releases
-   before anyone noticed. The site one shipped stale in v0.18.0 because this list had
-   just been edited to say the site carried no version: a grep for `VERSION=` finds the
-   README's form and not the site's, and the conclusion drawn from that grep was written
-   down as fact.) **Grep for the tag you are replacing, not for a pattern you expect:**
-   `grep -rn "v0\.$((MINOR-1))\." README.md site/` catches both forms and anything else
+   it to the tag being cut. The README and `site/docs/install.html` deliberately show
+   the placeholder `vX.Y.Z` and name no release. (The README used to carry a real
+   `VERSION=`, which shipped as `v0.1.0` for four releases before anyone noticed. The
+   site one shipped stale in v0.18.0 because this list had just been edited to say the
+   site carried no version: a grep for `VERSION=` found the README's form and not the
+   site's, and the conclusion drawn from that grep was written down as fact.) **Grep
+   for the tag you are replacing, not for a pattern you expect:**
+   `grep -rn "v0\.$((MINOR-1))\." README.md site/` catches every form and anything else
    that named the last release.
 3. **PRD version references.** `README.md`'s documentation table and this file's header
    both name the PRD version ("the north star (v1.NN)"). They must match `PRD.md`'s

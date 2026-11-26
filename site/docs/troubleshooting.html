@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting - Kanea docs</title>
+<meta name="description" content="Find out why a Kanea service, daemon or node is misbehaving: where to look, which logs to read, and fixes for common situations.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%231c1c22'/><g transform='translate(6.4 7.8) scale(0.8)'><path d='M44.5 10.35 A25 25 0 1 1 19.5 10.35' fill='none' stroke='%23e8e8ee' stroke-width='5' stroke-linecap='round'/><rect x='28.5' y='1' width='7' height='12' rx='3.5' fill='%23f2b544'/><rect x='28' y='21' width='8' height='6' rx='3' fill='%23e8e8ee'/><rect x='24' y='32' width='16' height='6' rx='3' fill='%23e8e8ee' opacity='0.65'/></g></svg>">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="../">
+      <svg width="24" height="24" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M44.5 10.35 A25 25 0 1 1 19.5 10.35" fill="none" stroke="currentColor"
+              stroke-width="5" stroke-linecap="round"/>
+        <rect x="28.5" y="1" width="7" height="12" rx="3.5" fill="var(--mark)"/>
+        <rect x="28" y="21" width="8" height="6" rx="3" fill="currentColor"/>
+        <rect x="24" y="32" width="16" height="6" rx="3" fill="currentColor" opacity=".65"/>
+      </svg>
+      Kanea
+    </a>
+    <nav>
+      <a href="../#install" class="hide-sm">Install</a>
+      <a href="./">Docs</a>
+      <a href="https://github.com/m18h/kanea">GitHub&nbsp;↗</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="docs-shell">
+
+  <aside class="sidebar" id="toc">
+    <button type="button" class="toc-toggle" aria-expanded="false" aria-controls="toc-list">Contents</button>
+    <nav id="toc-list"><noscript><a class="part" href="index.html">All pages</a></noscript></nav>
+  </aside>
+
+  <main class="prose">
+    <p class="eyebrow">Guides</p>
+    <h1 id="troubleshoot">Troubleshooting</h1>
+    <p>
+      Find what is wrong by looking at the workload first, then the daemons under it, then
+      the node. The checks in the first three sections are read-only and safe on a live
+      node.
+    </p>
+
+    <h2 id="troubleshoot-services">Check services</h2>
+
+    <p>Start with what Kanea believes is true:</p>
+    <pre class="plain">kanea ps -a                  # every alloc, including stopped services and pending slots
+kanea status shop/web        # health, recent events, current and desired counts
+kanea describe shop/web      # spec, routes, volumes, allocs, stats and events</pre>
+    <p>
+      Three columns of <code>kanea ps</code> carry most of the signal for an
+      <a href="concepts.html#term-alloc">alloc</a>:
+    </p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Column</th><th>Reading</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td>State</td><td><code>pending</code></td><td>The slot is not created yet. Usually an image is still pulling, or a dependency is not healthy.</td></tr>
+          <tr><td>Health</td><td><code>-</code></td><td>The service declares no health check. It is reported as running or not, never as unhealthy.</td></tr>
+          <tr><td>Restarts</td><td>climbing</td><td>A crash loop.</td></tr>
+          <tr><td>Restarts</td><td>stopped climbing</td><td>The restart budget is spent and the alloc is failed. See <a href="#troubleshoot-crash-loop">A service is crash-looping</a>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      A node reboot moves no counter: allocs found stopped at boot come back without
+      spending the budget.
+    </p>
+
+    <h3 id="troubleshoot-units">Check the daemons</h3>
+    <p>A standard install runs four units:</p>
+    <pre class="plain">systemctl status kanead kanea-edge kanea-containerd kanea-buildkit</pre>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Unit</th><th>Does</th><th>While it is down</th></tr></thead>
+        <tbody>
+          <tr><td><code>kanead</code></td><td>The control plane: API, dashboard, deploys, scaling, certificates.</td><td>Workloads and ingress keep running. Nothing changes: no deploys, no scaling, no renewals.</td></tr>
+          <tr><td><code>kanea-edge</code></td><td>The ingress proxy. It does not depend on <a href="concepts.html#term-kanead">kanead</a>.</td><td>No traffic from outside reaches your services.</td></tr>
+          <tr><td><code>kanea-containerd</code></td><td>Kanea's own containerd, at <code>/run/kanea/containerd.sock</code>.</td><td>Running containers keep running. Nothing can be created or probed.</td></tr>
+          <tr><td><code>kanea-buildkit</code></td><td>The rootless build daemon.</td><td>Builds fail. Everything else works.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <a href="concepts.html#term-edge">The edge</a> serves the last route table it read
+      from disk, whether or not kanead is up. <code>kanea-containerd</code> is absent on a
+      node set up with <code>kanea init --containerd external</code>.
+    </p>
+
+    <h3 id="troubleshoot-doctor">Check the node</h3>
+    <p>
+      <code>kanea doctor</code> verifies the node and changes nothing. It checks the kernel
+      and cgroup v2, the host components against their pinned versions, bpffs, the subnets,
+      IP forwarding, the host firewall, the build daemon, disk space and clock sync.
+    </p>
+    <p>
+      A check the current user may not perform reads <code>SKIP</code>, never
+      <code>FAIL</code>. Run it with <code>sudo</code> for the full set.
+    </p>
+
+    <h2 id="troubleshoot-logs">Read logs</h2>
+
+    <h3 id="troubleshoot-logs-workload">Workload logs</h3>
+    <pre class="plain">kanea logs shop/web -f               # merged across allocs, follow
+kanea logs shop/web --tail=200       # the last 200 lines first
+kanea logs shop/web --alloc=&lt;id&gt;     # one alloc only (ids from kanea ps)
+kanea logs shop/web -c migrate       # an init step's log, by its block name
+kanea logs shop/web --previous       # what a stopped or removed service left on disk</pre>
+    <p>
+      On disk there is one file per alloc, <code>&lt;alloc-id&gt;.log</code>, under
+      <code>/var/log/kanea/allocs/</code>. The directory is
+      <a href="node-config.html#nodeconfig-top"><code>alloc_log_dir</code></a> in the
+      <a href="concepts.html#term-node-config">node config</a>. A replaced alloc starts a
+      new file under its new id.
+    </p>
+    <p>
+      Log collection never blocks the workload. Under a burst of output Kanea drops lines
+      and counts the drops, so missing lines under load are expected.
+    </p>
+
+    <h3 id="troubleshoot-logs-daemon">Daemon logs</h3>
+    <p>The daemons log to stderr, which under systemd is the journal:</p>
+    <pre class="plain">journalctl -u kanead -e              # control plane: reconciler, deploys, certificates, backups
+journalctl -u kanea-edge -e          # ingress: TLS, routing, published ports
+journalctl -u kanea-containerd -e    # runtime: image pulls, task create failures
+journalctl -u kanea-buildkit -e      # the build daemon
+
+journalctl -u kanead -f --since "15 min ago"</pre>
+    <p>
+      A deploy that goes wrong is usually explained in kanead's journal. A task that will
+      not create at all, for a missing shim or an ungranted device, is often explained in
+      <code>kanea-containerd</code>'s.
+    </p>
+
+    <h3 id="troubleshoot-logs-build">Build logs</h3>
+    <p>
+      <code>kanea build shop/web --follow</code> streams a build live and
+      <code>kanea project builds shop</code> lists past runs. Each run also has a file
+      under <code>/var/lib/kanea/builds/</code>, which is
+      <a href="node-config.html#nodeconfig-builds"><code>builds.log_dir</code></a>.
+    </p>
+
+    <h2 id="troubleshoot-slices">Slices and resources</h2>
+
+    <p>Everything Kanea runs sits in one of two cgroup slices:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Slice</th><th>Holds</th><th>Guarantee</th></tr></thead>
+        <tbody>
+          <tr><td><code>kanea.slice</code></td><td>The four units above</td><td>A memory floor, <code>MemoryMin</code>, 256&nbsp;MiB by default. Raise it with <code>kanea init --reserve</code> on a node that runs builds.</td></tr>
+          <tr><td><code>kanea-workloads.slice</code></td><td>Every alloc</td><td>A shared ceiling of total RAM minus that reserve.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><a href="architecture.html#arch-isolation">Architecture</a> explains the design.</p>
+    <pre class="plain">systemctl status kanea.slice             # the control plane, with its live memory number
+systemctl status kanea-workloads.slice   # every alloc as a child cgroup
+systemd-cgls kanea-workloads.slice       # the tree, one cgroup per alloc
+systemd-cgtop                            # live CPU and memory per slice</pre>
+    <p>
+      kanead computes the ceiling at startup from the node's memory. Read both values from
+      the cgroup filesystem:
+    </p>
+    <pre class="plain">cat /sys/fs/cgroup/kanea.slice/memory.min             # the floor
+cat /sys/fs/cgroup/kanea-workloads.slice/memory.max   # the ceiling
+cat /sys/fs/cgroup/kanea-workloads.slice/memory.current</pre>
+    <p>
+      Each alloc has its own cgroup one level down, at
+      <code>/sys/fs/cgroup/kanea-workloads.slice/&lt;alloc&gt;/</code>, with
+      <code>memory.max</code>, <code>memory.current</code> and <code>cpu.max</code>. A
+      declared <code>resources</code> limit is enforced there. An omitted one reads
+      <code>max</code>: unbounded within the shared ceiling.
+    </p>
+
+    <h3 id="troubleshoot-oom">kanead was OOM-killed</h3>
+    <p>
+      The floor and the OOM score adjustments live in the unit files. A kanead started
+      outside its unit runs without them, and under memory pressure the kernel may pick it.
+    </p>
+    <p>
+      Check that <code>systemctl status kanead</code> shows it inside
+      <code>kanea.slice</code>, then run <code>journalctl -k | grep -i oom</code> to see
+      what the kernel chose.
+    </p>
+
+    <h2 id="troubleshoot-common">Common situations</h2>
+
+    <h3 id="troubleshoot-config">kanead will not start after editing kanea.hcl</h3>
+    <p>
+      kanead reads <code>/etc/kanea/kanea.hcl</code>, the
+      <a href="concepts.html#term-node-config">node config</a>, once at startup and refuses
+      to start on a file it cannot accept. Meanwhile your workloads keep running and the
+      edge keeps serving the last route table it read.
+    </p>
+    <ol class="steps">
+      <li>
+        <h3>Read the refusal</h3>
+        <p>
+          Run <code>journalctl -u kanead -n 30</code>. The last error line names the cause.
+          <code>kanea doctor</code> reports the same error without restarting anything.
+        </p>
+      </li>
+      <li>
+        <h3>Fix the cause</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>The message</th><th>Cause</th><th>Fix</th></tr></thead>
+            <tbody>
+              <tr><td>Names the file and a line</td><td>A syntax error, or an attribute the stanza does not have.</td><td>Correct that line. <a href="node-config.html#nodeconfig-stanzas">Node config</a> lists every attribute.</td></tr>
+              <tr><td>Says the file is group- or world-writable, has the wrong owner, or is not a regular file</td><td>Ownership or mode. kanead refuses a file another user could have written.</td><td><code>sudo chown root:root /etc/kanea/kanea.hcl &amp;&amp; sudo chmod 0644 /etc/kanea/kanea.hcl</code></td></tr>
+              <tr><td>Names an attribute, such as <code>bind.api_tls</code></td><td>A value refused by its own check: two attributes that contradict, a duration that does not parse, overlapping subnets.</td><td>Change the value the message names.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </li>
+      <li>
+        <h3>Start kanead again</h3>
+        <p>
+          Run <code>sudo systemctl restart kanead</code>.
+          <code>systemctl is-active kanead</code> prints <code>active</code>.
+        </p>
+      </li>
+    </ol>
+    <p>
+      Leave <code>kanea-edge</code> running while the file is broken. The edge reads only
+      the <code>bind</code> and <code>edge</code> stanzas, but a syntax error anywhere in
+      the file stops it at its next start too.
+    </p>
+    <p>
+      Both daemons also refuse any command-line argument. The journal then shows
+      <code>kanea agent takes no arguments</code>, or the same for
+      <code>kanea edge</code>, and points at <code>sudo kanea config migrate</code>.
+    </p>
+    <p>
+      If the journal shows that message, a unit file still passes flags.
+      <a href="upgrade.html#upgrade-migrate">Migrating from flags</a> has the steps.
+    </p>
+
+    <h3 id="troubleshoot-config-ignored">An edit to kanea.hcl has no effect</h3>
+    <ul>
+      <li>The file is read once. <a href="node-config.html#nodeconfig-apply">Restart
+        kanead</a>, and <code>kanea-edge</code> too for <code>bind.edge_*</code> and
+        <code>edge</code> attributes.</li>
+      <li>A misspelled stanza name is a warning, and the stanza is skipped. Run
+        <code>journalctl -u kanead -b -p warning</code>: the warning names it.</li>
+      <li>A backup destination saved in the dashboard wins over the <code>backup</code>
+        stanza. See <a href="backups.html#backups-precedence">Back up a node</a>.</li>
+    </ul>
+
+    <h3 id="troubleshoot-crash-loop">A service is crash-looping</h3>
+    <p>
+      Read <code>kanea logs shop/web</code> for the reason. Once the <code>restart</code>
+      budget is spent, the alloc is failed and left alone.
+    </p>
+    <p>
+      Fix the cause and deploy, or run <code>kanea restart shop/web</code>. Either one
+      starts a fresh budget. Only crashes kanead watched count against it: after a power
+      loss, stopped allocs come back on their own.
+    </p>
+
+    <h3 id="troubleshoot-noop-deploy">A deploy did nothing</h3>
+    <p>
+      Re-running an unchanged <a href="concepts.html#term-spec">spec</a> is a no-op. Run
+      <code>kanea plan</code> to see the diff kanead would apply. An empty diff means the
+      spec is what is running.
+    </p>
+
+    <h3 id="troubleshoot-unreachable">The site is unreachable but the service is healthy</h3>
+    <ol>
+      <li><code>kanea describe shop/web</code> shows the routes the service declares.</li>
+      <li><code>systemctl status kanea-edge</code> shows whether the edge is up.</li>
+      <li>The edge reads its routes from <code>/run/kanea-edge/routes.json</code>. A route
+        missing from that file is a publishing problem: read kanead's journal. A route
+        present in it is a proxying problem: read the edge's.</li>
+    </ol>
+
+    <h3 id="troubleshoot-cert-error">Browsers show a certificate error</h3>
+    <p>
+      A domain whose certificate is not issued yet refuses the TLS handshake. A
+      <code>provided</code> certificate that cannot be resolved leaves the route on plain
+      HTTP. In neither case does Kanea substitute a weaker certificate.
+    </p>
+    <p>
+      kanead's journal has the ACME or resolution failure.
+      <a href="domains.html#dns-certificates">Domains and HTTPS</a> lists what issuance
+      needs.
+    </p>
+
+    <h3 id="troubleshoot-dashboard-tls">The dashboard fails the TLS handshake</h3>
+    <p>
+      Check the port first. The dashboard answers on the port of
+      <code>bind.api_addr</code>, as in <code>https://&lt;name&gt;:8600</code>. The bare
+      name goes to port 443, which is the edge.
+    </p>
+    <p>
+      On a node with no exposed services the edge holds no certificates. The handshake
+      then fails with <code>SSL_ERROR_INTERNAL_ERROR_ALERT</code> in Firefox, where you
+      might expect a 404.
+    </p>
+    <p>
+      If the port is right, the certificate may not have arrived yet. The listener refuses
+      the handshake until it does. Check with
+      <code>journalctl -u kanead | grep 'api listener certificate installed'</code>.
+      <a href="dashboard.html#arch-dashboard">Reach the dashboard</a> covers the modes.
+    </p>
+
+    <h3 id="troubleshoot-no-name">A service has no public name, or the name does not resolve</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td><code>kanea describe</code> shows no domain</td><td>The service lists no <code>domains</code> and the node has no base domain.</td><td>Set <a href="domains.html#dns-base-domain"><code>base_domain</code></a> in the node config and restart kanead.</td></tr>
+          <tr><td>The name does not resolve</td><td>No DNS record points at the node.</td><td>Create the <a href="domains.html#dns-records">record</a>. A wildcard covers every service.</td></tr>
+          <tr><td>It resolves but no certificate arrives</td><td>The record did not point at the node before issuance, or <code>acme.email</code> is unset.</td><td>Fix the record, and set <a href="node-config.html#nodeconfig-acme"><code>acme.email</code></a>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="troubleshoot-firewall">Containers cannot reach each other, or DNS fails inside them</h3>
+    <p>
+      Run <code>kanea doctor</code> first. A host firewall with a default-deny policy, such
+      as ufw, firewalld or docker's FORWARD drop, blocks two things workloads need:
+    </p>
+    <ul>
+      <li>Alloc traffic crosses the forward hook on its way out.</li>
+      <li>A query to the internal resolver at <code>10.244.0.1:53</code> crosses the input
+        hook, because it is a new inbound connection to the host.</li>
+    </ul>
+    <p>
+      The host's own <code>dig</code> keeps working, which makes this look like broken
+      Kanea DNS. <code>kanea firewall</code> prints the rules this node needs for the
+      detected manager. Add <code>--all</code> for every manager, or
+      <code>--manager ufw</code> for one. It prints and never applies.
+    </p>
+
+    <h3 id="troubleshoot-cross-project">A cross-project call resolves but times out</h3>
+    <p>
+      That is policy. Names resolve for everyone, and traffic between projects is denied
+      by default. Add <code>allow_from</code> naming the caller on the service being
+      called. A dropped packet shows as a timeout, not a refusal.
+    </p>
+
+    <h3 id="troubleshoot-autoscaler">The autoscaler stopped scaling</h3>
+    <p>
+      Its circuit breaker trips after repeated failed actions. The journal and the
+      dashboard say so, and <code>/v1/metrics</code> reports
+      <code>kanea_circuit_breaker_open</code>.
+    </p>
+    <p>
+      The trip survives a restart of kanead, so fix the cause. <code>kanea scale</code>
+      still works meanwhile.
+    </p>
+
+    <h3 id="troubleshoot-buildctl">Builds fail with "buildctl": executable file not found in $PATH</h3>
+    <p>
+      <code>buildctl</code> is installed in Kanea's own bin directory, and the kanead unit
+      does not have that directory on its <code>PATH</code>. <code>kanea doctor</code>
+      reports it under the <code>buildkit</code> check.
+    </p>
+    <p>
+      Rewrite the units and restart: run <code>sudo kanea init</code>, which is safe to
+      repeat, then
+      <code>sudo systemctl daemon-reload &amp;&amp; sudo systemctl restart kanead</code>.
+    </p>
+
+  </main>
+
+</div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Kanea: Apache-2.0</span>
+    <a href="https://github.com/m18h/kanea">GitHub</a>
+    <a href="https://github.com/m18h/kanea/releases">Releases</a>
+    <a href="https://github.com/m18h/kanea/security/policy">Security</a>
+    <span class="sp">Built by Michael K. Essandoh</span>
+  </div>
+</footer>
+
+<script src="docs.js"></script>
+
+</body>
+</html>

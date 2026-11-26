@@ -256,8 +256,9 @@ footer .sp { margin-left: auto; }
 .sidebar a.sub { padding-left: 22px; font-size: .855rem; }
 .sidebar a.sub[aria-current] { background: var(--accent-dim); }
 
-/* On a narrow screen the contents collapse behind a button: a 39-entry list
-   above the first paragraph is not navigation, it is a wall. */
+/* On a narrow screen the sidebar collapses behind a button: the page list and
+   the current page's sections, stacked above the first paragraph, would push
+   the content off the screen. docs.js renders the list and drives the toggle. */
 .toc-toggle { display: none; }
 @media (max-width: 900px) {
   .sidebar {
@@ -294,8 +295,8 @@ footer .sp { margin-left: auto; }
 .prose { min-width: 0; max-width: 76ch; }
 .prose h1 { font-size: 2.1rem; margin: 0 0 12px; }
 
-/* Three levels, because the docs are one document: h2 is a part (Overview,
-   Architecture, …), h3 a section within it, h4 a block or subsection. */
+/* Three levels on every docs page: h2 is a section (docs.js lists these in
+   the sidebar), h3 a subsection within it, h4 a block inside that. */
 .prose h2 {
   font-size: 1.9rem; margin: 84px 0 20px;
   padding-top: 30px; border-top: 2px solid var(--accent-dim);
@@ -322,12 +323,23 @@ footer .sp { margin-left: auto; }
 .prose li { margin-bottom: 7px; }
 .prose li::marker { color: var(--muted); }
 .prose a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+/* break-word, not anywhere: a long path wraps in a paragraph on a narrow screen
+   without letting a table squeeze its code column to one character. */
 .prose code {
   font-size: .875em; padding: 1px 5px; border-radius: 5px;
   background: var(--bg-soft); border: 1px solid var(--border);
+  overflow-wrap: break-word;
 }
 .prose pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 .prose .window, .prose .tablewrap, .prose pre.plain { margin: 0 0 18px; }
+/* A highlighted block with no .window around it gets the same box without the
+   title bar. Without this it has no background and, on a narrow screen, pushes
+   the whole page sideways instead of scrolling. */
+.prose > pre:not([class]), .prose :not(.window) > pre:not([class]) {
+  margin: 0 0 18px; padding: 14px 16px; overflow-x: auto;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-soft); font-size: .82rem; line-height: 1.65;
+}
 .prose table code { border: 0; background: none; padding: 0; }
 .prose td, .prose th { vertical-align: top; }
 .prose th:first-child, .prose td:first-child { white-space: nowrap; }
