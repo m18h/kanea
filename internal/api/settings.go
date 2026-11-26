@@ -44,7 +44,6 @@ type NodeConfigView struct {
 	Listen       string `json:"listen,omitempty"`
 	TLS          bool   `json:"tls"`
 	BaseDomain   string `json:"base_domain,omitempty"`
-	NetworkMode  string `json:"network_mode"`
 	NodeCIDR     string `json:"node_cidr"`
 	ClusterCIDR  string `json:"cluster_cidr"`
 	ServiceCIDR  string `json:"service_cidr"`

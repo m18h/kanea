@@ -48,7 +48,7 @@ func runBundleCreate(args []string) error {
 	socket := fs.String("containerd", provision.DefaultRunDir+"/containerd.sock",
 		"containerd socket, for exporting the image components")
 	noImages := fs.Bool("no-images", false,
-		"omit buildkit (only useful for a network.driver = \"netns\" node with no in-cluster builds)")
+		"omit buildkit (for a node that runs no builds: builds.buildkit_addr = \"off\")")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func runBundleCreate(args []string) error {
 		if err != nil {
 			return fmt.Errorf("%w\n\nExporting buildkit needs a containerd to pull "+
 				"through. Run this on a node where `kanea install` has run, or pass --no-images "+
-				"for a bundle destined for a network.driver = \"netns\" node", err)
+				"for a bundle destined for a node that runs no builds", err)
 		}
 		defer func() { _ = client.Close() }() //nolint:errcheck // cleanup path
 		images = client

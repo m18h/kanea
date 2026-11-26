@@ -25,7 +25,6 @@ func TestSettingsDefaultsAreTheFormerFlagDefaults(t *testing.T) {
 		socket:           "/run/kanea/kanead.sock",
 		containerdSocket: "/run/kanea/containerd.sock",
 
-		networkMode: "ebpf",
 		bpfDir:      "/sys/fs/bpf/kanea",
 		nodeCIDR:    "10.244.0.0/24",
 		clusterCIDR: "10.244.0.0/16",

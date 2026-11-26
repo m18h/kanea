@@ -7,9 +7,9 @@ import (
 	"os"
 )
 
-// ensureSecretsTmpfs is the development-node answer: a plain directory. There
-// is no tmpfs mount primitive off Linux, and a workstation running netns mode
-// trades the structural guarantee for convenience; the 0700 directory is the
+// ensureSecretsTmpfs is the off-Linux answer: a plain directory. There is no
+// tmpfs mount primitive there, and kanead does not run there either; this
+// exists so the package builds and its tests run. The 0700 directory is the
 // whole posture here.
 func ensureSecretsTmpfs(dir string) (bool, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {

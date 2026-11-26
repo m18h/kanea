@@ -20,7 +20,6 @@ type nodeConfigWrite struct {
 	explicit map[string]bool
 
 	dataDir, logDir       string
-	network               string
 	nodeCIDR, clusterCIDR string
 
 	nodeCIDR6, clusterCIDR6, serviceCIDR6 string
@@ -37,8 +36,8 @@ type nodeConfigWrite struct {
 // Three rules decide what is written:
 //
 //   - A flag that was typed is written, always.
-//   - The settings the unit's ExecStart used to pin (the directories, the
-//     network driver and its two subnets) are written on a fresh node even
+//   - The settings the unit's ExecStart used to pin (the directories and
+//     the two subnets) are written on a fresh node even
 //     when defaulted. A node's subnets are part of its identity: with them
 //     in the file, a release that changed a default could not renumber a
 //     running node.
@@ -61,7 +60,6 @@ func writeNodeConfig(o *out, w nodeConfigWrite) error {
 	}{
 		{"data-dir", w.dataDir, []string{"data_dir"}},
 		{"log-dir", w.logDir, []string{"alloc_log_dir"}},
-		{"network", w.network, []string{"network", "driver"}},
 		{"node-cidr", w.nodeCIDR, []string{"network", "node_cidr"}},
 		{"cluster-cidr", w.clusterCIDR, []string{"network", "cluster_cidr"}},
 	} {

@@ -56,7 +56,6 @@ const settingsBody = {
     listen: ':8600',
     tls: true,
     base_domain: 'lab.example',
-    network_mode: 'ebpf',
     node_cidr: '10.100.1.0/24',
     cluster_cidr: '10.100.0.0/16',
     service_cidr: '10.96.0.0/16',

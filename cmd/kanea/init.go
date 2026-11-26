@@ -31,7 +31,6 @@ func runInit(args []string) error {
 	dataDir := fs.String("data-dir", defaultDataDir, "state directory")
 	logDir := fs.String("log-dir", defaultLogDir, "workload log directory")
 	unitDir := fs.String("unit-dir", defaultUnitDir, "where to write systemd units")
-	networkMode := fs.String("network", networkEBPF, "network mode: ebpf or netns")
 	containerdSocket := fs.String("containerd", runtime.DefaultSocket, "containerd socket")
 	reserve := fs.String("reserve", defaultReserve,
 		"memory reserved for the control plane")
@@ -87,7 +86,6 @@ func runInit(args []string) error {
 	}{
 		{"data-dir", dataDir, current.dataDir},
 		{"log-dir", logDir, current.logDir},
-		{"network", networkMode, current.networkMode},
 		{"node-cidr", nodeCIDR, current.nodeCIDR},
 		{"cluster-cidr", clusterCIDR, current.clusterCIDR},
 		{"node-cidr6", nodeCIDR6, current.nodeCIDR6},
@@ -105,11 +103,6 @@ func runInit(args []string) error {
 			return name
 		}
 		return configLabel(attr)
-	}
-	// Refused, not defaulted: before v1.36 any unknown value here silently
-	// meant the product mode, so a typo configured a node by accident.
-	if err := validNetworkMode(*networkMode, label); err != nil {
-		return err
 	}
 	// The full six-subnet validation kanead itself performs at startup, run
 	// here first so the refusal lands in front of whoever typed the flags
@@ -178,7 +171,6 @@ func runInit(args []string) error {
 	layout.NodeCIDR6, layout.ClusterCIDR6 = *nodeCIDR6, *clusterCIDR6
 	opts := preflightOptions{
 		dataDir: *dataDir, containerdSocket: effectiveSocket,
-		networkMode:    *networkMode,
 		buildkitSocket: *buildkitSocket,
 		layout:         layout,
 		serviceCIDR:    current.serviceCIDR,
@@ -234,7 +226,7 @@ func runInit(args []string) error {
 	// owns is still configured by this file.
 	if err := writeNodeConfig(o, nodeConfigWrite{
 		path: nodeconfig.DefaultPath, source: nodeCfg.Source, explicit: explicit,
-		dataDir: *dataDir, logDir: *logDir, network: *networkMode,
+		dataDir: *dataDir, logDir: *logDir,
 		nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR,
 		nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
 		listener: listener,
@@ -277,7 +269,6 @@ func runInit(args []string) error {
 	}
 	if err := bootstrapDaemon(o, reader, bootstrapOptions{
 		listen: listenAddr, adminUser: *adminUser, timeout: *timeout,
-		network:  *networkMode,
 		nodeCIDR: *nodeCIDR, clusterCIDR: *clusterCIDR, serviceCIDR: current.serviceCIDR,
 		nodeCIDR6: *nodeCIDR6, clusterCIDR6: *clusterCIDR6, serviceCIDR6: *serviceCIDR6,
 		client: api.NewClient(current.socket),
@@ -485,8 +476,8 @@ func runDoctor(args []string) error {
 	configCheck := checkNodeConfig(nodeCfg, s, cfgErr)
 	if !configCheck.OK {
 		// Settings that failed their own validation cannot steer the checks
-		// below either: an unknown network driver would skip or run the BPF
-		// checks by accident.
+		// below either: a subnet that does not parse fails every check
+		// that reads it, and hides the one finding that matters.
 		s = resolveAgentSettings(&nodeconfig.Config{})
 	}
 
@@ -494,7 +485,6 @@ func runDoctor(args []string) error {
 	layout.NodeCIDR6, layout.ClusterCIDR6 = s.nodeCIDR6, s.clusterCIDR6
 	results := append([]checkResult{configCheck}, preflight(preflightOptions{
 		dataDir: s.dataDir, containerdSocket: s.containerdSocket,
-		networkMode:    s.networkMode,
 		buildkitSocket: s.buildkit,
 		layout:         layout,
 		serviceCIDR:    s.serviceCIDR,

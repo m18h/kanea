@@ -79,7 +79,6 @@ dashboard {
 # kanead is the IPAM: these are fixed when the node is installed. node_cidr
 # must sit inside cluster_cidr, and neither may overlap service_cidr.
 network {
-  driver       = "ebpf"                  # or "netns": development only, no policy, no service LB
   node_cidr    = "10.244.0.0/24"         # alloc addresses
   cluster_cidr = "10.244.0.0/16"         # routed range, masqueraded on egress
   service_cidr = "10.201.0.0/16"         # service frontends

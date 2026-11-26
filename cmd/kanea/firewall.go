@@ -73,9 +73,6 @@ func runFirewall(args []string) error {
 		return err
 	}
 	s := resolveAgentSettings(nodeCfg)
-	if err := validNetworkMode(s.networkMode, configLabel); err != nil {
-		return err
-	}
 
 	layout := componentLayout(*prefix, s.nodeCIDR, s.clusterCIDR)
 	if err := layout.ValidateNetworking(); err != nil {
@@ -83,7 +80,7 @@ func runFirewall(args []string) error {
 	}
 	node, cluster := layout.Networking()
 
-	facts := firewallFacts{cluster: cluster, resolver: dnsAddrFor(s.networkMode, node)}
+	facts := firewallFacts{cluster: cluster, resolver: dnsAddrFor(node)}
 	switch {
 	case s.dnsListen == dnsOff:
 		facts.resolver = ""
@@ -107,7 +104,7 @@ func runFirewall(args []string) error {
 	o.printf("refused by a default-deny posture:\n\n")
 	if facts.dnsOff {
 		o.printf("  forward   %s reaching anything off this node\n", cluster)
-		o.printf("  input     (no internal resolver on this node: network.driver = \"netns\" or dns.listen = \"off\")\n\n")
+		o.printf("  input     (no internal resolver on this node: dns.listen = \"off\")\n\n")
 	} else {
 		o.printf("  input     %s reaching the internal resolver at %s\n", cluster, facts.resolver)
 		o.printf("  forward   %s reaching anything off this node\n\n", cluster)
