@@ -91,7 +91,7 @@
   }
   function link(cls, href, text) {
     var a = el('a', text);
-    a.className = cls;
+    if (cls) a.className = cls;
     a.setAttribute('href', href);
     return a;
   }
@@ -116,16 +116,18 @@
     if (page.file !== here) return;
     index = i;
     a.setAttribute('aria-current', 'page');
+    if (!targets.length) return;
+    var subs = el('div');
+    subs.className = 'subs';
     targets.forEach(function (h) {
-      var sub = link('sub', '#' + h.id, h.textContent);
-      byId[h.id] = sub;
-      frag.appendChild(sub);
+      byId[h.id] = subs.appendChild(link('', '#' + h.id, h.textContent));
     });
+    frag.appendChild(subs);
   });
 
   frag.appendChild(el('h4', 'Repository'));
   REPOSITORY.forEach(function (repo) {
-    frag.appendChild(link('sub', repo[0], repo[1] + '\u00a0\u2197'));
+    frag.appendChild(link('ext', repo[0], repo[1] + '\u00a0\u2197'));
   });
 
   list.textContent = '';

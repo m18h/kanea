@@ -244,25 +244,53 @@ footer .sp { margin-left: auto; }
   .docs-shell { grid-template-columns: 1fr; gap: 0; padding-top: 28px; }
 }
 
+/* The sidebar. Every row, headings included, is inset 10px inside the panel,
+   and the panel hangs 10px left so the text still lines up with the header.
+   No row reaches outside the panel: it scrolls, so it clips whatever does,
+   and a tint cut off at the text's edge is what that looks like. */
 .sidebar { position: sticky; top: 82px; font-size: .875rem; line-height: 1.45; }
-/* The links reach 10px left of the text for their hover and current tint. The
-   panel scrolls, so it clips: the padding keeps that 10px inside it. */
 .sidebar nav {
+  position: relative;
   max-height: calc(100vh - 116px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  margin-left: -10px; padding: 0 6px 0 10px;
+  margin-left: -10px; padding-right: 8px;
 }
-/* A page, and under the page being read, its sections. */
+.sidebar h4 {
+  font: 600 .7rem/1 var(--mono);
+  letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted); margin: 24px 0 8px; padding: 0 10px;
+}
+.sidebar h4:first-child { margin-top: 0; }
+.sidebar a {
+  display: block; padding: 4px 10px;
+  border-radius: 6px; text-decoration: none; color: var(--muted);
+}
+.sidebar a:hover { color: var(--fg); background: var(--bg-soft); }
 .sidebar a.part { color: var(--fg); }
-.sidebar a.sub { padding: 3px 10px 3px 22px; font-size: .82rem; }
-/* The section being read is marked by a bar, not a second tinted block: the
-   page above it already carries the tint, and two of them read as one. */
-.sidebar a.sub[aria-current] {
-  color: var(--fg); font-weight: 550;
-  box-shadow: inset 2px 0 0 var(--accent);
-  border-radius: 0 6px 6px 0;
+.sidebar a.ext { font-size: .82rem; }
+.sidebar a[aria-current="page"] {
+  color: var(--accent); background: var(--accent-dim); font-weight: 550;
+}
+/* A group with a page of its own: the heading is the link to it, and looks
+   like the other headings plus an arrow. */
+.sidebar h4 a {
+  margin: -6px -10px; padding: 6px 10px;
+  font: inherit; letter-spacing: inherit; color: inherit;
+}
+.sidebar h4 a::after { content: "\00a0\2192"; letter-spacing: 0; }
+/* The sections of the page being read hang off a rail under it, clear of the
+   page's tint. The one in view takes the accent on the rail, not a second
+   tinted block. */
+.sidebar .subs { margin: 6px 0 10px 10px; border-left: 1px solid var(--border); }
+.sidebar .subs a {
+  margin-left: -1px; padding: 3px 10px 3px 13px;
+  border-left: 2px solid transparent; border-radius: 0 6px 6px 0;
+  font-size: .82rem;
+}
+.sidebar .subs a[aria-current] {
+  color: var(--fg); font-weight: 550; border-left-color: var(--accent);
 }
 
 /* On a narrow screen the sidebar collapses behind a button: the page list and
@@ -283,29 +311,9 @@ footer .sp { margin-left: auto; }
   }
   .toc-toggle::after { content: " ▾"; color: var(--muted); }
   .sidebar.open .toc-toggle::after { content: " ▴"; }
-  .sidebar nav { display: none; max-height: 62vh; margin-top: 10px; }
+  .sidebar nav { display: none; max-height: 62vh; margin: 10px 0 0; }
   .sidebar.open nav { display: block; }
 }
-.sidebar h4 {
-  font: 600 .7rem/1 var(--mono);
-  letter-spacing: .12em; text-transform: uppercase;
-  color: var(--muted); margin: 20px 0 8px;
-}
-.sidebar h4:first-child { margin-top: 0; }
-.sidebar a {
-  display: block; padding: 4px 10px; margin-left: -10px;
-  border-radius: 6px; text-decoration: none; color: var(--muted);
-}
-.sidebar a:hover { color: var(--fg); background: var(--bg-soft); }
-.sidebar a[aria-current="page"] {
-  color: var(--accent); background: var(--accent-dim); font-weight: 550;
-}
-/* A group with a page of its own: the heading is the link to it. */
-.sidebar h4 a {
-  margin: -6px 0 -6px -10px; padding: 6px 10px;
-  font: inherit; letter-spacing: inherit; color: var(--fg);
-}
-.sidebar h4 a::after { content: " \2192"; color: var(--muted); letter-spacing: 0; }
 
 .prose { min-width: 0; max-width: 76ch; }
 .prose h1 { font-size: 2.1rem; margin: 0 0 12px; }
